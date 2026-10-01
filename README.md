@@ -1,0 +1,39 @@
+# korean-tax-calc-mcp — Korea Tax Calculator MCP (한국 세금 계산)
+
+**Korean tax calculations for AI agents — code, not guesses.** Corporate tax, entertainment limits, deemed interest, penalties, limitation periods, withholding and income tax, using year-by-year rate tables (2016–2025). Each result cites its statute. Years without a verified table stop with an error instead of estimating.
+
+세금 계산은 AI가 자주 틀립니다. 이 서버는 계산을 코드로 하고, 결과마다 근거 조문을 붙입니다. 연도표가 없는 해는 추정하지 않고 멈춥니다.
+
+## 설치
+
+```
+claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp
+```
+
+근거 조문·해석은 [korean-tax-mcp](https://github.com/seungmiyoon/korean-tax-mcp)와 함께 쓰면 "근거 찾기 → 계산"이 이어집니다.
+
+## 도구
+
+| 도구 | 계산 | 근거 |
+|---|---|---|
+| `corporate_tax` | 법인세 산출세액 (1년 미만 사업연도 포함) | 법인세법 제55조 |
+| `entertainment_limit` | 기업업무추진비 한도·한도초과 | 법인세법 제25조 |
+| `deemed_interest` | 가지급금 인정이자 (적수, 3억·5% 판정) | 법인세법 제52조, 영 제89조 |
+| `unfair_transaction` | 부당행위계산 기준 (시가 차이 3억·5%) | 영 제88조③ |
+| `loss_carryforward_limit` | 이월결손금 공제 한도율 | 법인세법 제13조 |
+| `minimum_tax` | 최저한세 | 조특법 제132조 |
+| `underreporting_penalty` | 과소신고가산세 (10%·40%) | 국세기본법 제47조의3 |
+| `late_payment_penalty` | 납부지연가산세 (이율 변경일 안분) | 국세기본법 제47조의4 |
+| `invoice_penalty` | 세금계산서 가산세 (가공·미발급·지연 등, 공급일 기준) | 부가가치세법 제60조 |
+| `assessment_limitation` | 부과제척기간·만료일 (역외거래·상증 포함) | 국세기본법 제26조의2 |
+| `income_tax` | 종합소득세 산출세액 | 소득세법 제55조 |
+| `withholding_tax` | 원천징수세액 (소득 종류·지급연도) | 소득세법 제129조 |
+| `retirement_income_tax` | 퇴직소득세 | 소득세법 제48조 |
+| `vat_deemed_rent` | 간주임대료 | 부가가치세법 시행령 제65조 |
+
+## 유의
+
+- 계산 결과는 검토 보조 자료이며 세무 자문이 아닙니다.
+- 지방소득세는 별도입니다.
+
+MIT · 작성 Mia(윤승미) · Upstage
