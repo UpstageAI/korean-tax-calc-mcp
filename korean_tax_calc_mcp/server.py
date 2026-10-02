@@ -173,6 +173,133 @@ def vat_deemed_rent(deposit: WON, days: Annotated[int, Field(description="과세
     return _ok({"간주임대료": V.deemed_rent(deposit, days, period=period)}, "부가가치세법 시행령 제65조")
 
 
+# ───────── 0.2 추가: 법인세 세무조정 ─────────
+@mcp.tool(annotations=CALC)
+@_guard
+def nonbusiness_interest_disallowance(loans: Annotated[list[dict], Field(description="차입금별 [{interest: 지급이자(원), jeoksu: 차입금 적수(잔액×일수)}]")],
+                                      nonbusiness_jeoksu: Annotated[int, Field(description="업무무관자산·가지급금 적수 합(원·일)", ge=0)]) -> dict:
+    """Disallowed interest related to non-business assets and related-party loans. 업무무관자산 등 관련 지급이자 손금불산입."""
+    r = C.nonbusiness_interest([(int(l["interest"]), int(l["jeoksu"])) for l in loans])(nonbusiness_jeoksu)
+    return _ok(r, "법인세법 제28조①4호, 시행령 제53조", 산식="지급이자 × min(1, 업무무관 적수 ÷ 차입금 적수)")
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def business_car_expense(year: YEAR, upkeep: Annotated[int, Field(description="유지비(유류·보험·수선 등, 원)")],
+                         depreciation: Annotated[int, Field(description="세법상 감가상각비(5년 정액, 원)")],
+                         booked_depreciation: Annotated[int, Field(description="장부상 감가상각비(원)")],
+                         log_kept: Annotated[bool, Field(description="운행기록부 작성 여부")],
+                         business_ratio: Annotated[float | None, Field(description="운행기록상 업무사용비율(작성 시)", ge=0, le=1)] = None,
+                         months: Annotated[int, Field(description="보유 월수", ge=1, le=12)] = 12,
+                         rental_corp: Annotated[bool, Field(description="부동산임대업 주업 등 특정법인")] = False,
+                         plate_ok: Annotated[bool, Field(description="법인 전용번호판 부착(2024년 이후 요건)")] = True) -> dict:
+    """Business-use passenger car expenses: business-use ratio, private use, depreciation cap. 업무용승용차 관련비용 손금불산입."""
+    return _ok(C.business_car(year, upkeep, depreciation, booked_depreciation, log_kept, business_ratio, months, rental_corp, plate_ok),
+               "법인세법 제27조의2, 시행령 제50조의2", 산식="미작성 시 업무사용비율 = min(1, 기준금액 ÷ 총비용), 감가상각 업무사용분 연 800만원 한도")
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def donation_limit(year: YEAR, base_income: Annotated[int, Field(description="기준소득금액(기부금 손금산입 전, 원)")],
+                   special: Annotated[int, Field(description="특례기부금(원)")] = 0, general: Annotated[int, Field(description="일반기부금(원)")] = 0,
+                   carried_loss: Annotated[int, Field(description="공제할 이월결손금(원)")] = 0,
+                   special_carry: Annotated[int, Field(description="특례기부금 이월분(원)")] = 0, general_carry: Annotated[int, Field(description="일반기부금 이월분(원)")] = 0,
+                   sme: Annotated[bool, Field(description="중소기업 여부")] = True,
+                   social_enterprise: Annotated[bool, Field(description="사회적기업 여부(일반한도 20%)")] = False) -> dict:
+    """Charitable donation deduction limits and carryforwards. 기부금 손금산입 한도(특례 50%, 일반 10%)와 한도초과·이월."""
+    return _ok(C.donation(base_income, carried_loss, special, general, special_carry, general_carry, sme, social_enterprise, year=year),
+               "법인세법 제24조", 산식="특례 = (기준소득 − 결손금) × 50%, 일반 = (기준소득 − 결손금 − 특례 손금산입) × 10%(사회적기업 20%)")
+
+
+@mcp.tool(annotations=CALC)
+def bad_debt_allowance(receivables: WON, loss_rate: Annotated[float, Field(description="대손실적률(소수)", ge=0, le=1)],
+                       set_amount: Annotated[int, Field(description="당기 대손충당금 설정액(원)")], prior_disallowed: Annotated[int, Field(description="전기 한도초과액(원)")] = 0) -> dict:
+    """Bad debt allowance limit. 대손충당금 한도(채권잔액 × max(1%, 대손실적률))와 한도초과."""
+    return _ok(C.bad_debt_allowance(receivables, loss_rate, set_amount, prior_disallowed), "법인세법 제34조, 시행령 제61조②")
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def missing_receipt_disallowance(year: YEAR, items: Annotated[list[dict], Field(description="[{amount: 1회 지출액, qualified: 적격증빙 여부, congratulatory: 경조금 여부}]")]) -> dict:
+    """Entertainment spending without qualified receipts. 적격증빙 미수취 기업업무추진비 손금불산입(건당 3만원·경조금 20만원 초과)."""
+    return _ok({"손금불산입": C.receipt_disallowed(year, [(int(i["amount"]), bool(i.get("qualified")), bool(i.get("congratulatory"))) for i in items])},
+               "법인세법 제25조②, 시행령 제41조①")
+
+
+# ───────── 0.2 추가: 부가가치세 ─────────
+@mcp.tool(annotations=CALC)
+@_guard
+def vat_deemed_input_credit(purchase: Annotated[int, Field(description="면세농산물 등 매입가액(원)")], base: Annotated[int, Field(description="해당 과세기간 과세표준(원)")],
+                            period: Annotated[str, Field(description="과세기간 'YYYY-1' 또는 'YYYY-2'")],
+                            industry: Annotated[Literal["음식점", "유흥", "제조", "제조_떡방앗간등", "기타"], Field(description="업종")],
+                            individual: Annotated[bool, Field(description="개인사업자 여부")] = True, sme: Annotated[bool, Field(description="중소기업 여부(제조 법인)")] = True) -> dict:
+    """VAT deemed input tax credit on tax-exempt agricultural purchases. 의제매입세액공제(공제율·한도율 과세기간 연도표)."""
+    num, den = V.deemed_input_rate(industry, period, individual, base, sme)
+    return _ok({"의제매입세액": V.deemed_input(purchase, base, period=period, industry=industry, individual=individual, sme=sme), "공제율": f"{num}/{den}"},
+               "부가가치세법 제42조, 시행령 제84조", 산식="min(매입가액, 과세표준 × 한도율) × 공제율")
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def vat_common_input_allocation(common_tax: WON, total_supply: WON, exempt_supply: WON) -> dict:
+    """Non-deductible share of common input VAT for mixed taxable/exempt businesses. 겸영사업자 공통매입세액 안분(면세비율 5% 미만 등 예외 포함)."""
+    return _ok(V.common_input_allocation(common_tax, total_supply, exempt_supply), "부가가치세법 시행령 제81조", 산식="불공제 = 공통매입세액 × 면세공급가액 ÷ 총공급가액")
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def vat_simplified_taxpayer(supply_incl_vat: Annotated[int, Field(description="공급대가(부가세 포함, 원)")],
+                            value_added_rate: Annotated[float, Field(description="업종별 부가가치율(소수, 예: 소매 0.15)", gt=0, lt=1)],
+                            invoice_purchase_incl_vat: Annotated[int, Field(description="세금계산서 등 수취 매입 공급대가(원)")] = 0) -> dict:
+    """VAT for simplified taxpayers (post-2021.7). 간이과세자 납부세액."""
+    return _ok({"납부세액": V.simplified_tax(supply_incl_vat, value_added_rate, invoice_purchase_incl_vat)}, "부가가치세법 제63조",
+               산식="공급대가 × 부가가치율 × 10% − 매입 공급대가 × 0.5%")
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def vat_card_sales_credit(amount: Annotated[int, Field(description="신용카드·현금영수증 매출(원)")], supplied_on: Annotated[str, Field(description="공급일 YYYY-MM-DD")],
+                          used_this_year: Annotated[int, Field(description="같은 해 이미 공제받은 금액(원)")] = 0) -> dict:
+    """Credit for card/cash-receipt sales by individual businesses. 신용카드매출전표 등 발행세액공제(1.3%, 연간 한도)."""
+    return _ok({"공제액": V.card_sales_credit(amount, supplied_on, used_this_year=used_this_year)}, "부가가치세법 제46조")
+
+
+@mcp.tool(annotations=CALC)
+def vat_bad_debt_credit(bad_debt_incl_vat: Annotated[int, Field(description="대손금액(부가세 포함, 원)")]) -> dict:
+    """VAT bad debt credit. 대손세액공제(대손금액 × 10/110)."""
+    return _ok({"대손세액": V.bad_debt_vat(bad_debt_incl_vat)}, "부가가치세법 제45조①")
+
+
+# ───────── 0.2 추가: 근로·원천 ─────────
+@mcp.tool(annotations=CALC)
+@_guard
+def wage_income_tax(gross_pay: Annotated[int, Field(description="총급여(원)")], tax_base: Annotated[int, Field(description="종합소득 과세표준(원)")], year: YEAR) -> dict:
+    """Wage income: employment income deduction, computed tax and wage tax credit. 근로소득공제·산출세액·근로소득세액공제."""
+    t = I.income_tax(tax_base, year)
+    return _ok({"근로소득공제": I.earned_deduction(gross_pay, year), "산출세액": t, "근로소득세액공제": I.earned_tax_credit(t, gross_pay, year=year)},
+               "소득세법 제47조①·제55조·제59조", 주의="그 밖의 소득공제·세액공제는 별도")
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def daily_worker_withholding(daily_wage: Annotated[int, Field(description="일급(원)")], year: Annotated[int, Field(description="지급연도", ge=2016, le=2026)] = 2025) -> dict:
+    """Withholding on daily workers' wages. 일용근로자 원천징수세액(소액부징수 포함)."""
+    return _ok({"원천징수세액": I.daily_worker_tax(daily_wage, year)}, "소득세법 제134조③·제129조①4호·제86조",
+               산식="(일급 − 15만원) × 6% × (1 − 55%), 1천원 미만 부징수")
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def deemed_bonus_resettlement(gross_pay: Annotated[int, Field(description="귀속연도 당초 총급여(원)")], tax_base: Annotated[int, Field(description="당초 과세표준(원)")],
+                              bonus: Annotated[int, Field(description="소득처분 상여(원)")], year: YEAR,
+                              other_credits: Annotated[int, Field(description="근로소득세액공제 외 세액공제 합계(원)")] = 0,
+                              prev_decided: Annotated[int | None, Field(description="당초 결정세액(원). 모르면 생략 — 재계산")] = None) -> dict:
+    """Year-end resettlement after a deemed bonus (income disposition) is added to wages. 소득처분 상여 연말정산 재정산(추가 원천징수세액)."""
+    return _ok(I.deemed_bonus_resettlement(gross_pay, tax_base, bonus, other_credits, prev_decided, year=year),
+               "법인세법 제67조, 소득세법 시행령 제192조, 소득세법 제137조",
+               주의="총급여 연동 소득·세액공제(신용카드 공제 등)는 수기 보정 필요")
+
+
 def main():
     import argparse
     p = argparse.ArgumentParser(prog="korean-tax-calc-mcp", description="한국 세금 계산 MCP 서버")
