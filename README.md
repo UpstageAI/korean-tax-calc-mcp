@@ -30,6 +30,19 @@ claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp
 | `withholding_tax` | 원천징수세액 (소득 종류·지급연도) | 소득세법 제129조 |
 | `retirement_income_tax` | 퇴직소득세 | 소득세법 제48조 |
 | `vat_deemed_rent` | 간주임대료 | 부가가치세법 시행령 제65조 |
+| `nonbusiness_interest_disallowance` | 업무무관자산 관련 지급이자 손금불산입 | 법인세법 제28조 |
+| `business_car_expense` | 업무용승용차 관련비용 (업무사용비율·감가상각 한도) | 법인세법 제27조의2 |
+| `donation_limit` | 기부금 한도·한도초과·이월 | 법인세법 제24조 |
+| `bad_debt_allowance` | 대손충당금 한도 | 법인세법 제34조 |
+| `missing_receipt_disallowance` | 적격증빙 미수취 기업업무추진비 | 법인세법 제25조② |
+| `vat_deemed_input_credit` | 의제매입세액공제 | 부가가치세법 제42조 |
+| `vat_common_input_allocation` | 공통매입세액 안분 | 부가가치세법 시행령 제81조 |
+| `vat_simplified_taxpayer` | 간이과세자 납부세액 | 부가가치세법 제63조 |
+| `vat_card_sales_credit` | 신용카드매출전표 발행세액공제 | 부가가치세법 제46조 |
+| `vat_bad_debt_credit` | 대손세액공제 | 부가가치세법 제45조 |
+| `wage_income_tax` | 근로소득공제·산출세액·근로소득세액공제 | 소득세법 제47·55·59조 |
+| `daily_worker_withholding` | 일용근로자 원천징수 | 소득세법 제134조 |
+| `deemed_bonus_resettlement` | 소득처분 상여 연말정산 재정산 | 소득세법 시행령 제192조 |
 
 ## 유의
 
