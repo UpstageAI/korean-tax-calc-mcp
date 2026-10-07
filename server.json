@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.UpstageAI/korean-tax-calc-mcp",
   "title": "Korea Tax Calculator",
-  "description": "Korea tax calculator: corporate/income tax, penalties, deemed interest, withholding, with statute citations",
+  "description": "Korea tax calculator: corporate/income tax, penalties, interest, withholding, with citations",
   "repository": {
     "url": "https://github.com/UpstageAI/korean-tax-calc-mcp",
     "source": "github"
