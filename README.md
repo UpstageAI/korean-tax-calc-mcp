@@ -2,15 +2,47 @@
 
 <!-- mcp-name: io.github.UpstageAI/korean-tax-calc-mcp -->
 
-**Korean tax calculations for AI agents — code, not guesses.** Corporate tax, entertainment limits, deemed interest, penalties, limitation periods, withholding and income tax, using year-by-year rate tables (2016–2025). Each result cites its statute. Years without a verified table stop with an error instead of estimating.
+![데모: 법인세·가산세 계산](https://raw.githubusercontent.com/UpstageAI/korean-tax-calc-mcp/main/docs/demo.gif)
 
-세금 계산은 AI가 자주 틀립니다. 이 서버는 계산을 코드로 하고, 결과마다 근거 조문을 붙입니다. 연도표가 없는 해는 추정하지 않고 멈춥니다.
+[![PyPI](https://img.shields.io/pypi/v/korean-tax-calc-mcp)](https://pypi.org/project/korean-tax-calc-mcp/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-korean--tax--calc--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=korean-tax-calc-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) · [English](README-EN.md)
+
+**Korean tax calculations for AI agents — code, not guesses.** Corporate tax, entertainment limits, deemed interest, penalties, limitation periods, withholding, income tax and VAT, using year-by-year rate tables (2016–2025). Each result cites its statute. Years without a verified table stop with an error instead of estimating. 27 tools, no API key, nothing sent outside. → [English README](README-EN.md)
+
+---
+
+> 세금 계산은 AI가 자주 틀립니다. 이 서버는 계산을 코드로 하고, 결과마다 근거 조문을 붙입니다. 연도표가 없는 해는 추정하지 않고 멈춥니다.
+
+**이렇게 물어보세요**
+
+- "2025 사업연도 과세표준 5억 법인세 산출세액은?"
+- "과소신고 1천만 원을 10월 7일에 납부하면 가산세는?"
+- "가지급금 3월 1일 2억 대여, 9월 30일 1억 회수 — 인정이자 계산해줘"
+- "중소기업 매출 100억, 기업업무추진비 5천만 원이면 한도초과액은?"
+- "2018년 3월 31일 신고기한인 법인세 부과제척기간 만료일은? 부정행위면?"
+- "퇴직금 1억, 근속 15년 퇴직소득세"
+- "세금계산서 미발급 공급가액 5천만 원 가산세"
+- "보증금 3억 상가 간주임대료 (184일)"
+
+**설치 한 줄** — `claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp`
+
+- **연도별 세율표** — 2016~2025 사업연도·귀속연도별 세율·한도율, 없는 해는 추정하지 않고 오류
+- **근거 조문** — 모든 결과에 법·시행령 조문 표시
+- **날짜 계산** — 가산세 이율 변경일 안분, 제척기간 만료일, 인정이자 적수
+- **API 키 없음·외부 전송 없음** — 설치한 컴퓨터 안에서 코드로만 계산
 
 ## 설치
 
+[uv](https://docs.astral.sh/uv/)가 있으면 설치 없이 바로 실행됩니다.
+
+```json
+{
+  "mcpServers": {
+    "korean-tax-calc": { "command": "uvx", "args": ["korean-tax-calc-mcp"] }
+  }
+}
 ```
-claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp
-```
+
+Claude Code: `claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp`
 
 근거 조문·해석은 [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp)와 함께 쓰면 "근거 찾기 → 계산"이 이어집니다.
 
@@ -48,9 +80,14 @@ claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp
 
 ## 유의
 
-- 계산 결과는 검토 보조 자료이며 세무 자문이 아닙니다.
+- 계산 결과는 검토 보조 자료이며 세무 자문이 아닙니다. 신고 전 원문 조문과 확인하세요.
 - 지방소득세는 별도입니다.
+- 세율표가 검증되지 않은 연도는 계산하지 않고 오류를 돌려줍니다.
 - **데이터 전송 안내** — 모든 계산은 설치한 컴퓨터 안에서 코드로 처리하며 외부 API로 전송하는 내용은 없습니다.
+
+## 함께 쓰면 좋은 MCP
+
+- [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp) — 국세청 해석·판례·통칙·시점별 조문
 
 ## 라이선스
 
