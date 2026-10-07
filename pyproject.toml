@@ -12,6 +12,9 @@ license = "MIT"
 dependencies = ["mcp>=2.2", "uvicorn>=0.30"]
 keywords = ["mcp", "mcp-server", "korea", "south-korea", "tax", "tax-calculator", "세금", "세법", "가산세"]
 
+[project.urls]
+Repository = "https://github.com/UpstageAI/korean-tax-calc-mcp"
+
 [project.scripts]
 korean-tax-calc-mcp = "korean_tax_calc_mcp.server:main"
 

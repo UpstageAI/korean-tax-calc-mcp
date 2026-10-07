@@ -1,5 +1,7 @@
 # korean-tax-calc-mcp — Korea Tax Calculator MCP (한국 세금 계산)
 
+<!-- mcp-name: io.github.UpstageAI/korean-tax-calc-mcp -->
+
 **Korean tax calculations for AI agents — code, not guesses.** Corporate tax, entertainment limits, deemed interest, penalties, limitation periods, withholding and income tax, using year-by-year rate tables (2016–2025). Each result cites its statute. Years without a verified table stop with an error instead of estimating.
 
 세금 계산은 AI가 자주 틀립니다. 이 서버는 계산을 코드로 하고, 결과마다 근거 조문을 붙입니다. 연도표가 없는 해는 추정하지 않고 멈춥니다.
@@ -10,7 +12,7 @@
 claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp
 ```
 
-근거 조문·해석은 [korean-tax-mcp](https://github.com/seungmiyoon/korean-tax-mcp)와 함께 쓰면 "근거 찾기 → 계산"이 이어집니다.
+근거 조문·해석은 [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp)와 함께 쓰면 "근거 찾기 → 계산"이 이어집니다.
 
 ## 도구
 
@@ -48,5 +50,10 @@ claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp
 
 - 계산 결과는 검토 보조 자료이며 세무 자문이 아닙니다.
 - 지방소득세는 별도입니다.
+- **데이터 전송 안내** — 모든 계산은 설치한 컴퓨터 안에서 코드로 처리하며 외부 API로 전송하는 내용은 없습니다.
 
-MIT · 작성 Mia(윤승미) · Upstage
+## 라이선스
+
+MIT © 2026 Upstage
+
+Created by Mia(윤승미)
