@@ -1,0 +1,8 @@
+- insert:
+    - id: korean-tax-calc-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: korean-tax-calc-mcp
+        transport: stdio
+        command: uvx
+        args: ['korean-tax-calc-mcp']
