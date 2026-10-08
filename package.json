@@ -1,0 +1,10 @@
+{
+  "name": "korean-tax-calc-mcp",
+  "version": "0.2.1",
+  "description": "Solar Work plugin: Korean tax calculators with statutory citations (MCP)",
+  "dsh": {
+    "bundle": {
+      "patch": "./plugin.patch.yml"
+    }
+  }
+}
