@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.UpstageAI/korean-tax-calc-mcp",
   "title": "Korea Tax Calculator",
-  "description": "Korean tax calculation and tax-audit judgment MCP: 40 tools with statutory citations.",
+  "description": "Korean tax calculation and tax-audit judgment MCP: 41 tools with statutory citations.",
   "repository": {
     "url": "https://github.com/UpstageAI/korean-tax-calc-mcp",
     "source": "github"

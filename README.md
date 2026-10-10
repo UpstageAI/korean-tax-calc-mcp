@@ -8,7 +8,7 @@
 
 > **0.3.0부터 업스테이지 Solar Pro 4로 개발합니다.** (0.2.1까지는 Solar Pro 4 이전 개발분) 2026년 법인세율, 비거주자 원천징수(`nonresident_withholding`), 과소자본(`thin_capitalization`)은 Solar Pro 4(Solar Code CLI)가 코드를 작성하고, Solar Pro 4 기반 코드 리뷰(CodeSolar)가 PR을 검토했으며, Claude가 테스트로 교차 검증했습니다. **0.4.0: 세무조사 판정 도구 11개 통합. 0.5.1: precheck_schema 추가·41개 도구로 확대, description·인자 설명 전면 정비.**
 
-**Korean tax calculations for AI agents — code, not guesses.** Corporate tax, entertainment limits, deemed interest, penalties, limitation periods, withholding, income tax and VAT, using year-by-year rate tables (2016–2026). Each result cites its statute. Years without a verified table stop with an error instead of estimating. 41 tools (29 computation + 12 tax audit judgment) — precheck_schema 추가로 41개. → [English README](README-EN.md)
+**Korean tax calculations for AI agents — code, not guesses.** Corporate tax, entertainment limits, deemed interest, penalties, limitation periods, withholding, income tax and VAT, using year-by-year rate tables (2016–2026). Each result cites its statute. Years without a verified table stop with an error instead of estimating. 41 tools (29 computation + 12 tax audit judgment) — → [English README](README-EN.md)
 
 ---
 
