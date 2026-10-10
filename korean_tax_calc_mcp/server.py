@@ -1,7 +1,7 @@
-"""korean-tax-calc-mcp — 한국 세금 계산 MCP 서버(코드 계산, AI 없음).
+"""korean-tax-calc-mcp — 한국어 세금 계산 MCP 서버(코드 계산, AI 없음).
 
-세율·한도·가산세는 사업연도·과세기간·공급일 기준 연도표(2016~2025, 일부 2026)로 계산하고, 표에 없는 연도는 추정하지 않고 멈춘다.
-결과마다 근거 조문을 붙인다. 근거 원문은 korean-tax-mcp(law_article)로 확인.
+세율·한도·가산세는 사업연도·과세기간·공급일 기준 연도표(2016~2026)로 계산하고, 표에 없는 연도는 추정하지 않고 멈춘다.
+결과마다 근거 조문을 붙인다. 근거 원문은 korean-tax-mcp(law_article)로 확인한다.
 """
 import os
 from datetime import date
@@ -9,7 +9,7 @@ from typing import Annotated, Literal
 
 from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from .engine import calc as K, calc_cit as C, calc_income as I, calc_vat as V
 
@@ -18,8 +18,25 @@ mcp = MCPServer(
     instructions="한국 세금 계산은 반드시 이 도구 결과를 쓰고 직접 계산하지 않는다. 결과의 근거 조문을 함께 제시한다. "
                  "연도표가 없는 해는 오류로 멈추므로 추정하지 않는다. 계산 근거 원문·해석은 korean-tax-mcp로 확인한다.")
 CALC = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
-YEAR = Annotated[int, Field(description="사업연도·귀속연도(2016~2025)", ge=2016, le=2026)]
+YEAR = Annotated[int, Field(description="사업연도·귀속연도(2016~2026)", ge=2016, le=2026)]
 WON = Annotated[int, Field(description="금액(원)", ge=0)]
+
+
+# list[dict] 인자용 Pydantic 모델 — 입력 검증 강화 (지시서 4)
+class Movement(BaseModel):
+    date: str       # YYYY-MM-DD
+    amount: int     # 원 (대여 +, 회수 -)
+
+
+class Loan(BaseModel):
+    interest: int   # 지급이자(원)
+    jeoksu: int     # 차입금 적수(원·일)
+
+
+class ReceiptItem(BaseModel):
+    amount: int           # 1회 지출액(원)
+    qualified: bool = False       # 적격증빙 여부
+    congratulatory: bool = False  # 경조금 여부
 
 
 def _ok(r, basis, **extra):
@@ -41,7 +58,7 @@ def _guard(fn):
 
 @mcp.tool(annotations=CALC)
 @_guard
-def corporate_tax(base: Annotated[int, Field(description="과세표준(원)")], year: YEAR,
+def corporate_tax(base: WON, year: YEAR,
                   months: Annotated[int, Field(description="사업연도 월수(1년 미만이면 1~11)", ge=1, le=12)] = 12) -> dict:
     """Corporate income tax on a tax base for a fiscal year. 법인세 산출세액(사업연도 세율표, 1년 미만 사업연도 환산 포함)."""
     return _ok({"산출세액": C.corp_tax(base, year, months), "과세표준": base, "사업연도": year, "월수": months}, "법인세법 제55조(세율)·제55조②(1년 미만)")
@@ -50,10 +67,10 @@ def corporate_tax(base: Annotated[int, Field(description="과세표준(원)")], 
 @mcp.tool(annotations=CALC)
 @_guard
 def entertainment_limit(year: YEAR, sme: Annotated[bool, Field(description="중소기업 여부")],
-                        general_revenue: Annotated[int, Field(description="일반 수입금액(원)")],
-                        expensed: Annotated[int, Field(description="비용 계상 기업업무추진비(원, 증빙 미수취분 포함)")],
-                        related_revenue: Annotated[int, Field(description="특수관계인 거래 수입금액(원)")] = 0,
-                        culture: Annotated[int, Field(description="문화 기업업무추진비(원)")] = 0,
+                        general_revenue: WON,
+                        expensed: WON,
+                        related_revenue: WON = 0,
+                        culture: WON = 0,
                         months: Annotated[int, Field(description="사업연도 월수", ge=1, le=12)] = 12) -> dict:
     """Entertainment expense limit and excess. 기업업무추진비(접대비) 한도와 한도초과액(손금불산입·기타사외유출)."""
     return _ok(C.entertain(year, sme, general_revenue, related_revenue, expensed, culture=culture, months=months),
@@ -62,12 +79,12 @@ def entertainment_limit(year: YEAR, sme: Annotated[bool, Field(description="중�
 
 @mcp.tool(annotations=CALC)
 @_guard
-def deemed_interest(movements: Annotated[list[dict], Field(description="가지급금 증감 [{date:'YYYY-MM-DD', amount:원(대여 +, 회수 -)}]")],
+def deemed_interest(movements: Annotated[list[Movement], Field(description="가지급금 증감 [{date:'YYYY-MM-DD', amount:원(대여 +, 회수 -)}]")],
                     year_end: Annotated[str, Field(description="사업연도 종료일 YYYY-MM-DD")],
                     market_rate: Annotated[float, Field(description="시가 이자율(소수). 가중평균차입이자율 원칙, 예외 당좌대출이자율 0.046")] = 0.046,
                     charged_rate: Annotated[float, Field(description="실제 받은 이자율(소수)")] = 0.0) -> dict:
     """Deemed interest on loans to related parties. 가지급금 인정이자 — 적수와 시가 이자, 부당행위 기준(3억·5%) 판정, 익금산입액."""
-    mv = [(m["date"], int(m["amount"])) for m in movements]
+    mv = [(m.date, int(m.amount)) for m in movements]
     j = C.jeoksu(mv, year_end)
     days = 366 if date.fromisoformat(year_end).year % 4 == 0 else 365
     return _ok({"적수": j, **C.deemed_interest_check(market_rate, charged_rate, j, days)},
@@ -75,6 +92,7 @@ def deemed_interest(movements: Annotated[list[dict], Field(description="가지�
 
 
 @mcp.tool(annotations=CALC)
+@_guard
 def unfair_transaction(market_price: Annotated[float, Field(description="시가(단가)")], actual_price: Annotated[float, Field(description="실제 거래 단가")],
                        quantity: Annotated[int, Field(description="수량", ge=1)]) -> dict:
     """Related-party transaction at non-arm's-length price: 3억 or 5% threshold. 부당행위계산 기준(시가 차이 3억 이상 또는 5% 이상)."""
@@ -92,7 +110,7 @@ def loss_carryforward_limit(year: YEAR, sme: Annotated[bool, Field(description="
 
 @mcp.tool(annotations=CALC)
 @_guard
-def minimum_tax(base_before_incentives: Annotated[int, Field(description="감면 전 과세표준(원)")], year: YEAR,
+def minimum_tax(base_before_incentives: WON, year: YEAR,
                 sme: Annotated[bool, Field(description="중소기업 여부")] = True,
                 grace_year: Annotated[int, Field(description="중소기업 졸업 후 경과 연차(0=해당 없음)", ge=0, le=5)] = 0) -> dict:
     """Minimum corporate tax. 최저한세(감면 전 과세표준 × 최저한세율)."""
@@ -160,6 +178,21 @@ def withholding_tax(kind: Annotated[str, Field(description="소득 종류: 이�
 
 @mcp.tool(annotations=CALC)
 @_guard
+def nonresident_withholding(income_kind: Annotated[Literal["이자", "배당", "사용료", "인적용역", "기타"],
+                                                   Field(description="소득 종류(비거주자·외국법인 국내원천) — 이자·배당·사용료·인적용역·기타")],
+                            amount: WON,
+                            recipient_type: Annotated[Literal["개인", "법인"], Field(description="수취인 구분 — 개인(비거주자) / 법인(외국법인)")],
+                            residence_country: Annotated[str, Field(description="거주지국(ISO 2자 또는 국명)")],
+                            treaty_rate: Annotated[float | None, Field(description="조세조약 제한세율(소수, 예: 0.15). 없으면 국내세율 적용")] = None,
+                            bond_interest: Annotated[bool, Field(description="채권 이자 여부 — 이자 소득에서만 의미, 특례 적용 필요 시 별도 확인")] = False) -> dict:
+    """Non-resident/foreign corporation withholding tax on Korean-source income (소득세법 제156조 / 법인세법 제98조).
+    적용세율 = min(국내세율, 조약 제한세율), 지방소득세 10% 별도 합산. 조약 미체결·비과세 확인은 korean-tax-mcp로 원문 대조."""
+    r = I.nonresident_withholding(income_kind, amount, recipient_type, residence_country, treaty_rate, bond_interest)
+    return _ok(r, r["근거"])
+
+
+@mcp.tool(annotations=CALC)
+@_guard
 def retirement_income_tax(income: WON, years_of_service: Annotated[int, Field(description="근속연수", ge=1, le=60)]) -> dict:
     """Retirement income tax. 퇴직소득세(근속연수공제·환산급여 방식)."""
     return _ok({"퇴직소득세": I.retirement_tax(income, years_of_service)}, "소득세법 제48조·제55조②")
@@ -176,10 +209,10 @@ def vat_deemed_rent(deposit: WON, days: Annotated[int, Field(description="과세
 # ───────── 0.2 추가: 법인세 세무조정 ─────────
 @mcp.tool(annotations=CALC)
 @_guard
-def nonbusiness_interest_disallowance(loans: Annotated[list[dict], Field(description="차입금별 [{interest: 지급이자(원), jeoksu: 차입금 적수(잔액×일수)}]")],
+def nonbusiness_interest_disallowance(loans: Annotated[list[Loan], Field(description="차입금별 [{interest: 지급이자(원), jeoksu: 차입금 적수(잔액×일수)}]")],
                                       nonbusiness_jeoksu: Annotated[int, Field(description="업무무관자산·가지급금 적수 합(원·일)", ge=0)]) -> dict:
     """Disallowed interest related to non-business assets and related-party loans. 업무무관자산 등 관련 지급이자 손금불산입."""
-    r = C.nonbusiness_interest([(int(l["interest"]), int(l["jeoksu"])) for l in loans])(nonbusiness_jeoksu)
+    r = C.nonbusiness_interest([(int(l.interest), int(l.jeoksu)) for l in loans])(nonbusiness_jeoksu)
     return _ok(r, "법인세법 제28조①4호, 시행령 제53조", 산식="지급이자 × min(1, 업무무관 적수 ÷ 차입금 적수)")
 
 
@@ -200,10 +233,10 @@ def business_car_expense(year: YEAR, upkeep: Annotated[int, Field(description="�
 
 @mcp.tool(annotations=CALC)
 @_guard
-def donation_limit(year: YEAR, base_income: Annotated[int, Field(description="기준소득금액(기부금 손금산입 전, 원)")],
-                   special: Annotated[int, Field(description="특례기부금(원)")] = 0, general: Annotated[int, Field(description="일반기부금(원)")] = 0,
-                   carried_loss: Annotated[int, Field(description="공제할 이월결손금(원)")] = 0,
-                   special_carry: Annotated[int, Field(description="특례기부금 이월분(원)")] = 0, general_carry: Annotated[int, Field(description="일반기부금 이월분(원)")] = 0,
+def donation_limit(year: YEAR, base_income: WON,
+                   special: WON = 0, general: WON = 0,
+                   carried_loss: WON = 0,
+                   special_carry: WON = 0, general_carry: WON = 0,
                    sme: Annotated[bool, Field(description="중소기업 여부")] = True,
                    social_enterprise: Annotated[bool, Field(description="사회적기업 여부(일반한도 20%)")] = False) -> dict:
     """Charitable donation deduction limits and carryforwards. 기부금 손금산입 한도(특례 50%, 일반 10%)와 한도초과·이월."""
@@ -213,16 +246,56 @@ def donation_limit(year: YEAR, base_income: Annotated[int, Field(description="�
 
 @mcp.tool(annotations=CALC)
 def bad_debt_allowance(receivables: WON, loss_rate: Annotated[float, Field(description="대손실적률(소수)", ge=0, le=1)],
-                       set_amount: Annotated[int, Field(description="당기 대손충당금 설정액(원)")], prior_disallowed: Annotated[int, Field(description="전기 한도초과액(원)")] = 0) -> dict:
+                       set_amount: WON, prior_disallowed: WON = 0) -> dict:
     """Bad debt allowance limit. 대손충당금 한도(채권잔액 × max(1%, 대손실적률))와 한도초과."""
     return _ok(C.bad_debt_allowance(receivables, loss_rate, set_amount, prior_disallowed), "법인세법 제34조, 시행령 제61조②")
 
 
 @mcp.tool(annotations=CALC)
 @_guard
-def missing_receipt_disallowance(year: YEAR, items: Annotated[list[dict], Field(description="[{amount: 1회 지출액, qualified: 적격증빙 여부, congratulatory: 경조금 여부}]")]) -> dict:
+def thin_capitalization(equity: WON,
+                        borrowings: WON,
+                        total_interest: WON,
+                        ratio: Annotated[float | int, Field(description="적용 배수(기본 2, 금융업 등 업종 배수는 별도 확인)")] = 2,
+                        year: YEAR = 2026,
+                        recipient_residence_country: str | None = None,
+                        interest_treaty_rate: float | None = None,
+                        dividend_treaty_rate: float | None = None,
+                        recipient_type: Literal['개인', '법인'] = '개인') -> dict:
+    """Thin capitalization disallowance (국제조세조정에 관한 법률 제22조). 국외지배주주 출자금액 대비 차입금이
+    기준 배수(기본 2배)를 초과하는 경우 초과분 지급이자 손금불산입(배당 또는 기타사외유출 처분).
+    recipient_residence_country 지정 시 배당 처분에 따른 원천징수 재계산 결과를 함께 제공."""
+    base = C.thin_capitalization(equity, borrowings, total_interest, ratio, year)
+    result = {"결과": base, "근거": "국제조세조정에 관한 법률 제22조, 시행령 제34조"}
+    if recipient_residence_country:
+        disallowed_interest = base["손금불산입 이자"]
+        if disallowed_interest > 0:
+            # 이자 기준 원천징수 (기존 이자소득 처분 가정)
+            interest_wh = I.nonresident_withholding("이자", disallowed_interest, recipient_type,
+                                                    recipient_residence_country, interest_treaty_rate)
+            # 배당 기준 원천징수 (국조법 제22조② 배당 처분)
+            dividend_wh = I.nonresident_withholding("배당", disallowed_interest, recipient_type,
+                                                    recipient_residence_country, dividend_treaty_rate)
+            diff_income = dividend_wh["원천징수세액"] - interest_wh["원천징수세액"]
+            diff_local = dividend_wh["지방소득세"] - interest_wh["지방소득세"]
+            result["결과"]["원천징수 재계산"] = {
+                "대상 금액(손금불산입 이자)": disallowed_interest,
+                "이자 기준 원천징수세액": interest_wh["원천징수세액"],
+                "이자 기준 지방소득세": interest_wh["지방소득세"],
+                "배당 기준 원천징수세액": dividend_wh["원천징수세액"],
+                "배당 기준 지방소득세": dividend_wh["지방소득세"],
+                "소득세 차액": diff_income,
+                "지방소득세 차액": diff_local,
+                "근거": "국조법 제22조 ② 배당 처분 → 소득세법 제119조 2호 / 법인세법 제93조 2호 배당소득",
+            }
+    return result
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def missing_receipt_disallowance(year: YEAR, items: Annotated[list[ReceiptItem], Field(description="[{amount: 1회 지출액, qualified: 적격증빙 여부, congratulatory: 경조금 여부}]")]) -> dict:
     """Entertainment spending without qualified receipts. 적격증빙 미수취 기업업무추진비 손금불산입(건당 3만원·경조금 20만원 초과)."""
-    return _ok({"손금불산입": C.receipt_disallowed(year, [(int(i["amount"]), bool(i.get("qualified")), bool(i.get("congratulatory"))) for i in items])},
+    return _ok({"손금불산입": C.receipt_disallowed(year, [(int(i.amount), bool(i.qualified), bool(i.congratulatory)) for i in items])},
                "법인세법 제25조②, 시행령 제41조①")
 
 
