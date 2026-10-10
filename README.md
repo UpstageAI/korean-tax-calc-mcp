@@ -4,9 +4,11 @@
 
 ![데모: 법인세·가산세 계산](https://raw.githubusercontent.com/UpstageAI/korean-tax-calc-mcp/main/docs/demo.gif)
 
-[![PyPI](https://img.shields.io/pypi/v/korean-tax-calc-mcp)](https://pypi.org/project/korean-tax-calc-mcp/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-korean--tax--calc--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=korean-tax-calc-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) · [English](README-EN.md)
+[![PyPI](https://img.shields.io/pypi/v/korean-tax-calc-mcp)](https://pypi.org/project/korean-tax-calc-mcp/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-korean--tax--calc--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=korean-tax-calc-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Built with Upstage Solar Pro 4](https://img.shields.io/badge/Built%20with-Upstage%20Solar%20Pro%204-7A3FF2)](https://www.upstage.ai/) · [English](README-EN.md)
 
-**Korean tax calculations for AI agents — code, not guesses.** Corporate tax, entertainment limits, deemed interest, penalties, limitation periods, withholding, income tax and VAT, using year-by-year rate tables (2016–2025). Each result cites its statute. Years without a verified table stop with an error instead of estimating. 27 tools, no API key, nothing sent outside. → [English README](README-EN.md)
+> **업스테이지 Solar Pro 4로 개발합니다.** 2026년 법인세율, 비거주자 원천징수(`nonresident_withholding`), 과소자본(`thin_capitalization`)은 Solar Pro 4(Solar Code CLI)가 코드를 작성하고, Claude가 결과를 검증했습니다.
+
+**Korean tax calculations for AI agents — code, not guesses.** Corporate tax, entertainment limits, deemed interest, penalties, limitation periods, withholding, income tax and VAT, using year-by-year rate tables (2016–2026). Each result cites its statute. Years without a verified table stop with an error instead of estimating. 29 tools, no API key, nothing sent outside. → [English README](README-EN.md)
 
 ---
 
@@ -25,7 +27,7 @@
 
 **설치 한 줄** — `claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp`
 
-- **연도별 세율표** — 2016~2025 사업연도·귀속연도별 세율·한도율, 없는 해는 추정하지 않고 오류
+- **연도별 세율표** — 2016~2026 사업연도·귀속연도별 세율·한도율, 없는 해는 추정하지 않고 오류
 - **근거 조문** — 모든 결과에 법·시행령 조문 표시
 - **날짜 계산** — 가산세 이율 변경일 안분, 제척기간 만료일, 인정이자 적수
 - **API 키 없음·외부 전송 없음** — 설치한 컴퓨터 안에서 코드로만 계산
@@ -84,6 +86,20 @@ Claude Code: `claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp`
 - 지방소득세는 별도입니다.
 - 세율표가 검증되지 않은 연도는 계산하지 않고 오류를 돌려줍니다.
 - **데이터 전송 안내** — 모든 계산은 설치한 컴퓨터 안에서 코드로 처리하며 외부 API로 전송하는 내용은 없습니다.
+
+## 지원 연도
+
+세목별 연도표는 2016~2026을 지원하며, 표에 없는 연도는 추정 계산하지 않고 오류로 멈춘다. 연도는 사업연도·귀속연도·지급연도·과세기간 기준으로 세목마다 적용 기간이 다르다.
+
+| 세목 | 도구 예시 | 지원 연도 | 기준 |
+|---|---|---|---|
+| 법인세 | `corporate_tax`, `entertainment_limit`, `minimum_tax` 등 | 2016~2026 사업연도 | calc_cit.YEAR (법인세법 제55조 등) |
+| 소득세(종합소득세) | `income_tax`, `wage_income_tax` | 2016~2026 귀속연도 | calc_income.RATES (소득세법 제55조) |
+| 원천징수 | `withholding_tax`, `daily_worker_withholding` | 2016~2026 지급연도 | 소득세법 제129조·제134조 |
+| 비거주자·외국법인 원천징수 | `nonresident_withholding` | 조약별 (국내세율은 현행) | 소득세법 제156조 / 법인세법 제98조 |
+| 과소자본 손금불산입 | `thin_capitalization` | 사업연도 기준 (현행 국조법 제22조) | 국제조세조정법 제22조 |
+| 부가가치세 | `vat_deemed_rent`, `vat_simplified_taxpayer` 등 | 2016년 1기 ~ 2026년 2기 | calc_vat 연도표 (부가가치세법) |
+| 가산세·제척기간 등 | `invoice_penalty`, `assessment_limitation` 등 | 현행 조문 (날짜 기준 적용) | 국세기본법·부가가치세법 등 |
 
 ## 함께 쓰면 좋은 MCP
 

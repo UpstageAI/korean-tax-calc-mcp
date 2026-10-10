@@ -6,9 +6,9 @@ M = 1_000_000
 
 억 = 100 * M
 
-def test_table_covers_2016_2025():
-    assert sorted(C.YEAR) == list(range(2016, 2026))
-    for y in range(2016, 2026):
+def test_table_covers_2016_2026():
+    assert sorted(C.YEAR) == list(range(2016, 2027))
+    for y in range(2016, 2027):
         C.require_year(y)
     try:
         C.require_year(2015); raise AssertionError("2015는 표 없음")
@@ -16,16 +16,19 @@ def test_table_covers_2016_2025():
         pass
 
 def test_corp_tax_rates_by_year():
-    # 3억: 2016~2022 2천만 + 1억×20% = 4천만 / 2023~ 1,800만 + 1억×19% = 3,700만
+    # 3억: 2016~2022 2천만 + 1억×20% = 4천만 / 2023~2025 1,800만 + 1억×19% = 3,700만 / 2026 2천만+1억×20%=4천만
     assert [C.corp_tax(3 * 억, y) for y in (2016, 2019, 2020, 2021, 2022)] == [40 * M] * 5
     assert [C.corp_tax(3 * 억, y) for y in (2023, 2024, 2025)] == [37 * M] * 3
-    # 3,500억: 2017 39.8억 + 3,300억×22% = 765.8억 / 2018 655.8억 + 500억×25% = 780.8억 / 2023 625.8억 + 500억×24% = 745.8억
+    assert C.corp_tax(3 * 억, 2026) == 40 * M                                        # 2026: 2억×10% + 1억×20% = 4천만
+    # 3,500억: 2017 39.8억 + 3,300억×22% = 765.8억 / 2018 655.8억 + 500억×25% = 780.8억 / 2023 625.8억 + 500억×24% = 745.8억 / 2026 655.8억+500억×25%=780.8억
     assert C.corp_tax(3500 * 억, 2017) == 76_580 * M
     assert C.corp_tax(3500 * 억, 2018) == 78_080 * M
     assert C.corp_tax(3500 * 억, 2023) == 74_580 * M
-    # 소규모 임대법인 세율은 2025부터: 3억 × 19% = 5,700만, 2024엔 일반 세율
+    assert C.corp_tax(3500 * 억, 2026) == 78_080 * M                                # 2026: 기본세율 2018과 동일
+    # 소규모 임대법인 세율: 2025년 표에는 2억 이하 구간 없음(3억 전액 19% → 5,700만). 2026년 개정표부터 2억 이하 10% 포함.
     assert C.corp_tax(3 * 억, 2025, small_rental=True) == 57 * M
-    assert C.corp_tax(3 * 억, 2024, small_rental=True) == 37 * M
+    assert C.corp_tax(3 * 억, 2026, small_rental=True) == 39 * M                    # 2026: 2억×10% + 1억×19% = 3,900만
+    assert C.corp_tax(3 * 억, 2024, small_rental=True) == 37 * M                    # 2024는 소규모 세율표 없음 → 일반세율
 
 def _ent(y, rev, **kw):
     return C.entertain(y, True, rev, 0, expensed=10 * 억, **kw)

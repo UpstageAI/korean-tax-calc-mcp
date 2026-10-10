@@ -1,17 +1,19 @@
 """세액 계산은 LLM이 하지 않는다. 적출 사실(JSON)을 받아 법정 산식으로 계산. 작성 Mia(윤승미)
-세율·이자율은 2025 사업연도 가정값이며, 보고서 단계에서 법령 MCP로 해당 조문(시행일 기준)을 조회해 함께 싣는다."""
+세율·이자율은 연도표(calc_cit.YEAR) 기준. hardcode 대신 사업연도별 표(2016~2026)를 경유한다."""
 from datetime import date
 
-RATE_OVERDRAFT = 0.046  # 당좌대출이자율 (법인세법 시행규칙 제43조제2항) — 조문 조회로 확인
-CORP_BRACKETS = [(200_000_000, 0.09), (20_000_000_000, 0.19), (300_000_000_000, 0.21), (float("inf"), 0.24)]  # 법인세법 제55조, 2025 사업연도 가정
+RATE_OVERDRAFT = 0.046  # 당좌대출이자율 (법인세법 시행규칙 제43조제2항) — 연도별 변동 없음, 조문 조회로 확인
 
 
 def won(x): return int(round(x))
 
 
-def corp_tax(base):
+def corp_tax(base, year=2025):
+    """법인세 산출세액(calc_cit.YEAR[year]['세율'] 경유). year=2025가 기본."""
+    from .calc_cit import YEAR as CIT_YEAR
+    tiers = CIT_YEAR[year]["세율"]
     tax, prev = 0, 0
-    for cap, r in CORP_BRACKETS:
+    for cap, r in tiers:
         if base > prev: tax += (min(base, cap) - prev) * r
         prev = cap
     return won(tax)
@@ -20,7 +22,11 @@ def corp_tax(base):
 def days(a, b): return (date.fromisoformat(b) - date.fromisoformat(a)).days + 1
 
 
-def deemed_interest(segments, year_end="2025-12-31", rate=RATE_OVERDRAFT):
+def deemed_interest(segments, year_end=None, rate=RATE_OVERDRAFT):
+    """segments=[{from:'2025-01-01', 잔액:800000000}, ...] — 그날부터 다음 구간 전날까지의 잔액으로 적수 계산.
+    year_end 미지정 시 사업연도 종료일( Calc_cit.YEAR 기준 2025-12-31 )."""
+    if year_end is None: year_end = "2025-12-31"
+    seg = sorted(({"from": s["from"], "bal": int(s.get("잔액", s.get("amount", 0)))} for s in segments), key=lambda x: x["from"])
     """segments=[{from:'2025-01-01', 잔액:800000000}, {from:'2025-04-01', 잔액:1200000000}] — 그날부터 다음 구간 전날까지의 잔액으로 적수 계산."""
     seg = sorted(({"from": s["from"], "bal": int(s.get("잔액", s.get("amount", 0)))} for s in segments), key=lambda x: x["from"])
     parts, jeoksu = [], 0

@@ -155,6 +155,49 @@ def withholding_tax(kind, amount, year=2025):
     return int(amount * withholding_rate(kind, year)) // 10 * 10
 
 
+# ── 비거주자·외국법인 원천징수(소득세법 제156조 / 법인세법 제98조) ──────────────────
+DOMESTIC_WH_RATES = {
+    "이자": 0.20, "배당": 0.20, "사용료": 0.20, "인적용역": 0.20, "기타": 0.20,
+}
+DOMESTIC_WH_BASIS = {
+    "이자": "소득세법 제156조①1호 / 법인세법 제98조①1호",
+    "배당": "소득세법 제156조①2호 / 법인세법 제98조①2호",
+    "사용료": "소득세법 제156조①6호 / 법인세법 제98조①6호",
+    "인적용역": "소득세법 제156조①4호 / 법인세법 제98조①4호",
+    "기타": "소득세법 제156조①8호 / 법인세법 제98조①8호",
+}
+
+
+def nonresident_withholding(income_kind, amount, recipient_type, residence_country,
+                            treaty_rate=None, bond_interest=False):
+    """비거주자·외국법인 국내원천소득 원천징수. 적용세율 = min(국내세율, 조약 제한세율).
+    domestic_rate는 소득세법 제156조(비거주자)·법인세법 제98조(외국법인)에 따르며, 수취인 구분(개인/법인)과
+    관계없이 소득 종류 기준 동일 세율. 조약_rate 미지정 시 국내세율만 적용.
+    채권이자(bond_interest=True, income_kind='이자')는 국가·지방자치단체·내국법인 발행 채권 이자로
+    소득세법 제156조①1호가목·법인세법 제98조①1호가목 특례 14% 적용."""
+    if bond_interest and income_kind == "이자":
+        domestic = 0.14
+        basis = "소득세법 제156조①1호가목 / 법인세법 제98조①1호가목 (국가·지방자치단체·내국법인 발행 채권 이자)"
+    else:
+        domestic = DOMESTIC_WH_RATES[income_kind]
+        basis = DOMESTIC_WH_BASIS[income_kind]
+    applicable = min(domestic, treaty_rate) if treaty_rate is not None else domestic
+    note = ""
+    if treaty_rate is not None and treaty_rate > domestic:
+        note = " · 조약세율이 국내세율보다 높아 국내세율 적용"
+    wh_amount = int(amount * applicable) // 10 * 10
+    local_income_tax = int(wh_amount * 0.10) // 10 * 10
+    return {
+        "국내세율": domestic,
+        "조약세율": treaty_rate,
+        "적용세율": applicable,
+        "원천징수세액": wh_amount,
+        "지방소득세": local_income_tax,
+        "합계": wh_amount + local_income_tax,
+        "근거": basis + (f" · 조세조약 제한세율 {treaty_rate*100:.0f}%" if treaty_rate else "") + note,
+    }
+
+
 # ── 인정상여 귀속연도 연말정산 재정산(소득세법 제135조④·제131조②, 소령 제49조①3호·제196조) ──
 def deemed_bonus_resettlement(gross, base, bonus, other_credits=0, prev_decided=None, reduced_tax=0, year=2025):
     """상여 처분액을 귀속연도 총급여에 가산해 연말정산을 다시 한 결정세액과 추가 원천징수세액.
