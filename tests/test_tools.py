@@ -131,3 +131,67 @@ def test_thin_cap_withholding_recalc():
     assert recalc["소득세 차액"] == 1_800_000                 # 900만 - 720만
     assert recalc["지방소득세 차액"] == 180_000               # 18만 (소득세 차액의 10%)
     assert "국조법 제22조 ② 배당 처분" in recalc["근거"]
+
+
+def test_사용료_쟁점_수원고등법원_포함():
+    # 사용료 호출 → 쟁점 1건 이상, 참고에 "수원고등법원-2023-누-15618" 포함, 판단 == "세무사 확인 필요"
+    r = c("nonresident_withholding", {"income_kind": "사용료", "amount": 200_000_000,
+                                       "recipient_type": "개인", "residence_country": "US", "treaty_rate": 0.15})
+    issues = r["결과"]["쟁점"]
+    assert len(issues) >= 1
+    refs = [ref for it in issues for ref in it["참고"]]
+    assert any("수원고등법원-2023-누-15618" in ref for ref in refs)
+    assert all(it["판단"] == "세무사 확인 필요" for it in issues)
+
+
+def test_배당_treaty_rate_제156조의6_포함():
+    # 배당 + treaty_rate → 제156조의6 쟁점 포함
+    r = c("nonresident_withholding", {"income_kind": "배당", "amount": 100_000_000,
+                                       "recipient_type": "개인", "residence_country": "US", "treaty_rate": 0.15})
+    refs = [ref for it in r["결과"]["쟁점"] for ref in it["참고"]]
+    assert any("제156조의6" in ref or "제98조의6" in ref for ref in refs)
+
+
+def test_배당_treaty_rate_없음_제156조의6_없음():
+    # 배당 + treaty_rate 없음 → 제156조의6 쟁점 없음
+    r = c("nonresident_withholding", {"income_kind": "배당", "amount": 100_000_000,
+                                       "recipient_type": "법인", "residence_country": "CA"})
+    refs = [ref for it in r["결과"]["쟁점"] for ref in it["참고"]]
+    assert not any("제156조의6" in ref or "제98조의6" in ref for ref in refs)
+
+
+def test_이자_related_party_제22조_포함():
+    # 이자 + related_party=True → 제22조 쟁점 포함
+    r = c("nonresident_withholding", {"income_kind": "이자", "amount": 100_000_000,
+                                       "recipient_type": "개인", "residence_country": "US",
+                                       "related_party": True})
+    refs = [ref for it in r["결과"]["쟁점"] for ref in it["참고"]]
+    assert any("제22조" in ref for ref in refs)
+
+
+def test_결과_JSON_단정문구_없음():
+    # 결과 JSON 문자열에 "사업소득임"·"사용료임" 없음
+    r = c("nonresident_withholding", {"income_kind": "이자", "amount": 100_000_000,
+                                       "recipient_type": "개인", "residence_country": "US",
+                                       "related_party": True})
+    full_text = json.dumps(r, ensure_ascii=False)
+    assert "사업소득임" not in full_text
+    assert "사용료임" not in full_text
+
+
+def test_thin_capitalization_쟁점_포함():
+    # thin_capitalization → 쟁점 1건, 참고에 "제22조"
+    r = c("thin_capitalization", {"equity": 2_000_000_000, "borrowings": 5_000_000_000,
+                                  "total_interest": 300_000_000, "ratio": 2})
+    issues = r.get("쟁점", [])
+    assert len(issues) >= 1
+    refs = [ref for it in issues for ref in it["참고"]]
+    assert any("제22조" in ref for ref in refs)
+    assert all(it["판단"] == "세무사 확인 필요" for it in issues)
+
+
+def test_issues_json_패키지_데이터_존재():
+    # korean_tax_calc_mcp/data/issues.json이 패키지 데이터로 설치되는지 확인
+    import importlib.resources
+    path = importlib.resources.files("korean_tax_calc_mcp") / "data" / "issues.json"
+    assert path.exists()
