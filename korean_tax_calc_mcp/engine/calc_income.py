@@ -176,6 +176,23 @@ DOMESTIC_WH_BASIS = {
 }
 
 
+def _match(issue_match, *, income_kind, treaty_rate, related_party):
+    """issues.json 쟁점의 match 필드와 실제 사실 관계 비교. AND 조건 — 적힌 키는 모두 만족해야 True."""
+    if "income_kind" in issue_match:
+        ik = issue_match["income_kind"]
+        if isinstance(ik, list):
+            if income_kind not in ik: return False
+        elif income_kind != ik:
+            return False
+    if "treaty_rate_given" in issue_match:
+        if (treaty_rate is not None) != issue_match["treaty_rate_given"]:
+            return False
+    if "related_party" in issue_match:
+        if related_party != issue_match["related_party"]:
+            return False
+    return True
+
+
 def nonresident_withholding(income_kind, amount, recipient_type, residence_country,
                             treaty_rate=None, bond_interest=False, related_party=False):
     """비거주자·외국법인 국내원천소득 원천징수. 적용세율 = min(국내세율, 조약 제한세율).
@@ -197,24 +214,14 @@ def nonresident_withholding(income_kind, amount, recipient_type, residence_count
     wh_amount = int(amount * applicable) // 10 * 10
     local_income_tax = int(wh_amount * 0.10) // 10 * 10
 
-    # 쟁점 부착 (issues.json에서 읽음, 하드코딩 금지 — SPEC r1d §1)
+    # 쟁점 부착 (issues.json match 필드 기반 — SPEC r1f §1)
     _issues = _load_issues().get("nonresident_withholding", [])
     issues: list[dict] = []
     for it in _issues:
-        ok = True
-        cond = it["조건"]
-        if cond.startswith('income_kind="사용료"'): ok = income_kind == "사용료"
-        elif cond.startswith('income_kind="이자"'): ok = income_kind == "이자"
-        elif cond.startswith('income_kind="인적용역"'): ok = income_kind == "인적용역"
-        elif cond.startswith('treaty_rate 주어짐'):
-            ok = treaty_rate is not None
-            if cond.startswith('income_kind="사용료" and treaty_rate'):
-                ok = ok and income_kind == "사용료"
-        elif cond.startswith('treaty_rate 주어짐 (모든 소득)'):
-            ok = treaty_rate is not None
-        elif cond.startswith('income_kind="이자" and recipient가 지배주주'):
-            ok = income_kind == "이자" and related_party
-        if ok:
+        m = it.get("match")
+        if m is None:
+            continue  # match 없는 쟁점은 부착하지 않음
+        if _match(m, income_kind=income_kind, treaty_rate=treaty_rate, related_party=related_party):
             issues.append(it)
 
     return {
