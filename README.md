@@ -6,9 +6,9 @@
 
 [![PyPI](https://img.shields.io/pypi/v/korean-tax-calc-mcp)](https://pypi.org/project/korean-tax-calc-mcp/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-korean--tax--calc--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=korean-tax-calc-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Built with Upstage Solar Pro 4](https://img.shields.io/badge/Built%20with-Upstage%20Solar%20Pro%204-7A3FF2)](https://www.upstage.ai/) · [English](README-EN.md)
 
-> **0.3.0부터 업스테이지 Solar Pro 4로 개발합니다.** (0.2.1까지는 Solar Pro 4 이전 개발분) 2026년 법인세율, 비거주자 원천징수(`nonresident_withholding`), 과소자본(`thin_capitalization`)은 Solar Pro 4(Solar Code CLI)가 코드를 작성하고, Solar Pro 4 기반 코드 리뷰(CodeSolar)가 PR을 검토했으며, Claude가 테스트로 교차 검증했습니다.
+> **0.3.0부터 업스테이지 Solar Pro 4로 개발합니다.** (0.2.1까지는 Solar Pro 4 이전 개발분) 2026년 법인세율, 비거주자 원천징수(`nonresident_withholding`), 과소자본(`thin_capitalization`)은 Solar Pro 4(Solar Code CLI)가 코드를 작성하고, Solar Pro 4 기반 코드 리뷰(CodeSolar)가 PR을 검토했으며, Claude가 테스트로 교차 검증했습니다. **0.4.0: 세무조사 판정 도구 11개 통합.**
 
-**Korean tax calculations for AI agents — code, not guesses.** Corporate tax, entertainment limits, deemed interest, penalties, limitation periods, withholding, income tax and VAT, using year-by-year rate tables (2016–2026). Each result cites its statute. Years without a verified table stop with an error instead of estimating. 29 tools, no API key, nothing sent outside. → [English README](README-EN.md)
+**Korean tax calculations for AI agents — code, not guesses.** Corporate tax, entertainment limits, deemed interest, penalties, limitation periods, withholding, income tax and VAT, using year-by-year rate tables (2016–2026). Each result cites its statute. Years without a verified table stop with an error instead of estimating. 40 tools (29 computation + 11 tax audit judgment). → [English README](README-EN.md)
 
 ---
 
@@ -80,16 +80,38 @@ Claude Code: `claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp`
 | `daily_worker_withholding` | 일용근로자 원천징수 | 소득세법 제134조 |
 | `deemed_bonus_resettlement` | 소득처분 상여 연말정산 재정산 | 소득세법 시행령 제192조 |
 
+### 세무조사 판정 (11개)
+
+| 도구 | 계산·판정 | 근거 |
+|---|---|---|
+| `related_judge` | 두 당사자의 특수관계 여부·호수를 국세기본법·법인세법·상증법 기준으로 판정(기준일 YYYY-MM-DD 필수) | 국세기본법 시행령 제1조의2, 법인세법 시행령 제2조, 상증법 시행령 제2조의2 |
+| `kinship_check` | 두 개인의 친족관계(촌수·배우자)와 기준일 친족 범위 해당 여부 | 국세기본법 시행령 제1조의2①, 상증법 시행령 제2조의2①1호 |
+| `ownership_ratio` | 보유자→법인 직접·간접 보유비율(경로별 곱, 순환출자 반영) | 상증법 시행령 제34조의3② |
+| `dominant_shareholder` | 수혜법인 지배주주 판정(최대주주등 중 직접보유 최고자 / 법인이면 직접+간접 최고 개인) | 상증법 시행령 제34조의3① |
+| `tunnelling_gift` | 일감몰아주기 증여의제이익(상증법 제45조의3) — ⑩항 과세제외매출액 입력, ⑭·⑮ 미반영 | 상증법 제45조의3, 시행령 제34조의3 |
+| `tunnelling_gift_nts` | 일감몰아주기 증여의제이익 — 국세청 2026 신고안내 산식(⑫·⑭1·3호·⑮ 배당공제) | 상증법 제45조의3, 시행령 제34조의3, 국세청 2026 신고안내 |
+| `related_provision_at` | 특수관계인 범위 조문이 기준일에 어디 있었는지(law=국기|법인|상증) — LAW_OC 있으면 법제처 API, 없으면 고정 이동표 | 국세기본법·법인세법·상증법 시행령 |
+| `extract_relations` | 주주명부·가족관계·임원명단 PDF → 관계표 추출. UPSTAGE_API_KEY 없이도 pypdf 로컬 추출 후 related_judge 입력으로 정리 가능(기본). 키 설정 시 Document Parse + Solar Pro 4로 더 정교한 표 추출 | — |
+| `tunnelling_from_pdf` | 일감몰아주기 검토 자료 PDF → 표 추출 → 지배주주·출자관계·증여의제이익 계산. UPSTAGE_API_KEY 없이도 pypdf 로컬 추출 후 입력 정리 가능(기본). 키 설정 시 Document Parse + Solar Pro 4로 더 정교한 표 추출 | 상증법 제45조의3 |
+| `return_precheck` | 신고서 사전검토(오류 의심 목록): data={입력키: 값}, tax=법인|부가|소득 — audit/agents/precheck 규칙 엔진 사용 | 서식별 근거 조문(각 규칙 근거 참조) |
+| `return_precheck_pdf` | 법인세 신고서 PDF(별지 1·3·50호) → 표 추출 → 사전검토. UPSTAGE_API_KEY 없이도 pypdf 로컬 추출 후 return_precheck 입력으로 정리 가능(기본). 키 설정 시 Document Parse + Solar Pro 4로 더 정교한 표 추출 | 서식 간 대사·세액 체인 재계산 |
+
 ## 쟁점 표시
 
 비거주자·외국법인 원천징수(`nonresident_withholding`)와 과소자본(`thin_capitalization`) 결과는 계산된 세액과 함께 **쟁점** 리스트를 반환할 수 있습니다. 쟁점은 "이 소득 구분이 맞는지", "이 조약 세율이 그대로 적용되는지"처럼 실무에서 다툼이 될 수 있는 지점을 정리한 것으로, 도구는 결론을 내리지 않고 **확인할 자료와 참고 근거(조문·적부·판례 번호)**만 제시합니다. 각 쟁점 항목의 `판단` 필드는 항상 "세무사 확인 필요"로 고정되어 있으며, 도구가 "사업소득임", "사용료임" 같은 단정 문구를 결과 어디에도 쓰지 않습니다. 쟁점 데이터는 코드 하드코딩 없이 `korean_tax_calc_mcp/data/issues.json`에서 읽어옵니다.
+
+## 면책 및 고지
+
+- **면책:** 이 도구의 결과는 세무 자문이 아닙니다. 법령·해석을 바탕으로 계산·판정 과정을 보여 주는 참고 자료이며, 실제 신고·세무조사·불복 판단은 세무사·회계사·변호사 등 전문가에게 확인하세요. 근거 조문·판례는 원문으로 확인하세요.
+- **AI 사용 고지:** 계산·판정 도구 29개는 코드로 동작하며 생성형 AI를 쓰지 않습니다. PDF 검토 도구 3개(`extract_relations`, `tunnelling_from_pdf`, `return_precheck_pdf`)는 UPSTAGE_API_KEY가 있으면 생성형 AI(Upstage Solar Pro 4)로 표를 추출하며 결과에 그 사실을 표시합니다. 키가 없으면 pypdf로 로컬 텍스트 추출(host_ai 모드) 후 정리 안내에 따라 다음 도구 입력으로 직접 정리할 수 있습니다.
+- **데이터 전송:** UPSTAGE_API_KEY를 설정해 PDF 도구를 사용할 때만 문서 내용이 Upstage API(api.upstage.ai)로 전송됩니다. 키 없이 사용하면(pypdf 로컬 추출) 외부 전송이 없습니다. 민감정보가 담긴 문서는 API 전송 시 넣지 마세요.
 
 ## 유의
 
 - 계산 결과는 검토 보조 자료이며 세무 자문이 아닙니다. 신고 전 원문 조문과 확인하세요.
 - 지방소득세는 별도입니다.
 - 세율표가 검증되지 않은 연도는 계산하지 않고 오류를 돌려줍니다.
-- **데이터 전송 안내** — 모든 계산은 설치한 컴퓨터 안에서 코드로 처리하며 외부 API로 전송하는 내용은 없습니다.
+- **데이터 전송 안내** — 계산·판정 도구 29개는 설치한 컴퓨터 안에서 코드로 처리하며 외부 API로 전송하는 내용은 없습니다. PDF 도구 3개만 Upstage API로 문서를 전송합니다.
 
 ## 지원 연도
 
