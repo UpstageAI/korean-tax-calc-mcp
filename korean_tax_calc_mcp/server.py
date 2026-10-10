@@ -3,6 +3,7 @@
 세율·한도·가산세는 사업연도·과세기간·공급일 기준 연도표(2016~2026)로 계산하고, 표에 없는 연도는 추정하지 않고 멈춘다.
 결과마다 근거 조문을 붙인다. 근거 원문은 korean-tax-mcp(law_article)로 확인한다.
 """
+import functools
 import os
 from datetime import date
 from typing import Annotated, Literal
@@ -13,10 +14,152 @@ from pydantic import BaseModel, Field
 
 from .engine import calc as K, calc_cit as C, calc_income as I, calc_vat as V
 
+# ── 세무조사 판정 도구 (audit 패키지) ──
+from .audit.agents import related as _R
+from .audit.agents.related_intake import norm_name
+from .audit.agents.tunnel_intake import upstage as _tunnel_upstage
+from .audit.agents.return_intake import upstage as _return_upstage
+from .audit.agents.precheck import corp as _precheck_corp, vat as _precheck_vat, income as _precheck_income, run as _precheck_run
+from .audit.agents.precheck.needs import guide as _precheck_guide
+from .audit.agents.precheck import REGISTRY as _AUDIT_REGISTRY, Data as _AuditData, Missing as _AuditMissing
+from .audit.agents import calc as _audit_calc, related as _audit_related
+
+AUDIT_INSTRUCTIONS = (
+    "한국 세무조사 판정 도구. 특수관계인 판정은 반드시 기준일(사실관계 시점, YYYY-MM-DD)을 넣는다 — "
+    "친족 범위(2023.3.1. 전 6촌·4촌, 이후 4촌·3촌)와 조문 위치가 시점마다 다르다. "
+    "결과의 '근거'를 그대로 인용하고, 도구가 '확인 필요'라고 한 부분은 추측으로 채우지 않는다. "
+    "PDF에서 표를 뽑는 도구만 Upstage(Document Parse + Solar Pro 4)로 전송하며, 나머지는 로컬 계산이다.")
+
+AI_GENERATED = "이 결과의 표 추출·정리는 생성형 AI(Upstage Solar Pro 4)가 수행했습니다. 사람이 원본과 대조해 확인하세요."
+AI_GENERATED_EN = "Table extraction and organization in this result was performed by generative AI (Upstage Solar Pro 4). Please verify against the original document."
+
+def _upstage_key():
+    import os
+    return os.environ.get("UPSTAGE_API_KEY")
+
+def _pdf_guard(fn):
+    """PDF 도구용 가드: 키 없으면 mode=host_ai로 로컬 추출, 있으면 solar_cloud."""
+    @functools.wraps(fn)
+    def w(*a, **k):
+        if not _upstage_key():
+            return _host_ai_response(k.get("pdf_path", ""), fn.__name__)
+        try:
+            return fn(*a, **k)
+        except Exception as e:
+            return {"error": str(e), "안내": "PDF 처리 중 오류 — 문서 형식·내용을 확인하세요"}
+    return w
+
+
+HOST_AI_CLEANUP = (
+    "정리 안내 — 추출한 텍스트를 아래 형식으로 다듬어 다음 도구에 넣으세요.\n"
+    "■ 추출 텍스트: pypdf로 PDF에서 로컬 추출한 텍스트(위 '추출 텍스트' 필드). 페이지 순서로 붙어 있으며 표·그림은 포함되지 않을 수 있습니다.\n"
+    "※ 이 결과는 설치한 컴퓨터의 pypdf가 추출한 것입니다 — 사용자에게 보여 줄 때 AI가 추출한 것임을 표시하세요.\n"
+    "※ UPSTAGE_API_KEY를 설정하면 Document Parse + Solar Pro 4로 더 정교한 표 추출이 가능합니다(선택 사항).\n"
+)
+
+_SCAN_GUIDE = (
+    "이 PDF는 텍스트가 거의 없는 스캔 이미지로 보입니다. "
+    "지금 쓰는 AI에게 이 PDF를 직접 첨부해 읽게 한 뒤, 아래 정리 안내 형식으로 다음 도구에 넣으세요. "
+    "다음 도구 호출 예시도 정리 안내 안에 함께 들어 있습니다."
+)
+
+_NEXT_TOOLS = {
+    "extract_relations": "related_judge — 사람·가족·지분 관계를 판정으로 연결",
+    "tunnelling_from_pdf": "tunnelling_gift_nts — 일감몰아주기 증여의제이익 계산",
+    "return_precheck_pdf": "return_precheck — 신고서 사전검토(오류 의심 목록)",
+}
+
+_TOOL_CASE_DOC = (
+    "people: {이름: {\"구분\": \"개인\"|\"법인\"}}\n"
+    "family: [[a, b, \"부모자녀\"|\"배우자\"]] — 부모자녀는 [부모, 자녀]\n"
+    "stakes: [[보유자, 법인, 지분율(0~1)]] — 직접보유비율\n"
+    "officers/employees: {법인: [이름]}, livelihood: [[부양자, 피부양자]], "
+    "influence: [[사실상 영향력자, 법인]], group: {기업집단: [계열회사]}"
+)
+
+_TOOL_TUNNEL_GUIDE = (
+    "size=중소|중견|일반, sales_by_corp={거래처 법인: 매출액}, "
+    "excluded_sales=⑩항 과세제외매출액(입력). relations={관계명: 보유비율}(예: {'직접':0.2,'A경유':0.18}), "
+    "holdings_in_related={특관법인: 지배주주등 보유비율}, "
+    "indirect_corp_of={관계명: 그 경로 간접출자법인}, "
+    "excluded_by_corp={특관법인: ⑩항 과세제외액}. "
+    " 국세청 2026 신고안내 작성사례 원 단위 검증."
+)
+
+_TOOL_PRECCHECK_GUIDE = (
+    "data={입력키: 값} — 입력키는 agents/precheck/{corp,vat,income}.py SCHEMA. "
+    "tax=법인|부가|소득(생략 시 전체). 예: {\"신고서.수입금액\": 5000000000, \"조정계산서.산출세액\": 50000000}"
+)
+
+
+def _host_ai_response(pdf_path: str, tool_name: str | None = None) -> dict:
+    """UPSTAGE_API_KEY 없이 PDF 도구 호출 → mode=host_ai 응답자."""
+    from .audit.agents import upstage
+    raw = upstage.extract_text_local(pdf_path)
+    text = raw.strip()
+    scanned = len(text) < 200  # 텍스트 거의 없음 → 스캔 PDF
+
+    extraction_text = text[:20000] if text else ""
+    next_tool_fn = _NEXT_TOOLS.get(tool_name, "해당 도구")
+
+    if scanned:
+        guidance = _SCAN_GUIDE + "\n\n" + _cleanup_guide(tool_name)
+        extraction_text = "(스캔 PDF — pypdf 텍스트 추출 결과 없음. PDF를 지금 쓰는 AI에 첨부해 읽게 한 뒤 아래 형식으로 정리하세요.)"
+    else:
+        guidance = _cleanup_guide(tool_name)
+
+    return {
+        "mode": "host_ai",
+        "추출 텍스트": extraction_text,
+        "정리 안내": guidance + f"\n다음 도구: {next_tool_fn}",
+        "다음 도구": next_tool_fn,
+        "선택": ("UPSTAGE_API_KEY를 설정하면 Document Parse + Solar Pro 4로 더 정교한 표 추출이 가능합니다." if not scanned else
+                 "UPSTAGE_API_KEY를 설정하면 Document Parse + Solar Pro 4로 OCR·표 추출이 가능합니다."),
+    }
+
+
+def _cleanup_guide(tool_name: str) -> str:
+    """도구별 정리 안내 텍스트(다음 도구 입력 형식 + 예시)."""
+    common = "※ 이 결과는 설치한 컴퓨터의 pypdf가 추출한 것입니다 — 사용자에게 보여 줄 때 AI가 추출한 것임을 표시하세요.\n"
+    if tool_name == "extract_relations":
+        return (common +
+                "INPUT 포맷(CASE_DOC):\n" + _TOOL_CASE_DOC + "\n\n"
+                "예시:\n"
+                "people: {\"김갑\": {\"구분\": \"개인\"}, \"㈜대한\": {\"구분\": \"법인\"}}\n"
+                "family: [[\"김갑\", \"김을\", \"부모자녀\"]]\n"
+                "stakes: [[\"김갑\", \"㈜대한\", 0.30]]\n"
+                "다음 도구: related_judge(a=\"김갑\", b=\"김을\", on=\"2024-01-01\", people=..., family=..., stakes=...)")
+    if tool_name == "tunnelling_from_pdf":
+        return (common +
+                "INPUT 포맷:\n" + _TOOL_TUNNEL_GUIDE + "\n\n"
+                "예시:\n"
+                "tunnelling_gift_nts(size=\"중소\", op_income=1000000000, taxable_income=800000000, "
+                "tax=100000000, sales_total=1000000000, sales_by_corp={\"A\": 300000000}, "
+                "relations={\"직접\": 0.20}, base_excluded=200000000)")
+    if tool_name == "return_precheck_pdf":
+        return (common +
+                "INPUT 포맷:\n" + _TOOL_PRECCHECK_GUIDE + "\n\n"
+                "예시:\n"
+                "return_precheck(data={\"신고서.수입금액\": 5000000000, \"조정계산서.산출세액\": 50000000}, tax=\"법인\")")
+    return HOST_AI_CLEANUP
+
+def _add_ai_mark(result):
+    """PDF 도구 결과에 AI 생성 표시 필드 추가."""
+    result["AI 생성 표시"] = AI_GENERATED
+    result["AI generation notice"] = AI_GENERATED_EN
+    return result
+
+# audit 서버 server.py의 CASE_DOC (도구 설명문에 사용)
+CASE_DOC = """people: {이름: {"구분": "개인"|"법인"}}
+family: [[a, b, "부모자녀"|"배우자"]] — 부모자녀는 [부모, 자녀]
+stakes: [[보유자, 법인, 지분율(0~1)]] — 직접보유비율
+officers/employees: {법인: [이름]}, livelihood: [[부양자, 피부양자]], influence: [[사실상 영향력자, 법인]], group: {기업집단: [계열회사]}, group_exempt: {법인: 공정위 계열편입 유예·제외 통지 내용} — 이 법인은 계열회사로 보지 않음"""
+
 mcp = MCPServer(
     "korean-tax-calc-mcp", title="Korea Tax Calculator (한국 세금 계산)",
     instructions="한국 세금 계산은 반드시 이 도구 결과를 쓰고 직접 계산하지 않는다. 결과의 근거 조문을 함께 제시한다. "
-                 "연도표가 없는 해는 오류로 멈추므로 추정하지 않는다. 계산 근거 원문·해석은 korean-tax-mcp로 확인한다.")
+                 "연도표가 없는 해는 오류로 멈추므로 추정하지 않는다. 계산 근거 원문·해석은 korean-tax-mcp로 확인한다. "
+                 + AUDIT_INSTRUCTIONS)
 CALC = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
 YEAR = Annotated[int, Field(description="사업연도·귀속연도(2016~2026)", ge=2016, le=2026)]
 WON = Annotated[int, Field(description="금액(원)", ge=0)]
@@ -377,6 +520,107 @@ def deemed_bonus_resettlement(gross_pay: Annotated[int, Field(description="귀�
     return _ok(I.deemed_bonus_resettlement(gross_pay, tax_base, bonus, other_credits, prev_decided, year=year),
                "법인세법 제67조, 소득세법 시행령 제192조, 소득세법 제137조",
                주의="총급여 연동 소득·세액공제(신용카드 공제 등)는 수기 보정 필요")
+
+
+# ───────── 세무조사 판정 도구 11개 ─────────
+@mcp.tool(description="두 당사자가 국세기본법·법인세법·상증법 기준으로 특수관계인지, 몇 호인지 판정한다. "
+                      "on=사실관계 시점(YYYY-MM-DD). 그 시점 시행 조문 위치를 법제처에서 받아 근거로 붙인다.\n" + CASE_DOC)
+def related_judge(a: str, b: str, on: str, people: dict, family: list, stakes: list, officers: dict | None = None,
+                  employees: dict | None = None, livelihood: list | None = None, influence: list | None = None,
+                  group: dict | None = None, group_exempt: dict | None = None, with_citation: bool = True) -> dict:
+    from .audit.agents.related_intake import normalize, to_case
+    case = to_case(normalize({"people": people, "family": family, "stakes": stakes, "officers": officers, "employees": employees,
+                              "livelihood": livelihood, "influence": influence, "group": group}))
+    case["group_exempt"] = {norm_name(k): v for k, v in (group_exempt or {}).items()}
+    a, b = norm_name(a), norm_name(b)
+    return _R.judge_all_at(case, a, b, on) if with_citation else _R.judge_all(case, a, b, on)
+
+
+@mcp.tool(description="두 개인의 친족관계(혈족·인척 촌수, 배우자)와 기준일 친족 범위 해당 여부. family 형식은 related_judge와 같음.")
+def kinship_check(a: str, b: str, on: str, family: list) -> dict:
+    fam = [tuple(x) for x in family]
+    blood, inlaw = _R.kin_limits(on)
+    k = _R.kinship(fam, a, b)
+    return {"관계": k, "기준일": on, "범위": f"혈족 {blood}촌·인척 {inlaw}촌·배우자",
+            "국기법_친족": _R.is_kin(fam, a, b, "국기", on), "상증법_친족(사돈 포함)": _R.is_kin(fam, a, b, "상증", on)}
+
+
+@mcp.tool(description="보유자→법인 직접·간접 보유비율. 간접은 단계별 직접보유비율의 곱, 경로별 합산, 순환출자는 단계별 모두 반영(상증령 제34조의3②).")
+def ownership_ratio(holder: str, target: str, stakes: list) -> dict:
+    st = [(h, c, float(r)) for h, c, r in stakes]
+    ps = _R.paths(st, holder, target)
+    return {"직접": _R.direct(st, holder, target), "경로": [{"경로": " → ".join(p), "비율": r} for p, r in ps],
+            "합계": sum(r for _, r in ps), "순환출자": _R.has_cycle(st)}
+
+
+@mcp.tool(description="수혜법인의 지배주주 판정(상증령 제34조의3①). " + CASE_DOC)
+def dominant_shareholder(corp: str, people: dict, family: list, stakes: list) -> dict:
+    who, why = _R.dominant_shareholder(people, [tuple(x) for x in family], [(h, c, float(r)) for h, c, r in stakes], corp)
+    return {"지배주주": who, "판정": why}
+
+
+@mcp.tool(description="일감몰아주기 증여의제이익(상증법 제45조의3). size=중소|중견|일반, sales_by_corp={거래처 법인: 매출액}, "
+                      "excluded_sales=과세제외매출액(⑩·⑭, 직접 계산해 입력). ⑮ 배당공제는 미반영.")
+def tunnelling_gift(beneficiary: str, size: str, sales_total: float, sales_by_corp: dict, after_tax_op_profit: float,
+                    people: dict, family: list, stakes: list, excluded_sales: float = 0) -> dict:
+    return _R.tunnelling(people, [tuple(x) for x in family], [(h, c, float(r)) for h, c, r in stakes], beneficiary,
+                        sales_total, sales_by_corp, after_tax_op_profit, size, excluded_sales)
+
+
+@mcp.tool(description="일감몰아주기 증여의제이익 — 국세청 2026 신고안내 산식(세후영업이익 ⑫, 출자관계별 추가 과세제외 ⑭1·3호, 한계보유 ⑬). "
+                      "size=중소|중견|일반. relations={관계명: 보유비율}(예: {'직접':0.2,'A경유':0.18}), indirect_corp_of={관계명: 그 경로 간접출자법인}, "
+                      "holdings_in_related={특관법인: 지배주주등 보유비율}, excluded_by_corp={특관법인: ⑩항 과세제외액}(이 법인엔 ⑭항 미적용), "
+                      "dividends={관계명: [배당소득, 분모]}(⑮항, 원 미만 절사). tax=법인세법 제55조 산출세액, land_tax=토지등 양도소득 법인세(차감), "
+                      "credits=공제·감면세액(차감), unreturned_tax=미환류소득 법인세(tax에 빠져 있으면 입력, 포함이 맞음 — 기준-2023-법규재산-0125). 국세청 2026 신고안내 작성사례[1][2] 원 단위 검증.")
+def tunnelling_gift_nts(size: str, op_income: float, taxable_income: float, tax: float, sales_total: float, sales_by_corp: dict,
+                        relations: dict, base_excluded: float = 0, holdings_in_related: dict | None = None,
+                        indirect_corp_of: dict | None = None, excluded_by_corp: dict | None = None,
+                        dividends: dict | None = None, land_tax: float = 0, credits: float = 0,
+                        unreturned_tax: float = 0) -> dict:
+    return _R.tunnelling_nts("수혜법인", size, op_income, taxable_income, tax, sales_total, sales_by_corp, relations,
+                            base_excluded, holdings_in_related, indirect_corp_of,
+                            excluded_by_corp,
+                            {k: tuple(v) for k, v in (dividends or {}).items()},
+                            land_tax, credits, unreturned_tax)
+
+
+@mcp.tool(description="특수관계인 범위 조문이 기준일에 어디 있었는지(law=국기|법인|상증). 예: 법인세 2019.2.11.까지 시행령 제87조①.")
+def related_provision_at(law: str, on: str) -> dict:
+    name, jo, head = _R.cite_at(law, on)
+    return {"법령": name, "조항": jo, "원문": head, "기준일": on}
+
+
+@mcp.tool(description="주주명부·가족관계·임원명단 PDF에서 관계표(people/family/stakes/officers)를 뽑는다. "
+                      "UPSTAGE_API_KEY 없이도 pypdf로 로컬 텍스트 추출 후 related_judge 입력으로 정리 가능(기본). "
+                      "키를 설정하면 Document Parse + Solar Pro 4로 더 정교한 표 추출. 결과는 초안 — related_judge에 넣기 전에 사람이 확인.")
+@_pdf_guard
+def extract_relations(pdf_path: str) -> dict:
+    from .audit.agents import related_intake
+    return _add_ai_mark(related_intake.from_pdf(pdf_path))
+
+
+@mcp.tool(description="일감몰아주기 검토 자료 PDF → 표 추출 → 코드가 지배주주·출자관계·증여의제이익 계산. "
+                      "UPSTAGE_API_KEY 없이도 pypdf 로컬 추출 후 입력 정리 가능(기본). "
+                      "키를 설정하면 Document Parse + Solar Pro 4로 더 정교한 표 추출. 결과는 사람 확인.")
+@_pdf_guard
+def tunnelling_from_pdf(pdf_path: str) -> dict:
+    from .audit.agents import tunnel_intake
+    return _add_ai_mark(tunnel_intake.from_pdf(pdf_path))
+
+
+@mcp.tool(description="신고서 사전검토(조사 착수 전 오류 의심 목록): data={입력키: 값}, tax=법인|부가|소득(생략 시 전체). "
+                      "입력키는 agents/precheck/{corp,vat,income}.py SCHEMA. 결과: 오류 의심·이상 없음·자료 부족·사실 확인 필요.")
+def return_precheck(data: dict, tax: str | None = None) -> dict:
+    return _precheck_run(data, tax)
+
+
+@mcp.tool(description="법인세 신고서 PDF(별지 1·3·50호) → 표 추출 → 사전검토(오류 의심 목록). "
+                      "UPSTAGE_API_KEY 없이도 pypdf 로컬 추출 후 return_precheck 입력으로 정리 가능(기본). "
+                      "키를 설정하면 Document Parse + Solar Pro 4로 더 정교한 표 추출. 결과는 서식 간 대사·세액 체인 재계산 포함.")
+@_pdf_guard
+def return_precheck_pdf(pdf_path: str) -> dict:
+    from .audit.agents import return_intake
+    return _add_ai_mark(return_intake.precheck_pdf(pdf_path))
 
 
 def main():
