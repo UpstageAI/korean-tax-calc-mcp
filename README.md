@@ -6,9 +6,9 @@
 
 [![PyPI](https://img.shields.io/pypi/v/korean-tax-calc-mcp)](https://pypi.org/project/korean-tax-calc-mcp/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-korean--tax--calc--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=korean-tax-calc-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Built with Upstage Solar Pro 4](https://img.shields.io/badge/Built%20with-Upstage%20Solar%20Pro%204-7A3FF2)](https://www.upstage.ai/) · [English](README-EN.md)
 
-> **0.3.0부터 업스테이지 Solar Pro 4로 개발합니다.** (0.2.1까지는 Solar Pro 4 이전 개발분) 2026년 법인세율, 비거주자 원천징수(`nonresident_withholding`), 과소자본(`thin_capitalization`)은 Solar Pro 4(Solar Code CLI)가 코드를 작성하고, Solar Pro 4 기반 코드 리뷰(CodeSolar)가 PR을 검토했으며, Claude가 테스트로 교차 검증했습니다. **0.4.0: 세무조사 판정 도구 11개 통합.**
+> **0.3.0부터 업스테이지 Solar Pro 4로 개발합니다.** (0.2.1까지는 Solar Pro 4 이전 개발분) 2026년 법인세율, 비거주자 원천징수(`nonresident_withholding`), 과소자본(`thin_capitalization`)은 Solar Pro 4(Solar Code CLI)가 코드를 작성하고, Solar Pro 4 기반 코드 리뷰(CodeSolar)가 PR을 검토했으며, Claude가 테스트로 교차 검증했습니다. **0.4.0: 세무조사 판정 도구 11개 통합. 0.5.1: precheck_schema 추가·41개 도구로 확대, description·인자 설명 전면 정비.**
 
-**Korean tax calculations for AI agents — code, not guesses.** Corporate tax, entertainment limits, deemed interest, penalties, limitation periods, withholding, income tax and VAT, using year-by-year rate tables (2016–2026). Each result cites its statute. Years without a verified table stop with an error instead of estimating. 40 tools (29 computation + 11 tax audit judgment). → [English README](README-EN.md)
+**Korean tax calculations for AI agents — code, not guesses.** Corporate tax, entertainment limits, deemed interest, penalties, limitation periods, withholding, income tax and VAT, using year-by-year rate tables (2016–2026). Each result cites its statute. Years without a verified table stop with an error instead of estimating. 41 tools (29 computation + 12 tax audit judgment) — precheck_schema 추가로 41개. → [English README](README-EN.md)
 
 ---
 
@@ -71,9 +71,9 @@ Claude Code: `claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp`
 | `donation_limit` | 기부금 한도·한도초과·이월 | 법인세법 제24조 |
 | `bad_debt_allowance` | 대손충당금 한도 | 법인세법 제34조 |
 | `missing_receipt_disallowance` | 적격증빙 미수취 기업업무추진비 | 법인세법 제25조② |
-| `vat_deemed_input_credit` | 의제매입세액공제 | 부가가치세법 제42조 |
+| `vat_deemed_input_credit` | 의제매입세액공제(연장·운반비 제외·공통분 안분) | 부가가치세법 제42조, 시행령 제81·84조 |
 | `vat_common_input_allocation` | 공통매입세액 안분 | 부가가치세법 시행령 제81조 |
-| `vat_simplified_taxpayer` | 간이과세자 납부세액 | 부가가치세법 제63조 |
+| `vat_simplified_taxpayer` | 간이과세자 납부세액 전 과정(과세표준·매입공제·카드공제·가산세·면제판정) | 부가가치세법 제46·63·68조의2·69조 |
 | `vat_card_sales_credit` | 신용카드매출전표 발행세액공제 | 부가가치세법 제46조 |
 | `vat_bad_debt_credit` | 대손세액공제 | 부가가치세법 제45조 |
 | `wage_income_tax` | 근로소득공제·산출세액·근로소득세액공제 | 소득세법 제47·55·59조 |
@@ -95,6 +95,7 @@ Claude Code: `claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp`
 | `tunnelling_from_pdf` | 일감몰아주기 검토 자료 PDF → 표 추출 → 지배주주·출자관계·증여의제이익 계산. UPSTAGE_API_KEY 없이도 pypdf 로컬 추출 후 입력 정리 가능(기본). 키 설정 시 Document Parse + Solar Pro 4로 더 정교한 표 추출 | 상증법 제45조의3 |
 | `return_precheck` | 신고서 사전검토(오류 의심 목록): data={입력키: 값}, tax=법인|부가|소득 — audit/agents/precheck 규칙 엔진 사용 | 서식별 근거 조문(각 규칙 근거 참조) |
 | `return_precheck_pdf` | 법인세 신고서 PDF(별지 1·3·50호) → 표 추출 → 사전검토. UPSTAGE_API_KEY 없이도 pypdf 로컬 추출 후 return_precheck 입력으로 정리 가능(기본). 키 설정 시 Document Parse + Solar Pro 4로 더 정교한 표 추출 | 서식 간 대사·세액 체인 재계산 |
+| `precheck_schema` | 신고서 사전검토 입력스키마 반환: tax=법인|부가|소득 지정 시 해당 세목 입력키의 의미·단위·필수 여부 목록 제공. return_precheck·PDF 도구 입력 전에 먼저 호출 | 각 규칙의 needs 기반 요건별 필수·선택 구분 |
 
 ## 쟁점 표시
 

@@ -58,9 +58,9 @@ Pair it with [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp) to go
 | `donation_limit` | Donation limit, excess and carryforward | CITA Art. 24 |
 | `bad_debt_allowance` | Bad debt allowance limit | CITA Art. 34 |
 | `missing_receipt_disallowance` | Entertainment expenses without qualified receipts | CITA Art. 25(2) |
-| `vat_deemed_input_credit` | Deemed input tax credit | VAT Act Art. 42 |
+| `vat_deemed_input_credit` | Deemed input tax credit (freight exclusion, common inventory allocation) | VAT Act Art. 42; Decree Art. 81, 84 |
 | `vat_common_input_allocation` | Allocation of common input tax | VAT Decree Art. 81 |
-| `vat_simplified_taxpayer` | VAT payable by simplified taxpayers | VAT Act Art. 63 |
+| `vat_simplified_taxpayer` | Full VAT calculation for simplified taxpayers (tax base, input credit, card credit, penalty, exemption) | VAT Act Art. 46, 63, 68-2, 69 |
 | `vat_card_sales_credit` | Credit for credit-card sales slips | VAT Act Art. 46 |
 | `vat_bad_debt_credit` | Bad debt VAT credit | VAT Act Art. 45 |
 | `wage_income_tax` | Earned income deduction, tax and earned income tax credit | Income Tax Act Arts. 47, 55, 59 |

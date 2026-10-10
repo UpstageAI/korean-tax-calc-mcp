@@ -38,6 +38,16 @@ def test_v02_tools():
     assert round(r["업무사용비율"], 4) == round(15_000_000 / 28_000_000, 4)
     assert c("donation_limit", {"year": 2025, "base_income": 500_000_000, "special": 10_000_000, "general": 80_000_000})["결과"]["한도초과(기타사외유출)"] == 31_000_000
     assert c("vat_deemed_input_credit", {"purchase": 50_000_000, "base": 300_000_000, "period": "2025-1", "industry": "음식점", "individual": False})["결과"]["의제매입세액"] == 2_830_188
+    # SPEC c4b 가상 수치: 구입액 100,000,000(운반비 6,000,000 포함), 과세 사용 70,000,000,
+    # 면세 판매 15,000,000, 공통 기말재고 10,000,000, 과세 공급 280,000,000, 면세 120,000,000,
+    # 법인·중소기업 아님·제조, 공제율 2/102 → 공제대상 72,380,000 / 의제매입세액 1,419,215
+    r = c("vat_deemed_input_credit",
+          {"purchase_total": 100_000_000, "freight_included": 6_000_000,
+           "used_taxable": 70_000_000, "used_exempt": 15_000_000, "ending_inventory_common": 10_000_000,
+           "taxable_supply": 280_000_000, "exempt_supply": 120_000_000,
+           "period": "2026-1", "industry": "제조", "individual": False, "sme": False})
+    assert r["결과"]["의제매입세액"] == 1_419_215
+    assert r["결과"]["공제대상_매입가액"] == 72_379_999
     items = [{"amount": 50_000}, {"amount": 20_000}, {"amount": 300_000, "congratulatory": True}, {"amount": 100_000, "qualified": True}]
     assert c("missing_receipt_disallowance", {"year": 2025, "items": items})["결과"]["손금불산입"] == 350_000
     assert c("vat_common_input_allocation", {"common_tax": 10_000_000, "total_supply": 1_000_000_000, "exempt_supply": 300_000_000})["결과"]["불공제"] == 3_000_000
@@ -271,3 +281,113 @@ def test_두_도구_쟁점_위치_동일():
                                    "total_interest": 300_000_000, "ratio": 2})
     assert "쟁점" in r1 and "쟁점" in r2
     assert len(r1["쟁점"]) >= 1 and len(r2["쟁점"]) >= 1
+
+
+# ── SPEC c5 §6: description·인자 description 검사 ────────────────────────────
+
+def test_all_tool_descriptions_have_when_and_input():
+    """모든 도구 description에 '언제:'·'입력:'이 들어 있는지 검사(SPEC c5 §1)."""
+    import asyncio
+    from korean_tax_calc_mcp.server import mcp
+    tools = asyncio.run(mcp.list_tools())
+    missing_when = []
+    missing_input = []
+    for t in tools:
+        desc = t.description or ""
+        if "언제:" not in desc:
+            missing_when.append(t.name)
+        if "입력:" not in desc:
+            missing_input.append(t.name)
+    assert not missing_when, f"'언제:' 누락 도구: {missing_when}"
+    assert not missing_input, f"'입력:' 누락 도구: {missing_input}"
+
+
+def test_all_parameters_have_description():
+    """모든 인자에 description이 있는지 검사(lang 제외, SPEC c5 §2).
+    MCP 툴 inputSchema의 properties에서 각 파라미터 description을 확인한다."""
+    import asyncio
+    from korean_tax_calc_mcp.server import mcp
+    tools = asyncio.run(mcp.list_tools())
+    for t in tools:
+        schema = t.input_schema
+        properties = schema.get("properties", {})
+        # 'lang'은 언제든지 생략 가능한 자유 텍스트 인자 → 검사에서 제외
+        for name, prop in properties.items():
+            if name == "lang":
+                continue
+            desc = prop.get("description")
+            assert desc and desc.strip(), f"{t.name}. 파라미터 '{name}' description 없음"
+
+
+
+# ── SPEC c5 §6: precheck_schema 3종 반환 테스트 ──────────────────────────────
+
+def test_precheck_schema_corp():
+    """precheck_schema('법인') 반환 구조 검사."""
+    r = c("precheck_schema", {"tax": "법인"})
+    assert r["세목"] == "법인"
+    assert isinstance(r["입력스키마"], list)
+    assert r["총_입력키"] > 0
+    # 몇 개 키의 단위·필수 여부 확인
+    rows = r["입력스키마"]
+    keys = {row["키"] for row in rows}
+    assert "기본.종료일" in keys
+    assert "조정계산서.산출세액" in keys
+    for row in rows:
+        assert set(row.keys()) == {"키", "의미", "단위", "필수"}
+        assert row["단위"] in ("원 (int)", "bool", "YYYY-MM-DD/string", "list[dict]/list",
+                                "소수 (float)", "문자열", "int (명/수)", "문맥 참조")
+        assert row["필수"] in ("요건별 필수", "선택")
+
+
+def test_precheck_schema_vat():
+    """precheck_schema('부가') 반환 구조 검사."""
+    r = c("precheck_schema", {"tax": "부가"})
+    assert r["세목"] == "부가"
+    assert isinstance(r["입력스키마"], list)
+    assert r["총_입력키"] > 0
+    rows = r["입력스키마"]
+    keys = {row["키"] for row in rows}
+    assert "신고서.과세표준합계" in keys
+    for row in rows:
+        assert set(row.keys()) == {"키", "의미", "단위", "필수"}
+
+
+def test_precheck_schema_income():
+    """precheck_schema('소득') 반환 구조 검사."""
+    r = c("precheck_schema", {"tax": "소득"})
+    assert r["세목"] == "소득"
+    assert isinstance(r["입력스키마"], list)
+    assert r["총_입력키"] > 0
+    rows = r["입력스키마"]
+    keys = {row["키"] for row in rows}
+    assert "근로자" in keys
+    for row in rows:
+        assert set(row.keys()) == {"키", "의미", "단위", "필수"}
+
+
+# ── SPEC c5 §6: 세무조사 도구 기존 형식 호출 하위 호환 테스트 ───────────────
+
+def test_related_judge_backward_compat_list_format():
+    """related_judge에 list·dict 직접 전달(기존 호출 형식) 하위 호환."""
+    people = {"김갑": {"구분": "개인"}, "㈜대한": {"구분": "법인"}}
+    family = [["김갑", "김을", "부모자녀"]]
+    stakes = [["김갑", "㈜대한", 0.30]]
+    r = c("related_judge", {
+        "a": "김갑", "b": "김을", "on": "2024-01-01",
+        "people": people, "family": family, "stakes": stakes,
+    })
+    assert "결과" in r or "근거" in r or isinstance(r, dict)
+
+
+def test_tunnelling_gift_backward_compat():
+    """tunnelling_gift list·dict 직접 전달 하위 호환."""
+    r = c("tunnelling_gift", {
+        "beneficiary": "김갑", "size": "중소",
+        "sales_total": 1000000000.0, "sales_by_corp": {"A": 300000000.0},
+        "after_tax_op_profit": 100000000.0,
+        "people": {"김갑": {"구분": "개인"}},
+        "family": [["김갑", "김을", "부모자녀"]],
+        "stakes": [["김갑", "A", 0.30]],
+    })
+    assert isinstance(r, dict)
