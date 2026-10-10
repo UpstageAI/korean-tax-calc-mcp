@@ -134,11 +134,11 @@ def test_thin_cap_withholding_recalc():
 
 
 def test_사용료_쟁점_수원고등법원_포함():
-    # 사용료 호출 → 쟁점 1건 이상, 참고에 "수원고등법원-2023-누-15618" 포함, 판단 == "세무사 확인 필요"
+    # 사용료 + treaty_rate → 쟁점 3건, 참고에 "수원고등법원-2023-누-15618" 포함, 판단 == "세무사 확인 필요"
     r = c("nonresident_withholding", {"income_kind": "사용료", "amount": 200_000_000,
                                        "recipient_type": "개인", "residence_country": "US", "treaty_rate": 0.15})
-    issues = r["결과"]["쟁점"]
-    assert len(issues) >= 1
+    issues = r["쟁점"]
+    assert len(issues) == 3
     refs = [ref for it in issues for ref in it["참고"]]
     assert any("수원고등법원-2023-누-15618" in ref for ref in refs)
     assert all(it["판단"] == "세무사 확인 필요" for it in issues)
@@ -148,7 +148,7 @@ def test_배당_treaty_rate_제156조의6_포함():
     # 배당 + treaty_rate → 제156조의6 쟁점 포함
     r = c("nonresident_withholding", {"income_kind": "배당", "amount": 100_000_000,
                                        "recipient_type": "개인", "residence_country": "US", "treaty_rate": 0.15})
-    refs = [ref for it in r["결과"]["쟁점"] for ref in it["참고"]]
+    refs = [ref for it in r["쟁점"] for ref in it["참고"]]
     assert any("제156조의6" in ref or "제98조의6" in ref for ref in refs)
 
 
@@ -156,7 +156,7 @@ def test_배당_treaty_rate_없음_제156조의6_없음():
     # 배당 + treaty_rate 없음 → 제156조의6 쟁점 없음
     r = c("nonresident_withholding", {"income_kind": "배당", "amount": 100_000_000,
                                        "recipient_type": "법인", "residence_country": "CA"})
-    refs = [ref for it in r["결과"]["쟁점"] for ref in it["참고"]]
+    refs = [ref for it in r["쟁점"] for ref in it["참고"]]
     assert not any("제156조의6" in ref or "제98조의6" in ref for ref in refs)
 
 
@@ -165,7 +165,7 @@ def test_이자_related_party_제22조_포함():
     r = c("nonresident_withholding", {"income_kind": "이자", "amount": 100_000_000,
                                        "recipient_type": "개인", "residence_country": "US",
                                        "related_party": True})
-    refs = [ref for it in r["결과"]["쟁점"] for ref in it["참고"]]
+    refs = [ref for it in r["쟁점"] for ref in it["참고"]]
     assert any("제22조" in ref for ref in refs)
 
 
@@ -195,3 +195,79 @@ def test_issues_json_패키지_데이터_존재():
     import importlib.resources
     path = importlib.resources.files("korean_tax_calc_mcp") / "data" / "issues.json"
     assert path.exists()
+
+
+# ── SPEC r1f §3 부정 테스트 ──────────────────────────────────────────────
+
+def test_사용료_treaty_rate_없음_쟁점1건():
+    # 사용료 + treaty_rate 없음 → 쟁점 정확히 1건(소프트웨어 사용료 vs 사업소득)
+    r = c("nonresident_withholding", {"income_kind": "사용료", "amount": 200_000_000,
+                                       "recipient_type": "개인", "residence_country": "US"})
+    assert len(r["쟁점"]) == 1
+    assert any("수원고등법원-2023-누-15618" in ref for it in r["쟁점"] for ref in it["참고"])
+
+
+def test_사용료_treaty_rate_있음_쟁점3건():
+    # 사용료 + treaty_rate 있음 → 3건
+    r = c("nonresident_withholding", {"income_kind": "사용료", "amount": 200_000_000,
+                                       "recipient_type": "개인", "residence_country": "US", "treaty_rate": 0.15})
+    assert len(r["쟁점"]) == 3
+
+
+def test_이자_related_party_false_쟁점0건():
+    # 이자 + related_party=False → 0건
+    r = c("nonresident_withholding", {"income_kind": "이자", "amount": 100_000_000,
+                                       "recipient_type": "개인", "residence_country": "US",
+                                       "related_party": False})
+    assert len(r["쟁점"]) == 0
+
+
+def test_이자_related_party_true_쟁점1건():
+    # 이자 + related_party=True → 과소자본 1건
+    r = c("nonresident_withholding", {"income_kind": "이자", "amount": 100_000_000,
+                                       "recipient_type": "개인", "residence_country": "US",
+                                       "related_party": True})
+    assert len(r["쟁점"]) == 1
+    assert any("제22조" in ref for it in r["쟁점"] for ref in it["참고"])
+
+
+def test_배당_treaty_rate_없음_쟁점0건():
+    # 배당 + treaty_rate 없음 → 0건
+    r = c("nonresident_withholding", {"income_kind": "배당", "amount": 100_000_000,
+                                       "recipient_type": "법인", "residence_country": "CA"})
+    assert len(r["쟁점"]) == 0
+
+
+def test_배당_treaty_rate_있음_쟁점1건():
+    # 배당 + treaty_rate 있음 → 제한세율 1건 (treaty_rate 주어짐 조건만 매칭)
+    r = c("nonresident_withholding", {"income_kind": "배당", "amount": 100_000_000,
+                                       "recipient_type": "개인", "residence_country": "US", "treaty_rate": 0.15})
+    assert len(r["쟁점"]) == 1
+
+
+def test_인적용역_쟁점1건():
+    # 인적용역 → 1건
+    r = c("nonresident_withholding", {"income_kind": "인적용역", "amount": 100_000_000,
+                                       "recipient_type": "개인", "residence_country": "US"})
+    assert len(r["쟁점"]) == 1
+
+
+def test_issues_json_match_field_존재():
+    # issues.json의 모든 nonresident_withholding 쟁점에 match 필드 존재
+    import json, os
+    path = os.path.join(os.path.dirname(__file__), "..", "korean_tax_calc_mcp", "data", "issues.json")
+    with open(path, encoding="utf-8") as f:
+        issues = json.load(f)["nonresident_withholding"]
+    for it in issues:
+        assert "match" in it, f"쟁점 누락: {it.get('쟁점', '조건 못 읽음')}"
+        assert isinstance(it["match"], dict)
+
+
+def test_두_도구_쟁점_위치_동일():
+    # nonresident_withholding와 thin_capitalization 모두 최상위 쟁점
+    r1 = c("nonresident_withholding", {"income_kind": "사용료", "amount": 200_000_000,
+                                        "recipient_type": "개인", "residence_country": "US", "treaty_rate": 0.15})
+    r2 = c("thin_capitalization", {"equity": 2_000_000_000, "borrowings": 5_000_000_000,
+                                   "total_interest": 300_000_000, "ratio": 2})
+    assert "쟁점" in r1 and "쟁점" in r2
+    assert len(r1["쟁점"]) >= 1 and len(r2["쟁점"]) >= 1
