@@ -6,7 +6,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/korean-tax-calc-mcp)](https://pypi.org/project/korean-tax-calc-mcp/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-korean--tax--calc--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=korean-tax-calc-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Built with Upstage Solar Pro 4](https://img.shields.io/badge/Built%20with-Upstage%20Solar%20Pro%204-7A3FF2)](https://www.upstage.ai/) · [한국어](README.md)
 
-> **Developed with Upstage Solar Pro 4.** 2026 corporate tax rates, non-resident withholding (`nonresident_withholding`) and thin capitalization (`thin_capitalization`) were written by Solar Pro 4 (Solar Code CLI) and verified by Claude.
+> **Developed with Upstage Solar Pro 4 since 0.3.0** (0.2.1 and earlier predate it). 2026 corporate tax rates, non-resident withholding (`nonresident_withholding`) and thin capitalization (`thin_capitalization`) were written by Solar Pro 4 (Solar Code CLI) and verified by Claude.
 
 **Korean (South Korea) tax calculations for AI agents — code, not guesses.** LLMs often get tax arithmetic wrong. This MCP server computes in code and cites the statute behind every result. It uses year-by-year rate tables (2016–2025); for a year without a verified table it returns an error instead of estimating. 27 tools, no API key, nothing sent outside your machine.
 
@@ -68,6 +68,10 @@ Pair it with [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp) to go
 | `deemed_bonus_resettlement` | Year-end resettlement of deemed bonus | Income Tax Decree Art. 192 |
 
 CITA = Corporate Income Tax Act.
+
+## Issue flags
+
+`nonresident_withholding` and `thin_capitalization` may return an **쟁점 (issues)** list alongside the computed tax. Each entry records a point that can be disputed in practice — e.g. whether software remuneration is royalty or business income, whether a treaty rate applies only after substance-over-form review — and lists **materials to verify** and **reference authorities** (statute articles, ruling numbers, case citations). The tool never concludes ("this is business income"); the `판단` field of every issue is fixed to "세무사 확인 필요" (tax accountant review required). Issue data is read from `korean_tax_calc_mcp/data/issues.json`, not hardcoded.
 
 ## Notes
 

@@ -1,7 +1,15 @@
 """소득세·원천세 계산(2016~2026 귀속 연도표, 기본 2025 귀속) — 국세청 연말정산·중소기업 취업자 감면 안내 예시로 검증. 작성 Mia(윤승미)
 플레이북: knowledge/14_소득세_원천세_연말정산_조사포인트.md. 2026 귀속 변경분은 표 추가 후 적용.
 """
+import json
 import math
+import os
+
+# 쟁점 데이터는 korean_tax_calc_mcp/data/issues.json에서 읽음 (SPEC r1d §1 — 하드코딩 금지)
+def _load_issues():
+    path = os.path.join(os.path.dirname(__file__), "..", "data", "issues.json")
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
 
 # 종합소득세 기본세율(소득세법 제55조①) — 귀속연도별(각 개정 부칙: 시행 전 발생 소득·개시 과세기간은 종전). knowledge/16 '소득세 연도표'
 _R2016 = [(12_000_000, 0.06), (46_000_000, 0.15), (88_000_000, 0.24), (150_000_000, 0.35), (math.inf, 0.38)]
@@ -169,12 +177,13 @@ DOMESTIC_WH_BASIS = {
 
 
 def nonresident_withholding(income_kind, amount, recipient_type, residence_country,
-                            treaty_rate=None, bond_interest=False):
+                            treaty_rate=None, bond_interest=False, related_party=False):
     """비거주자·외국법인 국내원천소득 원천징수. 적용세율 = min(국내세율, 조약 제한세율).
     domestic_rate는 소득세법 제156조(비거주자)·법인세법 제98조(외국법인)에 따르며, 수취인 구분(개인/법인)과
     관계없이 소득 종류 기준 동일 세율. 조약_rate 미지정 시 국내세율만 적용.
     채권이자(bond_interest=True, income_kind='이자')는 국가·지방자치단체·내국법인 발행 채권 이자로
-    소득세법 제156조①1호가목·법인세법 제98조①1호가목 특례 14% 적용."""
+    소득세법 제156조①1호가목·법인세법 제98조①1호가목 특례 14% 적용.
+    related_party=True이면 수취인이 국외지배주주일 가능성을 고려하여 과소자본 쟁점(국제조세조정에 관한 법률 제22조)을 함께 표시한다."""
     if bond_interest and income_kind == "이자":
         domestic = 0.14
         basis = "소득세법 제156조①1호가목 / 법인세법 제98조①1호가목 (국가·지방자치단체·내국법인 발행 채권 이자)"
@@ -187,6 +196,27 @@ def nonresident_withholding(income_kind, amount, recipient_type, residence_count
         note = " · 조약세율이 국내세율보다 높아 국내세율 적용"
     wh_amount = int(amount * applicable) // 10 * 10
     local_income_tax = int(wh_amount * 0.10) // 10 * 10
+
+    # 쟁점 부착 (issues.json에서 읽음, 하드코딩 금지 — SPEC r1d §1)
+    _issues = _load_issues().get("nonresident_withholding", [])
+    issues: list[dict] = []
+    for it in _issues:
+        ok = True
+        cond = it["조건"]
+        if cond.startswith('income_kind="사용료"'): ok = income_kind == "사용료"
+        elif cond.startswith('income_kind="이자"'): ok = income_kind == "이자"
+        elif cond.startswith('income_kind="인적용역"'): ok = income_kind == "인적용역"
+        elif cond.startswith('treaty_rate 주어짐'):
+            ok = treaty_rate is not None
+            if cond.startswith('income_kind="사용료" and treaty_rate'):
+                ok = ok and income_kind == "사용료"
+        elif cond.startswith('treaty_rate 주어짐 (모든 소득)'):
+            ok = treaty_rate is not None
+        elif cond.startswith('income_kind="이자" and recipient가 지배주주'):
+            ok = income_kind == "이자" and related_party
+        if ok:
+            issues.append(it)
+
     return {
         "국내세율": domestic,
         "조약세율": treaty_rate,
@@ -195,6 +225,7 @@ def nonresident_withholding(income_kind, amount, recipient_type, residence_count
         "지방소득세": local_income_tax,
         "합계": wh_amount + local_income_tax,
         "근거": basis + (f" · 조세조약 제한세율 {treaty_rate*100:.0f}%" if treaty_rate else "") + note,
+        "쟁점": issues,
     }
 
 
