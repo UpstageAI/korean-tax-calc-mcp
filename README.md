@@ -80,6 +80,10 @@ Claude Code: `claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp`
 | `daily_worker_withholding` | 일용근로자 원천징수 | 소득세법 제134조 |
 | `deemed_bonus_resettlement` | 소득처분 상여 연말정산 재정산 | 소득세법 시행령 제192조 |
 
+## 쟁점 표시
+
+비거주자·외국법인 원천징수(`nonresident_withholding`)와 과소자본(`thin_capitalization`) 결과는 계산된 세액과 함께 **쟁점** 리스트를 반환할 수 있습니다. 쟁점은 "이 소득 구분이 맞는지", "이 조약 세율이 그대로 적용되는지"처럼 실무에서 다툼이 될 수 있는 지점을 정리한 것으로, 도구는 결론을 내리지 않고 **확인할 자료와 참고 근거(조문·적부·판례 번호)**만 제시합니다. 각 쟁점 항목의 `판단` 필드는 항상 "세무사 확인 필요"로 고정되어 있으며, 도구가 "사업소득임", "사용료임" 같은 단정 문구를 결과 어디에도 쓰지 않습니다. 쟁점 데이터는 코드 하드코딩 없이 `korean_tax_calc_mcp/data/issues.json`에서 읽어옵니다.
+
 ## 유의
 
 - 계산 결과는 검토 보조 자료이며 세무 자문이 아닙니다. 신고 전 원문 조문과 확인하세요.
