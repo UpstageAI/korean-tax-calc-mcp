@@ -184,10 +184,12 @@ def nonresident_withholding(income_kind: Annotated[Literal["이자", "배당", "
                             recipient_type: Annotated[Literal["개인", "법인"], Field(description="수취인 구분 — 개인(비거주자) / 법인(외국법인)")],
                             residence_country: Annotated[str, Field(description="거주지국(ISO 2자 또는 국명)")],
                             treaty_rate: Annotated[float | None, Field(description="조세조약 제한세율(소수, 예: 0.15). 없으면 국내세율 적용")] = None,
-                            bond_interest: Annotated[bool, Field(description="채권 이자 여부 — 이자 소득에서만 의미, 특례 적용 필요 시 별도 확인")] = False) -> dict:
+                            bond_interest: Annotated[bool, Field(description="채권 이자 여부 — 이자 소득에서만 의미, 특례 적용 필요 시 별도 확인")] = False,
+                            related_party: Annotated[bool, Field(description="수취인이 국외지배주주일 가능성 — 이자 소득에서 과소자본 쟁점 표시 시 사용")] = False) -> dict:
     """Non-resident/foreign corporation withholding tax on Korean-source income (소득세법 제156조 / 법인세법 제98조).
-    적용세율 = min(국내세율, 조약 제한세율), 지방소득세 10% 별도 합산. 조약 미체결·비과세 확인은 korean-tax-mcp로 원문 대조."""
-    r = I.nonresident_withholding(income_kind, amount, recipient_type, residence_country, treaty_rate, bond_interest)
+    적용세율 = min(국내세율, 조약 제한세율), 지방소득세 10% 별도 합산. 조약 미체결·비과세 확인은 korean-tax-mcp로 원문 대조.
+    related_party=True이면 과소자본(국제조세조정에 관한 법률 제22조) 쟁점을 함께 표시한다."""
+    r = I.nonresident_withholding(income_kind, amount, recipient_type, residence_country, treaty_rate, bond_interest, related_party)
     return _ok(r, r["근거"])
 
 
@@ -267,6 +269,10 @@ def thin_capitalization(equity: WON,
     recipient_residence_country 지정 시 배당 처분에 따른 원천징수 재계산 결과를 함께 제공."""
     base = C.thin_capitalization(equity, borrowings, total_interest, ratio, year)
     result = {"결과": base, "근거": "국제조세조정에 관한 법률 제22조, 시행령 제34조"}
+
+    # 쟁점 부착 (issues.json에서 읽음, 하드코딩 금지 — SPEC r1d §1, §3)
+    from .engine.calc_income import _load_issues
+    result["쟁점"] = _load_issues().get("thin_capitalization", [])
     if recipient_residence_country:
         disallowed_interest = base["손금불산입 이자"]
         if disallowed_interest > 0:
