@@ -190,7 +190,7 @@ def nonresident_withholding(income_kind: Annotated[Literal["이자", "배당", "
     적용세율 = min(국내세율, 조약 제한세율), 지방소득세 10% 별도 합산. 조약 미체결·비과세 확인은 korean-tax-mcp로 원문 대조.
     related_party=True이면 과소자본(국제조세조정에 관한 법률 제22조) 쟁점을 함께 표시한다."""
     r = I.nonresident_withholding(income_kind, amount, recipient_type, residence_country, treaty_rate, bond_interest, related_party)
-    return _ok(r, r["근거"])
+    return _ok({k: v for k, v in r.items() if k != "쟁점"}, r["근거"], 쟁점=r["쟁점"])
 
 
 @mcp.tool(annotations=CALC)
