@@ -6,9 +6,9 @@
 
 [![PyPI](https://img.shields.io/pypi/v/korean-tax-calc-mcp)](https://pypi.org/project/korean-tax-calc-mcp/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-korean--tax--calc--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=korean-tax-calc-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Built with Upstage Solar Pro 4](https://img.shields.io/badge/Built%20with-Upstage%20Solar%20Pro%204-7A3FF2)](https://www.upstage.ai/) · [한국어](README.md)
 
-> **Developed with Upstage Solar Pro 4 since 0.3.0** (0.2.1 and earlier predate it). 2026 corporate tax rates, non-resident withholding (`nonresident_withholding`) and thin capitalization (`thin_capitalization`) were written by Solar Pro 4 (Solar Code CLI), reviewed on each PR by CodeSolar (Solar Pro 4-based code review) and cross-checked with tests by Claude. **0.4.0: merged 11 tax audit judgment tools.**
+> **Developed with Upstage Solar Pro 4 since 0.3.0** (0.2.1 and earlier predate it). 2026 corporate tax rates, non-resident withholding (`nonresident_withholding`) and thin capitalization (`thin_capitalization`) were written by Solar Pro 4 (Solar Code CLI), reviewed on each PR by CodeSolar (Solar Pro 4-based code review) and cross-checked with tests by Claude. **0.4.0: merged 11 tax audit judgment tools. 0.5.1: added precheck_schema (input schema for tax return precheck), expanded simplified-taxpayer and deemed-input-tax scenarios, refreshed descriptions — now 41 tools.**
 
-**Korean (South Korea) tax calculations for AI agents — code, not guesses.** LLMs often get tax arithmetic wrong. This MCP server computes in code and cites the statute behind every result. It uses year-by-year rate tables (2016–2025); for a year without a verified table it returns an error instead of estimating. 40 tools (29 computation + 11 tax audit judgment). Nothing sent outside your machine for the 29 computation tools.
+**Korean (South Korea) tax calculations for AI agents — code, not guesses.** LLMs often get tax arithmetic wrong. This MCP server computes in code and cites the statute behind every result. It uses year-by-year rate tables (2016–2026); for a year without a verified table it returns an error instead of estimating. 41 tools (29 computation + 12 tax audit judgment). Nothing sent outside your machine for the 29 computation tools.
 
 ## Try asking
 
@@ -58,9 +58,9 @@ Pair it with [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp) to go
 | `donation_limit` | Donation limit, excess and carryforward | CITA Art. 24 |
 | `bad_debt_allowance` | Bad debt allowance limit | CITA Art. 34 |
 | `missing_receipt_disallowance` | Entertainment expenses without qualified receipts | CITA Art. 25(2) |
-| `vat_deemed_input_credit` | Deemed input tax credit | VAT Act Art. 42 |
+| `vat_deemed_input_credit` | Deemed input tax credit (freight exclusion, common inventory allocation) | VAT Act Art. 42; Decree Art. 81, 84 |
 | `vat_common_input_allocation` | Allocation of common input tax | VAT Decree Art. 81 |
-| `vat_simplified_taxpayer` | VAT payable by simplified taxpayers | VAT Act Art. 63 |
+| `vat_simplified_taxpayer` | Full VAT calculation for simplified taxpayers (tax base, input credit, card credit, penalty, exemption) | VAT Act Art. 46, 63, 68-2, 69 |
 | `vat_card_sales_credit` | Credit for credit-card sales slips | VAT Act Art. 46 |
 | `vat_bad_debt_credit` | Bad debt VAT credit | VAT Act Art. 45 |
 | `wage_income_tax` | Earned income deduction, tax and earned income tax credit | Income Tax Act Arts. 47, 55, 59 |
@@ -82,6 +82,7 @@ Pair it with [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp) to go
 | `tunnelling_from_pdf` | Tunnelling review PDF → table extraction → dominant shareholder·ownership·gift calculation. Works without UPSTAGE_API_KEY using pypdf local extraction + 정리 안내 (default). With key: Document Parse + Solar Pro 4 for more precise table extraction | Inheritance/Gift Tax Act Art. 45-3 |
 | `return_precheck` | Pre-review of tax return (error suspicion list): data={input key: value}, tax=법인|부가|소득 — uses audit/agents/precheck rule engine | Per-rule authority (see each rule's 근거) |
 | `return_precheck_pdf` | Corporate tax return PDF (Forms 1·3·50) → table extraction → pre-review. Works without UPSTAGE_API_KEY using pypdf local extraction + 정리 안내 (default). With key: Document Parse + Solar Pro 4 for more precise table extraction | Cross-form reconciliation·tax chain recalculation |
+| `precheck_schema` | Returns the input schema for tax return precheck: when tax=corp|vat|income is specified, provides the meaning, unit, and required/optional status of each input key for that tax type. Call before return_precheck or PDF tools | Required/optional classification based on each rule's needs |
 
 CITA = Corporate Income Tax Act.
 
