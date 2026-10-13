@@ -85,3 +85,9 @@ def test_inconsistent_facts_rejected():  # CodeSolar 리뷰(PR #9) 회귀 (Claud
     assert "error" in r
     r = c("other_income_aggregate", {"year": 2025, "items": [{"kind": "위약금·배상금", "amount": 1_000_000, "deposit_substituted": 2_000_000}]})
     assert "error" in r
+
+
+def test_actual_expense_capped_at_income():  # CodeSolar 3차(PR #9) 회귀: 실제 경비가 총수입을 넘어도 소득금액은 0 (제37조②)
+    r = c("other_income_aggregate", {"year": 2025, "items": [{"kind": "산업재산권대여", "amount": 1_000_000, "actual_expense": 3_000_000}]})
+    k = by_kind(r)["산업재산권대여"]
+    assert k["필요경비"] == 1_000_000 and k["소득금액"] == 0 and r["결과"]["종합소득_합산_기타소득금액"] == 0
