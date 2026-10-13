@@ -1019,7 +1019,7 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
 
     _v = _validate_items(writeoffs, "kind", {
         "소멸시효완성": {"필요": ["amount", "arose_in"], "허용": {"arose_in": ["전기", "당기"]}, "설명": "상법·민법 등 소멸시효가 완성된 채권(신고조정 — 완성된 사업연도 손금)"},
-        "화해·확정판결": {"필요": ["amount", "arose_in"], "허용": {"arose_in": ["전기", "당기"]}, "설명": "확정판결·화해·조정 등으로 회수불능이 확정된 채권(신고조정)"},
+        "화해·확정판결": {"필요": ["amount", "arose_in"], "허용": {"arose_in": ["전기", "당기"]}, "설명": "재판상 화해·확정판결 등으로 회수불능이 확정된 채권(결산조정 — 손비 계상 사업연도 손금)"},
         "부도6개월": {"필요": ["amount", "arose_in", "instrument", "months_since_default"], "허용": {"arose_in": ["전기", "당기"], "instrument": ["외상매출금", "받을어음", "기타"]}, "설명": "부도발생일부터 6개월 이상 지난 어음·수표·외상매출금(결산조정, 외상매출금은 중소기업만, 저당권 설정 시 제외, 1,000원 비망)"},
         "회수불능": {"필요": ["amount", "arose_in"], "허용": {"arose_in": ["전기", "당기"]}, "설명": "파산·강제집행·사업폐지·사망 등으로 회수할 수 없는 채권(결산조정)"},
     })
@@ -1035,7 +1035,14 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
         kind = w["kind"]; amount = int(w["amount"]); arose_in = w["arose_in"]
         instrument = w.get("instrument"); months = w.get("months_since_default"); mortgage = w.get("mortgage", False)
 
-        if kind in ("소멸시효완성", "화해·확정판결"):
+        if kind == "화해·확정판결":
+            # 영 제19조의2①10호(재판상 화해 등 확정판결과 같은 효력)는 ③1호 열거 밖 → 결산조정: 손비로 계상한 사업연도 손금 (Claude 10-13 정정)
+            tax_bad_debt_recognized += amount
+            judgments.append({"항목": f"{kind} {amount:,}원", "결론": "인정(대손금, 결산조정)",
+                              "금액": amount, "근거": "법인세법 시행령 제19조의2①10호·③2호",
+                              "이유": "확정판결과 같은 효력으로 회수불능 확정 — 손비로 계상한 사업연도에 손금"})
+            continue
+        if kind == "소멸시효완성":
             # 신고조정 대손: 사유 발생 사업연도 손금. arose_in='전기'인데 당기 장부 처리 → 당기 손금불산입(유보), 전기말 채권 차감
             if arose_in == "전기":
                 # 전기 손금이었어야 할 것을 당기에 장부 처리 → 당기 손금불산입(유보), 전기 신고조정 추심

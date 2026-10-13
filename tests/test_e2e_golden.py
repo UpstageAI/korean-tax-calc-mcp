@@ -1,5 +1,5 @@
 """끝에서 끝까지 계산기 정답 테스트 (Claude 작성 2026-10-13) — 수정 금지.
-기출 사례(개발용 2024·2025)는 원문 사실관계를 그대로 입력, 정답 금액은 공식 정답과 Claude 손계산 일치 확인. 실무형 사례는 Claude 손계산.
+공개 검증 사례(세무사 1차 시험 문제, 출처 Q-Net 공개 문제·정답)는 원문 사실관계를 그대로 입력하고 공식 정답과 손계산 일치를 확인. 실무형 사례는 Claude 손계산. 이 사례들은 도구 설계의 기준이 아니라 검증용이다.
 """
 import asyncio, json
 from korean_tax_calc_mcp.server import mcp
@@ -14,7 +14,7 @@ def find(judg, word):
 
 
 # ── 대손충당금 ───────────────────────────────────────────────────────────────
-def test_bad_debt_2024_66():  # 세무사 2024 66번, 정답 ① 81,674,945원
+def test_bad_debt_2024_66():  # 공개 검증 사례: 세무사 1차 2024-66(정답 ① 81,674,945원)
     r = c("bad_debt_adjustment", {
         "year": 2024, "sme": False, "prior_excess": 20_000_000,
         "book": {"opening": 150_000_000, "offset": 130_000_000, "provision": 200_000_000, "closing": 220_000_000},
@@ -49,7 +49,7 @@ def test_bad_debt_sme_receivable_allowed():  # 실무형: 중소기업 부도 �
 
 
 # ── 기업업무추진비 ───────────────────────────────────────────────────────────
-def test_entertainment_2024_65():  # 세무사 2024 65번, 정답 ① 대표자상여 8,000,000 / 기타사외유출 12,350,000
+def test_entertainment_2024_65():  # 공개 검증 사례: 세무사 1차 2024-65(정답 ① 대표자상여 8,000,000 / 기타사외유출 12,350,000
     r = c("entertainment_adjustment", {
         "year": 2024, "sme": False, "months": 12,
         "revenue_general": 7_500_000_000, "revenue_related": 4_500_000_000,
@@ -79,7 +79,7 @@ def test_entertainment_short_year():  # 실무형: 일반법인 6개월 사업�
 
 
 # ── 금융소득 ─────────────────────────────────────────────────────────────────
-def test_financial_2024_54():  # 세무사 2024 54번, 정답 ③ 39,500,000원
+def test_financial_2024_54():  # 공개 검증 사례: 세무사 1차 2024-54(정답 ③ 39,500,000원
     r = c("financial_income_aggregate", {"year": 2024, "items": [
         {"kind": "예금이자", "amount": 5_000_000},
         {"kind": "투자신탁환매이익", "amount": 12_000_000, "components": [
@@ -94,7 +94,7 @@ def test_financial_2024_54():  # 세무사 2024 54번, 정답 ③ 39,500,000원
     assert "제외" in json.dumps(find(r["판단"], "장내파생"), ensure_ascii=False)
 
 
-def test_financial_2025_51():  # 세무사 2025 51번, 정답 ③ 40,350,000원
+def test_financial_2025_51():  # 공개 검증 사례: 세무사 1차 2025-51(정답 ③ 40,350,000원
     r = c("financial_income_aggregate", {"year": 2025, "items": [
         {"kind": "외상매출금지급기일연장이자", "amount": 4_000_000},
         {"kind": "소비대차전환이자", "amount": 3_000_000},
@@ -117,15 +117,15 @@ def test_financial_grossup_order():  # 실무형: 이자 먼저 채우고 남은
     assert r["결과"]["합산액"] == 25_500_000
 
 
-# ── 입력 엄격성 (Claude 추가 10-13, 22회차에서 Solar가 사실관계를 뭉뚱그려 넣어 틀린 사례) ──
-def test_strict_unknown_kind_rejected():  # 22회차: kind='대손금'·'외상매출금' 같은 임의 값 → 조용히 0으로 계산하던 문제
+# ── 입력 엄격성 (Claude 추가 10-13 — 모델이 사실관계를 뭉뚱그려 넣은 사례) ──
+def test_strict_unknown_kind_rejected():  # 사례: kind='대손금'·'외상매출금' 같은 임의 값 → 조용히 0으로 계산하던 문제
     r = c("bad_debt_adjustment", {"year": 2024, "sme": False, "book": {"opening": 0, "offset": 0, "provision": 0, "closing": 0},
                                   "receivables_prev_end_book": 1, "receivables_end_book": 1,
                                   "writeoffs": [{"kind": "대손금", "amount": 1, "arose_in": "당기"}]})
     assert "error" in r and "허용값" in r and "결과" not in r
 
 
-def test_strict_missing_facts_rejected():  # 22회차: 의제배당 source 없이, 투자신탁 components 없이 호출 → 잘못된 합산
+def test_strict_missing_facts_rejected():  # 사례: 의제배당 source 없이, 투자신탁 components 없이 호출 → 잘못된 합산
     r = c("financial_income_aggregate", {"year": 2025, "items": [{"kind": "의제배당_잉여금자본전입", "amount": 8_000_000}]})
     assert "error" in r and any("source" in p for p in r["문제"])
     r = c("financial_income_aggregate", {"year": 2024, "items": [{"kind": "투자신탁환매이익", "amount": 12_000_000}]})
