@@ -73,3 +73,9 @@ def test_prepaid_deducted_and_unknown_type_rejected():
     assert r["계산"]["납부세액"] == 2_000_000 and r["결과"]["차가감납부세액"] == 1_500_000
     r = c("simplified_vat_return", {"year": 2025, "business_type": "카페", "supplies": {"total": 80_000_000}, "purchases": {}, "prior_year_supplies": 0, "prepaid_assessed": 0})
     assert "error" in r and "허용값" in r
+
+
+def test_card_credit_rate_2021_2022():  # CodeSolar(PR #11) 지적 후 Claude 확인(10-13): 2021-07~2022도 1.3%·1천만 원(제46조①3호 2021·2022 시행본)
+    r = c("simplified_vat_return", {"year": 2022, "business_type": "음식점업", "supplies": {"total": 60_000_000, "card_receipt_issued": 10_000_000},
+                                    "purchases": {}, "prior_year_supplies": 50_000_000, "prepaid_assessed": 0})
+    assert r["계산"]["신용카드매출전표등발급세액공제"] == 130_000 and r["계산"]["납부세액"] == 900_000
