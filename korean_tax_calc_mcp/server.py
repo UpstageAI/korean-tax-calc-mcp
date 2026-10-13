@@ -1376,6 +1376,211 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
                산식=f"기본한도 = 중소 {기본한도_중소:,}원·일반 {기본한도_일반:,}원 × 월수/12, 수입금액 한도 = 수입금액 구간별 비율을 적용한 금액(+ 특수관계 10%), 문화한도 = min(문화비, 일반한도 × 20%), 한도 = 기본 + 수입금액 + 문화, 한도초과 = 시부인 대상 − 한도")
 
 
+# ───────── 끝에서 끝까지: 의제배당(잉여금 자본전입) ─────────
+# 재원별 허용값·판단 규칙은 facts_vocab.json '의제배당_잉여금자본전입' 항목에서 함께 관리한다.
+def _bonus_share_sources():
+    """어휘 '의제배당_잉여금자본전입.판단.재원별'에서 (과세 제외 재원, 과세 대상 재원) — 코드 상수 없음 (Claude 10-13)"""
+    by = vocab.rule("의제배당_잉여금자본전입", date.today().year)["재원별"]
+    non = tuple(k for k, v in by.items() if v == "의제배당 아님")
+    tax = tuple(k for k, v in by.items() if "Gross-up 대상" in v and "지분율" not in k)
+    return non, tax
+
+
+_NON_TAXABLE_SOURCES, _TAXABLE_SOURCES = _bonus_share_sources()
+
+
+def _corporate_basis(source, has_self_stock_shift):
+    """법인세 납세 주주 대상 근거 조문(법인세법 제16조①2호·3호, 영 제14조①1호가목)."""
+    if source in _TAXABLE_SOURCES:
+        b = "법인세법 제16조①2호" + ("·제16조①3호" if has_self_stock_shift else "")
+    elif source in _NON_TAXABLE_SOURCES:
+        if has_self_stock_shift:
+            b = "법인세법 제16조①3호, 영 제14조①1호가목"
+        else:
+            b = "법인세법 제16조①3호 단서(과세 제외 재원 — 의제배당 아님)"
+    else:
+        b = ""
+    return b
+
+
+def _income_basis(source, shareholder_type, has_self_stock_shift):
+    """소득세법 납세 주주 대상 근거 조문(소득세법 제17조②2호·5호)."""
+    if shareholder_type != "개인":
+        return _corporate_basis(source, has_self_stock_shift)
+    if source in _TAXABLE_SOURCES:
+        b = "소득세법 제17조②2호·제56조" + ("·제17조②5호" if has_self_stock_shift else "")
+    elif source in _NON_TAXABLE_SOURCES:
+        if has_self_stock_shift:
+            b = "소득세법 제17조②5호"
+        else:
+            b = "소득세법 제17조②2호 단서(과세 제외 재원 — 의제배당 아님)"
+    else:
+        b = ""
+    return b
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def deemed_dividend_bonus_shares(
+    year: YEAR,
+    source: Annotated[str, Field(description="재원 — 어휘 '의제배당_잉여금자본전입.판단.재원별' 키: 주식발행초과금·자본준비금·재평가적립금·자기주식처분이익·이익잉여금")],
+    capitalized_amount: WON,
+    par_value: Annotated[int, Field(description="액면가(원/주), 신주 1주의 액면금액")],
+    shareholders: Annotated[list, Field(description="[{name, shares, self_stock?:bool}] — 무상증자 직전 보유주식수, 발행법인 자기주식은 self_stock=true")],
+    self_stock_allotment: Annotated[Literal["다른주주에게교부", "미교부"], Field(description="자기주식 몫의 무상주를 다른 주주에게 교부했는지")],
+    shareholder_type: Annotated[Literal["법인", "개인"], Field(description="주주 구분 — 법인세법 제16조(법인) / 소득세법 제17조(개인) 근거 조문이 다름")],
+) -> dict:
+    """잉여금을 자본에 전입(무상증자)할 때 주주별 의제배당 금액. 언제: 법인이 잉여금을 자본에 전입해 무상주를 발행할 때 주주별 의제배당을 계산한다.
+입력:
+  year — 사업연도(2016~2026).
+  source — 재원(어휘 '의제배당_잉여금자본전입.판단.재원별' 키): 주식발행초과금·자본준비금·재평가적립금(과세 제외), 이익잉여금·자기주식처분이익(과세 대상).
+  capitalized_amount — 자본전입액(원).
+  par_value — 액면가(원/주).
+  shareholders — [{name, shares, self_stock?:bool}]: 무상증자 직전 보유주식수, 발행법인 자기주식은 self_stock=true.
+  self_stock_allotment — '다른주주에게교부' | '미교부': 자기주식 몫 무상주를 다른 주주에게 교부했는지.
+  shareholder_type — '법인' | '개인': 근거 조문(법인세법 제16조 / 소득세법 제17조)이 다름.
+결과: 주주별 {배정주식수, 전입전지분율, 전입후지분율, 의제배당, 과세여부, 근거}, 전입후총주식수, 재원구분, 과세대상합계, 산식.
+  재원 어휘에 없으면 'error' 반환(계산하지 않음)."""
+    source = source.strip()
+    if source not in _NON_TAXABLE_SOURCES and source not in _TAXABLE_SOURCES:
+        return {"error": f"지원하지 않는 재원 '{source}' — facts_vocab.json '의제배당_잉여금자본전입.판단.재원별' 허용값 확인 필요",
+                "허용값": {"과세 제외(의제배당 아님, 단 자기주식 미배정 시 지분율 상승분은 과세)": list(_NON_TAXABLE_SOURCES),
+                           "과세 대상(의제배당·Gross-up 대상)": list(_TAXABLE_SOURCES)}}
+
+    from fractions import Fraction
+
+    taxable_source = source in _TAXABLE_SOURCES
+    total_pre = sum(int(h["shares"]) for h in shareholders)
+    n_new = int(capitalized_amount / par_value)  # 신주 총수
+
+    # 자기주식 정보 추출
+    self_stock_indices = [i for i, h in enumerate(shareholders) if h.get("self_stock")]
+    self_stock_shares = sum(int(shareholders[i]["shares"]) for i in self_stock_indices)
+
+    # 자기주식 몫 신주 (다른주주에게교부면 발행, 미교부면 발행 안 함)
+    if self_stock_allotment == "다른주주에게교부" and self_stock_shares > 0:
+        self_stock_new = (self_stock_shares * n_new) // total_pre  # 정수 배분
+        self_stock_new_rem = Fraction(self_stock_shares * n_new, total_pre) - self_stock_new
+        n_issued_to_others = n_new
+    else:
+        self_stock_new = 0
+        self_stock_new_rem = Fraction(0)
+        n_issued_to_others = n_new - (self_stock_shares * n_new) // total_pre if self_stock_shares > 0 else n_new
+
+    # 전입 후 총 주식수 (미교부면 자기주식 몫 신주 제외)
+    total_post = total_pre + n_issued_to_others
+
+    # 각 주주 배정: 정확한 정수 배분 (Fraction 기반, 나머지 큰 순서로 추가 배정)
+    allotments: list[dict] = []
+    remainders: list[Fraction] = []
+    for i, h in enumerate(shareholders):
+        sh = int(h["shares"])
+        base_allot = (sh * n_new) // total_pre
+        rem = Fraction(sh * n_new, total_pre) - base_allot
+        allotments.append({"index": i, "name": h["name"], "shares": sh,
+                           "proportion": sh / total_pre if total_pre > 0 else 0,
+                           "BaseAllot": base_allot, "self_stock": bool(h.get("self_stock"))})
+        remainders.append(rem)
+
+    # 나머지(절단분) 배정: 나머지 큰 순서로 1주씩
+    total_base = sum(a["BaseAllot"] for a in allotments)
+    extra_needed = n_new - total_base
+    ranked = sorted(range(len(allotments)), key=lambda i: (-remainders[i], allotments[i]["name"]))
+    for j in range(extra_needed):
+        allotments[ranked[j % len(ranked)]]["BaseAllot"] += 1
+
+    # 다른주주에게교부면 자기주식 배정분을 0으로 하고, 자기주식 몫 신주를 다른 주주에게 재분배
+    if self_stock_allotment == "다른주주에게교부":
+        for a in allotments:
+            if a["self_stock"]:
+                a["BaseAllot"] = 0
+        # self_stock_new를 다른 주주의 상대 지분율(other_shares / other_total) 기준으로 재분배
+        other_idxs = [i for i, a in enumerate(allotments) if not a["self_stock"]]
+        other_total = sum(allotments[i]["shares"] for i in other_idxs)
+        if other_total > 0 and self_stock_new > 0:
+            extra_by_idx: dict[int, int] = {}
+            for j, i in enumerate(other_idxs):
+                sh = allotments[i]["shares"]
+                extra_by_idx[i] = (self_stock_new * sh) // other_total
+            extra_sum = sum(extra_by_idx.values())
+            rem = self_stock_new - extra_sum
+            # 나머지(절단분)는 상대 지분율이 큰 순서로 1주씩
+            if rem > 0:
+                order = sorted(other_idxs, key=lambda i: (-allotments[i]["shares"] / other_total, allotments[i]["name"]))
+                for k in range(rem):
+                    allotments[order[k % len(order)]]["BaseAllot"] += 1
+            for i, extra in extra_by_idx.items():
+                allotments[i]["BaseAllot"] += extra
+
+    # 전입 전·후 지분율 및 의제배당 계산
+    result_list = []
+    taxable_total = 0
+    for a in allotments:
+        name = a["name"]
+        allot = a["BaseAllot"]
+        prop_pre = a["proportion"]
+        prop_post = (a["shares"] + allot) / total_post if total_post > 0 else 0
+
+        deemed_div = 0
+        taxable = False
+        if taxable_source:
+            deemed_div = allot * par_value  # 받은 주식 수 × 액면가
+            taxable = True
+        else:
+            # 과세 제외 재원 + 자기주식 존재 + 다른주주에게교부/미교부 →
+            # 다른 주주의 지분율 상승분에 대해 의제배당 과세 (법인세법 제16조①3호 / 소득세법 제17조②5호)
+            if self_stock_shares > 0 and not a["self_stock"]:
+                # share_val = (전입후지분율 − 전입전지분율) × total_post × par_value
+                #           = [(shares+allot)/total_post − shares/total_pre] × total_post × par_value
+                #           = par_value × [(shares+allot)×total_pre − shares×total_post] ÷ total_pre  (정수 계산)
+                shift_num = (a["shares"] + allot) * total_pre - a["shares"] * total_post
+                share_val = (par_value * shift_num) // total_pre
+                if share_val > 0:
+                    deemed_div += share_val
+                    taxable = True
+
+        taxable_total += deemed_div
+
+        basis = _income_basis(source, shareholder_type, taxable)
+        result_list.append({
+            "name": name,
+            "배정주식수": allot,
+            "전입전지분율": round(prop_pre * 100, 4),
+            "전입후지분율": round(prop_post * 100, 4),
+            "의제배당": deemed_div,
+            "과세여부": "과세" if taxable else "의제배당 아님",
+            "근거": basis,
+        })
+
+    # 산식 문자열
+    if taxable_source:
+        calc_formula = (f"신주 총수 = 자본전입액 ÷ 액면가 = {capitalized_amount:,} ÷ {par_value} = {n_new:,}주; "
+                        f"각 주주 배정 = 신주 총수 × 지분율(자기주식 포함 총 {total_pre:,}주 기준); "
+                        f"자기주식 몫 {'발행 후 다른 주주에게 교부' if self_stock_allotment == '다른주주에게교부' else '미발행'}; "
+                        f"의제배당 = 배정주식수 × 액면가 (재원 {source} = 과세 대상, 법인세법 제16조①2호 / 소득세법 제17조②2호)")
+    else:
+        if self_stock_shares > 0:
+            calc_formula = (f"신주 총수 = {capitalized_amount:,} ÷ {par_value} = {n_new:,}주; "
+                            f"자기주식 {self_stock_shares:,}주 {'미발행(미교부)' if self_stock_allotment == '미교부' else '발행 후 다른 주주에게 교부(다른주주에게교부)'}; "
+                            f"발행 총수 = {n_issued_to_others:,}주; "
+                            f"전입 후 총 주식수(자기주식 {'제외' if self_stock_allotment == '미교부' else '포함'}) = {total_post:,}주; "
+                            f"각 주주 의제배당 = (전입 후 지분율 − 전입 전 지분율) × 전입 후 총 주식수{('(자기주식 제외)' if self_stock_allotment == '미교부' else '')} × 액면가 "
+                            f"(법인세법 제16조①3호 / 소득세법 제17조②5호, 영 제14조①1호가목 — 액면가액)")
+        else:
+            calc_formula = (f"신주 총수 = {capitalized_amount:,} ÷ {par_value} = {n_new:,}주; "
+                            f"재원 {source} = 과세 제외(주식발행초과금·자본준비금·재평가적립금) → 의제배당 없음; "
+                            f"자기주식 없음 → 지분율 상승분 없음 → 전원 의제배당 0")
+
+    result = {
+        "주주별": result_list,
+        "전입후총주식수": total_post,
+        "재원구분": "과세 대상" if taxable_source else "과세 제외",
+        "과세대상합계": taxable_total,
+        "산식": calc_formula,
+    }
+    return _ok(result, _income_basis(source, shareholder_type, taxable_source))
+
+
 @mcp.tool(annotations=CALC)
 @_guard
 def financial_income_aggregate(year: YEAR,

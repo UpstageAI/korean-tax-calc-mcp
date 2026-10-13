@@ -421,7 +421,8 @@
     "감자·해산 의제배당"
    ],
    "도구": {
-    "financial_income_aggregate": "kind+source"
+    "financial_income_aggregate": "kind+source",
+    "deemed_dividend_bonus_shares": "kind+source"
    },
    "적용": [
     {
