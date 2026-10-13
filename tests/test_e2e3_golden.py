@@ -78,3 +78,10 @@ def test_missing_required_fact_rejected():  # 직무발명보상금_퇴직후는
     assert "error" in r
     r = c("other_income_aggregate", {"year": 2025, "items": [{"kind": "복권당첨금", "amount": 4_000_000}]})
     assert "error" in r and "허용값" in r
+
+
+def test_inconsistent_facts_rejected():  # CodeSolar 리뷰(PR #9) 회귀 (Claude 추가 10-13): 몰수액·계약금 대체액이 총액을 넘으면 계산하지 않음
+    r = c("other_income_aggregate", {"year": 2025, "items": [{"kind": "뇌물", "amount": 1_000_000, "forfeited": 2_000_000}]})
+    assert "error" in r
+    r = c("other_income_aggregate", {"year": 2025, "items": [{"kind": "위약금·배상금", "amount": 1_000_000, "deposit_substituted": 2_000_000}]})
+    assert "error" in r
