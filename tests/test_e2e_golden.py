@@ -202,3 +202,15 @@ def test_financial_taxable_source_with_self_stock_shift():  # 과세 재원 무�
         {"kind": "예금이자", "amount": 20_000_000}]})
     k = r["계산"]
     assert k["배당(Gross-up 대상)"] == 8_000_000 and k["배당(Gross-up 비대상)"] == 2_000_000
+
+
+def test_excluded_source_requires_self_stock_shift():  # Claude 10-13 (24회차 2025-51): 과세 제외 재원이면 자기주식 미배정 상승분을 명시해야 계산
+    r = c("financial_income_aggregate", {"year": 2025, "items": [{"kind": "의제배당_잉여금자본전입", "amount": 8_000_000, "source": "주식발행초과금"}]})
+    assert "error" in r and any("self_stock_shift" in p for p in r["문제"])
+    r = c("financial_income_aggregate", {"year": 2025, "items": [
+        {"kind": "소비대차전환이자", "amount": 3_000_000}, {"kind": "외상매출금지급기일연장이자", "amount": 4_000_000},
+        {"kind": "파생결합사채이익", "amount": 4_500_000},
+        {"kind": "의제배당_잉여금자본전입", "amount": 8_000_000, "source": "주식발행초과금", "self_stock_shift": 3_500_000},
+        {"kind": "의제배당_잉여금자본전입", "amount": 10_000_000, "source": "자기주식처분이익"},
+        {"kind": "인정배당", "amount": 17_500_000}]})
+    assert r["결과"]["합산액"] == 40_350_000       # 공개 검증 사례 2025-51 정답 ③

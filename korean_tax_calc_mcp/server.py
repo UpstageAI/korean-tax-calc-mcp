@@ -1524,6 +1524,7 @@ def deemed_dividend_bonus_shares(
         basis = _income_basis(source, shareholder_type, taxable)
         result_list.append({
             "name": name,
+            "의제배당": deemed_div,                # Claude 10-13: 답은 이 값. 지분율은 참고(24회차 2024-64 — 모델이 지분율 차이로 다시 계산해 오답)
             "배정주식수": allot,
             "전입전지분율": round(prop_pre * 100, 4),
             "전입후지분율": round(prop_post * 100, 4),
@@ -1552,6 +1553,7 @@ def deemed_dividend_bonus_shares(
                             f"자기주식 없음 → 지분율 상승분 없음 → 전원 의제배당 0")
 
     result = {
+        "주주별_의제배당": {r["name"]: r["의제배당"] for r in result_list},   # 요약: 이 숫자가 각 주주의 의제배당(원). 두 사례 비교는 이 값끼리 뺄 것
         "주주별": result_list,
         "전입후총주식수": total_post,
         "재원구분": "과세 대상" if taxable_source else "과세 제외",
@@ -1593,6 +1595,10 @@ def financial_income_aggregate(year: YEAR,
     _extra = [f"항목 {i+1}(저축성보험차익): 계약 {year - int(it.get('contract_year'))}년 유지 — 비과세 요건(시행령 제25조: 납입 한도·월적립식 등) 충족 여부를 'exempt_conditions_met'(true/false)로 입력 필요"
               for i, it in enumerate(items or []) if isinstance(it, dict) and it.get("kind") == "저축성보험차익" and it.get("contract_year")
               and year - int(it.get("contract_year")) >= 10 and it.get("exempt_conditions_met") is None]
+    _excl = tuple(k for k, v in vocab.rule("의제배당_잉여금자본전입", year)["재원별"].items() if v == "의제배당 아님")
+    _extra += [f"항목 {i+1}(의제배당_잉여금자본전입, {it.get('source')}): 과세 제외 재원이라 무상주 자체는 의제배당이 아니지만, 법인이 자기주식을 보유해 다른 주주의 지분율이 오른 부분은 의제배당(소득세법 제17조②5호, Gross-up 비대상) — 그 금액을 'self_stock_shift'로 입력 필요(없으면 0)"
+               for i, it in enumerate(items or []) if isinstance(it, dict) and it.get("kind") == "의제배당_잉여금자본전입"
+               and it.get("source") in _excl and it.get("self_stock_shift") is None]   # Claude 10-13: 24회차 2025-51 — 상승분 누락으로 오답
     _v = _validate_items(items, "kind", _specs_from_vocab("financial_income_aggregate", "kind"), extra=_extra)
     if _v: return _v
 
