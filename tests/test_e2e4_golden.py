@@ -79,3 +79,10 @@ def test_card_credit_rate_2021_2022():  # CodeSolar(PR #11) 지적 후 Claude �
     r = c("simplified_vat_return", {"year": 2022, "business_type": "음식점업", "supplies": {"total": 60_000_000, "card_receipt_issued": 10_000_000},
                                     "purchases": {}, "prior_year_supplies": 50_000_000, "prepaid_assessed": 0})
     assert r["계산"]["신용카드매출전표등발급세액공제"] == 130_000 and r["계산"]["납부세액"] == 900_000
+
+
+def test_penalty_survives_exemption():  # CodeSolar(PR #11 2차) 후 Claude 확인: 납부의무 면제(제69조①)여도 미수취 가산세(제68조의2②)는 별도 — 제69조②는 미등록 가산세만 배제
+    r = c("simplified_vat_return", {"year": 2025, "business_type": "소매업", "supplies": {"total": 40_000_000},
+                                    "purchases": {"no_tax_invoice_from_issuer": 2_200_000}, "prior_year_supplies": 50_000_000, "prepaid_assessed": 0})
+    assert r["결과"]["납부의무면제"] is True and r["계산"]["납부세액"] == 0
+    assert r["계산"]["세금계산서미수취가산세"] == 11_000 and r["결과"]["차가감납부세액"] == 11_000
