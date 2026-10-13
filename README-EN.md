@@ -6,9 +6,9 @@
 
 [![PyPI](https://img.shields.io/pypi/v/korean-tax-calc-mcp)](https://pypi.org/project/korean-tax-calc-mcp/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-korean--tax--calc--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=korean-tax-calc-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Built with Upstage Solar Pro 4](https://img.shields.io/badge/Built%20with-Upstage%20Solar%20Pro%204-7A3FF2)](https://www.upstage.ai/) · [한국어](README.md)
 
-> **Developed with Upstage Solar Pro 4 since 0.3.0** (0.2.1 and earlier predate it). 2026 corporate tax rates, non-resident withholding (`nonresident_withholding`) and thin capitalization (`thin_capitalization`) were written by Solar Pro 4 (Solar Code CLI), reviewed on each PR by CodeSolar (Solar Pro 4-based code review) and cross-checked with tests by Claude. **0.4.0: merged 11 tax audit judgment tools. 0.5.1: added precheck_schema (input schema for tax return precheck), expanded simplified-taxpayer and deemed-input-tax scenarios, refreshed descriptions — now 41 tools.**
+> **Developed with Upstage Solar Pro 4 since 0.3.0** (0.2.1 and earlier predate it). 2026 corporate tax rates, non-resident withholding (`nonresident_withholding`) and thin capitalization (`thin_capitalization`) were written by Solar Pro 4 (Solar Work CLI), reviewed on each PR by CodeSolar (Solar Pro 4-based code review) and cross-checked with tests by Claude. **0.4.0: merged 11 tax audit judgment tools. 0.5.1: added precheck_schema (input schema for tax return precheck), expanded simplified-taxpayer and deemed-input-tax scenarios, refreshed descriptions — now 41 tools. 0.6.0: three end-to-end calculators (bad debt, entertainment, financial income) that take raw facts and return item judgments → tax-basis adjustments → intermediate values → adjustments, plus a fact-type vocabulary (`data/facts_vocab.json`) that supplies accepted values, per-period thresholds and aliases — 44 tools.**
 
-**Korean (South Korea) tax calculations for AI agents — code, not guesses.** LLMs often get tax arithmetic wrong. This MCP server computes in code and cites the statute behind every result. It uses year-by-year rate tables (2016–2026); for a year without a verified table it returns an error instead of estimating. 41 tools (29 computation + 12 tax audit judgment). Nothing sent outside your machine for the 29 computation tools.
+**Korean (South Korea) tax calculations for AI agents — code, not guesses.** LLMs often get tax arithmetic wrong. This MCP server computes in code and cites the statute behind every result. It uses year-by-year rate tables (2016–2026); for a year without a verified table it returns an error instead of estimating. 44 tools (32 computation + 12 tax audit judgment). Nothing sent outside your machine for the 32 computation tools.
 
 ## Try asking
 
@@ -41,6 +41,9 @@ Pair it with [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp) to go
 |---|---|---|
 | `corporate_tax` | Corporate income tax (incl. short fiscal years) | CITA Art. 55 |
 | `entertainment_limit` | Business entertainment expense limit and excess | CITA Art. 25 |
+| `entertainment_adjustment` | **End-to-end** entertainment-expense adjustment from raw spending items: evidence judgment per item (no evidence → representative bonus; non-qualified receipt → other outflow), limit and excess; covers 접대비 (pre-2024 name) | CITA Art. 25; Enforcement Decree Arts. 41, 42 |
+| `bad_debt_adjustment` | **End-to-end** bad-debt and allowance adjustment: recognition per write-off reason (statute of limitation, settlement, 6-month default, uncollectible, SME receivables, memo value), tax-basis receivables, loss rate, limit, adjustments | CITA Arts. 19-2, 34; Decree Arts. 19-2, 61 |
+| `financial_income_aggregate` | **End-to-end** financial income for global taxation: per-item interest/dividend/excluded judgment, Gross-up eligibility, 20M threshold, Gross-up amount | ITA Arts. 14, 16, 17, 56 |
 | `deemed_interest` | Deemed interest on shareholder loans (daily balances, 300M/5% test) | CITA Art. 52; Decree Art. 89 |
 | `unfair_transaction` | Unfair related-party transaction threshold (300M/5% gap from market price) | CITA Decree Art. 88(3) |
 | `loss_carryforward_limit` | Loss carryforward deduction limit rate | CITA Art. 13 |

@@ -6,9 +6,9 @@
 
 [![PyPI](https://img.shields.io/pypi/v/korean-tax-calc-mcp)](https://pypi.org/project/korean-tax-calc-mcp/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-korean--tax--calc--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=korean-tax-calc-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Built with Upstage Solar Pro 4](https://img.shields.io/badge/Built%20with-Upstage%20Solar%20Pro%204-7A3FF2)](https://www.upstage.ai/) · [English](README-EN.md)
 
-> **0.3.0부터 업스테이지 Solar Pro 4로 개발합니다.** (0.2.1까지는 Solar Pro 4 이전 개발분) 2026년 법인세율, 비거주자 원천징수(`nonresident_withholding`), 과소자본(`thin_capitalization`)은 Solar Pro 4(Solar Code CLI)가 코드를 작성하고, Solar Pro 4 기반 코드 리뷰(CodeSolar)가 PR을 검토했으며, Claude가 테스트로 교차 검증했습니다. **0.4.0: 세무조사 판정 도구 11개 통합. 0.5.1: precheck_schema 추가·41개 도구로 확대, description·인자 설명 전면 정비.**
+> **0.3.0부터 업스테이지 Solar Pro 4로 개발합니다.** (0.2.1까지는 Solar Pro 4 이전 개발분) 2026년 법인세율, 비거주자 원천징수(`nonresident_withholding`), 과소자본(`thin_capitalization`)은 Solar Pro 4(Solar Work CLI)가 코드를 작성하고, Solar Pro 4 기반 코드 리뷰(CodeSolar)가 PR을 검토했으며, Claude가 테스트로 교차 검증했습니다. **0.4.0: 세무조사 판정 도구 11개 통합. 0.5.1: precheck_schema 추가·41개 도구로 확대, description·인자 설명 전면 정비. 0.6.0: 원래 사실관계를 받아 항목 판단→세법상 금액 조정→중간 계산→세무조정까지 돌려주는 끝에서 끝까지 계산기 3종(대손충당금·기업업무추진비·금융소득)과 사실관계 어휘(`data/facts_vocab.json`: 허용값·기간별 기준·별칭을 파일에서 읽음) — 44개 도구.**
 
-**Korean tax calculations for AI agents — code, not guesses.** Corporate tax, entertainment limits, deemed interest, penalties, limitation periods, withholding, income tax and VAT, using year-by-year rate tables (2016–2026). Each result cites its statute. Years without a verified table stop with an error instead of estimating. 41 tools (29 computation + 12 tax audit judgment) — → [English README](README-EN.md)
+**Korean tax calculations for AI agents — code, not guesses.** Corporate tax, entertainment limits, deemed interest, penalties, limitation periods, withholding, income tax and VAT, using year-by-year rate tables (2016–2026). Each result cites its statute. Years without a verified table stop with an error instead of estimating. 44 tools (32 computation + 12 tax audit judgment) — → [English README](README-EN.md)
 
 ---
 
@@ -54,6 +54,9 @@ Claude Code: `claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp`
 |---|---|---|
 | `corporate_tax` | 법인세 산출세액 (1년 미만 사업연도 포함) | 법인세법 제55조 |
 | `entertainment_limit` | 기업업무추진비 한도·한도초과 | 법인세법 제25조 |
+| `entertainment_adjustment` | **끝에서 끝까지** 기업업무추진비 세무조정: 지출 건별 증빙 판단(증빙 없음→대표자상여, 적격증빙 미수취→기타사외유출), 한도·한도초과. 접대비(2023년 이전) 포함 | 법인세법 제25조, 영 제41조·제42조 |
+| `bad_debt_adjustment` | **끝에서 끝까지** 대손금·대손충당금 세무조정: 대손 사유별 인정·부인(소멸시효·화해·부도 6개월·회수불능, 중소기업 외상매출금, 비망가액), 세법상 채권·대손실적률·한도·세무조정 | 법인세법 제19조의2·제34조, 영 제19조의2·제61조 |
+| `financial_income_aggregate` | **끝에서 끝까지** 종합소득 합산 금융소득: 항목별 이자·배당·제외 판단, Gross-up 대상, 2천만 원 기준, 배당가산액 | 소득세법 제14조·제16조·제17조·제56조 |
 | `deemed_interest` | 가지급금 인정이자 (적수, 3억·5% 판정) | 법인세법 제52조, 영 제89조 |
 | `unfair_transaction` | 부당행위계산 기준 (시가 차이 3억·5%) | 영 제88조③ |
 | `loss_carryforward_limit` | 이월결손금 공제 한도율 | 법인세법 제13조 |
@@ -104,7 +107,7 @@ Claude Code: `claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp`
 ## 면책 및 고지
 
 - **면책:** 이 도구의 결과는 세무 자문이 아닙니다. 법령·해석을 바탕으로 계산·판정 과정을 보여 주는 참고 자료이며, 실제 신고·세무조사·불복 판단은 세무사·회계사·변호사 등 전문가에게 확인하세요. 근거 조문·판례는 원문으로 확인하세요.
-- **AI 사용 고지:** 계산·판정 도구 29개는 코드로 동작하며 생성형 AI를 쓰지 않습니다. PDF 검토 도구 3개(`extract_relations`, `tunnelling_from_pdf`, `return_precheck_pdf`)는 UPSTAGE_API_KEY가 있으면 생성형 AI(Upstage Solar Pro 4)로 표를 추출하며 결과에 그 사실을 표시합니다. 키가 없으면 pypdf로 로컬 텍스트 추출(host_ai 모드) 후 정리 안내에 따라 다음 도구 입력으로 직접 정리할 수 있습니다.
+- **AI 사용 고지:** 계산·판정 도구 32개는 코드로 동작하며 생성형 AI를 쓰지 않습니다. PDF 검토 도구 3개(`extract_relations`, `tunnelling_from_pdf`, `return_precheck_pdf`)는 UPSTAGE_API_KEY가 있으면 생성형 AI(Upstage Solar Pro 4)로 표를 추출하며 결과에 그 사실을 표시합니다. 키가 없으면 pypdf로 로컬 텍스트 추출(host_ai 모드) 후 정리 안내에 따라 다음 도구 입력으로 직접 정리할 수 있습니다.
 - **데이터 전송:** UPSTAGE_API_KEY를 설정해 PDF 도구를 사용할 때만 문서 내용이 Upstage API(api.upstage.ai)로 전송됩니다. 키 없이 사용하면(pypdf 로컬 추출) 외부 전송이 없습니다. 민감정보가 담긴 문서는 API 전송 시 넣지 마세요.
 
 ## 유의
@@ -112,7 +115,7 @@ Claude Code: `claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp`
 - 계산 결과는 검토 보조 자료이며 세무 자문이 아닙니다. 신고 전 원문 조문과 확인하세요.
 - 지방소득세는 별도입니다.
 - 세율표가 검증되지 않은 연도는 계산하지 않고 오류를 돌려줍니다.
-- **데이터 전송 안내** — 계산·판정 도구 29개는 설치한 컴퓨터 안에서 코드로 처리하며 외부 API로 전송하는 내용은 없습니다. PDF 도구 3개만 Upstage API로 문서를 전송합니다.
+- **데이터 전송 안내** — 계산·판정 도구 32개는 설치한 컴퓨터 안에서 코드로 처리하며 외부 API로 전송하는 내용은 없습니다. PDF 도구 3개만 Upstage API로 문서를 전송합니다.
 
 ## 지원 연도
 
