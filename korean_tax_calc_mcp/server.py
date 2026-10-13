@@ -1030,6 +1030,7 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
     prior_year_reduced = 0        # 전기 사유 신고조정 대손 → 전기말 채권 차감
     denied_bad_debt = 0           # 당기 부인 대손 합계
     current_disallowed_entries = []  # 당기 손금불산입(유보) 항목
+    memo_count = 0                   # 비망가액 1,000원을 공제한 부도6개월 채권 수 (CodeSolar 리뷰 반영)
 
     for w in writeoffs:
         kind = w["kind"]; amount = int(w["amount"]); arose_in = w["arose_in"]
@@ -1070,7 +1071,7 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
                 current_disallowed_entries.append({"구분": "부인 대손(저당권)", "금액": amount, "소득처분": "유보"})
             elif instrument == "받을어음":
                 # 받을어음: 중소기업·일반 모두 인정 (비망 1,000원 공제)
-                recognized = max(0, amount - 1000)
+                recognized = max(0, amount - 1000); memo_count += 1
                 tax_bad_debt_recognized += recognized
                 judgments.append({"항목": f"부도6개월 받을어음 {amount:,}원",
                                   "결론": f"인정(대손금, 비망 1,000원 공제 → {recognized:,}원)",
@@ -1079,7 +1080,7 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
             elif instrument == "외상매출금":
                 if sme:
                     # 중소기업: 부도 이전 발생 외상매출금 인정 (비망 1,000원 공제)
-                    recognized = max(0, amount - 1000)
+                    recognized = max(0, amount - 1000); memo_count += 1
                     tax_bad_debt_recognized += recognized
                     judgments.append({"항목": f"부도6개월 외상매출금 {amount:,}원(중소기업)",
                                       "결론": f"인정(대손금, 비망 1,000원 공제 → {recognized:,}원)",
@@ -1096,7 +1097,7 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
             else:
                 # instrument 미지정 기타
                 if sme:
-                    recognized = max(0, amount - 1000)
+                    recognized = max(0, amount - 1000); memo_count += 1
                     tax_bad_debt_recognized += recognized
                     judgments.append({"항목": f"부도6개월 기타 {amount:,}원(중소기업)", "결론": f"인정(비망 1,000원 공제 → {recognized:,}원)",
                                       "금액": recognized, "근거": "법인세법 제19조의2·시행령 제19조의2"})
@@ -1115,12 +1116,7 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
     # 세법상 당기말 채권 = 장부 당기말 + 부인 채권 + 비망가액
     # (부인 채권 = 인정되지 않은 대손금, 비망가액은 인식된 부도6개월 채권의 1,000원)
     # 비망가액 합계 계산 필요 — 인정된 부도6개월 채권별 1,000원
-    reservation_total = 0
-    for w in writeoffs:
-        if w["kind"] == "부도6개월" and w.get("instrument") in ("받을어음", "외상매출금"):
-            if (w.get("instrument") == "받을어음") or (w.get("instrument") == "외상매출금" and sme):
-                if not w.get("mortgage"):
-                    reservation_total += 1000
+    reservation_total = memo_count * 1000   # 인정된 부도6개월 채권별 비망가액(판단 단계에서 센 수)
     # 부인 채권: 인정되지 않은 writeoff
     tax_receivables_end = receivables_end_book + denied_bad_debt + reservation_total
 
@@ -1259,11 +1255,11 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
         congratulatory = e.get("congratulatory", False)
         if evidence == "적격":
             si_bu_shin += amount
-        elif evidence == "영수증 등" and not over_30k:
-            si_bu_shin += amount
-        elif evidence == "영수증 등" and over_30k:
-            # over_30k=True → 한도 대상 아님 (이미 no_qual_total에 포함)
-            pass
+        elif evidence == "영수증 등":
+            # 판단 단계와 같은 기준: 건당 기준(경조금 20만·일반 3만) 이하면 한도 시부인 대상 (CodeSolar 리뷰 반영)
+            limit_amount = 200_000 if congratulatory else 30_000
+            if (not over_30k) or amount <= limit_amount:
+                si_bu_shin += amount
         # "없음"은 한도 대상 아님
 
     culture_total = sum(int(e["amount"]) for e in expenses if e.get("culture") and e.get("evidence") == "적격")
