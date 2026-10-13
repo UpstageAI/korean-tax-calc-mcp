@@ -227,6 +227,34 @@ class GroupExemptEntry(BaseModel):
     통지내용: str
 
 
+# ── 끝에서 끝까지 계산기 공용 입력 검증 (Claude 10-13): 모르는 kind·빠진 사실관계는 조용히 기본값으로 계산하지 않고 바로 돌려보낸다 ──
+def _validate_items(items, field, specs, extra=None):
+    """items: 목록, field: 종류 필드명, specs: {종류: {"필요": [필드...], "허용": {필드: [값...]}, "설명": str}}.
+    문제가 있으면 {"error", "문제", "허용값", "안내"} 반환, 없으면 None."""
+    problems = []
+    if not isinstance(items, list) or not items:
+        problems.append(f"{field} 목록이 비어 있음")
+    for i, it in enumerate(items or []):
+        k = (it or {}).get(field)
+        if k not in specs:
+            problems.append(f"항목 {i+1}: {field}='{k}' 은(는) 지원하지 않음")
+            continue
+        sp = specs[k]
+        for need in sp.get("필요", []):
+            if it.get(need) in (None, "", []):
+                problems.append(f"항목 {i+1}({k}): '{need}' 입력 필요 — {sp.get('설명', '')}")
+        for f, allowed in sp.get("허용", {}).items():
+            if it.get(f) is not None and it.get(f) not in allowed:
+                problems.append(f"항목 {i+1}({k}): {f}='{it.get(f)}' 은(는) {allowed} 중 하나여야 함")
+    if extra:
+        problems += extra
+    if not problems:
+        return None
+    return {"error": "입력 확인 필요 — 계산하지 않음", "문제": problems,
+            "허용값": {k: {"필요": v.get("필요", []), "허용": v.get("허용", {}), "설명": v.get("설명", "")} for k, v in specs.items()},
+            "안내": "문제·장부에 적힌 사실관계를 위 허용값의 종류로 나눠 다시 호출하세요. 한 금액에 두 성격이 섞여 있으면 항목을 나누세요."}
+
+
 def _ok(r, basis, **extra):
     return {"결과": r, "근거": basis, **extra}
 
@@ -989,6 +1017,13 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
     대손실적률 소수 자릿수(기본 3) → loss_rate_digits.
     결과: 판단(항목별·근거)·계산(세법상 당기 대손금·전기말·당기말 채권·실적률)·결과(한도·한도초과)·세무조정. 대손금·대손충당금 세무조정."""
 
+    _v = _validate_items(writeoffs, "kind", {
+        "소멸시효완성": {"필요": ["amount", "arose_in"], "허용": {"arose_in": ["전기", "당기"]}, "설명": "상법·민법 등 소멸시효가 완성된 채권(신고조정 — 완성된 사업연도 손금)"},
+        "화해·확정판결": {"필요": ["amount", "arose_in"], "허용": {"arose_in": ["전기", "당기"]}, "설명": "확정판결·화해·조정 등으로 회수불능이 확정된 채권(신고조정)"},
+        "부도6개월": {"필요": ["amount", "arose_in", "instrument", "months_since_default"], "허용": {"arose_in": ["전기", "당기"], "instrument": ["외상매출금", "받을어음", "기타"]}, "설명": "부도발생일부터 6개월 이상 지난 어음·수표·외상매출금(결산조정, 외상매출금은 중소기업만, 저당권 설정 시 제외, 1,000원 비망)"},
+        "회수불능": {"필요": ["amount", "arose_in"], "허용": {"arose_in": ["전기", "당기"]}, "설명": "파산·강제집행·사업폐지·사망 등으로 회수할 수 없는 채권(결산조정)"},
+    })
+    if _v: return _v
     # ── 대손금 인정 판단 ──
     judgments = []  # 항목별 판단
     tax_bad_debt_recognized = 0   # 세법상 당기 대손금(인정분)
@@ -1147,6 +1182,12 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
     지출 목록 [{amount(원), evidence:'없음'|'영수증 등'|'적격', over_30k?:bool(기본 true), congratulatory?:bool, culture?:bool}] → expenses.
     결과: 판단(항목별·근거)·결과(한도·한도초과)·세무조정(구분·금액·소득처분). 기업업무추진비 세액공제."""
 
+    _v = _validate_items(expenses, "evidence", {
+        "없음": {"필요": ["amount"], "설명": "지출 증빙이 전혀 없는 건(손금불산입·대표자상여)"},
+        "영수증 등": {"필요": ["amount"], "설명": "영수증 등은 있으나 세금계산서·신용카드 등 적격증명서류가 아닌 건(건당 3만 원·경조금 20만 원 초과면 손금불산입·기타사외유출)"},
+        "적격": {"필요": ["amount"], "설명": "적격증명서류(세금계산서·계산서·신용카드·현금영수증) 수취 건(한도 시부인 대상)"},
+    })
+    if _v: return _v
     limit_base_amount = 36_000_000 if sme else 12_000_000  # 2020 이후 기본한도
 
     # ── 항목별 증빙 판정 ──
@@ -1257,6 +1298,21 @@ def financial_income_aggregate(year: YEAR,
     입력: 귀속연도(2016~2026) → year, 금융소득 항목 목록 [{kind, amount, ...}] → items.
     결과: 판단(항목별 이자/배당/제외·Gross-up 대상 여부)·결과(이자소득금액·배당소득금액·합산액)·계산(중간값). 금융소득 종합과세·배당가산."""
 
+    _v = _validate_items(items, "kind", {
+        "예금이자": {"필요": ["amount"], "설명": "예·적금 이자"},
+        "비영업대금이익": {"필요": ["amount"], "설명": "금전 대여 이자(사업이 아닌 대여)"},
+        "소비대차전환이자": {"필요": ["amount"], "설명": "외상매출금 등이 소비대차(금전 대여)로 전환된 뒤 발생한 이자 — 지급기일 연장이자와 분리해 따로 넣을 것"},
+        "외상매출금지급기일연장이자": {"필요": ["amount"], "설명": "물품 대금 지급기일을 연장해 주고 받는 이자(사업소득, 금융소득 아님) — 소비대차 전환분은 제외한 금액"},
+        "투자신탁환매이익": {"필요": ["amount", "components"], "설명": "집합투자기구 이익. components=[{asset:'상장주식'|'비상장주식'|'채권'|'기타', gain}]로 자산별 손익을 반드시 나눠 줄 것(상장주식 손익 제외)"},
+        "파생결합사채이익": {"필요": ["amount"], "설명": "파생결합사채(ELB 등) 분배금(배당소득, Gross-up 비대상)"},
+        "장내파생상품": {"필요": ["amount"], "설명": "장내파생상품 거래 이익(양도소득, 금융소득 아님)"},
+        "상장법인현금배당": {"필요": ["amount"], "설명": "상장 내국법인 현금배당(Gross-up 대상)"},
+        "비상장법인현금배당": {"필요": ["amount"], "설명": "비상장 내국법인 현금배당(Gross-up 대상)"},
+        "의제배당_잉여금자본전입": {"필요": ["amount", "source"], "허용": {"source": ["주식발행초과금", "자본준비금", "재평가적립금", "자기주식처분이익", "이익잉여금"]}, "설명": "잉여금 자본전입 무상주. source(재원) 필수. 자기주식 미배정으로 지분율이 오른 부분이 있으면 self_stock_shift에 그 금액"},
+        "인정배당": {"필요": ["amount"], "설명": "법인세법상 배당으로 소득처분된 금액(Gross-up 대상)"},
+        "저축성보험차익": {"필요": ["premium", "payout", "contract_year"], "설명": "보험차익. premium(납입보험료)·payout(수령액)·contract_year(계약연도) 필수, 종신형 연금이면 annuity=true"},
+    })
+    if _v: return _v
     # Claude 재작성(10-13): 항목 판단 → 이자/배당/제외·Gross-up 대상 → 2천만 원 기준 → Gross-up
     rate = 0.11 if year <= 2023 else 0.10
     판단, inc, div_n, div_g, exc = [], 0, 0, 0, 0
