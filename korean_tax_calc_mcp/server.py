@@ -4,6 +4,7 @@
 결과마다 근거 조문을 붙인다. 근거 원문은 korean-tax-mcp(law_article)로 확인한다.
 """
 import functools
+import math
 import os
 from datetime import date
 from typing import Annotated, Literal
@@ -961,6 +962,369 @@ def _infer_unit(desc: str) -> str:
 def return_precheck_pdf(pdf_path: Annotated[str, Field(description="PDF 파일 경로")]) -> dict:
     from .audit.agents import return_intake
     return _add_ai_mark(return_intake.precheck_pdf(pdf_path))
+
+
+# ───────── 끝에서 끝까지 계산기 시범 3종 ─────────
+
+def _loss_rate_floor(rate: float, digits: int = 3) -> float:
+    """대손실적률 소수 자릿수 절사(넷째 자리 이하 버림)."""
+    return math.floor(rate * 10 ** digits) / 10 ** digits
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중소기업 여부")],
+                        book: Annotated[dict, Field(description='장부상 대손충당금 {opening: 기초, offset: 당기상계, provision: 당기설정, closing: 기말}(원)')],
+                        receivables_prev_end_book: WON,
+                        receivables_end_book: WON,
+                        writeoffs: Annotated[list, Field(description="대손금 목록 [{kind, amount, arose_in:'전기'|'당기', instrument?:'외상매출금'|'받을어음'|'기타', months_since_default?, mortgage?:bool}]")],
+                        prior_excess: Annotated[int, Field(description="전기 대손충당금 한도초과액(원)")] = 0,
+                        loss_rate_digits: Annotated[int, Field(description="대손실적률 소수 자릿수(기본 3 — 넷째 자리 이하 절사)")] = 3) -> dict:
+    """대손금·대손충당금 세무조정(법인세법 제19조의2·제34조, 시행령 제19조의2·제61조).
+    언제: 법인세 세무조정에서 대손금 인정 여부와 대손충당금 한도·국회초과를 함께 계산할 때.
+    입력: 사업연도(2016~2026) → year, 중소기업 여부 → sme, 전기 대손충당금 한도초과액(원) → prior_excess,
+    장부상 대손충당금 {opening, offset, provision, closing}(원) → book,
+    장부상 설정대상 채권 전기말·당기말(원) → receivables_prev_end_book·receivables_end_book,
+    대손금 목록 [{kind, amount, arose_in, instrument?, months_since_default?, mortgage?}] → writeoffs,
+    대손실적률 소수 자릿수(기본 3) → loss_rate_digits.
+    결과: 판단(항목별·근거)·계산(세법상 당기 대손금·전기말·당기말 채권·실적률)·결과(한도·한도초과)·세무조정. 대손금·대손충당금 세무조정."""
+
+    # ── 대손금 인정 판단 ──
+    judgments = []  # 항목별 판단
+    tax_bad_debt_recognized = 0   # 세법상 당기 대손금(인정분)
+    prior_year_reduced = 0        # 전기 사유 신고조정 대손 → 전기말 채권 차감
+    denied_bad_debt = 0           # 당기 부인 대손 합계
+    current_disallowed_entries = []  # 당기 손금불산입(유보) 항목
+
+    for w in writeoffs:
+        kind = w["kind"]; amount = int(w["amount"]); arose_in = w["arose_in"]
+        instrument = w.get("instrument"); months = w.get("months_since_default"); mortgage = w.get("mortgage", False)
+
+        if kind in ("소멸시효완성", "화해·확정판결"):
+            # 신고조정 대손: 사유 발생 사업연도 손금. arose_in='전기'인데 당기 장부 처리 → 당기 손금불산입(유보), 전기말 채권 차감
+            if arose_in == "전기":
+                # 전기 손금이었어야 할 것을 당기에 장부 처리 → 당기 손금불산입(유보), 전기 신고조정 추심
+                prior_year_reduced += amount
+                judgments.append({"항목": f"{kind} {amount:,}원(전기 사유, 당기 장부 처리)",
+                                  "결론": "손금불산입(유보)·전기 신고조정 추심",
+                                  "금액": amount, "근거": "법인세법 제19조의2·시행령 제19조의2(소멸시효완성 등 신고조정 대손)",
+                                  "이유": f"{arose_in} 사유 발생, 전기 손금 귀속분이나 당기 장부 처리 → 당기 손금불산입(유보)"})
+                current_disallowed_entries.append({"구분": "전기 사유분", "금액": amount, "소득처분": "유보"})
+            else:
+                # 당기 사유 → 세법상 인정
+                tax_bad_debt_recognized += amount
+                judgments.append({"항목": f"{kind} {amount:,}원(당기 사유)", "결론": "인정(대손금)",
+                                  "금액": amount, "근거": "법인세법 제19조의2·시행령 제19조의2",
+                                  "이유": "사유 발생 사업연도 손금 귀속, 당기 대손금 인정"})
+
+        elif kind == "부도6개월":
+            if mortgage:
+                # 저당권 설정 시 불인정 (SPEC: 저당권 설정 시 불인정)
+                denied_bad_debt += amount
+                judgments.append({"항목": f"부도6개월 {instrument or '기타'} {amount:,}원(저당권 설정)",
+                                  "결론": "불인정(저당권으로 인한 부인, 손금불산입·유보)",
+                                  "금액": amount, "근거": "법인세법 제19조의2·시행령 제19조의2(저당권 설정 부도6개월분 불인정)",
+                                  "이유": "저당권 설정 사유로 부도6개월 대손금 불인정"})
+                current_disallowed_entries.append({"구분": "부인 대손(저당권)", "금액": amount, "소득처분": "유보"})
+            elif instrument == "받을어음":
+                # 받을어음: 중소기업·일반 모두 인정 (비망 1,000원 공제)
+                recognized = max(0, amount - 1000)
+                tax_bad_debt_recognized += recognized
+                judgments.append({"항목": f"부도6개월 받을어음 {amount:,}원",
+                                  "결론": f"인정(대손금, 비망 1,000원 공제 → {recognized:,}원)",
+                                  "금액": recognized, "근거": "법인세법 제19조의2·시행령 제19조의2(부도발생 후 6개월 경과 받을어음)",
+                                  "이유": "받을어음 부도6개월분 인정, 비망 1,000원 공제"})
+            elif instrument == "외상매출금":
+                if sme:
+                    # 중소기업: 부도 이전 발생 외상매출금 인정 (비망 1,000원 공제)
+                    recognized = max(0, amount - 1000)
+                    tax_bad_debt_recognized += recognized
+                    judgments.append({"항목": f"부도6개월 외상매출금 {amount:,}원(중소기업)",
+                                      "결론": f"인정(대손금, 비망 1,000원 공제 → {recognized:,}원)",
+                                      "금액": recognized, "근거": "법인세법 제19조의2·시행령 제19조의2(중소기업 외상매출금 부도6개월분)",
+                                      "이유": "중소기업 외상매출금 부도6개월분 인정, 비망 1,000원 공제"})
+                else:
+                    # 일반법인: 외상매출금 부도6개월분 불인정
+                    denied_bad_debt += amount
+                    judgments.append({"항목": f"부인 대손(외상매출금) {amount:,}원(일반법인)",
+                                      "결론": "부인(손금불산입·유보)",
+                                      "금액": amount, "근거": "법인세법 제19조의2·시행령 제19조의2(중소기업 외 외상매출금 부도6개월분 불인정)",
+                                      "이유": "중소기업 아닌 일반법인, 외상매출금 부도6개월분 손금 불인정 — 부인"})
+                    current_disallowed_entries.append({"구분": "부인 대손(외상매출금)", "금액": amount, "소득처분": "유보"})
+            else:
+                # instrument 미지정 기타
+                if sme:
+                    recognized = max(0, amount - 1000)
+                    tax_bad_debt_recognized += recognized
+                    judgments.append({"항목": f"부도6개월 기타 {amount:,}원(중소기업)", "결론": f"인정(비망 1,000원 공제 → {recognized:,}원)",
+                                      "금액": recognized, "근거": "법인세법 제19조의2·시행령 제19조의2"})
+                else:
+                    denied_bad_debt += amount
+                    judgments.append({"항목": f"부도6개월 기타 {amount:,}원(일반법인)", "결론": "불인정(손금불산입·유보)",
+                                      "금액": amount, "근거": "법인세법 제19조의2·시행령 제19조의2"})
+                    current_disallowed_entries.append({"구분": "부인 대손(기타)", "금액": amount, "소득처분": "유보"})
+
+        else:
+            judgments.append({"항목": f"{kind} {amount:,}원", "결론": "검토 필요", "금액": amount,
+                              "근거": "종류 미정", "이유": f"kind={kind} — 세무 판단 기준 확인 필요"})
+
+    # 세법상 전기말 채권 = 장부 전기말 − 전기 사유 신고조정 대손
+    tax_receivables_prev = receivables_prev_end_book - prior_year_reduced
+    # 세법상 당기말 채권 = 장부 당기말 + 부인 채권 + 비망가액
+    # (부인 채권 = 인정되지 않은 대손금, 비망가액은 인식된 부도6개월 채권의 1,000원)
+    # 비망가액 합계 계산 필요 — 인정된 부도6개월 채권별 1,000원
+    reservation_total = 0
+    for w in writeoffs:
+        if w["kind"] == "부도6개월" and w.get("instrument") in ("받을어음", "외상매출금"):
+            if (w.get("instrument") == "받을어음") or (w.get("instrument") == "외상매출금" and sme):
+                if not w.get("mortgage"):
+                    reservation_total += 1000
+    # 부인 채권: 인정되지 않은 writeoff
+    tax_receivables_end = receivables_end_book + denied_bad_debt + reservation_total
+
+    # 대손실적률 = 세법상 당기 대손금 ÷ 세법상 전기말 채권 (절사)
+    if tax_receivables_prev > 0:
+        raw_rate = tax_bad_debt_recognized / tax_receivables_prev
+        loss_rate = _loss_rate_floor(raw_rate, loss_rate_digits)
+    else:
+        loss_rate = 0.0
+
+    # 한도 = 세법상 당기말 채권 × max(1%, 실적률)
+    limit = int(tax_receivables_end * max(0.01, loss_rate))
+    # 한도초과 = 장부 기말잔액 − 한도
+    book_closing = int(book["closing"])
+    over = max(0, book_closing - limit)
+
+    # 세무조정 조립
+    settlements = []
+    # 1. 부인 대손(손금불산입·유보)
+    if denied_bad_debt > 0:
+        settlements.append({"구분": "부인 대손", "금액": denied_bad_debt, "소득처분": "유보"})
+    # 2. 전기 사유분(손금불산입·유보)
+    for e in current_disallowed_entries:
+        if e["구분"] == "전기 사유분":
+            settlements.append({"구분": "전기 사유분", "금액": e["금액"], "소득처분": "유보"})
+    # 3. 한도초과(손금불산입·유보)
+    if over > 0:
+        settlements.append({"구분": "한도초과", "금액": over, "소득처분": "유보"})
+    # 4. 전기 한도초과(손금산입·△유보)
+    if prior_excess > 0:
+        settlements.append({"구분": "전기 한도초과", "금액": prior_excess, "소득처분": "△유보"})
+
+    result = {
+        "한도": limit,
+        "한도초과": over,
+        "전기한도초과_손금산입": prior_excess,
+        "세법상_당기_대손금_인정합계": tax_bad_debt_recognized,
+        "비망가액_합계": reservation_total,
+    }
+    calc_dict = {
+        "세법상 당기 대손금": tax_bad_debt_recognized,
+        "세법상 전기말 채권": tax_receivables_prev,
+        "세법상 당기말 채권": tax_receivables_end,
+        "대손실적률": loss_rate,
+        "한도": limit,
+        "한도초과": over,
+        "비망가액 합계": reservation_total,
+        "장부 당기말": book_closing,
+    }
+    return _ok(result, "법인세법 제19조의2·제34조, 시행령 제19조의2·제61조",
+               세무조정=settlements, 판단=judgments, 계산=calc_dict,
+               산식="세법상 당기 대손금 = 인정 대손금 합계, 세법상 전기말 채권 = 장부 전기말 − 전기 신고조정 대손, 세법상 당기말 채권 = 장부 당기말 + 부인 채권 + 비망가액, 실적률 = 당기 대손금 ÷ 전기말 채권(절사), 한도 = 당기말 채권 × max(1%, 실적률), 한도초과 = 장부 기말잔액 − 한도")
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중소기업 여부")],
+                             expenses: Annotated[list, Field(description="지출 목록 [{amount, evidence:'없음'|'영수증 등'|'적격', over_30k?:bool(기본 true), congratulatory?:bool, culture?:bool}]")],
+                             months: Annotated[int, Field(description="사업연도 월수(1~12)")] = 12,
+                             revenue_general: WON = 0,
+                             revenue_related: WON = 0) -> dict:
+    """기업업무추진비(접대비) 세무조정(법인세법 제25조, 시행령 제41조·제42조).
+    언제: 법인세 신고에서 기업업무추진비 손금불산입을 항목별로 계산할 때.
+    입력: 사업연도(2016~2026) → year, 중소기업 여부 → sme, 사업연도 월수(1~12) → months,
+    일반 수입금액(원) → revenue_general, 특수관계 수입금액(원) → revenue_related,
+    지출 목록 [{amount(원), evidence:'없음'|'영수증 등'|'적격', over_30k?:bool(기본 true), congratulatory?:bool, culture?:bool}] → expenses.
+    결과: 판단(항목별·근거)·결과(한도·한도초과)·세무조정(구분·금액·소득처분). 기업업무추진비 세액공제."""
+
+    limit_base_amount = 36_000_000 if sme else 12_000_000  # 2020 이후 기본한도
+
+    # ── 항목별 증빙 판정 ──
+    judgments = []
+    no_receipt_total = 0        # 증빙 없음(대표자상여)
+    no_qual_total = 0          # 적격증빙 미수취(기타사외유출)
+    disallow_direct = 0        # 직부인 소계
+
+    for e in expenses:
+        amount = int(e["amount"])
+        evidence = e.get("evidence", "없음")
+        over_30k = e.get("over_30k", True)   # 기본 true — 3만원 초과 여부
+        congratulatory = e.get("congratulatory", False)
+        culture = e.get("culture", False)
+
+        if evidence == "없음":
+            # 증빙 없음 → 손금불산입·대표자상여
+            no_receipt_total += amount
+            judgments.append({"항목": f"금액 {amount:,}원(증빙 없음)",
+                              "결론": "손금불산입·대표자상여",
+                              "금액": amount, "근거": "법인세법 제25조②(증빙서류 없는 접대비 손금불산입)",
+                              "이유": "증빙서류 없음 — 전액 손금불산입, 대표자상여 소득처분"})
+        elif evidence == "영수증 등":
+            # 영수증 등 → 적격증명서류 미수취 판단
+            if over_30k:
+                # 건당 3만원(경조 20만원) 초과 + 적격증빙 없음 → 손금불산입·기타사외유출
+                limit_amount = 200_000 if congratulatory else 30_000
+                if amount > limit_amount:
+                    no_qual_total += amount
+                    judgments.append({"항목": f"금액 {amount:,}원(영수증 등, {'경조금' if congratulatory else '일반'})",
+                                      "결론": "적격증명서류 미수취 → 손금불산입·기타사외유출",
+                                      "금액": amount, "근거": "법인세법 제25조②·시행령 제41조①(적격증빙 미수취)",
+                                      "이유": f"{'경조금' if congratulatory else '일반'} {'20만원' if congratulatory else '3만원'} 초과, 적격증명서류 미수취 → 기타사외유출"})
+                else:
+                    judgments.append({"항목": f"금액 {amount:,}원(영수증 등, {'경조금' if congratulatory else '일반'})",
+                                      "결론": "인정", "금액": amount,
+                                      "근거": "법인세법 제25조②", "이유": f"{'경조금' if congratulatory else '일반'} {limit_amount:,}원 이하 → 적격증빙 요구 해당 없음"})
+            else:
+                judgments.append({"항목": f"금액 {amount:,}원(영수증 등)", "결론": "인정", "금액": amount,
+                                  "근거": "법인세법 제25조②", "이유": "3만원 이하 → 적격증명서류 요구 없음"})
+        elif evidence == "적격":
+            # 적격증빙 → 시부인 대상 (문화비 여부 별도 표시)
+            if culture:
+                judgments.append({"항목": f"금액 {amount:,}원(적격·문화비)", "결론": "시부인 대상(문화접대비)",
+                                  "금액": amount, "근거": "법인세법 제25조④(문화접대비)", "이유": "적격증빙·문화비 지출 → 한도 계산 시 문화접대비 포함"})
+            else:
+                judgments.append({"항목": f"금액 {amount:,}원(적격)", "결론": "시부인 대상", "금액": amount,
+                                  "근거": "법인세법 제25조①", "이유": "적격증명서류 수취 → 한도 계산 대상"})
+        else:
+            judgments.append({"항목": f"금액 {amount:,}원(증빙 '{evidence}')", "결론": "검토 필요", "금액": amount,
+                              "근거": "", "이유": f"evidence={evidence} — 확인 필요"})
+
+    # ── 한도 계산 (기존 entertain 함수 재사용) ──
+    # expensed = 시부인 대상 총액 = 적격 증빙 지출 + (영수증 등 중 인정되는 것) — 하지만 여기서는 "시부인 대상 = 적격 증빙 지출 전체"로 처리
+    # 기존 entertain 함수: expensed=비용계상 접대비 전체(증빙 미수취 포함), no_card_over=적격증빙 미수취 직부인
+    # 여기서는: 시부인 대상 = 적격 증빙 지출_total + 영수증 등 중 인정분(3만원 이하)
+    si_bu_shin = 0  # 시부인 대상 총액
+    for e in expenses:
+        amount = int(e["amount"])
+        evidence = e.get("evidence", "없음")
+        over_30k = e.get("over_30k", True)
+        congratulatory = e.get("congratulatory", False)
+        if evidence == "적격":
+            si_bu_shin += amount
+        elif evidence == "영수증 등" and not over_30k:
+            si_bu_shin += amount
+        elif evidence == "영수증 등" and over_30k:
+            # over_30k=True → 한도 대상 아님 (이미 no_qual_total에 포함)
+            pass
+        # "없음"은 한도 대상 아님
+
+    culture_total = sum(int(e["amount"]) for e in expenses if e.get("culture") and e.get("evidence") == "적격")
+    ent = C.entertain(year, sme, revenue_general, revenue_related, si_bu_shin, culture=culture_total, months=months)
+    limit = ent["한도"]
+    over_limit = ent["한도초과(기타사외유출)"]
+
+    # ── 세무조정 조립 ──
+    settlements = []
+    if no_receipt_total > 0:
+        settlements.append({"구분": "증빙 없음", "금액": no_receipt_total, "소득처분": "대표자상여"})
+    if no_qual_total > 0:
+        settlements.append({"구분": "적격증빙 미수취", "금액": no_qual_total, "소득처분": "기타사외유출"})
+    if over_limit > 0:
+        settlements.append({"구분": "한도초과", "금액": over_limit, "소득처분": "기타사외유출"})
+
+    result = {"한도": limit, "한도초과": over_limit,
+              "직부인_대표자상여": no_receipt_total,
+              "직부인_기타사외유출": no_qual_total,
+              "시부인_대상": si_bu_shin}
+    calc_dict = {
+        "기본한도": ent["일반한도"],
+        "문화한도": ent["문화한도"],
+        "한도초과": over_limit,
+        "시부인 대상": si_bu_shin,
+        "직부인(증빙없음·심사비)": no_receipt_total + no_qual_total,
+    }
+    return _ok(result, "법인세법 제25조, 시행령 제41조·제42조",
+               세무조정=settlements, 판단=judgments, 계산=calc_dict,
+               산식="기본한도 = 중소 3,600만·일반 1,200만 × 월수/12, 수입금액 한도 = 수입금액 구간별 비율을 적용한 금액(+ 특수관계 10%), 문화한도 = min(문화비, 일반한도 × 20%), 한도 = 기본 + 수입금액 + 문화, 한도초과 = 시부인 대상 − 한도")
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def financial_income_aggregate(year: YEAR,
+                               items: Annotated[list, Field(description="금융소득 항목 [{kind, amount, ...}] — kind: 예금이자·비영업대금이익·외상매출금지급기일연장이자·소비대차전환이자·투자신탁환매이익·파생결합사채이익·장내파생상품·상장법인현금배당·비상장법인현금배당·의제배당_잉여금자본전입·인정배당·저축성보험차익")]) -> dict:
+    """종합소득 합산 금융소득(이자·배당)과 Gross-up 계산(소득세법 제14조·제16조·제17조·제56조).
+    언제: 종합소득세 신고에서 금융소득 종합과세 대상 여부와 배당가산(Gross-up)액을 계산할 때.
+    입력: 귀속연도(2016~2026) → year, 금융소득 항목 목록 [{kind, amount, ...}] → items.
+    결과: 판단(항목별 이자/배당/제외·Gross-up 대상 여부)·결과(이자소득금액·배당소득금액·합산액)·계산(중간값). 금융소득 종합과세·배당가산."""
+
+    # Claude 재작성(10-13): 항목 판단 → 이자/배당/제외·Gross-up 대상 → 2천만 원 기준 → Gross-up
+    rate = 0.11 if year <= 2023 else 0.10
+    판단, inc, div_n, div_g, exc = [], 0, 0, 0, 0
+
+    def add(항목, 구분, 금액, 근거, 이유, gu=None):
+        nonlocal inc, div_n, div_g, exc
+        if 구분 == "이자": inc += 금액
+        elif 구분 == "배당" and gu: div_g += 금액
+        elif 구분 == "배당": div_n += 금액
+        else: exc += 금액
+        결론 = {"이자": "이자소득", "배당": "배당소득(Gross-up 대상)" if gu else "배당소득(Gross-up 비대상)"}.get(구분, "금융소득 제외")
+        판단.append({"항목": 항목, "결론": 결론, "금액": 금액, "근거": 근거, "이유": 이유})
+
+    for it in items:
+        k, amt = it.get("kind", ""), int(it.get("amount", 0))
+        if k == "예금이자":
+            add(k, "이자", amt, "소득세법 제16조①1호", "국내 예금 이자")
+        elif k in ("비영업대금이익", "소비대차전환이자"):
+            add(k, "이자", amt, "소득세법 제16조①11호, 시행령 제26조③", "금전 대여 이익 — 외상매출금이 소비대차로 전환된 이자 포함")
+        elif k == "외상매출금지급기일연장이자":
+            add(k, "제외", amt, "소득세법 시행령 제26조③", "물품 대금 지급기일 연장 이자는 사업소득(금융소득 아님)")
+        elif k == "장내파생상품":
+            add(k, "제외", amt, "소득세법 제94조①5호", "파생상품 거래 이익은 양도소득")
+        elif k == "저축성보험차익":
+            gain = int(it.get("payout", amt)) - int(it.get("premium", 0))
+            if it.get("annuity"):
+                add(k, "제외", max(gain, 0), "소득세법 제16조①9호, 시행령 제25조", "비과세 요건 연금형 — 과세 제외(요건 충족 전제)")
+            else:
+                add(k, "이자", max(gain, 0), "소득세법 제16조①9호, 시행령 제25조", f"만기보험금 − 납입보험료 = {gain:,}원(10년 미만 등 비과세 요건 미충족)")
+        elif k == "투자신탁환매이익":
+            comps = it.get("components") or []
+            net = sum(int(c.get("gain", 0)) for c in comps if c.get("asset") != "상장주식") if comps else amt
+            add(k, "배당", max(net, 0), "소득세법 제17조①5호, 시행령 제26조의2", "상장주식 양도·평가 손익 제외, 나머지 손익 통산", gu=False)
+        elif k == "파생결합사채이익":
+            add(k, "배당", amt, "소득세법 제17조①5호의2", "파생결합사채 이익 — 배당소득, Gross-up 비대상", gu=False)
+        elif k in ("상장법인현금배당", "비상장법인현금배당"):
+            add(k, "배당", amt, "소득세법 제17조①1호, 제56조", "내국법인 이익배당 — 법인세 과세 재원, Gross-up 대상", gu=True)
+        elif k == "인정배당":
+            add(k, "배당", amt, "소득세법 제17조①4호, 제56조", "법인세법상 배당 소득처분 — Gross-up 대상", gu=True)
+        elif k == "의제배당_잉여금자본전입":
+            src, shift = it.get("source", ""), int(it.get("self_stock_shift", 0))
+            if src in ("주식발행초과금", "자본준비금", "재평가적립금"):
+                add(f"{k}({src})", "제외", amt - shift, "소득세법 제17조②2호 단서", "과세되지 않는 자본잉여금 전입 — 의제배당 아님")
+                if shift:
+                    add(f"{k}({src}) 자기주식 미배정 지분율 상승분", "배당", shift, "소득세법 제17조②5호", "자기주식 몫 미배정으로 다른 주주 지분 증가 — 의제배당, Gross-up 비대상", gu=False)
+            else:
+                add(f"{k}({src})", "배당", amt, "소득세법 제17조②2호, 제56조", f"{src} 자본전입 — 의제배당, 법인세 과세 재원이라 Gross-up 대상", gu=True)
+        else:
+            판단.append({"항목": k, "결론": "확인 필요", "금액": amt, "근거": "", "이유": "지원하지 않는 항목 — 직접 판단 필요"})
+
+    total = inc + div_n + div_g
+    threshold = 20_000_000
+    if total <= threshold:
+        gu_base = 0
+    else:
+        filled = min(threshold, inc + div_n)         # 2천만 원 구간을 이자 → 비대상 배당 순으로 채움
+        gu_base = div_g - max(0, threshold - filled)   # 남은 구간을 대상 배당이 채우고, 초과분만 Gross-up
+        gu_base = max(0, min(div_g, gu_base))
+    grossup = int(gu_base * rate)
+    합산 = 0 if total <= threshold else total + grossup
+    return _ok({"이자소득금액": inc if total > threshold else 0,
+                "배당소득금액": (div_n + div_g + grossup) if total > threshold else 0,
+                "합산액": 합산, "분리과세": total <= threshold, "Gross-up": grossup},
+               "소득세법 제14조·제16조·제17조·제56조",
+               계산={"이자": inc, "배당(Gross-up 비대상)": div_n, "배당(Gross-up 대상)": div_g, "금융소득 합계": total,
+                     "제외 합계": exc, "Gross-up 기준액": gu_base, "가산율": rate},
+               판단=판단,
+               산식="합계 ≤ 2천만 원이면 분리과세(합산 0). 초과 시 이자 → 비대상 배당 → 대상 배당 순으로 2천만 원을 채우고, 2천만 원을 넘는 대상 배당 × 가산율 = Gross-up")
 
 
 def main():
