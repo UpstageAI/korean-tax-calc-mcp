@@ -1710,6 +1710,8 @@ def other_income_aggregate(year: YEAR,
 
         if k == "뇌물":
             forfeited = int(it.get("forfeited", 0))
+            if forfeited > amount:   # 사실관계 불일치 — 계산하지 않음 (CodeSolar 10-13)
+                return {"error": f"뇌물 몰수·추징 확정액 {forfeited:,}원이 받은 금액 {amount:,}원을 초과 — 입력 확인 필요"}
             소득 = amount - forfeited
             원천징수세액 = 0
             뇌물_여부 = True
@@ -1721,6 +1723,8 @@ def other_income_aggregate(year: YEAR,
 
         elif k == "위약금·배상금":
             deposit_substituted = int(it.get("deposit_substituted", 0))
+            if deposit_substituted > amount:   # 사실관계 불일치 — 계산하지 않음 (CodeSolar 10-13)
+                return {"error": f"계약금 대체 위약금 {deposit_substituted:,}원이 위약금 총액 {amount:,}원을 초과 — 입력 확인 필요"}
             소득 = amount
             원천징수세액 = int((amount - deposit_substituted) * rule["원천징수세율"])
             항목별.append({"kind": k, "총수입금액": amount, "비과세": 0, "필요경비": 0,
