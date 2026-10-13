@@ -115,3 +115,24 @@ def test_financial_grossup_order():  # 실무형: 이자 먼저 채우고 남은
     r = c("financial_income_aggregate", {"year": 2024, "items": [{"kind": "예금이자", "amount": 10_000_000},
                                                                     {"kind": "상장법인현금배당", "amount": 15_000_000}]})
     assert r["결과"]["합산액"] == 25_500_000
+
+
+# ── 입력 엄격성 (Claude 추가 10-13, 22회차에서 Solar가 사실관계를 뭉뚱그려 넣어 틀린 사례) ──
+def test_strict_unknown_kind_rejected():  # 22회차: kind='대손금'·'외상매출금' 같은 임의 값 → 조용히 0으로 계산하던 문제
+    r = c("bad_debt_adjustment", {"year": 2024, "sme": False, "book": {"opening": 0, "offset": 0, "provision": 0, "closing": 0},
+                                  "receivables_prev_end_book": 1, "receivables_end_book": 1,
+                                  "writeoffs": [{"kind": "대손금", "amount": 1, "arose_in": "당기"}]})
+    assert "error" in r and "허용값" in r and "결과" not in r
+
+
+def test_strict_missing_facts_rejected():  # 22회차: 의제배당 source 없이, 투자신탁 components 없이 호출 → 잘못된 합산
+    r = c("financial_income_aggregate", {"year": 2025, "items": [{"kind": "의제배당_잉여금자본전입", "amount": 8_000_000}]})
+    assert "error" in r and any("source" in p for p in r["문제"])
+    r = c("financial_income_aggregate", {"year": 2024, "items": [{"kind": "투자신탁환매이익", "amount": 12_000_000}]})
+    assert "error" in r and any("components" in p for p in r["문제"])
+
+
+def test_strict_evidence_enum():
+    r = c("entertainment_adjustment", {"year": 2024, "sme": False, "months": 12, "revenue_general": 0, "revenue_related": 0,
+                                        "expenses": [{"amount": 1_000, "evidence": "카드"}]})
+    assert "error" in r
