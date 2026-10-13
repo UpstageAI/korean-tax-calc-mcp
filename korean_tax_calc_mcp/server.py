@@ -1453,64 +1453,35 @@ def deemed_dividend_bonus_shares(
     total_pre = sum(int(h["shares"]) for h in shareholders)
     n_new = int(capitalized_amount / par_value)  # 신주 총수
 
-    # 자기주식 정보 추출
-    self_stock_indices = [i for i, h in enumerate(shareholders) if h.get("self_stock")]
-    self_stock_shares = sum(int(shareholders[i]["shares"]) for i in self_stock_indices)
+    # 자기주식·배정 (Claude 10-13 재작성 — CodeSolar 지적: 미교부 시 자기주식 배정 0, 교부 시 단주 누락)
+    self_idx = {i for i, h in enumerate(shareholders) if h.get("self_stock")}
+    self_stock_shares = sum(int(shareholders[i]["shares"]) for i in self_idx)
+    others = [i for i in range(len(shareholders)) if i not in self_idx]
+    other_total = sum(int(shareholders[i]["shares"]) for i in others)
 
-    # 자기주식 몫 신주 (다른주주에게교부면 발행, 미교부면 발행 안 함)
-    if self_stock_allotment == "다른주주에게교부" and self_stock_shares > 0:
-        self_stock_new = (self_stock_shares * n_new) // total_pre  # 정수 배분
-        self_stock_new_rem = Fraction(self_stock_shares * n_new, total_pre) - self_stock_new
-        n_issued_to_others = n_new
+    def _largest_remainder(pool, idxs, denom):
+        """idxs 주주에게 pool 주를 보유주식 비례로 정수 배정(큰 나머지 순, 합계 = pool)."""
+        exact = {i: Fraction(int(shareholders[i]["shares"]) * pool, denom) for i in idxs}
+        base = {i: int(exact[i]) for i in idxs}
+        left = pool - sum(base.values())
+        for i in sorted(idxs, key=lambda i: (-(exact[i] - base[i]), shareholders[i]["name"]))[:left]:
+            base[i] += 1
+        return base
+
+    if self_stock_shares > 0 and self_stock_allotment == "미교부":
+        # 자기주식 몫은 발행하지 않음: 다른 주주는 전체 주식 기준 비례분만 (합계 = 신주 − 자기주식 몫)
+        allot = _largest_remainder(n_new - (self_stock_shares * n_new) // total_pre, others, other_total) if others else {}
+    elif self_stock_shares > 0:
+        # 자기주식 몫까지 다른 주주에게 교부: 신주 전부를 다른 주주끼리 보유 비례로
+        allot = _largest_remainder(n_new, others, other_total) if others else {}
     else:
-        self_stock_new = 0
-        self_stock_new_rem = Fraction(0)
-        n_issued_to_others = n_new - (self_stock_shares * n_new) // total_pre if self_stock_shares > 0 else n_new
-
-    # 전입 후 총 주식수 (미교부면 자기주식 몫 신주 제외)
+        allot = _largest_remainder(n_new, list(range(len(shareholders))), total_pre)
+    for i in self_idx:
+        allot[i] = 0
+    n_issued_to_others = sum(allot.values())
     total_post = total_pre + n_issued_to_others
-
-    # 각 주주 배정: 정확한 정수 배분 (Fraction 기반, 나머지 큰 순서로 추가 배정)
-    allotments: list[dict] = []
-    remainders: list[Fraction] = []
-    for i, h in enumerate(shareholders):
-        sh = int(h["shares"])
-        base_allot = (sh * n_new) // total_pre
-        rem = Fraction(sh * n_new, total_pre) - base_allot
-        allotments.append({"index": i, "name": h["name"], "shares": sh,
-                           "proportion": sh / total_pre if total_pre > 0 else 0,
-                           "BaseAllot": base_allot, "self_stock": bool(h.get("self_stock"))})
-        remainders.append(rem)
-
-    # 나머지(절단분) 배정: 나머지 큰 순서로 1주씩
-    total_base = sum(a["BaseAllot"] for a in allotments)
-    extra_needed = n_new - total_base
-    ranked = sorted(range(len(allotments)), key=lambda i: (-remainders[i], allotments[i]["name"]))
-    for j in range(extra_needed):
-        allotments[ranked[j % len(ranked)]]["BaseAllot"] += 1
-
-    # 다른주주에게교부면 자기주식 배정분을 0으로 하고, 자기주식 몫 신주를 다른 주주에게 재분배
-    if self_stock_allotment == "다른주주에게교부":
-        for a in allotments:
-            if a["self_stock"]:
-                a["BaseAllot"] = 0
-        # self_stock_new를 다른 주주의 상대 지분율(other_shares / other_total) 기준으로 재분배
-        other_idxs = [i for i, a in enumerate(allotments) if not a["self_stock"]]
-        other_total = sum(allotments[i]["shares"] for i in other_idxs)
-        if other_total > 0 and self_stock_new > 0:
-            extra_by_idx: dict[int, int] = {}
-            for j, i in enumerate(other_idxs):
-                sh = allotments[i]["shares"]
-                extra_by_idx[i] = (self_stock_new * sh) // other_total
-            extra_sum = sum(extra_by_idx.values())
-            rem = self_stock_new - extra_sum
-            # 나머지(절단분)는 상대 지분율이 큰 순서로 1주씩
-            if rem > 0:
-                order = sorted(other_idxs, key=lambda i: (-allotments[i]["shares"] / other_total, allotments[i]["name"]))
-                for k in range(rem):
-                    allotments[order[k % len(order)]]["BaseAllot"] += 1
-            for i, extra in extra_by_idx.items():
-                allotments[i]["BaseAllot"] += extra
+    allotments = [{"index": i, "name": h["name"], "shares": int(h["shares"]), "proportion": int(h["shares"]) / total_pre,
+                   "BaseAllot": allot.get(i, 0), "self_stock": i in self_idx} for i, h in enumerate(shareholders)]
 
     # 전입 전·후 지분율 및 의제배당 계산
     result_list = []
