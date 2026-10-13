@@ -136,3 +136,21 @@ def test_strict_evidence_enum():
     r = c("entertainment_adjustment", {"year": 2024, "sme": False, "months": 12, "revenue_general": 0, "revenue_related": 0,
                                         "expenses": [{"amount": 1_000, "evidence": "카드"}]})
     assert "error" in r
+
+
+# ── CodeSolar 리뷰(PR #6) 지적 회귀 테스트 (Claude 추가 10-13) ──
+def test_bad_debt_memo_for_other_instrument_sme():  # 중소기업 '기타' 채권 부도6개월: 비망 1,000원이 세법상 채권에도 반영
+    r = c("bad_debt_adjustment", {"year": 2025, "sme": True, "prior_excess": 0,
+                                  "book": {"opening": 0, "offset": 5_000_000, "provision": 0, "closing": 0},
+                                  "receivables_prev_end_book": 1_000_000_000, "receivables_end_book": 1_000_000_000,
+                                  "writeoffs": [{"kind": "부도6개월", "amount": 5_000_000, "arose_in": "당기", "instrument": "기타", "months_since_default": 8, "mortgage": False}]})
+    assert r["계산"]["세법상 당기 대손금"] == 4_999_000
+    assert r["계산"]["세법상 당기말 채권"] == 1_000_001_000
+
+
+def test_entertainment_receipt_under_threshold_counts_toward_limit():  # over_30k=True여도 금액이 기준 이하면 시부인 대상
+    r = c("entertainment_adjustment", {"year": 2025, "sme": False, "months": 12, "revenue_general": 0, "revenue_related": 0,
+                                        "expenses": [{"amount": 20_000, "evidence": "영수증 등", "over_30k": True},
+                                                     {"amount": 150_000, "evidence": "영수증 등", "over_30k": True, "congratulatory": True}]})
+    assert r["결과"]["시부인_대상"] == 170_000
+    assert sum(a["금액"] for a in r["세무조정"] if a["소득처분"] == "기타사외유출" and a["구분"] == "적격증빙 미수취") == 0
