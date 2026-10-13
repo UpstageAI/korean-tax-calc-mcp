@@ -1528,7 +1528,6 @@ def deemed_dividend_bonus_shares(
             "배정주식수": allot,
             "전입전지분율": round(prop_pre * 100, 4),
             "전입후지분율": round(prop_post * 100, 4),
-            "의제배당": deemed_div,
             "과세여부": "과세" if taxable else "의제배당 아님",
             "근거": basis,
         })

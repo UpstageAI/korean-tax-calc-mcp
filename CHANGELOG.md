@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.0 (2026-10-14)
+
+- 끝에서 끝까지 계산기 6종 추가(도구 50개): `deemed_dividend_bonus_shares`(잉여금 자본전입 의제배당, 자기주식 교부/미교부), `other_income_aggregate`(기타소득 과세 구분·비과세·필요경비·원천징수·종합소득 합산), `simplified_vat_return`(간이과세자 확정신고 차가감납부세액), `common_input_tax`(겸영사업자 공통매입세액 안분·정산·공통사용재화 공급), `input_tax_recalculation`(감가상각자산 재계산), `bundled_supply_split`(토지·건물 일괄공급 안분)
+- 사실관계 어휘 항목 36개(기타소득 7·간이과세 5·공통매입 4 추가), 모든 기준값은 어휘에서만 읽음(코드 상수·기본값 제거)
+- `financial_income_aggregate`: 과세 제외 재원(주식발행초과금 등) 무상주는 `self_stock_shift`(자기주식 미배정 지분율 상승분, 0 가능)를 명시 입력해야 계산
+- `deemed_dividend_bonus_shares`: 주주별 의제배당을 결과 맨 앞과 `주주별_의제배당` 요약으로
+- 입력 가드: 몰수액·계약금 대체액이 총액 초과 시 거부, 실제 경비는 총수입 한도(소득세법 제37조②), 간이과세 납부의무 면제 시에도 미수취 가산세는 별도 적용(제69조②)
+- 정답 테스트 261개(공개 검증 사례 12문항, 출처 Q-Net). Solar Pro 4(Solar Work CLI) 작성, CodeSolar·Claude 검수
+
+## 0.6.0 (2026-10-13)
+
+- 끝에서 끝까지 계산기 3종: `bad_debt_adjustment`, `entertainment_adjustment`, `financial_income_aggregate` — 원래 사실관계를 받아 항목 판단→세법상 금액 조정→중간 계산→그 항목의 세무조정(소득처분)까지. 모르는 항목·빠진 사실은 계산하지 않고 허용값 반환
+- 사실관계 어휘 `data/facts_vocab.json`(20항목): 허용값·기간별 기준(부터/까지)·별칭(접대비≤2023)을 파일에서 읽음 — 도구 44개
+
 ## 0.5.1 (2026-10-10)
 
 - 도구 41개로 확대: `precheck_schema(tax=법인|부가|소득)` 추가 — 신고서 사전검토 입력키·의미·단위·필수 여부 목록 반환
