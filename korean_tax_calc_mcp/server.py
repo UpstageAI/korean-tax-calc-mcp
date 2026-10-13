@@ -1178,7 +1178,7 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
                              months: Annotated[int, Field(description="사업연도 월수(1~12)")] = 12,
                              revenue_general: WON = 0,
                              revenue_related: WON = 0) -> dict:
-    """기업업무추진비(접대비) 세무조정(법인세법 제25조, 시행령 제41조·제42조).
+    """기업업무추진비 세무조정 — 2023년 이전 사업연도의 "접대비"와 같은 항목(2024.1.1. 명칭 변경, 법률 19193). 접대비 문제·장부도 이 도구로 계산한다(법인세법 제25조, 시행령 제41조·제42조).
     언제: 법인세 신고에서 기업업무추진비 손금불산입을 항목별로 계산할 때.
     입력: 사업연도(2016~2026) → year, 중소기업 여부 → sme, 사업연도 월수(1~12) → months,
     일반 수입금액(원) → revenue_general, 특수관계 수입금액(원) → revenue_related,
