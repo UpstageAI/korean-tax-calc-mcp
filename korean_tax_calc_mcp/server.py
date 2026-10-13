@@ -1764,7 +1764,7 @@ def other_income_aggregate(year: YEAR,
             필요경비율 = rule.get("필요경비율", 0)
             actual_expense = int(it.get("actual_expense", 0))
             과세대상금액 = amount  # 비과세 없음
-            필요경비 = max(과세대상금액 * 필요경비율, actual_expense)
+            필요경비 = min(과세대상금액, max(과세대상금액 * 필요경비율, actual_expense))   # 총수입금액 한도 (제37조②, CodeSolar 10-13)
             소득 = amount - 필요경비
             원천징수세율 = rule.get("원천징수세율", 0.2)
             원천징수세액 = int(소득 * 원천징수세율) if 소득 > 0 else 0
