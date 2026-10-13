@@ -330,12 +330,19 @@ def _ok(r, basis, **extra):
     return {"결과": r, "근거": basis, **extra}
 
 
+def _front(r):
+    """결과 dict의 키 순서를 결과 → 계산 → 나머지로 (답이 되는 값을 먼저 보이게, Claude 10-14)"""
+    if isinstance(r, dict) and "결과" in r:
+        return {k: r[k] for k in ("결과", "계산") if k in r} | {k: v for k, v in r.items() if k not in ("결과", "계산")}
+    return r
+
+
 def _guard(fn):
     import functools
 
     @functools.wraps(fn)
     def w(*a, **k):
-        try: return fn(*a, **k)
+        try: return _front(fn(*a, **k))
         except (C.NoYearTable, getattr(V, "NoYearTable", C.NoYearTable), getattr(I, "NoYearTable", C.NoYearTable)) as e:
             return {"error": str(e), "주의": "연도표 없는 해는 추정 계산하지 않음"}
         except (ValueError, KeyError, TypeError) as e:
@@ -1636,6 +1643,10 @@ def financial_income_aggregate(year: YEAR,
                 add(k, "이자", max(gain, 0), "소득세법 제16조①9호, 시행령 제25조", f"만기보험금 − 납입보험료 = {gain:,}원(10년 미만 등 비과세 요건 미충족)")
         elif k == "투자신탁환매이익":
             comps = it.get("components") or []
+            if comps and not (isinstance(comps, list) and all(isinstance(c, dict) for c in comps)):   # Claude 10-14 (25회차 2024-54 크래시)
+                return {"error": "입력 확인 필요 — 계산하지 않음",
+                        "문제": [f"항목({k}): 'components'는 [{{'asset': '상장주식'|'채권'|'비상장주식'|…, 'gain': 원(손실은 음수)}}] 목록이어야 함 — 집합투자기구 이익 중 상장주식 양도차익은 제외(소득세법 시행령 제26조의2④)"],
+                        "예시": {"kind": "투자신탁환매이익", "amount": 12000000, "components": [{"asset": "상장주식", "gain": 10000000}, {"asset": "채권", "gain": -3000000}, {"asset": "비상장주식", "gain": 5000000}]}}
             net = sum(int(c.get("gain", 0)) for c in comps if c.get("asset") != "상장주식") if comps else amt
             add(k, "배당", max(net, 0), "소득세법 제17조①5호, 시행령 제26조의2", "상장주식 양도·평가 손익 제외, 나머지 손익 통산", gu=False)
         elif k == "파생결합사채이익":
