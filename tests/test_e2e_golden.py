@@ -154,3 +154,51 @@ def test_entertainment_receipt_under_threshold_counts_toward_limit():  # over_30
                                                      {"amount": 150_000, "evidence": "영수증 등", "over_30k": True, "congratulatory": True}]})
     assert r["결과"]["시부인_대상"] == 170_000
     assert sum(a["금액"] for a in r["세무조정"] if a["소득처분"] == "기타사외유출" and a["구분"] == "적격증빙 미수취") == 0
+
+
+# ── CodeSolar 3차 리뷰(PR #6) 회귀 테스트 (Claude 추가 10-13) ──
+def test_bad_debt_small_amount_memo():  # 비망가액은 min(금액, 1,000원)
+    r = c("bad_debt_adjustment", {"year": 2025, "sme": True, "prior_excess": 0,
+                                  "book": {"opening": 0, "offset": 500, "provision": 0, "closing": 0},
+                                  "receivables_prev_end_book": 1_000_000_000, "receivables_end_book": 1_000_000_000,
+                                  "writeoffs": [{"kind": "부도6개월", "amount": 500, "arose_in": "당기", "instrument": "받을어음", "months_since_default": 8, "mortgage": False}]})
+    assert r["계산"]["세법상 당기 대손금"] == 0
+    assert r["계산"]["세법상 당기말 채권"] == 1_000_000_500
+
+
+def test_bad_debt_no_duplicate_judgment_and_uncollectible():  # 소멸시효 건에 '검토 필요' 중복 없음, 회수불능은 인정
+    r = c("bad_debt_adjustment", {"year": 2025, "sme": False, "prior_excess": 0,
+                                  "book": {"opening": 0, "offset": 3_000_000, "provision": 0, "closing": 0},
+                                  "receivables_prev_end_book": 1_000_000_000, "receivables_end_book": 1_000_000_000,
+                                  "writeoffs": [{"kind": "소멸시효완성", "amount": 1_000_000, "arose_in": "당기"},
+                                                {"kind": "회수불능", "amount": 2_000_000, "arose_in": "당기"}]})
+    assert not [j for j in r["판단"] if "검토 필요" in j.get("결론", "")]
+    assert r["계산"]["세법상 당기 대손금"] == 3_000_000
+
+
+def test_bad_debt_default_under_six_months_denied():  # 부도 후 6개월 미만은 부인
+    r = c("bad_debt_adjustment", {"year": 2025, "sme": True, "prior_excess": 0,
+                                  "book": {"opening": 0, "offset": 5_000_000, "provision": 0, "closing": 0},
+                                  "receivables_prev_end_book": 1_000_000_000, "receivables_end_book": 1_000_000_000,
+                                  "writeoffs": [{"kind": "부도6개월", "amount": 5_000_000, "arose_in": "당기", "instrument": "받을어음", "months_since_default": 4, "mortgage": False}]})
+    assert r["계산"]["세법상 당기 대손금"] == 0
+    assert r["계산"]["세법상 당기말 채권"] == 1_005_000_000
+    assert sum(a["금액"] for a in r["세무조정"] if a["소득처분"] == "유보" and "부인" in a["구분"]) == 5_000_000
+
+
+def test_financial_insurance_ten_years_requires_exemption_facts():  # 10년 이상 유지 계약은 비과세 요건 사실 없이는 계산하지 않음
+    r = c("financial_income_aggregate", {"year": 2025, "items": [
+        {"kind": "저축성보험차익", "amount": 10_000_000, "premium": 40_000_000, "payout": 50_000_000, "contract_year": 2012, "annuity": False}]})
+    assert "error" in r and any("비과세" in p for p in r["문제"])
+    r = c("financial_income_aggregate", {"year": 2025, "items": [
+        {"kind": "저축성보험차익", "amount": 10_000_000, "premium": 40_000_000, "payout": 50_000_000, "contract_year": 2012, "annuity": False, "exempt_conditions_met": True},
+        {"kind": "예금이자", "amount": 25_000_000}]})
+    assert r["결과"]["이자소득금액"] == 25_000_000           # 보험차익은 비과세로 제외
+
+
+def test_financial_taxable_source_with_self_stock_shift():  # 과세 재원 무상주에 자기주식 미배정분이 있으면 분리
+    r = c("financial_income_aggregate", {"year": 2025, "items": [
+        {"kind": "의제배당_잉여금자본전입", "amount": 10_000_000, "source": "이익잉여금", "self_stock_shift": 2_000_000},
+        {"kind": "예금이자", "amount": 20_000_000}]})
+    k = r["계산"]
+    assert k["배당(Gross-up 대상)"] == 8_000_000 and k["배당(Gross-up 비대상)"] == 2_000_000

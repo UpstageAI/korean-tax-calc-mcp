@@ -14,6 +14,7 @@ from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
 from .engine import calc as K, calc_cit as C, calc_income as I, calc_vat as V
+from . import vocab
 
 # ── 세무조사 판정 도구 (audit 패키지) ──
 from .audit.agents import related as _R
@@ -253,6 +254,67 @@ def _validate_items(items, field, specs, extra=None):
     return {"error": "입력 확인 필요 — 계산하지 않음", "문제": problems,
             "허용값": {k: {"필요": v.get("필요", []), "허용": v.get("허용", {}), "설명": v.get("설명", "")} for k, v in specs.items()},
             "안내": "문제·장부에 적힌 사실관계를 위 허용값의 종류로 나눠 다시 호출하세요. 한 금액에 두 성격이 섞여 있으면 항목을 나누세요."}
+
+
+# 한글 사실관계 필드명 → 도구 입력 필드명 매핑
+# 도구별로 필수로 요구할 입력 필드 (vocab의 필요한사실 중 일부만 필수 처리)
+_도구별_필수필드 = {
+    "financial_income_aggregate": {
+        "예금이자": ["amount"],
+        "비영업대금이익": ["amount"],
+        "소비대차전환이자": ["amount"],
+        "외상매출금지급기일연장이자": ["amount"],
+        "저축성보험차익": ["premium", "payout", "contract_year"],
+        "투자신탁환매이익": ["amount", "components"],
+        "파생결합사채이익": ["amount"],
+        "장내파생상품이익": ["amount"],
+        "상장법인현금배당": ["amount"],
+        "비상장법인현금배당": ["amount"],
+        "의제배당_잉여금자본전입": ["amount", "source"],
+        "인정배당": ["amount"],
+    },
+    "bad_debt_adjustment": {
+        "소멸시효완성": ["amount", "arose_in"],
+        "화해·확정판결": ["amount", "arose_in"],
+        "부도6개월": ["amount", "arose_in", "instrument", "months_since_default"],
+        "회수불능": ["amount", "arose_in"],
+    },
+    "entertainment_adjustment": {
+        "없음": ["amount"],
+        "영수증 등": ["amount"],
+        "적격": ["amount"],
+    },
+}
+
+
+def _specs_from_vocab(tool_name: str, field: str) -> dict:
+    """vocab.items_for로 _validate_items용 specs를 생성한다.
+
+    허용값 키: kind 필드는 항목 이름, evidence 필드는 매핑값(='evidence=값'의 값).
+    별칭도 허용값에 포함하고, 설명에는 항목의 뜻을 쓴다.
+    필수 필드(필요)는 도구별_필수필드에서 가져온다(어휘의 필요한사실보다 완화된 기준).
+    """
+    specs: dict = {}
+    필수맵 = _도구별_필수필드.get(tool_name, {})
+
+    for item in vocab.items_for(tool_name, field):
+        의미 = item.get("뜻", "")
+        aliases = [a[0] for a in item.get("별칭", [])]
+
+        # 필수 필드는 도구별 맵에서 가져온다
+        if "_매핑값" in item:
+            key = item["_매핑값"]
+        else:
+            key = item["이름"]
+
+        필요 = 필수맵.get(key, ["amount"])  # 기본은 amount 필수
+
+        specs[key] = {"필요": 필요, "설명": 의미}
+        # 별칭도 허용값에 추가
+        for alias in aliases:
+            if alias not in specs:
+                specs[alias] = {"필요": 필요, "설명": 의미}
+    return specs
 
 
 def _ok(r, basis, **extra):
@@ -1017,12 +1079,7 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
     대손실적률 소수 자릿수(기본 3) → loss_rate_digits.
     결과: 판단(항목별·근거)·계산(세법상 당기 대손금·전기말·당기말 채권·실적률)·결과(한도·한도초과)·세무조정. 대손금·대손충당금 세무조정."""
 
-    _v = _validate_items(writeoffs, "kind", {
-        "소멸시효완성": {"필요": ["amount", "arose_in"], "허용": {"arose_in": ["전기", "당기"]}, "설명": "상법·민법 등 소멸시효가 완성된 채권(신고조정 — 완성된 사업연도 손금)"},
-        "화해·확정판결": {"필요": ["amount", "arose_in"], "허용": {"arose_in": ["전기", "당기"]}, "설명": "재판상 화해·확정판결 등으로 회수불능이 확정된 채권(결산조정 — 손비 계상 사업연도 손금)"},
-        "부도6개월": {"필요": ["amount", "arose_in", "instrument", "months_since_default"], "허용": {"arose_in": ["전기", "당기"], "instrument": ["외상매출금", "받을어음", "기타"]}, "설명": "부도발생일부터 6개월 이상 지난 어음·수표·외상매출금(결산조정, 외상매출금은 중소기업만, 저당권 설정 시 제외, 1,000원 비망)"},
-        "회수불능": {"필요": ["amount", "arose_in"], "허용": {"arose_in": ["전기", "당기"]}, "설명": "파산·강제집행·사업폐지·사망 등으로 회수할 수 없는 채권(결산조정)"},
-    })
+    _v = _validate_items(writeoffs, "kind", _specs_from_vocab("bad_debt_adjustment", "kind"))
     if _v: return _v
     # ── 대손금 인정 판단 ──
     judgments = []  # 항목별 판단
@@ -1030,7 +1087,7 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
     prior_year_reduced = 0        # 전기 사유 신고조정 대손 → 전기말 채권 차감
     denied_bad_debt = 0           # 당기 부인 대손 합계
     current_disallowed_entries = []  # 당기 손금불산입(유보) 항목
-    memo_count = 0                   # 비망가액 1,000원을 공제한 부도6개월 채권 수 (CodeSolar 리뷰 반영)
+    memo_total = 0                   # 비망가액 합계: 인정 채권별 min(금액, 1,000원) (CodeSolar 리뷰 반영)
 
     for w in writeoffs:
         kind = w["kind"]; amount = int(w["amount"]); arose_in = w["arose_in"]
@@ -1060,6 +1117,20 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
                                   "금액": amount, "근거": "법인세법 제19조의2·시행령 제19조의2",
                                   "이유": "사유 발생 사업연도 손금 귀속, 당기 대손금 인정"})
 
+        elif kind == "회수불능":
+            # 영 제19조의2①8호(파산·강제집행·사업폐지·사망·실종 등) — 결산조정, 손비 계상 사업연도 손금
+            tax_bad_debt_recognized += amount
+            judgments.append({"항목": f"{kind} {amount:,}원", "결론": "인정(대손금, 결산조정)",
+                              "금액": amount, "근거": "법인세법 시행령 제19조의2①8호·③2호",
+                              "이유": "채무자 파산·강제집행·사업폐지·사망·실종 등으로 회수할 수 없는 채권 — 손비로 계상한 사업연도에 손금"})
+        elif kind == "부도6개월" and months is not None and int(months) < 6:
+            # 부도발생일부터 6개월이 지나지 않음 → 요건 미충족, 부인(유보) (CodeSolar 리뷰 반영)
+            denied_bad_debt += amount
+            judgments.append({"항목": f"부도6개월 {instrument or '기타'} {amount:,}원(부도 후 {months}개월)",
+                              "결론": "부인(손금불산입·유보) — 6개월 미경과",
+                              "금액": amount, "근거": "법인세법 시행령 제19조의2①9호",
+                              "이유": "부도발생일부터 6개월 이상 지나야 대손금 — 요건 미충족"})
+            current_disallowed_entries.append({"구분": "부인 대손(6개월 미경과)", "금액": amount, "소득처분": "유보"})
         elif kind == "부도6개월":
             if mortgage:
                 # 저당권 설정 시 불인정 (SPEC: 저당권 설정 시 불인정)
@@ -1071,7 +1142,7 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
                 current_disallowed_entries.append({"구분": "부인 대손(저당권)", "금액": amount, "소득처분": "유보"})
             elif instrument == "받을어음":
                 # 받을어음: 중소기업·일반 모두 인정 (비망 1,000원 공제)
-                recognized = max(0, amount - 1000); memo_count += 1
+                recognized = max(0, amount - 1000); memo_total += min(amount, 1000)
                 tax_bad_debt_recognized += recognized
                 judgments.append({"항목": f"부도6개월 받을어음 {amount:,}원",
                                   "결론": f"인정(대손금, 비망 1,000원 공제 → {recognized:,}원)",
@@ -1080,7 +1151,7 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
             elif instrument == "외상매출금":
                 if sme:
                     # 중소기업: 부도 이전 발생 외상매출금 인정 (비망 1,000원 공제)
-                    recognized = max(0, amount - 1000); memo_count += 1
+                    recognized = max(0, amount - 1000); memo_total += min(amount, 1000)
                     tax_bad_debt_recognized += recognized
                     judgments.append({"항목": f"부도6개월 외상매출금 {amount:,}원(중소기업)",
                                       "결론": f"인정(대손금, 비망 1,000원 공제 → {recognized:,}원)",
@@ -1097,7 +1168,7 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
             else:
                 # instrument 미지정 기타
                 if sme:
-                    recognized = max(0, amount - 1000); memo_count += 1
+                    recognized = max(0, amount - 1000); memo_total += min(amount, 1000)
                     tax_bad_debt_recognized += recognized
                     judgments.append({"항목": f"부도6개월 기타 {amount:,}원(중소기업)", "결론": f"인정(비망 1,000원 공제 → {recognized:,}원)",
                                       "금액": recognized, "근거": "법인세법 제19조의2·시행령 제19조의2"})
@@ -1116,7 +1187,7 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
     # 세법상 당기말 채권 = 장부 당기말 + 부인 채권 + 비망가액
     # (부인 채권 = 인정되지 않은 대손금, 비망가액은 인식된 부도6개월 채권의 1,000원)
     # 비망가액 합계 계산 필요 — 인정된 부도6개월 채권별 1,000원
-    reservation_total = memo_count * 1000   # 인정된 부도6개월 채권별 비망가액(판단 단계에서 센 수)
+    reservation_total = memo_total   # 인정된 부도6개월 채권별 비망가액 min(금액, 1,000원)
     # 부인 채권: 인정되지 않은 writeoff
     tax_receivables_end = receivables_end_book + denied_bad_debt + reservation_total
 
@@ -1182,16 +1253,25 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
     언제: 법인세 신고에서 기업업무추진비 손금불산입을 항목별로 계산할 때.
     입력: 사업연도(2016~2026) → year, 중소기업 여부 → sme, 사업연도 월수(1~12) → months,
     일반 수입금액(원) → revenue_general, 특수관계 수입금액(원) → revenue_related,
-    지출 목록 [{amount(원), evidence:'없음'|'영수증 등'|'적격', over_30k?:bool(기본 true), congratulatory?:bool, culture?:bool}] → expenses.
+    지출 목록 [{amount(원), evidence, over_30k?, congratulatory?, culture?}] → expenses.
+      evidence 허용값(어휘 기반):
+        · 없음 — 지출 증빙이 전혀 없는 건(손금불산입·대표자상여)
+        · 영수증 등 — 영수증 등은 있으나 적격증명서류가 아닌 건(건당 기준 초과 시 손금불산입·기타사외유출)
+        · 적격 — 적격증명서류(세금계산서·계산서·신용카드·현금영수증) 수취 건(한도 시부인 대상)
+      옛 명칭(별칭, ~2023): 접대비·접대비_증빙없음·접대비_적격증빙미수취·접대비_적격수취·접대비_문화
     결과: 판단(항목별·근거)·결과(한도·한도초과)·세무조정(구분·금액·소득처분). 기업업무추진비 세액공제."""
 
-    _v = _validate_items(expenses, "evidence", {
-        "없음": {"필요": ["amount"], "설명": "지출 증빙이 전혀 없는 건(손금불산입·대표자상여)"},
-        "영수증 등": {"필요": ["amount"], "설명": "영수증 등은 있으나 세금계산서·신용카드 등 적격증명서류가 아닌 건(건당 3만 원·경조금 20만 원 초과면 손금불산입·기타사외유출)"},
-        "적격": {"필요": ["amount"], "설명": "적격증명서류(세금계산서·계산서·신용카드·현금영수증) 수취 건(한도 시부인 대상)"},
-    })
+    _v = _validate_items(expenses, "evidence", _specs_from_vocab("entertainment_adjustment", "evidence"))
     if _v: return _v
-    limit_base_amount = 36_000_000 if sme else 12_000_000  # 2020 이후 기본한도
+
+    # 어휘에서 연도별 기준·한도를 가져온다
+    적격증빙_규칙 = vocab.rule("기업업무추진비_적격증빙미수취", year)
+    적격수취_규칙 = vocab.rule("기업업무추진비_적격수취", year)
+    기준_일반 = 적격증빙_규칙.get("기준", {}).get("일반")
+    기준_경조금 = 적격증빙_규칙.get("기준", {}).get("경조금")
+    기본한도_중소 = 적격수취_규칙.get("기본한도", {}).get("중소")
+    기본한도_일반 = 적격수취_규칙.get("기본한도", {}).get("일반")
+    기본한도 = 기본한도_중소 if sme else 기본한도_일반
 
     # ── 항목별 증빙 판정 ──
     judgments = []
@@ -1214,23 +1294,22 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
                               "금액": amount, "근거": "법인세법 제25조②(증빙서류 없는 접대비 손금불산입)",
                               "이유": "증빙서류 없음 — 전액 손금불산입, 대표자상여 소득처분"})
         elif evidence == "영수증 등":
-            # 영수증 등 → 적격증명서류 미수취 판단
+            # 영수증 등 → 적격증명서류 미수취 판단 (어휘 기준 사용)
             if over_30k:
-                # 건당 3만원(경조 20만원) 초과 + 적격증빙 없음 → 손금불산입·기타사외유출
-                limit_amount = 200_000 if congratulatory else 30_000
+                limit_amount = 기준_경조금 if congratulatory else 기준_일반
                 if amount > limit_amount:
                     no_qual_total += amount
                     judgments.append({"항목": f"금액 {amount:,}원(영수증 등, {'경조금' if congratulatory else '일반'})",
                                       "결론": "적격증명서류 미수취 → 손금불산입·기타사외유출",
                                       "금액": amount, "근거": "법인세법 제25조②·시행령 제41조①(적격증빙 미수취)",
-                                      "이유": f"{'경조금' if congratulatory else '일반'} {'20만원' if congratulatory else '3만원'} 초과, 적격증명서류 미수취 → 기타사외유출"})
+                                      "이유": f"{'경조금' if congratulatory else '일반'} {limit_amount:,}원 초과, 적격증명서류 미수취 → 기타사외유출"})
                 else:
                     judgments.append({"항목": f"금액 {amount:,}원(영수증 등, {'경조금' if congratulatory else '일반'})",
                                       "결론": "인정", "금액": amount,
                                       "근거": "법인세법 제25조②", "이유": f"{'경조금' if congratulatory else '일반'} {limit_amount:,}원 이하 → 적격증빙 요구 해당 없음"})
             else:
                 judgments.append({"항목": f"금액 {amount:,}원(영수증 등)", "결론": "인정", "금액": amount,
-                                  "근거": "법인세법 제25조②", "이유": "3만원 이하 → 적격증명서류 요구 없음"})
+                                  "근거": "법인세법 제25조②", "이유": f"{기준_일반:,}원 이하 → 적격증명서류 요구 없음"})
         elif evidence == "적격":
             # 적격증빙 → 시부인 대상 (문화비 여부 별도 표시)
             if culture:
@@ -1257,7 +1336,7 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
             si_bu_shin += amount
         elif evidence == "영수증 등":
             # 판단 단계와 같은 기준: 건당 기준(경조금 20만·일반 3만) 이하면 한도 시부인 대상 (CodeSolar 리뷰 반영)
-            limit_amount = 200_000 if congratulatory else 30_000
+            limit_amount = 기준_경조금 if congratulatory else 기준_일반
             if (not over_30k) or amount <= limit_amount:
                 si_bu_shin += amount
         # "없음"은 한도 대상 아님
@@ -1287,37 +1366,54 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
         "시부인 대상": si_bu_shin,
         "직부인(증빙없음·심사비)": no_receipt_total + no_qual_total,
     }
-    return _ok(result, "법인세법 제25조, 시행령 제41조·제42조",
+    근거_목록 = vocab.basis("기업업무추진비_적격수취", year)
+    근거_문자열 = ", ".join(
+        f"{조문[0]} {조문[1]} {조문[2]} {조문[3]}" if 조문[3] else f"{조문[0]} {조문[1]} {조문[2]}"
+        for 조문 in 근거_목록
+    )
+    return _ok(result, 근거_문자열,
                세무조정=settlements, 판단=judgments, 계산=calc_dict,
-               산식="기본한도 = 중소 3,600만·일반 1,200만 × 월수/12, 수입금액 한도 = 수입금액 구간별 비율을 적용한 금액(+ 특수관계 10%), 문화한도 = min(문화비, 일반한도 × 20%), 한도 = 기본 + 수입금액 + 문화, 한도초과 = 시부인 대상 − 한도")
+               산식=f"기본한도 = 중소 {기본한도_중소:,}원·일반 {기본한도_일반:,}원 × 월수/12, 수입금액 한도 = 수입금액 구간별 비율을 적용한 금액(+ 특수관계 10%), 문화한도 = min(문화비, 일반한도 × 20%), 한도 = 기본 + 수입금액 + 문화, 한도초과 = 시부인 대상 − 한도")
 
 
 @mcp.tool(annotations=CALC)
 @_guard
 def financial_income_aggregate(year: YEAR,
-                               items: Annotated[list, Field(description="금융소득 항목 [{kind, amount, ...}] — kind: 예금이자·비영업대금이익·외상매출금지급기일연장이자·소비대차전환이자·투자신탁환매이익·파생결합사채이익·장내파생상품·상장법인현금배당·비상장법인현금배당·의제배당_잉여금자본전입·인정배당·저축성보험차익")]) -> dict:
+                               items: Annotated[list, Field(description="금융소득 항목 [{kind, amount, ...}] — kind: 예금이자·비영업대금이익·소비대차전환이자·외상매출금지급기일연장이자·저축성보험차익·투자신탁환매이익·파생결합사채이익·장내파생상품이익·상장법인현금배당·비상장법인현금배당·의제배당_잉여금자본전입·인정배당")]) -> dict:
     """종합소득 합산 금융소득(이자·배당)과 Gross-up 계산(소득세법 제14조·제16조·제17조·제56조).
     언제: 종합소득세 신고에서 금융소득 종합과세 대상 여부와 배당가산(Gross-up)액을 계산할 때.
     입력: 귀속연도(2016~2026) → year, 금융소득 항목 목록 [{kind, amount, ...}] → items.
+      kind 허용값(어휘 기반, 별칭 포함):
+        · 예금이자 — 예금·적금·부금의 이자
+        · 비영업대금이익 — 사업이 아닌 금전 대여에서 받는 이자
+        · 소비대차전환이자 — 외상매출금 등 거래 대금이 소비대차로 바뀐 뒤 그 원금에서 생긴 이자
+        · 외상매출금지급기일연장이자 — 물품·용역 대금의 지급기일을 연장해 주고 추가로 받는 금액(사업소득)
+        · 저축성보험차익 — 보험 만기·해지 시 받는 보험금에서 납입보험료를 뺀 차익
+        · 투자신탁환매이익 — 집합투자기구(투자신탁 등)로부터 받는 이익
+        · 파생결합사채이익 — 상법상 파생결합사채(ELB 등)에서 받는 이익
+        · 장내파생상품이익 — KOSPI200 선물·옵션 등 장내파생상품 거래 이익(양도소득)
+        · 상장법인현금배당 — 상장 내국법인에서 받는 이익배당(Gross-up 대상)
+        · 비상장법인현금배당 — 비상장 내국법인에서 받는 이익배당(Gross-up 대상)
+        · 의제배당_잉여금자본전입 — 잉여금을 자본에 전입해 받은 무상주
+        · 인정배당 — 법인세법에 따라 배당으로 소득처분된 금액(Gross-up 대상)
     결과: 판단(항목별 이자/배당/제외·Gross-up 대상 여부)·결과(이자소득금액·배당소득금액·합산액)·계산(중간값). 금융소득 종합과세·배당가산."""
 
-    _v = _validate_items(items, "kind", {
-        "예금이자": {"필요": ["amount"], "설명": "예·적금 이자"},
-        "비영업대금이익": {"필요": ["amount"], "설명": "금전 대여 이자(사업이 아닌 대여)"},
-        "소비대차전환이자": {"필요": ["amount"], "설명": "외상매출금 등이 소비대차(금전 대여)로 전환된 뒤 발생한 이자 — 지급기일 연장이자와 분리해 따로 넣을 것"},
-        "외상매출금지급기일연장이자": {"필요": ["amount"], "설명": "물품 대금 지급기일을 연장해 주고 받는 이자(사업소득, 금융소득 아님) — 소비대차 전환분은 제외한 금액"},
-        "투자신탁환매이익": {"필요": ["amount", "components"], "설명": "집합투자기구 이익. components=[{asset:'상장주식'|'비상장주식'|'채권'|'기타', gain}]로 자산별 손익을 반드시 나눠 줄 것(상장주식 손익 제외)"},
-        "파생결합사채이익": {"필요": ["amount"], "설명": "파생결합사채(ELB 등) 분배금(배당소득, Gross-up 비대상)"},
-        "장내파생상품": {"필요": ["amount"], "설명": "장내파생상품 거래 이익(양도소득, 금융소득 아님)"},
-        "상장법인현금배당": {"필요": ["amount"], "설명": "상장 내국법인 현금배당(Gross-up 대상)"},
-        "비상장법인현금배당": {"필요": ["amount"], "설명": "비상장 내국법인 현금배당(Gross-up 대상)"},
-        "의제배당_잉여금자본전입": {"필요": ["amount", "source"], "허용": {"source": ["주식발행초과금", "자본준비금", "재평가적립금", "자기주식처분이익", "이익잉여금"]}, "설명": "잉여금 자본전입 무상주. source(재원) 필수. 자기주식 미배정으로 지분율이 오른 부분이 있으면 self_stock_shift에 그 금액"},
-        "인정배당": {"필요": ["amount"], "설명": "법인세법상 배당으로 소득처분된 금액(Gross-up 대상)"},
-        "저축성보험차익": {"필요": ["premium", "payout", "contract_year"], "설명": "보험차익. premium(납입보험료)·payout(수령액)·contract_year(계약연도) 필수, 종신형 연금이면 annuity=true"},
-    })
+    # 어휘의 항목 이름과 다른 흔한 표기를 정식 이름으로 해결(예: 장내파생상품→장내파생상품이익)
+    _kind_별칭 = {"장내파생상품": "장내파생상품이익"}
+    for it in items:
+        k = it.get("kind", "")
+        if k in _kind_별칭:
+            it["kind"] = _kind_별칭[k]
+
+    _extra = [f"항목 {i+1}(저축성보험차익): 계약 {year - int(it.get('contract_year'))}년 유지 — 비과세 요건(시행령 제25조: 납입 한도·월적립식 등) 충족 여부를 'exempt_conditions_met'(true/false)로 입력 필요"
+              for i, it in enumerate(items or []) if isinstance(it, dict) and it.get("kind") == "저축성보험차익" and it.get("contract_year")
+              and year - int(it.get("contract_year")) >= 10 and it.get("exempt_conditions_met") is None]
+    _v = _validate_items(items, "kind", _specs_from_vocab("financial_income_aggregate", "kind"), extra=_extra)
     if _v: return _v
-    # Claude 재작성(10-13): 항목 판단 → 이자/배당/제외·Gross-up 대상 → 2천만 원 기준 → Gross-up
-    rate = 0.11 if year <= 2023 else 0.10
+
+    # Gross-up 가산율은 어휘에서 가져온다(연도별)
+    배당_규칙 = vocab.rule("상장법인현금배당", year)
+    rate = 배당_규칙.get("Gross-up가산율", 0.1)
     판단, inc, div_n, div_g, exc = [], 0, 0, 0, 0
 
     def add(항목, 구분, 금액, 근거, 이유, gu=None):
@@ -1337,11 +1433,14 @@ def financial_income_aggregate(year: YEAR,
             add(k, "이자", amt, "소득세법 제16조①11호, 시행령 제26조③", "금전 대여 이익 — 외상매출금이 소비대차로 전환된 이자 포함")
         elif k == "외상매출금지급기일연장이자":
             add(k, "제외", amt, "소득세법 시행령 제26조③", "물품 대금 지급기일 연장 이자는 사업소득(금융소득 아님)")
-        elif k == "장내파생상품":
+        elif k == "장내파생상품이익":
             add(k, "제외", amt, "소득세법 제94조①5호", "파생상품 거래 이익은 양도소득")
         elif k == "저축성보험차익":
             gain = int(it.get("payout", amt)) - int(it.get("premium", 0))
-            if it.get("annuity"):
+            held = year - int(it.get("contract_year", year))
+            if held >= 10 and it.get("exempt_conditions_met") is True:
+                add(k, "제외", max(gain, 0), "소득세법 제16조①9호, 시행령 제25조①", f"계약 {held}년 유지 + 비과세 요건(납입 한도 등) 충족 — 비과세")
+            elif it.get("annuity"):
                 add(k, "제외", max(gain, 0), "소득세법 제16조①9호, 시행령 제25조", "비과세 요건 연금형 — 과세 제외(요건 충족 전제)")
             else:
                 add(k, "이자", max(gain, 0), "소득세법 제16조①9호, 시행령 제25조", f"만기보험금 − 납입보험료 = {gain:,}원(10년 미만 등 비과세 요건 미충족)")
@@ -1362,7 +1461,9 @@ def financial_income_aggregate(year: YEAR,
                 if shift:
                     add(f"{k}({src}) 자기주식 미배정 지분율 상승분", "배당", shift, "소득세법 제17조②5호", "자기주식 몫 미배정으로 다른 주주 지분 증가 — 의제배당, Gross-up 비대상", gu=False)
             else:
-                add(f"{k}({src})", "배당", amt, "소득세법 제17조②2호, 제56조", f"{src} 자본전입 — 의제배당, 법인세 과세 재원이라 Gross-up 대상", gu=True)
+                add(f"{k}({src})", "배당", amt - shift, "소득세법 제17조②2호, 제56조", f"{src} 자본전입 — 의제배당, 법인세 과세 재원이라 Gross-up 대상", gu=True)
+                if shift:
+                    add(f"{k}({src}) 자기주식 미배정 지분율 상승분", "배당", shift, "소득세법 제17조②5호", "자기주식 몫 미배정으로 다른 주주 지분 증가 — 의제배당, Gross-up 비대상", gu=False)
         else:
             판단.append({"항목": k, "결론": "확인 필요", "금액": amt, "근거": "", "이유": "지원하지 않는 항목 — 직접 판단 필요"})
 
