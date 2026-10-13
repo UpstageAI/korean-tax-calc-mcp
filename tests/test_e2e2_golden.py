@@ -59,3 +59,22 @@ def test_unknown_source_rejected():
                                            "capitalized_amount": 1_000_000, "par_value": 500,
                                            "shareholders": [{"name": "X", "shares": 100}], "self_stock_allotment": "미교부"})
     assert "error" in r
+
+
+# ── CodeSolar 리뷰(PR #8) 회귀 (Claude 추가 10-13) ──
+def test_self_stock_gets_nothing_when_not_allotted():  # 미교부: 자기주식 주주 배정·의제배당 0, 발행 합계 = 신주 − 자기주식 몫
+    r = c("deemed_dividend_bonus_shares", {"year": 2025, "shareholder_type": "법인", "source": "이익잉여금",
+                                           "capitalized_amount": 200_000_000, "par_value": 500,
+                                           "shareholders": HOLDERS, "self_stock_allotment": "미교부"})
+    h = by_name(r)
+    assert h["A(자기주식)"]["배정주식수"] == 0 and h["A(자기주식)"]["의제배당"] == 0
+    assert sum(x["배정주식수"] for x in r["결과"]["주주별"]) == 320_000 and r["결과"]["전입후총주식수"] == 420_000
+
+
+def test_remainder_shares_fully_distributed():  # 교부: 단주까지 다른 주주에게 전부 배정(합계 = 신주)
+    r = c("deemed_dividend_bonus_shares", {"year": 2025, "shareholder_type": "개인", "source": "주식발행초과금",
+                                           "capitalized_amount": 5_000, "par_value": 500, "self_stock_allotment": "다른주주에게교부",
+                                           "shareholders": [{"name": "X", "shares": 5}, {"name": "Y", "shares": 2, "self_stock": True}, {"name": "Z", "shares": 1}]})
+    h = by_name(r)
+    assert h["X"]["배정주식수"] == 8 and h["Z"]["배정주식수"] == 2 and h["Y"]["배정주식수"] == 0   # 10 × 5/6 = 8.33, 10 × 1/6 = 1.67 → 나머지 1주는 Z
+    assert sum(x["배정주식수"] for x in r["결과"]["주주별"]) == 10
