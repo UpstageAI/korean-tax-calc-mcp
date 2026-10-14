@@ -6,7 +6,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/korean-tax-calc-mcp)](https://pypi.org/project/korean-tax-calc-mcp/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-korean--tax--calc--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=korean-tax-calc-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Built with Upstage Solar Pro 4](https://img.shields.io/badge/Built%20with-Upstage%20Solar%20Pro%204-7A3FF2)](https://www.upstage.ai/) · [한국어](README.md)
 
-> **Developed with Upstage Solar Pro 4 since 0.3.0** (0.2.1 and earlier predate it). 2026 corporate tax rates, non-resident withholding (`nonresident_withholding`) and thin capitalization (`thin_capitalization`) were written by Solar Pro 4 (Solar Work CLI), reviewed on each PR by CodeSolar (Solar Pro 4-based code review) and cross-checked with tests by Claude. **0.4.0: merged 11 tax audit judgment tools. 0.5.1: added precheck_schema (input schema for tax return precheck), expanded simplified-taxpayer and deemed-input-tax scenarios, refreshed descriptions — now 41 tools. 0.6.0: three end-to-end calculators (bad debt, entertainment, financial income) that take raw facts and return item judgments → tax-basis adjustments → intermediate values → adjustments, plus a fact-type vocabulary (`data/facts_vocab.json`) that supplies accepted values, per-period thresholds and aliases — 44 tools. 0.7.0: six more end-to-end calculators (bonus-share deemed dividend, other income, simplified VAT return, common input tax allocation/settlement, input tax recalculation, bundled land-building supply split); non-taxable-surplus bonus shares now require the treasury-share shift explicitly — 50 tools.**
+> **Developed with Upstage Solar Pro 4 since 0.3.0** (0.2.1 and earlier predate it). 2026 corporate tax rates, non-resident withholding (`nonresident_withholding`) and thin capitalization (`thin_capitalization`) were written by Solar Pro 4 (Solar Work CLI), reviewed on each PR by CodeSolar (Solar Pro 4-based code review) and cross-checked with tests by Claude. **0.4.0: merged 11 tax audit judgment tools. 0.5.1: added precheck_schema (input schema for tax return precheck), expanded simplified-taxpayer and deemed-input-tax scenarios, refreshed descriptions — now 41 tools. 0.6.0: three end-to-end calculators (bad debt, entertainment, financial income) that take raw facts and return item judgments → tax-basis adjustments → intermediate values → adjustments, plus a fact-type vocabulary (`data/facts_vocab.json`) that supplies accepted values, per-period thresholds and aliases — 44 tools. 0.7.0: six more end-to-end calculators (bonus-share deemed dividend, other income, simplified VAT return, common input tax allocation/settlement, input tax recalculation, bundled land-building supply split); non-taxable-surplus bonus shares now require the treasury-share shift explicitly — 50 tools. 0.8.0–0.9.0: adjustment calculators return results in tax-adjustment-sheet shape (adjustment list, totals by disposition, total disallowed); the entertainment, simplified-VAT and common-input-tax calculators now take **ledger-style item lists only** (item name, amount, attributes — classification by the vocabulary), bundled land-building split feeds the input-tax recalculation, and identical repeated calls are flagged.**
 
 **Korean (South Korea) tax calculations for AI agents — code, not guesses.** LLMs often get tax arithmetic wrong. This MCP server computes in code and cites the statute behind every result. It uses year-by-year rate tables (2016–2026); for a year without a verified table it returns an error instead of estimating. 50 tools (38 computation + 12 tax audit judgment). Nothing sent outside your machine for the 32 computation tools.
 
@@ -88,6 +88,23 @@ Pair it with [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp) to go
 | `precheck_schema` | Returns the input schema for tax return precheck: when tax=corp|vat|income is specified, provides the meaning, unit, and required/optional status of each input key for that tax type. Call before return_precheck or PDF tools | Required/optional classification based on each rule's needs |
 
 CITA = Corporate Income Tax Act.
+
+## Ledger-style input (0.9.0)
+
+The entertainment, simplified-VAT and common-input-tax calculators take facts the way they appear in a ledger: a list of **item name + amount + attributes**. The calculator decides which bucket each item falls into and whether it is included, using `data/facts_vocab.json`; unknown item names are refused with the accepted values instead of being guessed.
+
+```json
+{"year": 2026, "sme": false,
+ "revenue": {"매출액": 25000000000, "특수관계매출": 4000000000, "매출할인등": {"특수관계": 200000000}},
+ "ledger": [
+   {"항목": "기업업무추진비(증빙 없음)", "금액": 7000000, "증빙": "없음"},
+   {"항목": "기업업무추진비", "금액": 50000000, "증빙": "적격"},
+   {"항목": "광고비 — 거래처 교제 목적", "금액": 13000000, "증빙": "적격", "성격": "교제목적"},
+   {"항목": "복리후생비 — 직원 단체(법인) 복리시설비", "금액": 12000000, "성격": "직원단체_법인"},
+   {"항목": "제품 사례 제공", "성격": "현물", "시가": 15000000, "장부가액": 11000000}]}
+```
+
+Results lead with `세무조정` (adjustment entries with disposition), `소득처분별_합계` and `손금불산입_합계`, followed by limits, judgments, formulas and citations. Calling again with identical input prefixes the result with a notice that it is the N-th identical calculation.
 
 ## Issue flags
 
