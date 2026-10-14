@@ -326,6 +326,21 @@ def _specs_from_vocab(tool_name: str, field: str) -> dict:
     return specs
 
 
+
+
+def _build_tax_adjustment_result(settlements, result, calc_dict=None):
+    """세무조정 출력 통일: 결과 첫 키에 세무조정·소득처분별_합계·손금불산입_합계 배치."""
+    처분별 = {}
+    for s in settlements:
+        처분 = s["소득처분"]
+        처분별[처분] = 처분별.get(처분, 0) + s["금액"]
+    처분별 = {k: v for k, v in 처분별.items() if v != 0}
+    손금불산입 = sum(v for k, v in 처분별.items() if k != "△유보")
+    new_result = {"세무조정": settlements, "소득처분별_합계": 처분별, "손금불산입_합계": 손금불산입}
+    new_result.update(result)
+    return new_result
+
+
 def _ok(r, basis, **extra):
     return {"결과": r, "근거": basis, **extra}
 
@@ -1253,7 +1268,8 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
         "비망가액 합계": reservation_total,
         "장부 당기말": book_closing,
     }
-    return _ok(result, "법인세법 제19조의2·제34조, 시행령 제19조의2·제61조",
+    unified = _build_tax_adjustment_result(settlements, result, calc_dict)
+    return _ok(unified, "법인세법 제19조의2·제34조, 시행령 제19조의2·제61조",
                세무조정=settlements, 판단=judgments, 계산=calc_dict,
                산식="세법상 당기 대손금 = 인정 대손금 합계, 세법상 전기말 채권 = 장부 전기말 − 전기 신고조정 대손, 세법상 당기말 채권 = 장부 당기말 + 부인 채권 + 비망가액, 실적률 = 당기 대손금 ÷ 전기말 채권(절사), 한도 = 당기말 채권 × max(1%, 실적률), 한도초과 = 장부 기말잔액 − 한도")
 
@@ -1261,108 +1277,192 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
 @mcp.tool(annotations=CALC)
 @_guard
 def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중소기업 여부")],
-                             expenses: Annotated[list, Field(description="지출 목록 [{amount, evidence:'없음'|'영수증 등'|'적격', over_30k?:bool(기본 true), congratulatory?:bool, culture?:bool}]")],
+                             expenses: Annotated[list | None, Field(description="지출 목록 [{amount, evidence:'없음'|'영수증 등'|'적격', over_30k?:bool(기본 true), congratulatory?:bool, culture?:bool}]")] = None,
                              months: Annotated[int, Field(description="사업연도 월수(1~12)")] = 12,
                              revenue_general: WON = 0,
-                             revenue_related: WON = 0) -> dict:
-    """기업업무추진비 세무조정 — 2023년 이전 사업연도의 "접대비"와 같은 항목(2024.1.1. 명칭 변경, 법률 19193). 접대비 문제·장부도 이 도구로 계산한다(법인세법 제25조, 시행령 제41조·제42조).
+                             revenue_related: WON = 0,
+                             ledger: Annotated[list | None, Field(description="원장형 입력(expenses 대안) [{항목, 금액, 증빙:'없음'|'영수증 등'|'적격'(기본 '적격'), 성격?:'교제목적'|'직원단체_법인'|'직원단체_비법인'|'임직원부담'|'현물'|'경조금'|'문화', 시가?, 장부가액?, 건당기준초과?}] — 성격별 포함·제외는 어휘 기업업무추진비_포함항목으로 판단")] = None,
+                             revenue: Annotated[dict | None, Field(description="수입금액 원장형 입력(revenue_general·revenue_related 대안) {매출액, 특수관계매출?(기본 0), 매출할인등:{일반?, 특수관계?}(기본 0)} — 기업회계기준 매출액 기준(영 제42조①)")] = None) -> dict:
+    """기업업무추진비 세무조정 — 2023년 이전 사업연도의 "접대비"와 같은 항목(2024.1.1. 명칭 변경, 법률 19193). 접대비 문제·장부도 이 도구로 계산한다(법인세법 제25조, 시행령 제40조·제41조·제42조).
     언제: 법인세 신고에서 기업업무추진비 손금불산입을 항목별로 계산할 때.
-    입력: 사업연도(2016~2026) → year, 중소기업 여부 → sme, 사업연도 월수(1~12) → months,
-    일반 수입금액(원) → revenue_general, 특수관계 수입금액(원) → revenue_related,
-    지출 목록 [{amount(원), evidence, over_30k?, congratulatory?, culture?}] → expenses.
+    입력:
+      · 장부 기반(기존): 사업연도 → year, 중소기업 여부 → sme, 월수 → months,
+        일반 수입금액 → revenue_general, 특수관계 수입금액 → revenue_related,
+        지출 목록 [{amount(원), evidence, over_30k?, congratulatory?, culture?}] → expenses.
+      · 원장 기반(신규 대안): ledger=[{항목, 금액, 증빙:'없음'|'영수증 등'|'적격'(기본 '적격'), 성격?:'교제목적'|'직원단체_법인'|'직원단체_비법인'|'임직원부담'|'현물'|'경조금'|'문화', 시가?, 장부가액?, 건당기준초과?:(기본 true)}],
+        revenue={매출액, 특수관계매출?(기본 0), 매출할인등:{일반?, 특수관계?}(기본 0)}.
+      둘 다 주면 error. revenue와 revenue_general·revenue_related 둘 다 주면 error.
       evidence 허용값(어휘 기반):
         · 없음 — 지출 증빙이 전혀 없는 건(손금불산입·대표자상여)
         · 영수증 등 — 영수증 등은 있으나 적격증명서류가 아닌 건(건당 기준 초과 시 손금불산입·기타사외유출)
         · 적격 — 적격증명서류(세금계산서·계산서·신용카드·현금영수증) 수취 건(한도 시부인 대상)
-      옛 명칭(별칭, ~2023): 접대비·접대비_증빙없음·접대비_적격증빙미수취·접대비_적격수취·접대비_문화
-    결과: 판단(항목별·근거)·결과(한도·한도초과)·세무조정(구분·금액·소득처분). 기업업무추진비 세액공제."""
+      성격 판단(어휘 기업업무추진비_포함항목.판단.성격별):
+        · 없음·교제목적 → 포함(법 제25조①) / 직원단체_법인 → 포함(영 제40조②) / 직원단체_비법인 → 제외(복리후생비)
+        · 임직원부담 → 제외(영 제40조①) / 현물 → 포함(max(시가, 장부가액), 영 제42조⑥) / 경조금·문화 → 기존과 동일
+    결과: 판단(항목별·근거)·결과(한도·한도초과)·세무조정(구분·금액·소득처분)·소득처분별_합계·손금불산입_합계·계산. 기업업무추진비 세액공제."""
 
-    _v = _validate_items(expenses, "evidence", _specs_from_vocab("entertainment_adjustment", "evidence"))
-    if _v: return _v
+    # ── 입력 충돌 검사 ──
+    if expenses is not None and ledger is not None:
+        return {"error": "입력 확인 필요 — expenses와 ledger를 함께 입력할 수 없음. 한 가지 방식으로 입력하세요"}
+    if revenue is not None and (revenue_general != 0 or revenue_related != 0):
+        return {"error": "입력 확인 필요 — revenue와 revenue_general·revenue_related를 함께 입력할 수 없음. 한 가지 방식으로 입력하세요"}
 
-    # 어휘에서 연도별 기준·한도를 가져온다
-    적격증빙_규칙 = vocab.rule("기업업무추진비_적격증빙미수취", year)
-    적격수취_규칙 = vocab.rule("기업업무추진비_적격수취", year)
-    기준_일반 = 적격증빙_규칙.get("기준", {}).get("일반")
-    기준_경조금 = 적격증빙_규칙.get("기준", {}).get("경조금")
-    기본한도_중소 = 적격수취_규칙.get("기본한도", {}).get("중소")
-    기본한도_일반 = 적격수취_규칙.get("기본한도", {}).get("일반")
-    기본한도 = 기본한도_중소 if sme else 기본한도_일반
+    # ── 원장형 입력 처리 ──
+    if ledger is not None:
+        포함항목_규칙 = vocab.rule("기업업무추진비_포함항목", year)
+        성격별_판단 = 포함항목_규칙.get("성격별", {})
 
-    # ── 항목별 증빙 판정 ──
-    judgments = []
-    no_receipt_total = 0        # 증빙 없음(대표자상여)
-    no_qual_total = 0          # 적격증빙 미수취(기타사외유출)
-    disallow_direct = 0        # 직부인 소계
+        if revenue is not None:
+            매출액 = int(revenue.get("매출액", 0))
+            특수관계매출 = int(revenue.get("특수관계매출", 0))
+            매출할인등 = revenue.get("매출할인등", {})
+            할인_일반 = int(매출할인등.get("일반", 0))
+            할인_특수관계 = int(매출할인등.get("특수관계", 0))
+            revenue_related_calc = 특수관계매출 - 할인_특수관계
+            revenue_general_calc = 매출액 - 특수관계매출 - 할인_일반
+            if revenue_related_calc < 0 or revenue_general_calc < 0:
+                return {"error": "입력 확인 필요 — 수입금액이 음수: 매출액·특수관계매출·매출할인등 확인"}
+            revenue_general = revenue_general_calc
+            revenue_related = revenue_related_calc
 
-    for e in expenses:
-        amount = int(e["amount"])
-        evidence = e.get("evidence", "없음")
-        over_30k = e.get("over_30k", True)   # 기본 true — 3만원 초과 여부
-        congratulatory = e.get("congratulatory", False)
-        culture = e.get("culture", False)
+        judgments = []
+        items_for_limit = []
+        no_receipt_total = 0
+        no_qual_total = 0
 
-        if evidence == "없음":
-            # 증빙 없음 → 손금불산입·대표자상여
-            no_receipt_total += amount
-            judgments.append({"항목": f"금액 {amount:,}원(증빙 없음)",
-                              "결론": "손금불산입·대표자상여",
-                              "금액": amount, "근거": "법인세법 제25조②(증빙서류 없는 접대비 손금불산입)",
-                              "이유": "증빙서류 없음 — 전액 손금불산입, 대표자상여 소득처분"})
-        elif evidence == "영수증 등":
-            # 영수증 등 → 적격증명서류 미수취 판단 (어휘 기준 사용)
-            if over_30k:
-                limit_amount = 기준_경조금 if congratulatory else 기준_일반
-                if amount > limit_amount:
-                    no_qual_total += amount
-                    judgments.append({"항목": f"금액 {amount:,}원(영수증 등, {'경조금' if congratulatory else '일반'})",
-                                      "결론": "적격증명서류 미수취 → 손금불산입·기타사외유출",
-                                      "금액": amount, "근거": "법인세법 제25조②·시행령 제41조①(적격증빙 미수취)",
-                                      "이유": f"{'경조금' if congratulatory else '일반'} {limit_amount:,}원 초과, 적격증명서류 미수취 → 기타사외유출"})
+        for item in ledger:
+            항목명 = item.get("항목", "")
+            금액 = int(item.get("금액", 0))
+            증빙 = item.get("증빙", "적격")
+            성격 = item.get("성격", None)
+            시가 = item.get("시가", None)
+            장부가액 = item.get("장부가액", None)
+            건당기준초과 = item.get("건당기준초과", True)
+
+            if 성격 == "현물" and 금액 == 0:
+                if 시가 is not None and 장부가액 is not None:
+                    금액 = max(int(시가), int(장부가액))
+                elif 시가 is not None:
+                    금액 = int(시가)
+                elif 장부가액 is not None:
+                    금액 = int(장부가액)
                 else:
-                    judgments.append({"항목": f"금액 {amount:,}원(영수증 등, {'경조금' if congratulatory else '일반'})",
-                                      "결론": "인정", "금액": amount,
-                                      "근거": "법인세법 제25조②", "이유": f"{'경조금' if congratulatory else '일반'} {limit_amount:,}원 이하 → 적격증빙 요구 해당 없음"})
-            else:
-                judgments.append({"항목": f"금액 {amount:,}원(영수증 등)", "결론": "인정", "금액": amount,
-                                  "근거": "법인세법 제25조②", "이유": f"{기준_일반:,}원 이하 → 적격증명서류 요구 없음"})
-        elif evidence == "적격":
-            # 적격증빙 → 시부인 대상 (문화비 여부 별도 표시)
-            if culture:
-                judgments.append({"항목": f"금액 {amount:,}원(적격·문화비)", "결론": "시부인 대상(문화접대비)",
-                                  "금액": amount, "근거": "법인세법 제25조④(문화접대비)", "이유": "적격증빙·문화비 지출 → 한도 계산 시 문화접대비 포함"})
-            else:
-                judgments.append({"항목": f"금액 {amount:,}원(적격)", "결론": "시부인 대상", "금액": amount,
-                                  "근거": "법인세법 제25조①", "이유": "적격증명서류 수취 → 한도 계산 대상"})
-        else:
-            judgments.append({"항목": f"금액 {amount:,}원(증빙 '{evidence}')", "결론": "검토 필요", "금액": amount,
-                              "근거": "", "이유": f"evidence={evidence} — 확인 필요"})
+                    return {"error": "입력 확인 필요 — 현물 항목인데 금액·시가·장부가액 중 하나 필요"}
 
-    # ── 한도 계산 (기존 entertain 함수 재사용) ──
-    # expensed = 시부인 대상 총액 = 적격 증빙 지출 + (영수증 등 중 인정되는 것) — 하지만 여기서는 "시부인 대상 = 적격 증빙 지출 전체"로 처리
-    # 기존 entertain 함수: expensed=비용계상 접대비 전체(증빙 미수취 포함), no_card_over=적격증빙 미수취 직부인
-    # 여기서는: 시부인 대상 = 적격 증빙 지출_total + 영수증 등 중 인정분(3만원 이하)
-    si_bu_shin = 0  # 시부인 대상 총액
-    for e in expenses:
-        amount = int(e["amount"])
-        evidence = e.get("evidence", "없음")
-        over_30k = e.get("over_30k", True)
-        congratulatory = e.get("congratulatory", False)
-        if evidence == "적격":
-            si_bu_shin += amount
-        elif evidence == "영수증 등":
-            # 판단 단계와 같은 기준: 건당 기준(경조금 20만·일반 3만) 이하면 한도 시부인 대상 (CodeSolar 리뷰 반영)
-            limit_amount = 기준_경조금 if congratulatory else 기준_일반
-            if (not over_30k) or amount <= limit_amount:
+            if 성격 is None:
+                결론 = "포함"
+                근거 = "법인세법 제25조①"
+                이유 = "명목 불문, 기업업무추진비 포함"
+            elif 성격 in 성격별_판단:
+                성급_판단 = 성격별_판단[성격]
+                결론 = 성급_판단.get("결론", "포함")
+                근거 = 성급_판단.get("근거", "")
+                이유 = 성급_판단.get("이유", "")
+            else:
+                결론 = "포함"
+                근거 = "법인세법 제25조①"
+                이유 = f"성격 '{성격}' — 기본 포함"
+
+            if 결론 == "제외":
+                judgments.append({"항목": 항목명, "성격": 성격, "결론": f"제외·근거: {근거}", "금액": 0, "근거": 근거, "이유": 이유})
+                continue
+
+            if 증빙 == "없음":
+                no_receipt_total += 금액
+                judgments.append({"항목": 항목명, "성격": 성격, "결론": "손금불산입·대표자상여", "금액": 금액, "근거": "법인세법 제25조②(증빙서류 없는 접대비 손금불산입)", "이유": "증빙서류 없음 — 전액 손금불산입, 대표자상여 소득처분"})
+            elif 증빙 == "영수증 등":
+                기준_일반 = vocab.rule("기업업무추진비_적격증빙미수취", year).get("기준", {}).get("일반", 30000)
+                기준_경조금 = vocab.rule("기업업무추진비_적격증빙미수취", year).get("기준", {}).get("경조금", 200000)
+                limit_amount = 기준_경조금 if 성격 == "경조금" else 기준_일반
+                if 건당기준초과 and 금액 > limit_amount:
+                    no_qual_total += 금액
+                    judgments.append({"항목": 항목명, "성격": 성격, "결론": "적격증명서류 미수취 → 손금불산입·기타사외유출", "금액": 금액, "근거": "법인세법 제25조②·시행령 제41조①(적격증빙 미수취)", "이유": f"{성격 or '일반'} {limit_amount:,}원 초과, 적격증명서류 미수취 → 기타사외유출"})
+                else:
+                    items_for_limit.append(금액)
+                    judgments.append({"항목": 항목명, "성격": 성격, "결론": "인정", "금액": 금액, "근거": "법인세법 제25조②", "이유": f"{성격 or '일반'} {limit_amount:,}원 이하 → 적격증빙 요구 해당 없음"})
+            elif 증빙 == "적격":
+                items_for_limit.append(금액)
+                if 성격 == "문화":
+                    judgments.append({"항목": 항목명, "성격": 성격, "결론": "시부인 대상(문화접대비)", "금액": 금액, "근거": "법인세법 제25조④(문화접대비)", "이유": "적격증빙·문화비 지출 → 한도 계산 시 문화접대비 포함"})
+                elif 성격 == "경조금":
+                    judgments.append({"항목": 항목명, "성격": 성격, "결론": "시부인 대상(경조금)", "금액": 금액, "근거": "법인세법 제25조①", "이유": "적격증빙·경조금 지출 → 한도 계산 대상"})
+                else:
+                    judgments.append({"항목": 항목명, "성격": 성격, "결론": 결론, "금액": 금액, "근거": 근거, "이유": "적격증명서류 수취 → 한도 계산 대상"})
+            else:
+                judgments.append({"항목": 항목명, "성격": 성격, "결론": "검토 필요", "금액": 금액, "근거": "", "이유": f"증빙='{증빙}' — 확인 필요"})
+
+        si_bu_shin = sum(items_for_limit)
+        culture_total = sum(int(item.get("금액", 0)) for item in ledger if item.get("성격") == "문화" and item.get("증빙") == "적격")
+        기본한도_중소 = vocab.rule("기업업무추진비_적격수취", year).get("기본한도", {}).get("중소", 36000000)
+        기본한도_일반 = vocab.rule("기업업무추진비_적격수취", year).get("기본한도", {}).get("일반", 12000000)
+    else:
+        # ── 기존 expenses 입력 처리 ──
+        _v = _validate_items(expenses, "evidence", _specs_from_vocab("entertainment_adjustment", "evidence"))
+        if _v: return _v
+
+        # 어휘에서 연도별 기준·한도를 가져온다
+        적격증빙_규칙 = vocab.rule("기업업무추진비_적격증빙미수취", year)
+        적격수취_규칙 = vocab.rule("기업업무추진비_적격수취", year)
+        기준_일반 = 적격증빙_규칙.get("기준", {}).get("일반")
+        기준_경조금 = 적격증빙_규칙.get("기준", {}).get("경조금")
+        기본한도_중소 = 적격수취_규칙.get("기본한도", {}).get("중소")
+        기본한도_일반 = 적격수취_규칙.get("기본한도", {}).get("일반")
+        기본한도 = 기본한도_중소 if sme else 기본한도_일반
+
+        # ── 항목별 증빙 판정 ──
+        judgments = []
+        no_receipt_total = 0
+        no_qual_total = 0
+
+        for e in expenses:
+            amount = int(e["amount"])
+            evidence = e.get("evidence", "없음")
+            over_30k = e.get("over_30k", True)
+            congratulatory = e.get("congratulatory", False)
+            culture = e.get("culture", False)
+
+            if evidence == "없음":
+                no_receipt_total += amount
+                judgments.append({"항목": f"금액 {amount:,}원(증빙 없음)", "결론": "손금불산입·대표자상여", "금액": amount, "근거": "법인세법 제25조②(증빙서류 없는 접대비 손금불산입)", "이유": "증빙서류 없음 — 전액 손금불산입, 대표자상여 소득처분"})
+            elif evidence == "영수증 등":
+                if over_30k:
+                    limit_amount = 기준_경조금 if congratulatory else 기준_일반
+                    if amount > limit_amount:
+                        no_qual_total += amount
+                        judgments.append({"항목": f"금액 {amount:,}원(영수증 등, {'경조금' if congratulatory else '일반'})", "결론": "적격증명서류 미수취 → 손금불산입·기타사외유출", "금액": amount, "근거": "법인세법 제25조②·시행령 제41조①(적격증빙 미수취)", "이유": f"{'경조금' if congratulatory else '일반'} {limit_amount:,}원 초과, 적격증명서류 미수취 → 기타사외유출"})
+                    else:
+                        judgments.append({"항목": f"금액 {amount:,}원(영수증 등, {'경조금' if congratulatory else '일반'})", "결론": "인정", "금액": amount, "근거": "법인세법 제25조②", "이유": f"{'경조금' if congratulatory else '일반'} {limit_amount:,}원 이하 → 적격증빙 요구 해당 없음"})
+                else:
+                    judgments.append({"항목": f"금액 {amount:,}원(영수증 등)", "결론": "인정", "금액": amount, "근거": "법인세법 제25조②", "이유": f"{기준_일반:,}원 이하 → 적격증명서류 요구 없음"})
+            elif evidence == "적격":
+                if culture:
+                    judgments.append({"항목": f"금액 {amount:,}원(적격·문화비)", "결론": "시부인 대상(문화접대비)", "금액": amount, "근거": "법인세법 제25조④(문화접대비)", "이유": "적격증빙·문화비 지출 → 한도 계산 시 문화접대비 포함"})
+                else:
+                    judgments.append({"항목": f"금액 {amount:,}원(적격)", "결론": "시부인 대상", "금액": amount, "근거": "법인세법 제25조①", "이유": "적격증명서류 수취 → 한도 계산 대상"})
+            else:
+                judgments.append({"항목": f"금액 {amount:,}원(증빙 '{evidence}')", "결론": "검토 필요", "금액": amount, "근거": "", "이유": f"evidence={evidence} — 확인 필요"})
+
+        si_bu_shin = 0
+        for e in expenses:
+            amount = int(e["amount"])
+            evidence = e.get("evidence", "없음")
+            over_30k = e.get("over_30k", True)
+            congratulatory = e.get("congratulatory", False)
+            if evidence == "적격":
                 si_bu_shin += amount
-        # "없음"은 한도 대상 아님
+            elif evidence == "영수증 등":
+                limit_amount = 기준_경조금 if congratulatory else 기준_일반
+                if (not over_30k) or amount <= limit_amount:
+                    si_bu_shin += amount
 
-    culture_total = sum(int(e["amount"]) for e in expenses if e.get("culture") and e.get("evidence") == "적격")
+        culture_total = sum(int(e["amount"]) for e in expenses if e.get("culture") and e.get("evidence") == "적격")
+
+    # ── 한도 계산 (공통) ──
     ent = C.entertain(year, sme, revenue_general, revenue_related, si_bu_shin, culture=culture_total, months=months)
     limit = ent["한도"]
     over_limit = ent["한도초과(기타사외유출)"]
 
-    # ── 세무조정 조립 ──
+    # ── 세무조정 조립 (공통) ──
     settlements = []
     if no_receipt_total > 0:
         settlements.append({"구분": "증빙 없음", "금액": no_receipt_total, "소득처분": "대표자상여"})
@@ -1371,25 +1471,12 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
     if over_limit > 0:
         settlements.append({"구분": "한도초과", "금액": over_limit, "소득처분": "기타사외유출"})
 
-    result = {"한도": limit, "한도초과": over_limit,
-              "직부인_대표자상여": no_receipt_total,
-              "직부인_기타사외유출": no_qual_total,
-              "시부인_대상": si_bu_shin}
-    calc_dict = {
-        "기본한도": ent["일반한도"],
-        "문화한도": ent["문화한도"],
-        "한도초과": over_limit,
-        "시부인 대상": si_bu_shin,
-        "직부인(증빙없음·심사비)": no_receipt_total + no_qual_total,
-    }
+    result = {"한도": limit, "한도초과": over_limit, "직부인_대표자상여": no_receipt_total, "직부인_기타사외유출": no_qual_total, "시부인_대상": si_bu_shin}
+    calc_dict = {"기본한도": ent["일반한도"], "문화한도": ent["문화한도"], "시부인 대상": si_bu_shin, "직부인(증빙없음·심사비)": no_receipt_total + no_qual_total}
     근거_목록 = vocab.basis("기업업무추진비_적격수취", year)
-    근거_문자열 = ", ".join(
-        f"{조문[0]} {조문[1]} {조문[2]} {조문[3]}" if 조문[3] else f"{조문[0]} {조문[1]} {조문[2]}"
-        for 조문 in 근거_목록
-    )
-    return _ok(result, 근거_문자열,
-               세무조정=settlements, 판단=judgments, 계산=calc_dict,
-               산식=f"기본한도 = 중소 {기본한도_중소:,}원·일반 {기본한도_일반:,}원 × 월수/12, 수입금액 한도 = 수입금액 구간별 비율을 적용한 금액(+ 특수관계 10%), 문화한도 = min(문화비, 일반한도 × 20%), 한도 = 기본 + 수입금액 + 문화, 한도초과 = 시부인 대상 − 한도")
+    근거_문자열 = ", ".join(f"{조문[0]} {조문[1]} {조문[2]} {조문[3]}" if 조문[3] else f"{조문[0]} {조문[1]} {조문[2]}" for 조문 in 근거_목록)
+    unified = _build_tax_adjustment_result(settlements, result, calc_dict)
+    return _ok(unified, 근거_문자열, 세무조정=settlements, 판단=judgments, 계산=calc_dict, 산식=f"기본한도 = 중소 {기본한도_중소:,}원·일반 {기본한도_일반:,}원 × 월수/12, 수입금액 한도 = 수입금액 구간별 비율을 적용한 금액(+ 특수관계 10%), 문화한도 = min(문화비, 일반한도 × 20%), 한도 = 기본 + 수입금액 + 문화, 한도초과 = 시부인 대상 − 한도")
 
 
 # ───────── 끝에서 끝까지: 의제배당(잉여금 자본전입) ─────────
@@ -1813,17 +1900,22 @@ def other_income_aggregate(year: YEAR,
 @mcp.tool(annotations=CALC)
 @_guard
 def simplified_vat_return(year: YEAR,
-                         business_type: Annotated[str, Field(description="업종 — 어휘 간이과세자_납부세액.적용[].판단.부가가치율 키(소매업·음식점업·제조업·숙박업·건설업·부동산임대업·그밖의서비스업 등)")],
-                         supplies: Annotated[dict, Field(description="공급대가 정보 {total: 공급대가 합계(부가세 포함), card_receipt_issued: 신용카드매출전표·현금영수증 발급분(기본 0), self_mileage: 자기적립마일리지 결제분(기본 0)}")],
-                         purchases: Annotated[dict, Field(description="매입 정보 {tax_invoice_received: 세금계산서·신용카드매출전표등 수취 공급대가(기본 0), invoice_received: 계산서 수취액(기본 0, 공제 없음), no_tax_invoice_from_issuer: 세금계산서 발급의무자로부터 세금계산서 없이 매입한 공급대가(기본 0), exempt_farm_products: 면세농산물 구입액(기본 0, 공제 없음)}")],
+                         business_type: Annotated[str, Field(description="업종 — 어휘 간이과세자_납부세액.적용[].판단.부가가치율 키(소매업·음식점업·제조업·숙박업·건설업·부동산임대업·그 밖의 서비스업 등)")],
                          prior_year_supplies: Annotated[int, Field(description="직전연도 공급대가 합계")],
+                         supplies: Annotated[dict | None, Field(description="공급대가 정보 {total: 공급대가 합계(부가세 포함), card_receipt_issued: 신용카드매출전표·현금영수증 발급분(기본 0), self_mileage: 자기적립마일리지 결제분(기본 0)}")] = None,
+                         purchases: Annotated[dict | None, Field(description="매입 정보 {tax_invoice_received: 세금계산서·신용카드매출전표등 수취 공급대가(기본 0), invoice_received: 계산서 수취액(기본 0, 공제 없음), no_tax_invoice_from_issuer: 세금계산서 발급의무자로부터 세금계산서 없이 매입한 공급대가(기본 0), exempt_farm_products: 면세농산물 구입액(기본 0, 공제 없음)}")] = None,
                          bad_debt_confirmed: Annotated[int, Field(description="대손 확정액(기본 0, 납부세액에 영향 없음 — 판단에 명시)")] = 0,
-                         prepaid_assessed: Annotated[int, Field(description="예정부과 고지세액")] = 0) -> dict:
+                         prepaid_assessed: Annotated[int, Field(description="예정부과 고지세액")] = 0,
+                         ledger: Annotated[dict | None, Field(description="원장형 입력(supplies·purchases 대안) {공급: [{항목, 금액}], 매입: [{항목, 금액}]} — 금액은 공급대가(부가세 포함). 항목명은 어휘 간이과세자_원장항목의 키워드로 역할을 정함")] = None) -> dict:
     """간이과세자 부가가치세 확정신고 차가감납부세액 계산(부가가치세법 제63조·제68조의2·제69조·제46조).
     언제: 간이과세자의 과세기간(1.1~12.31) 부가가치세 확정신고 시 차가감납부세액을 원래 사실관계에서 계산한다.
-    입력: 과세기간 연도(2021-07-01 이후 체계만 지원) → year, 업종 → business_type,
-      공급대가 정보 {total, card_receipt_issued, self_mileage} → supplies,
-      매입 정보 {tax_invoice_received, invoice_received, no_tax_invoice_from_issuer, exempt_farm_products} → purchases,
+    입력:
+      · 장부 기반(기존): 공급대가 정보 {total, card_receipt_issued, self_mileage} → supplies,
+        매입 정보 {tax_invoice_received, invoice_received, no_tax_invoice_from_issuer, exempt_farm_products} → purchases.
+      · 원장 기반(신규 대안): ledger={공급:[{항목, 금액}], 매입:[{항목, 금액}]}.
+        항목명 → 역할 매핑은 어휘 간이과세자_원장항목.판단.공급/매입에서 읽음(항목명에 키워드가 포함되면 해당 역할).
+        공급 금액 전부 합(total), 공제 대상 합(card_receipt_issued), 마일리지 합(self_mileage)으로 변환.
+        매입도 같은 식으로 변환. 둘 다 주면 error.
       대손 확정액(기본 0) → bad_debt_confirmed, 직전연도 공급대가 합계 → prior_year_supplies,
       예정부과 고지세액 → prepaid_assessed.
     결과: 판단(항목·결론·근거)·계산(과세표준·부가가치율·납부세액·공제·가산세)·결과(납부의무면제·차가감납부세액)·산식·근거."""
@@ -1831,6 +1923,80 @@ def simplified_vat_return(year: YEAR,
     # 2021-07-01 이전 체계 미지원
     if year < 2021:
         return {"error": "2021-07-01 이전 체계 미지원"}
+
+    # ── 입력 충돌 검사 ──
+    if supplies is not None and ledger is not None:
+        return {"error": "입력 확인 필요 — supplies와 ledger를 함께 입력할 수 없음. 한 가지 방식으로 입력하세요"}
+    if purchases is not None and ledger is not None:
+        return {"error": "입력 확인 필요 — purchases와 ledger를 함께 입력할 수 없음. 한 가지 방식으로 입력하세요"}
+
+    # ── 원장형 입력 처리 ──
+    if ledger is not None:
+        원장항목_규칙 = vocab.rule("간이과세자_원장항목", year)
+        공급_역할목록 = 원장항목_규칙.get("공급", {})
+        매입_역할목록 = 원장항목_규칙.get("매입", {})
+
+        총공급대가 = 0
+        카드발급 = 0
+        자기마일리지 = 0
+        세금계산서수취 = 0
+        계산서수취 = 0
+        미수취매입 = 0
+        면세농산물 = 0
+        문제_항목 = []
+
+        for 공급항목 in ledger.get("공급", []):
+            항목명 = 공급항목.get("항목", "")
+            금액 = int(공급항목.get("금액", 0))
+            총공급대가 += 금액
+            역할_찾음 = False
+            for 역할명, 역할정보 in 공급_역할목록.items():
+                for kw in 역할정보.get("키워드", []):
+                    if kw in 항목명:
+                        if 역할명 == "발급세액공제대상":
+                            카드발급 += 금액
+                        elif 역할명 == "과세표준제외":
+                            자기마일리지 += 금액
+                        역할_찾음 = True
+                        break
+                if 역할_찾음:
+                    break
+            if not 역할_찾음:
+                문제_항목.append(항목명)
+
+        for 매입항목 in ledger.get("매입", []):
+            항목명 = 매입항목.get("항목", "")
+            금액 = int(매입항목.get("금액", 0))
+            역할_찾음 = False
+            for 역할명, 역할정보 in 매입_역할목록.items():
+                for kw in 역할정보.get("키워드", []):
+                    if kw in 항목명:
+                        if 역할명 == "세금계산서등수취":
+                            세금계산서수취 += 금액
+                        elif 역할명 == "세금계산서미수취":
+                            미수취매입 += 금액
+                        elif 역할명 == "계산서수취":
+                            계산서수취 += 금액
+                        elif 역할명 == "면세농산물":
+                            면세농산물 += 금액
+                        역할_찾음 = True
+                        break
+                if 역할_찾음:
+                    break
+            if not 역할_찾음:
+                문제_항목.append(항목명)
+
+        if 문제_항목:
+            허용값 = {역할명: {"키워드": 역할정보.get("키워드", [])} for 역할명, 역할정보 in {**공급_역할목록, **매입_역할목록}.items()}
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"어휘에 없는 항목명: {', '.join(문제_항목)}"], "허용값": 허용값}
+    else:
+        총공급대가 = int(supplies.get("total", 0)) if supplies else 0
+        카드발급 = int(supplies.get("card_receipt_issued", 0)) if supplies else 0
+        자기마일리지 = int(supplies.get("self_mileage", 0)) if supplies else 0
+        세금계산서수취 = int(purchases.get("tax_invoice_received", 0)) if purchases else 0
+        계산서수취 = int(purchases.get("invoice_received", 0)) if purchases else 0      # 공제 없음
+        미수취매입 = int(purchases.get("no_tax_invoice_from_issuer", 0)) if purchases else 0
+        면세농산물 = int(purchases.get("exempt_farm_products", 0)) if purchases else 0   # 공제 없음
 
     # 업종 유효성 검사 — vocab.rule에서 연도별로 부가가치율 표 읽기
     vat_rule = vocab.rule("간이과세자_납부세액", year)
@@ -1844,14 +2010,6 @@ def simplified_vat_return(year: YEAR,
                 "문제": [f"business_type='{business_type}' 은(는) 지원하지 않음"],
                 "허용값": {k: {"설명": f"부가가치율 {v}"} for k, v in 부가가치율표.items()},
                 "안내": "허용 업종 목록에서 선택하세요."}
-
-    총공급대가 = int(supplies.get("total", 0))
-    카드발급 = int(supplies.get("card_receipt_issued", 0))
-    자기마일리지 = int(supplies.get("self_mileage", 0))
-    세금계산서수취 = int(purchases.get("tax_invoice_received", 0))
-    계산서수취 = int(purchases.get("invoice_received", 0))       # 공제 없음
-    미수취매입 = int(purchases.get("no_tax_invoice_from_issuer", 0))
-    면세농산물 = int(purchases.get("exempt_farm_products", 0))   # 공제 없음
     대손확정 = int(bad_debt_confirmed)
     직전연도 = int(prior_year_supplies)
     예정고지 = int(prepaid_assessed)
@@ -1990,18 +2148,27 @@ def common_input_tax(year: YEAR,
                      period: Annotated[str, Field(description="과세기간('1기'|'2기')")],
                      filing: Annotated[str, Field(description="신고 구분('예정'|'확정')")],
                      supplies: Annotated[dict, Field(description="공급가액 {예정:{taxable,exempt}, 확정:{taxable,exempt}} — 부가세 제외 금액, 확정신고는 전체 비율 사용. 둘 다 null이면 error")],
-                     input_tax: Annotated[dict, Field(description="매입세액 {taxable_only, taxable_only_nondeductible(제39조 불공제분), exempt_only, attributed:[{input_tax,taxable_ratio}], common:{예정,확정}}")],
+                     input_tax: Annotated[dict | None, Field(description="매입세액 {taxable_only, taxable_only_nondeductible(제39조 불공제분), exempt_only, attributed:[{input_tax,taxable_ratio}], common:{예정,확정}}")] = None,
                      new_business: Annotated[bool, Field(description="신규 사업 여부(기본 False)")] = False,
                      prior_nondeductible: Annotated[int | None, Field(description="예정신고 때 불공제한 공통매입세액. 없으면(null) 예정 기간 비율로 계산")] = None,
                      prior_period_supplies: Annotated[dict | None, Field(description="직전 과세기간 {taxable, exempt} — 공통사용재화 공급 과세표준용")] = None,
-                     common_asset_sales: Annotated[list | None, Field(description="공통사용재화 공급 목록 [{sale_price, input_tax}]")] = None) -> dict:
+                     common_asset_sales: Annotated[list | None, Field(description="공통사용재화 공급 목록 [{sale_price, input_tax}]")] = None,
+                     ledger: Annotated[list | None, Field(description="원장형 입력(input_tax 대안) 당기 매입 항목 [{항목, 매입세액? | 매입가액?(×10%), 사용처:'과세'|'면세'|'공통'|'실지귀속'|'불공제', 과세비율? | 횟수?:{과세,면세} | 면적?:{과세,면세}}] — 사용처별 처리는 어휘 공통매입세액_귀속")] = None,
+                     prior_common_input_tax: Annotated[int | None, Field(description="ledger로 확정신고할 때 예정신고 기간의 공통매입세액(common.예정)")] = None) -> dict:
     """겸영사업자 공통매입세액 안분·정산 + 공통사용재화 공급(부가법 제40조, 영 제81조~제83조·제63조).
     언제: 과세·면세 겸영 사업자의 예정·확정신고에서 공통매입세액 공제액과 공통사용재화 공급 시 추가 매출세액을 계산한다.
-    입력: 연도(2016~2026) → year, 과세기간('1기'|'2기') → period, 신고 구분('예정'|'확정') → filing,
-      신규 사업 여부 → new_business, 공급가액(예정·확정별 과세·면세) → supplies,
-      매입세액(taxable_only 등) → input_tax, 예정 불공제액 → prior_nondeductible,
-      직전 과세기간 공급가액 → prior_period_supplies, 공통사용재화 공급 목록 → common_asset_sales.
-    결과: 판단·계산·결과(공제매입세액·추가_매출세액)·산식·근거."""
+    입력:
+      · 기존: 공급가액(예정·확정별 과세·면세) → supplies, 매입세액(taxable_only 등) → input_tax,
+        예정 불공제액 → prior_nondeductible, 직전 과세기간 공급가액 → prior_period_supplies,
+        공통사용재화 공급 목록 → common_asset_sales.
+      · 원장 기반(신규 대안): ledger=[{항목, 매입세액?|매입가액?(→×10%), 사용처:'과세'|'면세'|'공통'|'실지귀속'|'불공제',
+        과세비율?:(0~1), 횟수?:{과세,면세}, 면적?:{과세,면적}}].
+        사용처별 처리(어휘 공통매입세액_귀속.판단.사용처별):
+          과세→taxable_only, 면세→exempt_only, 공통→common(확정), 실지귀속→attributed(과세비율=과세비율 또는 횟수·면적의 과세÷합계),
+          불공제→taxable_only_nondeductible(제39조).
+        prior_common_input_tax: 확정신고에서 ledger 사용 시 예정신고 기간의 공통매입세액(common.예정). 기존 prior_nondeductible는 그대로.
+        둘 다 주면 error.
+    결과: 판단·계산·결과(공제매입세액·추가_매출세액)·산식·근거. 계산의 실지귀속_공제는 기존 계산 키 유지."""
 
     # 기간 유효성 검사
     if period not in ("1기", "2기"):
@@ -2035,13 +2202,82 @@ def common_input_tax(year: YEAR,
     예정_과세, 예정_면세 = _get_supplies(예정)
     확정_과세, 확정_면세 = _get_supplies(확정)
 
-    # 매입세액 파싱
-    taxable_only = int(input_tax.get("taxable_only", 0))
-    taxable_only_nondeductible = int(input_tax.get("taxable_only_nondeductible", 0))
-    exempt_only = int(input_tax.get("exempt_only", 0))
-    attributed = input_tax.get("attributed", [])
-    common_예정 = int(input_tax.get("common", {}).get("예정", 0))
-    common_확정 = int(input_tax.get("common", {}).get("확정", 0))
+    # ── 입력 충돌 검사 ──
+    if input_tax is not None and ledger is not None:
+        return {"error": "입력 확인 필요 — input_tax와 ledger를 함께 입력할 수 없음. 한 가지 방식으로 입력하세요"}
+
+    # ── 원장형 입력 처리 ──
+    if ledger is not None:
+        taxable_only = 0
+        taxable_only_nondeductible = 0
+        exempt_only = 0
+        attributed = []
+        common_예정 = 0
+        common_확정 = 0
+
+        for item in ledger:
+            항목명 = item.get("항목", "")
+            매입세액 = item.get("매입세액", None)
+            매입가액 = item.get("매입가액", None)
+            사용처 = item.get("사용처", "")
+            과세비율 = item.get("과세비율", None)
+            횟수 = item.get("횟수", None)
+            면적 = item.get("면적", None)
+
+            if 매입세액 is not None:
+                금액 = int(매입세액)
+            elif 매입가액 is not None:
+                금액 = int(매입가액) * 10 // 100
+            else:
+                return {"error": f"입력 확인 필요 — 항목 '{항목명}': 매입세액 또는 매입가액 필요"}
+
+            if 사용처 == "과세":
+                taxable_only += 금액
+            elif 사용처 == "면세":
+                exempt_only += 금액
+            elif 사용처 == "불공제":
+                taxable_only += 금액                      # 과세사업분이지만 제39조로 불공제 — 기존 필드 의미(taxable_only 중 불공제분)에 맞춰 둘 다에 더해 순효과 0
+                taxable_only_nondeductible += 금액
+            elif 사용처 == "공통":
+                if filing == "확정":
+                    common_확정 += 금액
+                else:
+                    common_예정 += 금액
+            elif 사용처 == "실지귀속":
+                if 과세비율 is not None:
+                    비율 = float(과세비율)
+                elif 횟수 is not None:
+                    과세 = 횟수.get("과세", 0)
+                    면세 = 횟수.get("면세", 0)
+                    합계 = 과세 + 면세
+                    if 합계 == 0:
+                        return {"error": f"입력 확인 필요 — 항목 '{항목명}': 실지귀속 횟수 합계 0"}
+                    비율 = 과세 / 합계
+                elif 면적 is not None:
+                    과세 = 면적.get("과세", 0)
+                    총면적 = 과세 + 면적.get("면세", 0)
+                    if 총면적 == 0:
+                        return {"error": f"입력 확인 필요 — 항목 '{항목명}': 실지귀속 면적 합계 0"}
+                    비율 = 과세 / 총면적
+                else:
+                    return {"error": f"입력 확인 필요 — 항목 '{항목명}': 실지귀속인데 과세비율·횟수·면적 없음"}
+
+                attributed.append({"input_tax": 금액, "taxable_ratio": 비율})
+            else:
+                return {"error": f"입력 확인 필요 — 항목 '{항목명}': 사용처='{사용처}' 은(는) 지원하지 않음 — '과세'|'면세'|'공통'|'실지귀속'|'불공제'"}
+    else:
+        # ── 기존 input_tax 입력 처리 ──
+        if input_tax is None:
+            input_tax = {}
+        taxable_only = int(input_tax.get("taxable_only", 0))
+        taxable_only_nondeductible = int(input_tax.get("taxable_only_nondeductible", 0))
+        exempt_only = int(input_tax.get("exempt_only", 0))
+        attributed = input_tax.get("attributed", [])
+        common_예정 = int(input_tax.get("common", {}).get("예정", 0))
+        common_확정 = int(input_tax.get("common", {}).get("확정", 0))
+
+    if ledger is not None and prior_common_input_tax is not None:
+        common_예정 = int(prior_common_input_tax)
 
     # ── 1. 면세비율 계산 ──
     # 예정신고: 예정 기간 비율
@@ -2070,23 +2306,12 @@ def common_input_tax(year: YEAR,
     if filing == "예정":
         # 예정신고: 공제 = common.예정 × (1 − 예정 면세비율)
         공통매입세액_합계 = common_예정
-        if 공통매입세액_합계 < 공통매입세액_전액기준:
-            공통매입세액_공제 = 공통매입세액_합계
-            판단_목록.append({"항목": "공통매입세액 예정 공제", "결론": f"전액 공제({공통매입세액_합계:,}원 < {공통매입세액_전액기준:,}원, 영 제81조②2호)",
-                              "근거": "부가가치세법 시행령 제81조②2호"})
-            산식_목록.append(f"공통매입세액({공통매입세액_합계:,}원) < {공통매입세액_전액기준:,}원 → 전액 공제")
-        elif 면세비율_예정 < 면세비율미만_기준 and 공통매입세액_합계 < 공통매입세액_상한:
-            공통매입세액_공제 = 공통매입세액_합계
-            판단_목록.append({"항목": "공통매입세액 예정 공제", "결론": f"전액 공제(면세비율 {면세비율_예정:.1%} < 5%, 공통매입세액 {공통매입세액_합계:,}원 < 500만원, 영 제81조②1호)",
-                              "근거": "부가가치세법 시행령 제81조②1호"})
-            산식_목록.append(f"면세비율 {면세비율_예정:.1%} < 5% & 공통매입세액 {공통매입세액_합계:,}원 < 500만원 → 전액 공제(영 제81조②1호)")
-        else:
-            불공제_예정 = int(common_예정 * 면세비율_예정)
-            공통매입세액_공제 = common_예정 - 불공제_예정
-            판단_목록.append({"항목": "공통매입세액 예정 공제", "결론": f"안분 공제 {공통매입세액_공제:,}원 (불공제 {불공제_예정:,}원 = {common_예정:,} × {면세비율_예정:.4f})",
-                              "근거": "부가가치세법 시행령 제81조①"})
-            산식_목록.append(f"불공제 = 공통매입세액 × 면세비율 = {common_예정:,} × {면세비율_예정:.4f} = {불공제_예정:,}원 (영 제81조①)")
-            산식_목록.append(f"공제 = {common_예정:,} − {불공제_예정:,} = {공통매입세액_공제:,}원")
+        불공제_예정 = int(common_예정 * 면세비율_예정)
+        공통매입세액_공제 = common_예정 - 불공제_예정
+        판단_목록.append({"항목": "공통매입세액 예정 공제", "결론": f"안분 공제 {공통매입세액_공제:,}원 (불공제 {불공제_예정:,}원 = {common_예정:,} × {면세비율_예정:.4f})",
+                          "근거": "부가가치세법 시행령 제81조①"})
+        산식_목록.append(f"불공제 = 공통매입세액 × 면세비율 = {common_예정:,} × {면세비율_예정:.4f} = {불공제_예정:,}원 (영 제81조①)")
+        산식_목록.append(f"공제 = {common_예정:,} − {불공제_예정:,} = {공통매입세액_공제:,}원")
     else:  # 확정
         공통매입세액_합계 = common_예정 + common_확정
         불공제_과세기간합계 = 0
@@ -2241,14 +2466,66 @@ def common_input_tax(year: YEAR,
 @mcp.tool(annotations=CALC)
 @_guard
 def input_tax_recalculation(asset_type: Annotated[str, Field(description="자산 종류('건물·구축물'|'기타감가상각자산')")],
-                            input_tax: WON,
                             acquired: Annotated[dict, Field(description="{year, period} — 취득 과세기간")],
-                            ratios: Annotated[list, Field(description="[{year, period, exempt_ratio}] — 취득 과세기간부터 당기까지 순서대로(마지막이 당기)")]) -> dict:
+                            ratios: Annotated[list, Field(description="[{year, period, exempt_ratio}] — 취득 과세기간부터 당기까지 순서대로(마지막이 당기)")],
+                            input_tax: Annotated[int | None, Field(description="해당 재화 매입세액 총액(원). bundle을 주면 생략")] = None,
+                            bundle: Annotated[dict | None, Field(description="토지·건물 일괄공급 안분 입력(input_tax 대안) {total_price, vat_included, appraisal?, standard_value?, book_value?} — bundled_supply_split과 같은 규칙으로 건물 매입세액을 구함")] = None) -> dict:
     """감가상각자산 공통매입세액 재계산(부가법 제41조, 영 제83조).
     언제: 감가상각자산 매입 후 면세비율이 취득 과세기간 대비 5%p 이상 변동하면 확정신고 때 납부·환급세액을 재계산한다.
-    입력: 자산 종류 → asset_type, 해당 재화 매입세액 총액 → input_tax,
-      취득 과세기간 {year, period} → acquired, 과세기간별 면세비율 목록(취득~당기, 마지막이 당기) → ratios.
-    결과: 이력(기간별 비율·기준비율·변동·재계산 여부·경과과세기간수·세액)·결과(당기_납부세액_가산)·근거."""
+    입력:
+      · 자산 종류 → asset_type, 취득 과세기간 {year, period} → acquired,
+        과세기간별 면세비율 목록(취득~당기, 마지막이 당기) → ratios.
+      · 기존: 해당 재화 매입세액 총액 → input_tax.
+      · 일괄공급 안분 연결(신규 대안): bundle={total_price, vat_included, appraisal?:{building,land}, standard_value?:{building,land}, book_value?:{building,land}}.
+        bundle이 주어지면 내부에서 bundled_supply_split과 같은 규칙으로 건물 공급가액을 안분해 부가가치세를 input_tax로 쓴다.
+        input_tax와 bundle 둘 다 주면 error.
+    결과: 이력(기간별 비율·기준비율·변동·재계산 여부·경과과세기간수·세액)·결과(당기_납부세액_가산·건물_매입세액)·판단(안분 기준)·근거."""
+
+    # ── 입력 충돌 검사 ──
+    if input_tax is not None and bundle is not None:
+        return {"error": "입력 확인 필요 — input_tax와 bundle을 함께 입력할 수 없음. 한 가지 방식으로 입력하세요"}
+
+    # ── bundle 처리 ──
+    if bundle is not None:
+        total_price = int(bundle.get("total_price", 0))
+        vat_included = bool(bundle.get("vat_included", False))
+        appraisal = bundle.get("appraisal", None)
+        standard_value = bundle.get("standard_value", None)
+        book_value = bundle.get("book_value", None)
+
+        안분_규칙 = vocab.rule("토지건물_일괄공급_안분", 2026)
+        판단_목록 = []
+
+        if appraisal and appraisal.get("building") and appraisal.get("land"):
+            기준_건물 = float(appraisal["building"])
+            기준_토지 = float(appraisal["land"])
+            판단_목록.append({"항목": "안분 기준", "결론": f"감정평가가액(건물 {기준_건물:,.0f}원, 토지 {기준_토지:,.0f}원) — 우선순위 1순위", "근거": "부가가치세법 시행령 제64조①1호"})
+        elif standard_value and standard_value.get("building") and standard_value.get("land"):
+            기준_건물 = float(standard_value["building"])
+            기준_토지 = float(standard_value["land"])
+            판단_목록.append({"항목": "안분 기준", "결론": f"기준시가(건물 {기준_건물:,.0f}원, 토지 {기준_토지:,.0f}원) — 우선순위 2순위", "근거": "부가가치세법 시행령 제64조①1호"})
+        elif book_value and book_value.get("building") and book_value.get("land"):
+            기준_건물 = float(book_value["building"])
+            기준_토지 = float(book_value["land"])
+            판단_목록.append({"항목": "안분 기준", "결론": f"장부가액(건물 {기준_건물:,.0f}원, 토지 {기준_토지:,.0f}원) — 우선순위 3순위", "근거": "부가가치세법 시행령 제64조①2호"})
+        else:
+            return {"error": "안분 기준 없음 — bundle에 appraisal·standard_value·book_value 중 하나 필요"}
+
+        기준_총계 = 기준_건물 + 기준_토지
+        건물비율 = 기준_건물 / 기준_총계
+
+        if vat_included:
+            L_B비 = 기준_토지 / 기준_건물
+            건물_공급가액 = int(total_price / (1 + L_B비 + 0.1))
+            부가가치세 = int(건물_공급가액 * 0.1)
+        else:
+            건물_공급가액 = int(total_price * 건물비율)
+            부가가치세 = int(건물_공급가액 * 0.1)
+
+        input_tax = 부가가치세
+        판단 = 판단_목록
+    else:
+        판단 = []
 
     recal_year = int(acquired["year"])
     재계산_규칙 = vocab.rule("공통매입세액_재계산", recal_year)
@@ -2324,7 +2601,9 @@ def input_tax_recalculation(asset_type: Annotated[str, Field(description="자산
         "이력": 이력,
         "결과": {
             "당기_납부세액_가산": 당기_세액,
+            "건물_매입세액": input_tax,
         },
+        "판단": 판단,
         "근거": vocab.basis("공통매입세액_재계산", recal_year),
     }
 
