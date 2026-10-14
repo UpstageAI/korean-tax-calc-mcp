@@ -66,6 +66,7 @@ def _common(a):
         for i, x in enumerate(it.get("attributed") or []):
             ledger.append({"항목": f"실지귀속{i + 1}", "매입세액": x["input_tax"], "사용처": "실지귀속", "과세비율": x["taxable_ratio"]})
         common = it.get("common") or {}
+        common_has_keys = common.get("예정") is not None or common.get("확정") is not None
         if a.get("filing") == "예정":
             v = int(common.get("예정", 0) or 0)
             if v:
@@ -76,6 +77,9 @@ def _common(a):
                 ledger.append({"항목": "공통매입", "매입세액": v, "사용처": "공통"})
             if common.get("예정") is not None:
                 a["prior_common_input_tax"] = int(common.get("예정") or 0)
+        # common 키가 있는데 ledger에 추가된 항목이 없으면(모두 0), 0원 항목을 하나 남겨 빈 ledger 방지
+        if common_has_keys and not ledger:
+            ledger.append({"항목": "공통매입", "매입세액": 0, "사용처": "공통"})
         a["ledger"] = ledger
     return a
 
