@@ -6,7 +6,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/korean-tax-calc-mcp)](https://pypi.org/project/korean-tax-calc-mcp/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-korean--tax--calc--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=korean-tax-calc-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Built with Upstage Solar Pro 4](https://img.shields.io/badge/Built%20with-Upstage%20Solar%20Pro%204-7A3FF2)](https://www.upstage.ai/) · [English](README-EN.md)
 
-> **0.3.0부터 업스테이지 Solar Pro 4로 개발합니다.** (0.2.1까지는 Solar Pro 4 이전 개발분) 2026년 법인세율, 비거주자 원천징수(`nonresident_withholding`), 과소자본(`thin_capitalization`)은 Solar Pro 4(Solar Work CLI)가 코드를 작성하고, Solar Pro 4 기반 코드 리뷰(CodeSolar)가 PR을 검토했으며, Claude가 테스트로 교차 검증했습니다. **0.4.0: 세무조사 판정 도구 11개 통합. 0.5.1: precheck_schema 추가·41개 도구로 확대, description·인자 설명 전면 정비. 0.6.0: 원래 사실관계를 받아 항목 판단→세법상 금액 조정→중간 계산→세무조정까지 돌려주는 끝에서 끝까지 계산기 3종(대손충당금·기업업무추진비·금융소득)과 사실관계 어휘(`data/facts_vocab.json`: 허용값·기간별 기준·별칭을 파일에서 읽음) — 44개 도구. 0.7.0: 의제배당(잉여금 자본전입)·기타소득·간이과세자 신고·겸영사업자 공통매입세액(안분·정산·재계산·토지건물 일괄공급 안분) 끝에서 끝까지 계산기 6종 추가, 과세 제외 재원 무상주는 자기주식 미배정 상승분을 명시 입력하도록 요구 — 50개 도구. 0.8.0~0.9.0: 세무조정 계산기 결과를 조정명세서 모양(세무조정 목록·소득처분별 합계·손금불산입 합계)으로, 기업업무추진비·간이과세·공통매입세액 계산기는 **원장 항목 목록(원장형) 입력만** 받음(항목 판단은 어휘 `facts_vocab.json`), 토지·건물 일괄공급 안분→재계산 연결, 같은 입력 재호출 안내.**
+> **업스테이지 Solar Pro 4로 개발합니다.** 버전별 변경 내용은 [CHANGELOG](CHANGELOG.md)를 보세요.
 
 **Korean tax calculations for AI agents — code, not guesses.** Corporate tax, entertainment limits, deemed interest, penalties, limitation periods, withholding, income tax and VAT, using year-by-year rate tables (2016–2026). Each result cites its statute. Years without a verified table stop with an error instead of estimating. 50 tools (38 computation + 12 tax audit judgment) — → [English README](README-EN.md)
 
@@ -130,6 +130,7 @@ Claude Code: `claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp`
 ## 면책 및 고지
 
 - **면책:** 이 도구의 결과는 세무 자문이 아닙니다. 법령·해석을 바탕으로 계산·판정 과정을 보여 주는 참고 자료이며, 실제 신고·세무조사·불복 판단은 세무사·회계사·변호사 등 전문가에게 확인하세요. 근거 조문·판례는 원문으로 확인하세요.
+- **세무대리 아님:** 이 도구는 **세무사법 제2조의 세무대리**(세무조정계산서 작성, 신고 대리, 세무상담 등)를 수행하지 않으며, 그 업무는 세무사 등 자격자만 할 수 있습니다(세무사법 제20조). 법령에 적힌 산식을 코드로 옮겨 입력값에 대한 계산 과정을 보여 주는 소프트웨어이고, 입력 사실관계의 확인과 최종 판단은 세무사·납세자의 몫입니다.
 - **AI 사용 고지:** 계산·판정 도구 32개는 코드로 동작하며 생성형 AI를 쓰지 않습니다. PDF 검토 도구 3개(`extract_relations`, `tunnelling_from_pdf`, `return_precheck_pdf`)는 UPSTAGE_API_KEY가 있으면 생성형 AI(Upstage Solar Pro 4)로 표를 추출하며 결과에 그 사실을 표시합니다. 키가 없으면 pypdf로 로컬 텍스트 추출(host_ai 모드) 후 정리 안내에 따라 다음 도구 입력으로 직접 정리할 수 있습니다.
 - **데이터 전송:** UPSTAGE_API_KEY를 설정해 PDF 도구를 사용할 때만 문서 내용이 Upstage API(api.upstage.ai)로 전송됩니다. 키 없이 사용하면(pypdf 로컬 추출) 외부 전송이 없습니다. 민감정보가 담긴 문서는 API 전송 시 넣지 마세요.
 
