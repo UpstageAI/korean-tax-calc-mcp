@@ -6,10 +6,11 @@
 """
 import asyncio, json
 from korean_tax_calc_mcp.server import mcp
+from tests._legacy_to_ledger import to_ledger   # 0.9.0: 옛 입력은 테스트에서 원장형으로 변환해 호출
 
 
 def c(n, a):
-    return json.loads(asyncio.run(mcp.call_tool(n, a)).content[0].text)
+    return json.loads(asyncio.run(mcp.call_tool(n, to_ledger(n, a))).content[0].text)
 
 
 def find(judg, word):
@@ -95,12 +96,10 @@ def test_revenue_dict_with_expenses():   # 공개 사례 2024-65를 revenue(매�
     assert r["결과"]["소득처분별_합계"] == {"대표자상여": 8_000_000, "기타사외유출": 12_350_000}
 
 
-def test_ledger_conflicts_and_missing_values():
-    base = {"year": 2026, "sme": False, "months": 12, "revenue_general": 1_000_000_000}
-    r = c("entertainment_adjustment", {**base, "expenses": [{"amount": 1_000, "evidence": "적격"}], "ledger": [{"항목": "x", "금액": 1_000}]})
-    assert "error" in r
-    r = c("entertainment_adjustment", {**base, "revenue": {"매출액": 1}, "ledger": [{"항목": "x", "금액": 1_000}]})
-    assert "error" in r                                                                  # revenue와 revenue_general 둘 다
+def test_ledger_missing_values():
+    base = {"year": 2026, "sme": False, "months": 12, "revenue": {"매출액": 1_000_000_000}}
+    r = c("entertainment_adjustment", {**base, "ledger": []})
+    assert "error" in r                                                                  # 원장 항목 없음(0.9.0: ledger가 유일한 지출 입력)
     r = c("entertainment_adjustment", {**base, "ledger": [{"항목": "현물", "성격": "현물"}]})
     assert "error" in r                                                                  # 현물인데 시가·장부가액 없음
     r = c("entertainment_adjustment", {"year": 2026, "sme": False, "months": 12,
@@ -134,8 +133,8 @@ def test_simplified_ledger_unknown_item_refused():
     assert "error" in r and "허용값" in r and "자기적립마일리지" in json.dumps(r["허용값"], ensure_ascii=False)
     r = c("simplified_vat_return", {
         "year": 2025, "business_type": "음식점업", "prior_year_supplies": 75_000_000,
-        "supplies": {"total": 1}, "purchases": {}, "ledger": {"공급": [], "매입": []}})
-    assert "error" in r                                                                  # 둘 다
+        "ledger": {"공급": [], "매입": []}})
+    assert "error" in r                                                                  # 공급 항목 없음
 
 
 # ── B3. 공통매입세액 원장형 입력 ─────────────────────────────────────────────
@@ -162,9 +161,8 @@ def test_common_ledger_validation():
     assert "error" in r                                                                  # 실지귀속인데 비율·횟수·면적 없음
     r = c("common_input_tax", {**base, "ledger": [{"항목": "임차료", "사용처": "공통"}]})
     assert "error" in r                                                                  # 금액 없음
-    r = c("common_input_tax", {**base, "ledger": [{"항목": "임차료", "매입세액": 100_000, "사용처": "공통"}],
-                               "input_tax": {"common": {"예정": 100_000, "확정": 0}}})
-    assert "error" in r                                                                  # 둘 다
+    r = c("common_input_tax", {**base, "ledger": []})
+    assert "error" in r                                                                  # 원장 항목 없음
     r = c("common_input_tax", {**base, "ledger": [{"항목": "임차료", "매입세액": 1_000_000, "사용처": "공통"},
                                                   {"항목": "접대비", "매입세액": 50_000, "사용처": "불공제"}]})
     assert r["계산"]["공통매입세액_공제"] == 400_000 and r["결과"]["공제매입세액"] == 400_000

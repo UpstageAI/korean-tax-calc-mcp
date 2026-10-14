@@ -3,11 +3,12 @@
 """
 import asyncio, json, inspect
 from korean_tax_calc_mcp.server import mcp
+from tests._legacy_to_ledger import to_ledger   # 0.9.0: 옛 입력은 테스트에서 원장형으로 변환해 호출
 from korean_tax_calc_mcp import vocab
 
 
 def c(n, a):
-    return json.loads(asyncio.run(mcp.call_tool(n, a)).content[0].text)
+    return json.loads(asyncio.run(mcp.call_tool(n, to_ledger(n, a))).content[0].text)
 
 
 # ── vocab 모듈 ────────────────────────────────────────────────────────────────
