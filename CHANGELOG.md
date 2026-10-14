@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.1 (2026-10-15)
+
+- `tunnelling_gift_nts`: 엔진 호출 시 `dividends`(⑮ 배당공제)와 `excluded_by_corp`(⑩ 과세제외액)를 자리 순서로 바꿔 넘기던 버그 수정 — 배당공제를 주면 `TypeError`로 계산이 깨졌음. 키워드 인자로 전달. 데모 시나리오(중견기업 일감몰아주기, 2026 신고안내 산식) 작성 중 발견, Claude 수정, 기존 테스트 12건·전체 283건 통과
+- `docs/demo.gif` 교체: 2025 사업연도 법인세 조정 통합 시나리오(원장 → 조정 7종 → 과세표준 → 산출세액·최저한세), 실제 도구 호출 결과로 렌더
+
 ## 0.9.0 (2026-10-14) — 호환 깨짐
 
 - `entertainment_adjustment`·`simplified_vat_return`·`common_input_tax`: 옛 입력 파라미터 제거 — `expenses`·`revenue_general`·`revenue_related`(entertainment_adjustment), `supplies`·`purchases`(simplified_vat_return), `input_tax`(common_input_tax). 세 도구 모두 원장형 `ledger`만 받도록 통일(필수). 빈 원장(`[]`·공급 항목 없음)은 계산하지 않고 error 반환. entertainment_adjustment의 ledger 항목 `증빙`이 허용값('없음'|'영수증 등'|'적격') 밖이면 계산하지 않음(0.8.x의 '검토 필요' 처리 통일)

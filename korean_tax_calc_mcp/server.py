@@ -1030,10 +1030,10 @@ def tunnelling_gift_nts(size: Annotated[str, Field(description="기업 규모('�
                         credits: Annotated[float, Field(description="공제·감면세액(차감, 원)")] = 0,
                         unreturned_tax: Annotated[float, Field(description="미환류소득 법인세(원, tax에 포함이 맞음)")] = 0) -> dict:
     return _R.tunnelling_nts("수혜법인", size, op_income, taxable_income, tax, sales_total, sales_by_corp, relations,
-                            base_excluded, holdings_in_related, indirect_corp_of,
-                            excluded_by_corp,
-                            {k: tuple(v) for k, v in (dividends or {}).items()},
-                            land_tax, credits, unreturned_tax)
+                            base_excluded=base_excluded, holdings_in_related=holdings_in_related, indirect_corp_of=indirect_corp_of,
+                            dividends={k: tuple(v) for k, v in (dividends or {}).items()},
+                            excluded_by_corp=excluded_by_corp,
+                            land_tax=land_tax, credits=credits, unreturned_tax=unreturned_tax)
 
 
 @mcp.tool(description="""특수관계인 범위 조문이 기준일에 어느 법령에 있었는지 확인. 언제: 특수관계 판정 결과를 근거로 인용할 때 해당 기준일 시행 조문의 위치를 확인한다.
