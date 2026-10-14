@@ -6,7 +6,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/korean-tax-calc-mcp)](https://pypi.org/project/korean-tax-calc-mcp/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-korean--tax--calc--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=korean-tax-calc-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Built with Upstage Solar Pro 4](https://img.shields.io/badge/Built%20with-Upstage%20Solar%20Pro%204-7A3FF2)](https://www.upstage.ai/) · [English](README-EN.md)
 
-> **업스테이지 Solar Pro 4로 개발합니다.** 버전별 변경 내용은 [CHANGELOG](CHANGELOG.md)를 보세요.
+> **0.3.0부터 업스테이지 Solar Pro 4로 개발합니다.** (0.2.1까지는 그 이전 개발분) 2026 법인세율·비거주자 원천징수·과소자본(0.3.0), 세무조사 판정 도구 11개(0.4.0), 사실관계를 받아 세무조정까지 돌려주는 끝에서 끝까지 계산기 9종과 사실관계 어휘(0.6.0~0.7.0), 조정명세서 모양 결과·원장형 입력(0.8.0~0.9.0)은 Solar Pro 4가 코드를 쓰고 Solar Pro 4 기반 코드 리뷰(CodeSolar)가 PR을 검토했으며, Claude가 테스트로 교차 검증했습니다. 50개 도구, 상세는 [CHANGELOG](CHANGELOG.md).
 
 **Korean tax calculations for AI agents — code, not guesses.** Corporate tax, entertainment limits, deemed interest, penalties, limitation periods, withholding, income tax and VAT, using year-by-year rate tables (2016–2026). Each result cites its statute. Years without a verified table stop with an error instead of estimating. 50 tools (38 computation + 12 tax audit judgment) — → [English README](README-EN.md)
 

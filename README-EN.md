@@ -6,7 +6,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/korean-tax-calc-mcp)](https://pypi.org/project/korean-tax-calc-mcp/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-korean--tax--calc--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=korean-tax-calc-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Built with Upstage Solar Pro 4](https://img.shields.io/badge/Built%20with-Upstage%20Solar%20Pro%204-7A3FF2)](https://www.upstage.ai/) · [한국어](README.md)
 
-> **Developed with Upstage Solar Pro 4.** See the [CHANGELOG](CHANGELOG.md) for what changed in each version.
+> **Developed with Upstage Solar Pro 4 since 0.3.0** (0.2.1 and earlier predate it). 2026 corporate tax rates, non-resident withholding and thin capitalisation (0.3.0), 11 tax-audit judgment tools (0.4.0), nine end-to-end calculators that take facts through to tax adjustments plus the facts vocabulary (0.6.0–0.7.0), and adjustment-statement-shaped results with ledger-style input (0.8.0–0.9.0) were written by Solar Pro 4, reviewed by Solar Pro 4-based code review (CodeSolar), and cross-checked by Claude with tests. 50 tools; details in the [CHANGELOG](CHANGELOG.md).
 
 **Korean (South Korea) tax calculations for AI agents — code, not guesses.** LLMs often get tax arithmetic wrong. This MCP server computes in code and cites the statute behind every result. It uses year-by-year rate tables (2016–2026); for a year without a verified table it returns an error instead of estimating. 50 tools (38 computation + 12 tax audit judgment). Nothing sent outside your machine for the 32 computation tools.
 
