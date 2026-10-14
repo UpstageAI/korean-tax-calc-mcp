@@ -2,7 +2,7 @@
 0.9.0: entertainment_adjustment·simplified_vat_return·common_input_tax 는 ledger만 받고, _guard 가 같은 입력 재호출을 알린다.
 실행: .venv/bin/python -m pytest tests/test_e2e7_golden.py -q
 """
-import asyncio, json
+import asyncio, json, re
 from korean_tax_calc_mcp import server
 from korean_tax_calc_mcp.server import mcp
 
@@ -32,12 +32,12 @@ def test_schema_ledger_only():
 def test_descriptions_do_not_mention_legacy_fields():   # 모델이 보는 설명에 옛 필드명이 남아 있으면 그걸 쓴다
     legacy_by_tool = {"entertainment_adjustment": ("expenses", "revenue_general", "revenue_related"),
                       "simplified_vat_return": ("supplies", "purchases", "card_receipt_issued", "tax_invoice_received"),
-                      "common_input_tax": ("input_tax\"", "taxable_only", "exempt_only", "attributed")}
+                      "common_input_tax": ("taxable_only", "exempt_only", "attributed")}   # input_tax는 common_asset_sales 항목 키로 남아 있어 제외; 최상위 파라미터 제거는 test_schema_ledger_only가 확인
     for name, legacy_fields in legacy_by_tool.items():
         t = next(x for x in asyncio.run(mcp.list_tools()) if x.name == name)
         text = (t.description or "") + json.dumps(t.input_schema, ensure_ascii=False)
         for legacy in legacy_fields:
-            assert legacy not in text, (name, legacy)
+            assert not re.search(r"(?<![A-Za-z_])" + re.escape(legacy.rstrip('"')) + r"(?![A-Za-z_])", text), (name, legacy)   # 단어 단위(prior_year_supplies 같은 다른 이름은 통과)
 
 
 def test_empty_ledger_refused():
