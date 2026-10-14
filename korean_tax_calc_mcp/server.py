@@ -1307,23 +1307,24 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
     if revenue is not None and (revenue_general != 0 or revenue_related != 0):
         return {"error": "입력 확인 필요 — revenue와 revenue_general·revenue_related를 함께 입력할 수 없음. 한 가지 방식으로 입력하세요"}
 
+    # ── 수입금액 원장형 입력(revenue)은 expenses·ledger 어느 쪽과도 같이 쓴다 (Claude 10-14: ledger 안에만 있어 expenses와 쓰면 무시되던 버그) ──
+    if revenue is not None:
+        매출액 = int(revenue.get("매출액", 0))
+        특수관계매출 = int(revenue.get("특수관계매출", 0))
+        매출할인등 = revenue.get("매출할인등", {}) or {}
+        할인_일반 = int(매출할인등.get("일반", 0))
+        할인_특수관계 = int(매출할인등.get("특수관계", 0))
+        revenue_related_calc = 특수관계매출 - 할인_특수관계
+        revenue_general_calc = 매출액 - 특수관계매출 - 할인_일반
+        if revenue_related_calc < 0 or revenue_general_calc < 0:
+            return {"error": "입력 확인 필요 — 수입금액이 음수: 매출액·특수관계매출·매출할인등 확인"}
+        revenue_general = revenue_general_calc
+        revenue_related = revenue_related_calc
+
     # ── 원장형 입력 처리 ──
     if ledger is not None:
         포함항목_규칙 = vocab.rule("기업업무추진비_포함항목", year)
         성격별_판단 = 포함항목_규칙.get("성격별", {})
-
-        if revenue is not None:
-            매출액 = int(revenue.get("매출액", 0))
-            특수관계매출 = int(revenue.get("특수관계매출", 0))
-            매출할인등 = revenue.get("매출할인등", {})
-            할인_일반 = int(매출할인등.get("일반", 0))
-            할인_특수관계 = int(매출할인등.get("특수관계", 0))
-            revenue_related_calc = 특수관계매출 - 할인_특수관계
-            revenue_general_calc = 매출액 - 특수관계매출 - 할인_일반
-            if revenue_related_calc < 0 or revenue_general_calc < 0:
-                return {"error": "입력 확인 필요 — 수입금액이 음수: 매출액·특수관계매출·매출할인등 확인"}
-            revenue_general = revenue_general_calc
-            revenue_related = revenue_related_calc
 
         judgments = []
         items_for_limit = []

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.1 (2026-10-14)
+
+- `entertainment_adjustment`: `revenue`(원장형 수입금액)를 `expenses`와 같이 주면 무시되던 버그 수정(한도가 기본한도만 적용됨). 회귀 테스트 추가
+
 ## 0.8.0 (2026-10-14)
 
 - 세무조정 출력 통일: `bad_debt_adjustment`·`entertainment_adjustment`의 `결과` 첫 키를 `세무조정`(구분·금액·소득처분 목록)·`소득처분별_합계`·`손금불산입_합계`로 — 조정명세서에 적는 모양 그대로. 기존 키는 그 뒤에 유지
