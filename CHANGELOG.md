@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.0 (2026-10-14) — 호환 깨짐
+
+- `entertainment_adjustment`·`simplified_vat_return`·`common_input_tax`: 옛 입력 파라미터 제거 — `expenses`·`revenue_general`·`revenue_related`(entertainment_adjustment), `supplies`·`purchases`(simplified_vat_return), `input_tax`(common_input_tax). 세 도구 모두 원장형 `ledger`만 받도록 통일(필수). 빈 원장(`[]`·공급 항목 없음)은 계산하지 않고 error 반환. entertainment_adjustment의 ledger 항목 `증빙`이 허용값('없음'|'영수증 등'|'적격') 밖이면 계산하지 않음(0.8.x의 '검토 필요' 처리 통일)
+- `_guard` 공통: 같은 입력 재호출 시 결과 맨 앞에 `"안내": "같은 입력으로 {n}번째 계산입니다..."` 추가. 프로세스 내 키별 호출 횟수 추적(최근 500개). 테스트용 `_reset_call_memo()` 추가
+- `tests/_legacy_to_ledger.py`: 변환기에서 common매입세액이 모두 0인 경우 ledger가 비지 않도록 0원 항목 유지(빈 원장 error 방지)
+
 ## 0.8.1 (2026-10-14)
 
 - `entertainment_adjustment`: `revenue`(원장형 수입금액)를 `expenses`와 같이 주면 무시되던 버그 수정(한도가 기본한도만 적용됨). 회귀 테스트 추가
