@@ -85,6 +85,16 @@ def test_ledger_exclusions_and_in_kind_valuation():   # 실무형: 비법인 직
     assert len(excluded) == 2 and all(j.get("근거") for j in excluded)
 
 
+def test_revenue_dict_with_expenses():   # 공개 사례 2024-65를 revenue(매출액·특수관계매출)로: expenses와 같이 써도 수입금액 한도가 적용돼야 (28회차 관찰 버그)
+    r = c("entertainment_adjustment", {
+        "year": 2024, "sme": False, "months": 12, "revenue": {"매출액": 12_000_000_000, "특수관계매출": 4_500_000_000},
+        "expenses": [{"amount": 8_000_000, "evidence": "없음"},
+                     {"amount": 6_000_000, "evidence": "영수증 등", "over_30k": True},
+                     {"amount": 42_000_000, "evidence": "적격"}]})
+    assert r["결과"]["한도"] == 35_650_000 and r["결과"]["한도초과"] == 6_350_000
+    assert r["결과"]["소득처분별_합계"] == {"대표자상여": 8_000_000, "기타사외유출": 12_350_000}
+
+
 def test_ledger_conflicts_and_missing_values():
     base = {"year": 2026, "sme": False, "months": 12, "revenue_general": 1_000_000_000}
     r = c("entertainment_adjustment", {**base, "expenses": [{"amount": 1_000, "evidence": "적격"}], "ledger": [{"항목": "x", "금액": 1_000}]})
