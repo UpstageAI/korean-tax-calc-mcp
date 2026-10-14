@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.0 (2026-10-14)
+
+- 세무조정 출력 통일: `bad_debt_adjustment`·`entertainment_adjustment`의 `결과` 첫 키를 `세무조정`(구분·금액·소득처분 목록)·`소득처분별_합계`·`손금불산입_합계`로 — 조정명세서에 적는 모양 그대로. 기존 키는 그 뒤에 유지
+- 원장형 입력(기존 입력의 대안, 둘 다 주면 error): `entertainment_adjustment`에 `ledger`(항목·금액·증빙·성격·시가·장부가액)와 `revenue`(매출액·특수관계매출·매출할인등) — 교제목적 지출·직원단체(법인) 복리시설비 포함, 비법인 단체·임직원 부담분 제외, 현물은 시가·장부가액 중 큰 금액(법 제25조①, 영 제40조①②, 영 제42조①⑥); `simplified_vat_return`에 `ledger`(공급·매입 항목명과 금액, 어휘 키워드로 역할 판정 — 현금영수증·직불카드도 발급세액공제 대상); `common_input_tax`에 `ledger`(사용처 과세·면세·공통·실지귀속·불공제, 실지귀속은 과세비율·횟수·면적)와 `prior_common_input_tax`
+- 계산기 연결: `input_tax_recalculation`에 `bundle`(토지·건물 일괄공급 입력) — 안분해서 건물 매입세액을 구한 뒤 재계산, `결과.건물_매입세액`
+- 사실관계 어휘 3항목 추가(39개): `기업업무추진비_포함항목`·`간이과세자_원장항목`·`공통매입세액_귀속` (법제처 2026-01-01 시행본 확인)
+- 정답 테스트 274개(공개 검증 사례 17문항, 출처 Q-Net). Solar Pro 4(Solar Work CLI) 작성, 실행 시간 초과로 남은 문법·결과 조립 오류는 Claude가 수정, CodeSolar·Claude 검수
+
 ## 0.7.0 (2026-10-14)
 
 - 끝에서 끝까지 계산기 6종 추가(도구 50개): `deemed_dividend_bonus_shares`(잉여금 자본전입 의제배당, 자기주식 교부/미교부), `other_income_aggregate`(기타소득 과세 구분·비과세·필요경비·원천징수·종합소득 합산), `simplified_vat_return`(간이과세자 확정신고 차가감납부세액), `common_input_tax`(겸영사업자 공통매입세액 안분·정산·공통사용재화 공급), `input_tax_recalculation`(감가상각자산 재계산), `bundled_supply_split`(토지·건물 일괄공급 안분)
