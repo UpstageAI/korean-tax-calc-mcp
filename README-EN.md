@@ -18,6 +18,9 @@
 - "SME with 10B KRW revenue spent 50M on entertainment — how much exceeds the limit?"
 - "When does the assessment period expire for a corporate tax return due 2018-03-31? What if it was fraudulent?"
 - "Retirement income tax on 100M KRW after 15 years of service"
+- "Here are five entertainment-expense ledger lines — give me the FY2025 adjustments (disallowance and income disposition)"
+- "Bad debts: 8M statute-barred, 5M on a note dishonoured 3 months ago; allowance opening 20M, provision 25M — excess and reserve adjustments?"
+- "Mid-sized company, 50B revenue of which 40B from related corporations, controlling shareholder 60% — deemed gift from tunnelling under the 2026 NTS formula"
 
 ## Install
 
