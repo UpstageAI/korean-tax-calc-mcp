@@ -1,5 +1,5 @@
 """끝에서 끝까지 계산기 정답 테스트 (Claude 작성 2026-10-13) — 수정 금지.
-공개 검증 사례(세무사 1차 시험 문제, 출처 Q-Net 공개 문제·정답)는 원문 사실관계를 그대로 입력하고 공식 정답과 손계산 일치를 확인. 실무형 사례는 Claude 손계산. 이 사례들은 도구 설계의 기준이 아니라 검증용이다.
+공개 검증 사례는 원문 사실관계를 그대로 입력하고 공개 정답과 손계산 일치를 확인. 실무형 사례는 Claude 손계산. 이 사례들은 도구 설계의 기준이 아니라 검증용이다.
 """
 import asyncio, json
 from korean_tax_calc_mcp.server import mcp
@@ -15,7 +15,7 @@ def find(judg, word):
 
 
 # ── 대손충당금 ───────────────────────────────────────────────────────────────
-def test_bad_debt_2024_66():  # 공개 검증 사례: 세무사 1차 2024-66(정답 ① 81,674,945원)
+def test_bad_debt_public_case_66():  # 공개 검증 사례(답 81,674,945원)
     r = c("bad_debt_adjustment", {
         "year": 2024, "sme": False, "prior_excess": 20_000_000,
         "book": {"opening": 150_000_000, "offset": 130_000_000, "provision": 200_000_000, "closing": 220_000_000},
@@ -50,7 +50,7 @@ def test_bad_debt_sme_receivable_allowed():  # 실무형: 중소기업 부도 �
 
 
 # ── 기업업무추진비 ───────────────────────────────────────────────────────────
-def test_entertainment_2024_65():  # 공개 검증 사례: 세무사 1차 2024-65(정답 ① 대표자상여 8,000,000 / 기타사외유출 12,350,000
+def test_entertainment_public_case_65():  # 공개 검증 사례(답 대표자상여 8,000,000 / 기타사외유출 12,350,000
     r = c("entertainment_adjustment", {
         "year": 2024, "sme": False, "months": 12,
         "revenue_general": 7_500_000_000, "revenue_related": 4_500_000_000,
@@ -80,7 +80,7 @@ def test_entertainment_short_year():  # 실무형: 일반법인 6개월 사업�
 
 
 # ── 금융소득 ─────────────────────────────────────────────────────────────────
-def test_financial_2024_54():  # 공개 검증 사례: 세무사 1차 2024-54(정답 ③ 39,500,000원
+def test_financial_public_case_54():  # 공개 검증 사례(답 39,500,000원
     r = c("financial_income_aggregate", {"year": 2024, "items": [
         {"kind": "예금이자", "amount": 5_000_000},
         {"kind": "투자신탁환매이익", "amount": 12_000_000, "components": [
@@ -95,7 +95,7 @@ def test_financial_2024_54():  # 공개 검증 사례: 세무사 1차 2024-54(�
     assert "제외" in json.dumps(find(r["판단"], "장내파생"), ensure_ascii=False)
 
 
-def test_financial_2025_51():  # 공개 검증 사례: 세무사 1차 2025-51(정답 ③ 40,350,000원
+def test_financial_public_case_51():  # 공개 검증 사례(답 40,350,000원
     r = c("financial_income_aggregate", {"year": 2025, "items": [
         {"kind": "외상매출금지급기일연장이자", "amount": 4_000_000},
         {"kind": "소비대차전환이자", "amount": 3_000_000},
@@ -214,7 +214,7 @@ def test_excluded_source_requires_self_stock_shift():  # Claude 10-13 (24회차 
         {"kind": "의제배당_잉여금자본전입", "amount": 8_000_000, "source": "주식발행초과금", "self_stock_shift": 3_500_000},
         {"kind": "의제배당_잉여금자본전입", "amount": 10_000_000, "source": "자기주식처분이익"},
         {"kind": "인정배당", "amount": 17_500_000}]})
-    assert r["결과"]["합산액"] == 40_350_000       # 공개 검증 사례 2025-51 정답 ③
+    assert r["결과"]["합산액"] == 40_350_000       # 공개 검증 사례 답
 
 
 def test_components_wrong_shape_rejected():  # Claude 10-14 (25회차 2024-54): dict 형태 components는 크래시 대신 형식 안내

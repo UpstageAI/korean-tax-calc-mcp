@@ -1,5 +1,5 @@
 """의제배당(잉여금 자본전입) 끝에서 끝까지 계산기 정답 테스트 (Claude 작성 2026-10-13) — 수정 금지.
-공개 검증 사례(세무사 1차 2024-64, 출처 Q-Net)는 법인세법 제16조①3호·영 제14조①1호가목으로 손계산해 공식 정답과 일치 확인. 실무형 사례는 Claude 손계산.
+공개 검증 사례는 법인세법 제16조①3호·영 제14조①1호가목으로 손계산해 공개 정답과 일치 확인. 실무형 사례는 Claude 손계산.
 """
 import asyncio, json
 from korean_tax_calc_mcp.server import mcp
@@ -17,7 +17,7 @@ def by_name(r):
     return {h["name"]: h for h in r["결과"]["주주별"]}
 
 
-def test_capital_surplus_self_stock_allotted():  # 공개 검증 사례 2024-64 사례1: 주식발행초과금 2억, 자기주식 몫을 B·C·D에 교부
+def test_capital_surplus_self_stock_allotted():  # 공개 검증 사례 사례1: 주식발행초과금 2억, 자기주식 몫을 B·C·D에 교부
     r = c("deemed_dividend_bonus_shares", {"year": 2024, "shareholder_type": "법인", "source": "주식발행초과금",
                                            "capitalized_amount": 200_000_000, "par_value": 500,
                                            "shareholders": HOLDERS, "self_stock_allotment": "다른주주에게교부"})
@@ -27,7 +27,7 @@ def test_capital_surplus_self_stock_allotted():  # 공개 검증 사례 2024-64 
     assert h["A(자기주식)"]["의제배당"] == 0
 
 
-def test_capital_surplus_self_stock_not_allotted():  # 2024-64 사례2: 자기주식 몫 미교부 → 사례1과의 차이 B 300만·C 400만·D 100만(정답 ④)
+def test_capital_surplus_self_stock_not_allotted():  # 사례2: 자기주식 몫 미교부 → 사례1과의 차이 B 300만·C 400만·D 100만
     r = c("deemed_dividend_bonus_shares", {"year": 2024, "shareholder_type": "법인", "source": "주식발행초과금",
                                            "capitalized_amount": 200_000_000, "par_value": 500,
                                            "shareholders": HOLDERS, "self_stock_allotment": "미교부"})

@@ -21,7 +21,7 @@
 - 원장형 입력(기존 입력의 대안, 둘 다 주면 error): `entertainment_adjustment`에 `ledger`(항목·금액·증빙·성격·시가·장부가액)와 `revenue`(매출액·특수관계매출·매출할인등) — 교제목적 지출·직원단체(법인) 복리시설비 포함, 비법인 단체·임직원 부담분 제외, 현물은 시가·장부가액 중 큰 금액(법 제25조①, 영 제40조①②, 영 제42조①⑥); `simplified_vat_return`에 `ledger`(공급·매입 항목명과 금액, 어휘 키워드로 역할 판정 — 현금영수증·직불카드도 발급세액공제 대상); `common_input_tax`에 `ledger`(사용처 과세·면세·공통·실지귀속·불공제, 실지귀속은 과세비율·횟수·면적)와 `prior_common_input_tax`
 - 계산기 연결: `input_tax_recalculation`에 `bundle`(토지·건물 일괄공급 입력) — 안분해서 건물 매입세액을 구한 뒤 재계산, `결과.건물_매입세액`
 - 사실관계 어휘 3항목 추가(39개): `기업업무추진비_포함항목`·`간이과세자_원장항목`·`공통매입세액_귀속` (법제처 2026-01-01 시행본 확인)
-- 정답 테스트 274개(공개 검증 사례 17문항, 출처 Q-Net). Solar Pro 4(Solar Work CLI) 작성, 실행 시간 초과로 남은 문법·결과 조립 오류는 Claude가 수정, CodeSolar·Claude 검수
+- 정답 테스트 274개(공개 검증 사례 17건). Solar Pro 4(Solar Work CLI) 작성, 실행 시간 초과로 남은 문법·결과 조립 오류는 Claude가 수정, CodeSolar·Claude 검수
 
 ## 0.7.0 (2026-10-14)
 
@@ -30,7 +30,7 @@
 - `financial_income_aggregate`: 과세 제외 재원(주식발행초과금 등) 무상주는 `self_stock_shift`(자기주식 미배정 지분율 상승분, 0 가능)를 명시 입력해야 계산
 - `deemed_dividend_bonus_shares`: 주주별 의제배당을 결과 맨 앞과 `주주별_의제배당` 요약으로
 - 입력 가드: 몰수액·계약금 대체액이 총액 초과 시 거부, 실제 경비는 총수입 한도(소득세법 제37조②), 간이과세 납부의무 면제 시에도 미수취 가산세는 별도 적용(제69조②)
-- 정답 테스트 261개(공개 검증 사례 12문항, 출처 Q-Net). Solar Pro 4(Solar Work CLI) 작성, CodeSolar·Claude 검수
+- 정답 테스트 261개(공개 검증 사례 12건). Solar Pro 4(Solar Work CLI) 작성, CodeSolar·Claude 검수
 
 ## 0.6.0 (2026-10-13)
 

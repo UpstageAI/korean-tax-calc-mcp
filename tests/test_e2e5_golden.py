@@ -1,6 +1,6 @@
 """겸영사업자 공통매입세액 끝에서 끝까지 계산기 정답 테스트 (Claude 작성 2026-10-13) — 수정 금지.
-공개 검증 사례(세무사 1차 2023-77·2024-76·2025-71·2026-77, 출처 Q-Net)는 부가가치세법 제29조⑧⑨·제40조·제41조,
-영 제63조·제64조·제81조~제83조로 손계산해 공식 정답과 일치 확인. 실무형 사례는 Claude 손계산.
+공개 검증 사례는 부가가치세법 제29조⑧⑨·제40조·제41조,
+영 제63조·제64조·제81조~제83조로 손계산해 공개 정답과 일치 확인. 실무형 사례는 Claude 손계산.
 """
 import asyncio, json
 from korean_tax_calc_mcp.server import mcp
@@ -12,7 +12,7 @@ def c(n, a):
 
 
 # ── common_input_tax: 안분·정산·공통사용재화 공급 ──
-def test_public_case_2024_76():  # 확정신고 정산: 과세기간 전체 면세비율 70%, 예정 불공제 600,000 반영
+def test_public_case_public_case_76():  # 확정신고 정산: 과세기간 전체 면세비율 70%, 예정 불공제 600,000 반영
     r = c("common_input_tax", {"year": 2024, "period": "1기", "filing": "확정",
                                "supplies": {"예정": {"taxable": 400_000_000, "exempt": 600_000_000}, "확정": {"taxable": 200_000_000, "exempt": 800_000_000}},
                                "input_tax": {"taxable_only": 700_000, "exempt_only": 800_000,

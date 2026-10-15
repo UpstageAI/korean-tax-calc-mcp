@@ -1,6 +1,6 @@
 """간이과세자 부가가치세 신고 끝에서 끝까지 계산기 정답 테스트 (Claude 작성 2026-10-13) — 수정 금지.
-공개 검증 사례(세무사 1차 2023-80·2025-76·2026-78, 출처 Q-Net)는 부가가치세법 제46조①·제63조·제68조의2②·제69조, 영 제61조②·제111조②로
-손계산해 공식 정답과 일치 확인(495,000 / 366,000 / 310,000). 실무형 사례는 Claude 손계산.
+공개 검증 사례는 부가가치세법 제46조①·제63조·제68조의2②·제69조, 영 제61조②·제111조②로
+손계산해 공개 정답과 일치 확인(495,000 / 366,000 / 310,000). 실무형 사례는 Claude 손계산.
 """
 import asyncio, json
 from korean_tax_calc_mcp.server import mcp
@@ -11,7 +11,7 @@ def c(n, a):
     return json.loads(asyncio.run(mcp.call_tool(n, to_ledger(n, a))).content[0].text)
 
 
-def test_public_case_2023_80():
+def test_public_case_public_case_80():
     r = c("simplified_vat_return", {"year": 2023, "business_type": "음식점업",
                                     "supplies": {"total": 70_000_000, "card_receipt_issued": 30_000_000},
                                     "purchases": {"tax_invoice_received": 33_000_000, "exempt_farm_products": 4_360_000},
@@ -23,7 +23,7 @@ def test_public_case_2023_80():
     assert r["결과"]["차가감납부세액"] == 495_000 and r["결과"]["납부의무면제"] is False
 
 
-def test_public_case_2025_76():  # 자기적립마일리지 제외, 세금계산서 미수취 가산세 0.5%
+def test_public_case_public_case_76():  # 자기적립마일리지 제외, 세금계산서 미수취 가산세 0.5%
     r = c("simplified_vat_return", {"year": 2025, "business_type": "음식점업",
                                     "supplies": {"total": 99_500_000, "card_receipt_issued": 80_000_000, "self_mileage": 1_000_000},
                                     "purchases": {"tax_invoice_received": 16_500_000, "invoice_received": 29_000_000,
@@ -36,7 +36,7 @@ def test_public_case_2025_76():  # 자기적립마일리지 제외, 세금계산
     assert r["결과"]["차가감납부세액"] == 366_000
 
 
-def test_public_case_2026_78():  # 대손은 간이과세자 납부세액에 영향 없음
+def test_public_case_public_case_78():  # 대손은 간이과세자 납부세액에 영향 없음
     r = c("simplified_vat_return", {"year": 2026, "business_type": "음식점업",
                                     "supplies": {"total": 75_000_000, "card_receipt_issued": 50_000_000},
                                     "purchases": {"tax_invoice_received": 33_000_000, "exempt_farm_products": 4_360_000},
