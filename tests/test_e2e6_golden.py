@@ -86,7 +86,7 @@ def test_ledger_exclusions_and_in_kind_valuation():   # 실무형: 비법인 직
     assert len(excluded) == 2 and all(j.get("근거") for j in excluded)
 
 
-def test_revenue_dict_with_expenses():   # 공개 사례 2024-65를 revenue(매출액·특수관계매출)로: expenses와 같이 써도 수입금액 한도가 적용돼야 (28회차 관찰 버그)
+def test_revenue_dict_with_expenses():   # 공개 사례 2024-65를 revenue(매출액·특수관계매출)로: expenses와 같이 써도 수입금액 한도가 적용돼야
     r = c("entertainment_adjustment", {
         "year": 2024, "sme": False, "months": 12, "revenue": {"매출액": 12_000_000_000, "특수관계매출": 4_500_000_000},
         "expenses": [{"amount": 8_000_000, "evidence": "없음"},

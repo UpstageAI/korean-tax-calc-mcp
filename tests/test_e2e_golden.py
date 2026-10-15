@@ -205,7 +205,7 @@ def test_financial_taxable_source_with_self_stock_shift():  # 과세 재원 무�
     assert k["배당(Gross-up 대상)"] == 8_000_000 and k["배당(Gross-up 비대상)"] == 2_000_000
 
 
-def test_excluded_source_requires_self_stock_shift():  # Claude 10-13 (24회차 2025-51): 과세 제외 재원이면 자기주식 미배정 상승분을 명시해야 계산
+def test_excluded_source_requires_self_stock_shift():  # 공개 사례 2025-51: 과세 제외 재원이면 자기주식 미배정 상승분을 명시해야 계산
     r = c("financial_income_aggregate", {"year": 2025, "items": [{"kind": "의제배당_잉여금자본전입", "amount": 8_000_000, "source": "주식발행초과금"}]})
     assert "error" in r and any("self_stock_shift" in p for p in r["문제"])
     r = c("financial_income_aggregate", {"year": 2025, "items": [
@@ -217,11 +217,11 @@ def test_excluded_source_requires_self_stock_shift():  # Claude 10-13 (24회차 
     assert r["결과"]["합산액"] == 40_350_000       # 공개 검증 사례 2025-51 정답 ③
 
 
-def test_components_wrong_shape_rejected():  # Claude 10-14 (25회차 2024-54): dict 형태 components는 크래시 대신 형식 안내
+def test_components_wrong_shape_rejected():  # dict 형태 components는 크래시 대신 형식 안내
     r = c("financial_income_aggregate", {"year": 2024, "items": [{"kind": "투자신탁환매이익", "amount": 12_000_000, "components": {"코스닥상장법인주식양도차익": 10_000_000}}]})
     assert "error" in r and "예시" in r
 
 
-def test_result_key_comes_first():  # 25회차 2025-76: 모델이 판단 목록만 읽고 재계산 → 결과를 맨 앞에
+def test_result_key_comes_first():  # 판단 목록만 읽고 재계산하지 않도록 결과를 맨 앞에
     r = c("simplified_vat_return", {"year": 2025, "business_type": "음식점업", "supplies": {"total": 60_000_000}, "purchases": {}, "prior_year_supplies": 50_000_000, "prepaid_assessed": 0})
     assert list(r.keys())[0] == "결과"

@@ -80,7 +80,7 @@ def test_remainder_shares_fully_distributed():  # 교부: 단주까지 다른 �
     assert sum(x["배정주식수"] for x in r["결과"]["주주별"]) == 10
 
 
-def test_summary_puts_deemed_dividend_first():  # Claude 10-13 (24회차 2024-64): 주주별 의제배당 요약 제공, 각 주주 항목의 첫 숫자가 의제배당
+def test_summary_puts_deemed_dividend_first():  # 공개 사례 2024-64: 주주별 의제배당 요약 제공, 각 주주 항목의 첫 숫자가 의제배당
     r = c("deemed_dividend_bonus_shares", {"year": 2024, "shareholder_type": "법인", "source": "주식발행초과금",
                                            "capitalized_amount": 200_000_000, "par_value": 500, "shareholders": HOLDERS, "self_stock_allotment": "다른주주에게교부"})
     assert r["결과"]["주주별_의제배당"] == {"A(자기주식)": 0, "B": 15_000_000, "C": 20_000_000, "D": 5_000_000}
