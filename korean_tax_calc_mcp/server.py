@@ -1587,7 +1587,7 @@ def deemed_dividend_bonus_shares(
         basis = _income_basis(source, shareholder_type, taxable)
         result_list.append({
             "name": name,
-            "의제배당": deemed_div,                # Claude 10-13: 답은 이 값. 지분율은 참고(24회차 2024-64 — 모델이 지분율 차이로 다시 계산해 오답)
+            "의제배당": deemed_div,                # 답은 이 값. 지분율은 참고(지분율 차이로 다시 계산하지 않도록)
             "배정주식수": allot,
             "전입전지분율": round(prop_pre * 100, 4),
             "전입후지분율": round(prop_post * 100, 4),
@@ -1660,7 +1660,7 @@ def financial_income_aggregate(year: YEAR,
     _excl = tuple(k for k, v in vocab.rule("의제배당_잉여금자본전입", year)["재원별"].items() if v == "의제배당 아님")
     _extra += [f"항목 {i+1}(의제배당_잉여금자본전입, {it.get('source')}): 과세 제외 재원이라 무상주 자체는 의제배당이 아니지만, 법인이 자기주식을 보유해 다른 주주의 지분율이 오른 부분은 의제배당(소득세법 제17조②5호, Gross-up 비대상) — 그 금액을 'self_stock_shift'로 입력 필요(없으면 0)"
                for i, it in enumerate(items or []) if isinstance(it, dict) and it.get("kind") == "의제배당_잉여금자본전입"
-               and it.get("source") in _excl and it.get("self_stock_shift") is None]   # Claude 10-13: 24회차 2025-51 — 상승분 누락으로 오답
+               and it.get("source") in _excl and it.get("self_stock_shift") is None]   # 과세 제외 재원이면 자기주식 미배정 상승분이 빠지지 않도록
     _v = _validate_items(items, "kind", _specs_from_vocab("financial_income_aggregate", "kind"), extra=_extra)
     if _v: return _v
 
@@ -1699,7 +1699,7 @@ def financial_income_aggregate(year: YEAR,
                 add(k, "이자", max(gain, 0), "소득세법 제16조①9호, 시행령 제25조", f"만기보험금 − 납입보험료 = {gain:,}원(10년 미만 등 비과세 요건 미충족)")
         elif k == "투자신탁환매이익":
             comps = it.get("components") or []
-            if comps and not (isinstance(comps, list) and all(isinstance(c, dict) for c in comps)):   # Claude 10-14 (25회차 2024-54 크래시)
+            if comps and not (isinstance(comps, list) and all(isinstance(c, dict) for c in comps)):   # dict 형태 components는 크래시 대신 형식 안내
                 return {"error": "입력 확인 필요 — 계산하지 않음",
                         "문제": [f"항목({k}): 'components'는 [{{'asset': '상장주식'|'채권'|'비상장주식'|…, 'gain': 원(손실은 음수)}}] 목록이어야 함 — 집합투자기구 이익 중 상장주식 양도차익은 제외(소득세법 시행령 제26조의2④)"],
                         "예시": {"kind": "투자신탁환매이익", "amount": 12000000, "components": [{"asset": "상장주식", "gain": 10000000}, {"asset": "채권", "gain": -3000000}, {"asset": "비상장주식", "gain": 5000000}]}}
