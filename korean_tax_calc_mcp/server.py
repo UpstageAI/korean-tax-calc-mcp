@@ -250,6 +250,13 @@ def _validate_items(items, field, specs, extra=None):
     if extra:
         problems += extra
     if not problems:
+        # 별칭(예: 파산 → 회수불능)으로 들어온 종류는 정식 이름으로 바꿔 계산 분기가 알아보게 함
+        for it in items:
+            k = it.get(field)
+            try: canon = vocab.resolve(k)["이름"]
+            except Exception: continue
+            if canon != k and canon in specs:
+                it[field] = canon
         return None
     return {"error": "입력 확인 필요 — 계산하지 않음", "문제": problems,
             "허용값": {k: {"필요": v.get("필요", []), "허용": v.get("허용", {}), "설명": v.get("설명", "")} for k, v in specs.items()},
@@ -1844,6 +1851,7 @@ def other_income_aggregate(year: YEAR,
             기납부_원천징수세액 += 원천징수세액
             항목별.append({"kind": k, "총수입금액": amount, "비과세": 0, "필요경비": int(필요경비),
                            "소득금액": int(소득), "과세구분": "종합", "원천징수세액": 원천징수세액, "근거": basis})
+            if rule.get("주의"): 산식_목록.append(f"{k} 주의: {rule['주의']}")
             산식_목록.append(f"{k}: {amount:,}원 × 필요경비율 {필요경비율 * 100:.0f}% = {int(amount * 필요경비율):,}원, 실제경비 {actual_expense:,}원 → 필요경비 max({int(amount * 필요경비율):,}, {actual_expense:,}) = {int(필요경비):,}원, 소득 {int(소득):,}원, 원천징수 {int(소득):,} × {원천징수세율 * 100:.0f}% = {원천징수세액:,}원")
             근거_목록.extend(basis)
 

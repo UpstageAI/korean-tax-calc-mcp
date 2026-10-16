@@ -1,9 +1,13 @@
 # MCP Registry 등록 — UpstageAI 조직 레포에서 GitHub OIDC로 io.github.upstageai/* 이름 인증. 작성 Mia(윤승미)
-# 수동 실행: gh workflow run publish-mcp-registry.yml
+# PyPI 배포(Publish to PyPI)가 성공하면 자동 실행, 수동 실행도 가능: gh workflow run publish-mcp-registry.yml
+# PyPI에 새 버전이 보이기 전에 등록하면 404로 실패하므로, 버전이 보일 때까지 기다린 뒤 등록
 name: Publish to MCP Registry
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: ["Publish to PyPI"]
+    types: [completed]
 
 permissions:
   id-token: write
@@ -11,9 +15,19 @@ permissions:
 
 jobs:
   publish:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+
+      - name: Wait for PyPI
+        run: |
+          v=$(python3 -c "import json;print(json.load(open('server.json'))['version'])")
+          for i in $(seq 1 30); do
+            curl -sf "https://pypi.org/pypi/korean-tax-calc-mcp/$v/json" >/dev/null && echo "PyPI $v ok" && exit 0
+            sleep 10
+          done
+          echo "PyPI에 $v 가 5분 안에 안 보임" && exit 1
 
       - name: Install mcp-publisher
         run: |
