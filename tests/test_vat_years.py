@@ -3,11 +3,11 @@
 from korean_tax_calc_mcp.engine import calc_vat as V, calc
 
 
-def test_deemed_rent_rate_by_year():  # 부가규칙 제47조: 365,000,000 × 이율 × 181/365
-    assert V.deemed_rent(365_000_000, 181, period="2016-1") == 3_258_000   # 1.8%
+def test_deemed_rent_rate_by_year():  # 부가규칙 제47조: 365,000,000 × 이율 × 181/365(윤년 366)
+    assert V.deemed_rent(365_000_000, 181, period="2016-1") == 3_249_098   # 1.8%, 윤년 ÷366 (영 제65조①)
     assert V.deemed_rent(365_000_000, 181, period="2019-2") == 3_801_000   # 2.1%
     assert V.deemed_rent(365_000_000, 181, period="2021-1") == 2_172_000   # 1.2%
-    assert V.deemed_rent(365_000_000, 181, period="2024-1") == 6_335_000   # 3.5%
+    assert V.deemed_rent(365_000_000, 181, period="2024-1") == 6_317_691   # 3.5%, 윤년 ÷366
     assert V.deemed_rent(365_000_000, 181, period="2025-06-30") == V.deemed_rent(365_000_000, 181) == 5_611_000  # 3.1%
     assert [V.DEEMED_RENT_RATE[y] for y in (2017, 2018, 2020, 2022, 2023)] == [0.016, 0.018, 0.018, 0.012, 0.029]
 

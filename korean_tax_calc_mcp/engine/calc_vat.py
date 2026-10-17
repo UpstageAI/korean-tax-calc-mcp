@@ -2,6 +2,8 @@
 플레이북: knowledge/13_부가가치세_신고안내_조사포인트.md. 가공 세금계산서 가산세율은 calc.fake_invoice_rate(발급일).
 """
 
+import calendar
+
 
 # ── 과세기간·연도표 (2016년 제1기 ~ 2026년 제1기, 법제처 연혁본 원문 대조 — knowledge/16 '부가가치세 연도표') ──
 # 과세기간 인자: 'YYYY-1' | 'YYYY-2' | 'YYYY-MM-DD'(그 날이 속한 과세기간). None이면 현행(2026년) 값 — 기존 호출 호환.
@@ -43,9 +45,12 @@ DEEMED_RENT_RATE = {2016: 0.018,   # 2016.3.9. 개정(제546호)
                     2025: 0.031, 2026: 0.031}  # 2025.3.21.(제1116호) 1,000분의 31, 2026.9.30. 현재 유지
 
 
-def deemed_rent(deposit, days, year_days=365, rate=None, period=None):
-    """간주임대료(부가령 제65조): 보증금 × 정기예금이자율 × 과세기간 일수/연 일수. 이율은 rate > period 연도표 > 현행 3.1%."""
-    if rate is None: rate = DEEMED_RENT_RATE[_period(period)[0]] if period else 0.031
+def deemed_rent(deposit, days, year_days=None, rate=None, period=None):
+    """간주임대료(부가령 제65조): 보증금 × 정기예금이자율 × 과세기간 일수/연 일수. 연 일수는 윤년이면 366, 아니면 365(부가령 제65조①). 이율은 rate > period 연도표 > 현행 3.1%."""
+    y = _period(period)[0] if period else 2026
+    if year_days is None:
+        year_days = 366 if calendar.isleap(y) else 365
+    if rate is None: rate = DEEMED_RENT_RATE[y] if period else 0.031
     return int(round(deposit * rate * days / year_days, 6))  # 부동소수 오차(예: 3,257,999.9999) 제거 후 원 미만 절사
 
 
