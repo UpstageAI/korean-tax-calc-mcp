@@ -436,8 +436,9 @@ def depreciation_adjustment(year, method, acquisition_cost, booked_depreciation,
     # ── 사용월수 ───────────────────────────────────────────────────
     사용월수 = 총월수
     if in_service_date is not None:
-        사용월수 = months_in(in_service_date, fy_e)
-        판단_목록.append({"항목": "사용월수(월할)", "결론": f"{사용월수}개월 (사용개시일 {in_service_date} ~ 사업연도 종료 {fy_e})",
+        사용개시일 = in_service_date if in_service_date > fy_s else fy_s
+        사용월수 = months_in(사용개시일, fy_e)
+        판단_목록.append({"항목": "사용월수(월할)", "결론": f"{사용월수}개월 (사용개시일 {사용개시일} ~ 사업연도 종료 {fy_e})",
                           "근거": "법인세법 시행령 제26조⑨·제28조④", "이유": "사업연도 중 취득·사용개시"})
 
     # ── 즉시상각의제 여부 판단 (영 제31조③) ──────────────────────
@@ -1022,4 +1023,1259 @@ def foreign_tax_credit(year, base, base_includes_grossup, method, countries, mon
         "연도별_근거": {
             "외국납부세액공제": fta_basis,
         },
+    }
+
+
+# ── 수입배당금 익금불산입 ──────────────────────────────────────────
+
+
+def _parse_date(s):
+    """YYYY-MM-DD 문자열 → (year, month, day) 튜플."""
+    y, m, d = map(int, s.split("-"))
+    return (y, m, d)
+
+
+def _date_key(s):
+    """YYYY-MM-DD 문자열 → YYYYMMDD 정수."""
+    return int(s.replace("-", ""))
+
+
+def _months_between(start, end):
+    """두 날짜 사이의 월수 (초일 산입). start, end는 (y,m,d) 튜플."""
+    sy, sm, sd = start
+    ey, em, ed = end
+    months = (ey - sy) * 12 + (em - sm)
+    if ed >= sd:
+        months += 1
+    return months
+
+
+def _within_3m_cutoff(record_date):
+    """배당기준일(record_date)의 3개월 이전 기준일(YYYYMMDD). 민법 초일 불산입 기준."""
+    y, m, d = map(int, record_date.split("-"))
+    # 3개월 전: 같은 날짜 - 3개월 (월만 이동)
+    nm = m - 3
+    ny = y
+    if nm <= 0:
+        nm += 12
+        ny -= 1
+    # 경계: record_date가 12-31이면 09-30, 10-01이면 07-01
+    # 민법 초일 불산입: record_date 전 3개월 "이내" = record_date부터 역산 3개월
+    # 예: record_date 12-31 → 09-30 취득분은 3개월 이상(09-30은 경계, 10-01부터 이내)
+    return f"{ny:04d}-{nm:02d}-{d:02d}"
+
+
+def _calc_ownership_ratio(inv):
+    """피출자법인의 출자비율과 3개월 이내 취득분 배당금을 계산.
+
+    inv: Investee dict
+    returns: (출자비율 float, 제외배당 int)
+    """
+    # ratio 방식
+    if "ratio" in inv:
+        ratio = inv["ratio"]
+        within_3m_div = inv.get("within_3m_dividend", 0)
+        return ratio, within_3m_div
+
+    # shares 방식
+    if "shares" in inv:
+        s = inv["shares"]
+        issued = s["issued"]
+        held = s["held"]
+        within_3m = s.get("within_3m", 0)
+        ratio = (held - within_3m) / issued if issued > 0 else 0
+        # 제외 배당 = floor(dividend × within_3m / held)
+        dividend = inv["dividend"]
+        if held > 0:
+            within_3m_div = int(dividend * within_3m / held)
+        else:
+            within_3m_div = 0
+        return ratio, within_3m_div
+
+    # lots 방식 (선입선출 양도)
+    if "lots" in inv:
+        lots = sorted(inv["lots"], key=lambda x: x["date"])
+        record_date = inv["record_date"]
+        shares_issued = inv["shares_issued"]
+        record_key = _date_key(record_date)
+        cutoff_date = _within_3m_cutoff(record_date)
+        cutoff_key = _date_key(cutoff_date)
+
+        # record_date 이하만 반영, 양수(+)는 취득, 음수(-)는 양도
+        balance = 0
+        lot_balances = []  # [(date, shares)] 남은 취득 묶음
+        for lot in lots:
+            dk = _date_key(lot["date"])
+            if dk > record_key:
+                continue  # record_date 이후는 반영 안 함
+            shares = lot["shares"]
+            if shares > 0:
+                lot_balances.append([lot["date"], shares])
+                balance += shares
+            else:  # 양도 (선입선출: 가장 먼저 취득한 묶음부터 차감)
+                to_remove = -shares
+                remaining = to_remove
+                new_lot_balances = []
+                for lb_date, lb_shares in lot_balances:
+                    if remaining <= 0:
+                        new_lot_balances.append((lb_date, lb_shares))
+                        continue
+                    if lb_shares <= remaining:
+                        remaining -= lb_shares
+                        # 해당 묶음 전체 차감
+                    else:
+                        lb_shares -= remaining
+                        new_lot_balances.append((lb_date, lb_shares))
+                        remaining = 0
+                lot_balances = new_lot_balances
+                balance -= to_remove
+
+        # 이제 lot_balances에 남은 묶음으로 3개월 이상/이내 판정
+        held_total = balance
+        within_3m_shares = 0
+        for lb_date, lb_shares in lot_balances:
+            if _date_key(lb_date) > cutoff_key:  # 취득일 > cutoff → 3개월 이내
+                within_3m_shares += lb_shares
+
+        held_over_3m = held_total - within_3m_shares
+        ratio = held_over_3m / shares_issued if shares_issued > 0 else 0
+
+        # 제외 배당 = floor(dividend × within_3m_shares / held)
+        dividend = inv["dividend"]
+        if held_total > 0:
+            within_3m_div = int(dividend * within_3m_shares / held_total)
+        else:
+            within_3m_div = 0
+        return ratio, within_3m_div
+
+    return 0, 0
+
+
+def _is_exclusion_applicable(exclusion_kind, received_on_key):
+    """특정 exclusion kind가 받은 날(received_on_key)에 제외 대상인지 판정.
+
+    returns: (적용됨 bool, 사유 str|None)
+    """
+    if exclusion_kind is None:
+        return False, None
+
+    exclusion_map = {
+        "소득공제법인": 19000101,   # 2019.1.1~ (법률 제16833호 부칙 제3조로 2020.12.22 추가)
+        "감면법인": 19000101,       # 2019.1.1~ (구 조문 포함 전 기간)
+        "신탁재산": 20210101,       # 2021.1.1~ (법률 제17652호 부칙 제3조①)
+        "재평가적립금감액": 20240101,  # 2024.1.1~ (법률 제19930호 부칙 제3조)
+        "자본준비금감액": 20240101,    # 2024.1.1~ (법률 제19930호 부칙 제3조)
+        "감자등의제배당": 20240101,    # 2024.1.1~ (법률 제19930호 부칙 제3조)
+    }
+
+    threshold = exclusion_map.get(exclusion_kind)
+    if threshold is None:
+        return False, f"알 수 없는 제외 종류: {exclusion_kind}"
+
+    if received_on_key >= threshold:
+        return True, None
+    else:
+        return False, f"해당 연도에는 제18조의2② 제외 대상 아님(2024.1.1 이후 받는 분부터)"
+
+
+def _get_exclusion_rate_and_rule(received_on_key, company_type, holding_legacy_election, is_subsidiary):
+    """받은 날 기준 적용 규정과 익금불산입률 조회.
+
+    returns: (적용규정 str, 익금불산입률 float)
+    """
+    # 2023.1.1 이후: 통합 표 (제18조의2)
+    if received_on_key >= 20230101:
+        if company_type == "지주회사" and holding_legacy_election and received_on_key <= 20261231:
+            # 종전 제18조의3 선택: 자회사 요건 충족 시 지주 표, 아니면 통합 표
+            if is_subsidiary:
+                # 2020~2022 지주 표 사용
+                if is_subsidiary:
+                    return _get_holding_rate_2020_2022(received_on_key, company_type)
+            # 자회사 아니면 통합 표
+            return "법인세법 제18조의2(2023.1.1 이후)", _get_integrated_rate(received_on_key)
+        return "법인세법 제18조의2(2023.1.1 이후)", _get_integrated_rate(received_on_key)
+
+    # 2019.1.1 ~ 2022.12.31
+    if received_on_key >= 20190101:
+        if company_type == "지주회사":
+            # 지주회사는 자회사 요건 판정
+            return _get_holding_rate_2019_2022(received_on_key, company_type)
+        return "법인세법 제18조의2(2019.1.1~2022.12.31)", _get_general_rate_2019_2022(received_on_key)
+
+    # 2016.1.1 ~ 2018.12.31
+    if company_type == "지주회사":
+        return "구 법인세법 제18조의2(지주회사)", _get_holding_rate_2016_2018(received_on_key)
+    return "구 법인세법 제18조의3(일반)", _get_general_rate_2016_2018(received_on_key)
+
+
+def _get_integrated_rate(received_on_key):
+    """2023.1.1 이후 통합 표 익금불산입률."""
+    # 상장/비상장 구분 없음: 50% 이상 100%, 20% 이상~50% 미만 80%, 20% 미만 30%
+    # (비율 파라미터로 판정)
+    return None  # 호출측에서 비율 기준으로 판정
+
+
+def _get_integrated_exclusion_rate(ratio):
+    """2023.1.1 이후 통합 표: 50%↑ 100%, 20~50% 80%, 20%↓ 30%."""
+    if ratio >= 0.5:
+        return 1.0
+    elif ratio >= 0.2:
+        return 0.8
+    else:
+        return 0.3
+
+
+def _get_general_rate_2019_2022(received_on_key):
+    """2019~2022 일반 익금불산입률 (받은 날 기준)."""
+    if received_on_key >= 20200101:
+        # 2020~2022: 30% 이상~100% 미만 50%, 30% 미만 30% / 상장 구분 없음
+        # 상장·비상장 구분: 100% 100%, 50% 이상~100% 미만 50%, 50% 미만 30%
+        return None  # 호출측에서 비율 기준으로 판정
+    else:
+        # 2019: 30% 초과~100% 미만 50%, 30% 이하 30% / 상장·비상장 구분
+        return None
+
+
+def _get_general_exclusion_rate_2019_2022(ratio, listed, received_on_key):
+    """2019~2022 일반 익금불산입률."""
+    if received_on_key >= 20200101:
+        # 2020~2022: 상장 100% 100, 30% 이상~100% 미만 50, 30% 미만 30
+        #            비상장 100% 100, 50% 이상~100% 미만 50, 50% 미만 30
+        if ratio >= 1.0:
+            return 1.0
+        elif listed:
+            if ratio >= 0.3:  # 30% 이상
+                return 0.5
+            else:
+                return 0.3
+        else:
+            if ratio >= 0.5:  # 50% 이상
+                return 0.5
+            else:
+                return 0.3
+    else:
+        # 2019: 100% 100%, 30% 초과~100% 미만 50%, 30% 이하 30%
+        # 비상장법인 50% 초과~100% 미만 50%, 50% 이하 30%
+        if ratio >= 1.0:
+            return 1.0
+        elif listed:
+            if ratio > 0.3:  # 30% 초과
+                return 0.5
+            else:
+                return 0.3
+        else:
+            if ratio > 0.5:  # 50% 초과
+                return 0.5
+            else:
+                return 0.3
+
+
+def _get_general_rate_2016_2018(received_on_key):
+    """2016~2018 일반(구 제18조의3) 익금불산입률."""
+    return None  # 호출측에서 비율 기준으로 판정
+
+
+def _get_general_exclusion_rate_2016_2018(ratio, listed):
+    """2016~2018 일반(구 제18조의3) 익금불산입률."""
+    # 상장: 100% 100%, 30% 초과 50%, 30% 이하 30%
+    # 비상장: 100% 100%, 50% 초과 50%, 50% 이하 30%
+    if ratio >= 1.0:
+        return 1.0
+    elif listed:
+        if ratio > 0.3:
+            return 0.5
+        else:
+            return 0.3
+    else:
+        if ratio > 0.5:
+            return 0.5
+        else:
+            return 0.3
+
+
+def _get_holding_rate_2019_2022(received_on_key, company_type):
+    """2019~2022 지주회사 익금불산입률."""
+    return None  # 호출측에서 비율 기준으로 판정
+
+
+def _get_holding_exclusion_rate_2019_2022(ratio, listed, received_on_key, is_subsidiary):
+    """2019~2022 지주회사 익금불산입률."""
+    if not is_subsidiary:
+        # 자회사 아니면 일반 규정 적용 (법 제18조의2)
+        if received_on_key >= 20200101:
+            if ratio >= 1.0:
+                return 1.0
+            elif ratio >= 0.5:
+                return 0.5
+            else:
+                return 0.3
+        else:
+            if ratio >= 1.0:
+                return 1.0
+            elif ratio > 0.5:
+                return 0.5
+            else:
+                return 0.3
+
+    # 자회사: 법 제18조의3 표
+    if received_on_key >= 20200101:
+        # 2020~2022: 40% 이상 100%, 30% 이상~40% 미만 90%, 30% 미만 80%
+        # 비상장: 80% 이상 100%, 50% 이상~80% 미만 90%, 50% 미만 80%
+        if listed:
+            if ratio >= 0.4:
+                return 1.0
+            elif ratio >= 0.3:
+                return 0.9
+            else:
+                return 0.8
+        else:
+            if ratio >= 0.8:
+                return 1.0
+            elif ratio >= 0.5:
+                return 0.9
+            else:
+                return 0.8
+    else:
+        # 2019: 40% 초과 100%, 30% 초과~40% 이하 90%, 30% 이하 80%
+        # 비상장: 80% 초과 100%, 50% 초과~80% 이하 90%, 50% 이하 80%
+        if listed:
+            if ratio > 0.4:
+                return 1.0
+            elif ratio > 0.3:
+                return 0.9
+            else:
+                return 0.8
+        else:
+            if ratio > 0.8:
+                return 1.0
+            elif ratio > 0.5:
+                return 0.9
+            else:
+                return 0.8
+
+
+def _get_holding_rate_2016_2018(received_on_key):
+    """2016~2018 지주회사(구 제18조의2) 익금불산입률."""
+    return None
+
+
+def _get_holding_exclusion_rate_2016_2018(ratio, listed, is_subsidiary):
+    """2016~2018 지주회사(구 제18조의2) 익금불산입률."""
+    if not is_subsidiary:
+        # 자회사 아니면 구 제18조의3(일반) 적용
+        return _get_general_exclusion_rate_2016_2018(ratio, listed)
+
+    # 자회사: 구 법 제18조의2①1·2호
+    # 상장 자회사: 40% 초과 100%, 이하 80%
+    # 비상장 자회사: 80% 초과 100%, 이하 80%
+    if listed:
+        if ratio > 0.4:
+            return 1.0
+        else:
+            return 0.8
+    else:
+        if ratio > 0.8:
+            return 1.0
+        else:
+            return 0.8
+
+
+def _check_subsidiary(ratio, listed, venture, subsidiary_flag):
+    """지주회사 자회사 요건 판정.
+
+    구 영 제17조의2②·영 제17조의3②: 직접 발행주식총수의 40%(상장·벤처 20%) 이상 보유
+    subsidiary_flag가 있으면 그 값 사용, 없으면 출자비율로 판정
+    """
+    if subsidiary_flag is not None:
+        return subsidiary_flag
+
+    if listed or venture:
+        return ratio >= 0.2
+    else:
+        return ratio >= 0.4
+
+
+def _build_rule_text(received_on_key, company_type):
+    """적용 규정 텍스트 생성."""
+    if received_on_key >= 20230101:
+        return "법인세법 제18조의2(2023.1.1 이후)"
+    elif received_on_key >= 20190101:
+        if company_type == "지주회사":
+            return "법인세법 제18조의3(지주회사, 2019.1.1~2022.12.31)"
+        return "법인세법 제18조의2(2019.1.1~2022.12.31)"
+    else:
+        if company_type == "지주회사":
+            return "구 법인세법 제18조의2(지주회사, 2016.1.1~2018.12.31)"
+        return "구 법인세법 제18조의3(일반, 2016.1.1~2018.12.31)"
+
+
+def dividend_received_deduction(
+    year: int,
+    investees: list,
+    interest_paid: int = 0,
+    interest_excluded: int = 0,
+    total_assets_jeoksu: int = 0,
+    fy_start: str = None,
+    fy_end: str = None,
+    company_type: str = "일반",
+    holding_legacy_election: bool = False,
+) -> dict:
+    """내국법인 수입배당금액 익금불산입(피출자법인별 익금불산입률·지급이자 차감·세무조정)."""
+
+    # ── 1. 입력 검사 ──
+    problems = []
+    needed = []
+
+    if year < 2016 or year > 2026:
+        problems.append(f"year({year})가 2016~2026 범위 밖")
+
+    if not investees:
+        problems.append("investees 목록이 비어 있음")
+
+    # 사업연도 설정
+    if fy_start is None:
+        fy_start = f"{year}-01-01"
+    if fy_end is None:
+        fy_end = f"{year}-12-31"
+
+    fy_start_key = _date_key(fy_start)
+    fy_end_key = _date_key(fy_end)
+    is_calendar_year = (fy_start == f"{year}-01-01" and fy_end == f"{year}-12-31")
+
+    # 차감 이자 계산
+    A = max(0, interest_paid - interest_excluded)
+    if interest_excluded > interest_paid:
+        problems.append(f"interest_excluded({interest_excluded}) > interest_paid({interest_paid})")
+
+    # 사채권자의 이자 등(idx) 계산 필요 여부
+    need_total_assets = A > 0
+
+    per_investee_results = []
+    대상액_합계 = 0
+    차감액_합계 = 0
+    산식_목록 = []
+    판단_목록 = []
+
+    for i, inv in enumerate(investees):
+        name = inv.get("name", f"피출자법인{i+1}")
+
+        # 출자비율 정보 확인
+        has_ratio = "ratio" in inv
+        has_shares = "shares" in inv
+        has_lots = "lots" in inv
+
+        if has_ratio + has_shares + has_lots != 1:
+            problems.append(f"{name}: ratio·shares·lots 중 정확히 하나만 필요")
+            continue
+
+        # 배당 받은 날
+        received_on = inv.get("received_on")
+        if received_on is None:
+            if is_calendar_year:
+                received_on = f"{year}-06-30"
+            else:
+                problems.append(f"{name}: received_on 필요 (사업연도가 역년 아님)")
+                continue
+        received_on_key = _date_key(received_on)
+
+        # 사업연도 밖 배당인지 확인
+        if received_on_key < fy_start_key or received_on_key > fy_end_key:
+            problems.append(f"{name}: received_on({received_on})이 사업연도 밖")
+            continue
+
+        # 출자비율·제외 배당 계산
+        ratio, within_3m_dividend = _calc_ownership_ratio(inv)
+
+        if ratio < 0 or ratio > 1:
+            problems.append(f"{name}: ratio({ratio})가 0~1 범위 밖")
+            continue
+
+        dividend = inv["dividend"]
+        if within_3m_dividend > dividend:
+            problems.append(f"{name}: within_3m_dividend > dividend")
+            continue
+
+        # shares 검증
+        if has_shares:
+            s = inv["shares"]
+            if s["held"] > s["issued"]:
+                problems.append(f"{name}: shares.held > issued")
+                continue
+            if s.get("within_3m", 0) > s["held"]:
+                problems.append(f"{name}: within_3m > held")
+                continue
+            if s["held"] == 0 and dividend > 0:
+                problems.append(f"{name}: held=0인데 dividend>0")
+                continue
+
+        # lots 검증
+        if has_lots:
+            if "record_date" not in inv:
+                problems.append(f"{name}: lots 입력 시 record_date 필요")
+                continue
+            if "shares_issued" not in inv:
+                problems.append(f"{name}: lots 입력 시 shares_issued 필요")
+                continue
+
+        # 차감 이자 관련 검증
+        if A > 0 and total_assets_jeoksu <= 0:
+            problems.append(f"차감 이자(A={A}) > 0인데 total_assets_jeoksu 없음")
+            continue
+
+        exclusion_kind = inv.get("exclusion")
+        is_excluded, exclude_reason = _is_exclusion_applicable(exclusion_kind, received_on_key)
+
+        if not is_excluded and A > 0:
+            if "book_value_jeoksu" not in inv:
+                problems.append(f"{name}: 차감 이자 > 0이고 익금불산입률 적용 대상인데 book_value_jeoksu 없음")
+                continue
+
+        # 제외 대상 처리
+        if is_excluded:
+            대상_배당금 = 0
+            제외_배당금 = dividend
+            제외_사유 = exclusion_kind
+            if exclude_reason:
+                판단_목록.append({"항목": f"{name} 제외 대상", "결론": exclude_reason, "근거": "법인세법 제18조의2②"})
+        else:
+            제외_배당금 = within_3m_dividend
+            제외_사유 = "3개월 이내 취득 주식분 배당금" if within_3m_dividend > 0 else None
+            대상_배당금 = dividend - 제외_배당금
+
+        # 지주회사 자회사 요건 판정 (2016~2022)
+        is_subsidiary = None
+        if company_type == "지주회사" and received_on_key < 20230101:
+            is_subsidiary = _check_subsidiary(
+                ratio,
+                inv.get("listed", False),
+                inv.get("venture", False),
+                inv.get("subsidiary"),
+            )
+
+        # 지주회사 종전 선택(holding_legacy_election)이면 subsidiary 여부도 판정
+        if company_type == "지주회사" and holding_legacy_election and received_on_key >= 20230101 and received_on_key <= 20261231:
+            if is_subsidiary is None:
+                is_subsidiary = _check_subsidiary(
+                    ratio,
+                    inv.get("listed", False),
+                    inv.get("venture", False),
+                    inv.get("subsidiary"),
+                )
+
+        # 적용 규정 텍스트
+        rule_text = _build_rule_text(received_on_key, company_type)
+
+        # 익금불산입률 계산
+        if is_excluded:
+            exclusion_rate = 0
+        elif received_on_key >= 20230101:
+            if company_type == "지주회사" and holding_legacy_election and received_on_key <= 20261231 and is_subsidiary:
+                exclusion_rate = _get_holding_exclusion_rate_2019_2022(ratio, inv.get("listed", False), received_on_key, True)
+            else:
+                exclusion_rate = _get_integrated_exclusion_rate(ratio)
+        elif received_on_key >= 20190101:
+            if company_type == "지주회사":
+                if is_subsidiary:
+                    exclusion_rate = _get_holding_exclusion_rate_2019_2022(ratio, inv.get("listed", False), received_on_key, True)
+                else:
+                    exclusion_rate = _get_general_exclusion_rate_2019_2022(ratio, inv.get("listed", False), received_on_key)
+            else:
+                exclusion_rate = _get_general_exclusion_rate_2019_2022(ratio, inv.get("listed", False), received_on_key)
+        else:
+            if company_type == "지주회사":
+                if is_subsidiary:
+                    exclusion_rate = _get_holding_exclusion_rate_2016_2018(ratio, inv.get("listed", False), True)
+                else:
+                    exclusion_rate = _get_general_exclusion_rate_2016_2018(ratio, inv.get("listed", False))
+            else:
+                exclusion_rate = _get_general_exclusion_rate_2016_2018(ratio, inv.get("listed", False))
+
+        # 익금불산입 대상액 = floor(대상 배당 × 익금불산입률)
+        대상액 = int(대상_배당금 * exclusion_rate)
+        대상액_합계 += 대상액
+
+        # 차감액 = floor(A × B / C × D)
+        book_value = inv.get("book_value_jeoksu", 0)
+        if A > 0 and not is_excluded:
+            차감액 = int(A * book_value * exclusion_rate / total_assets_jeoksu)
+        else:
+            차감액 = 0
+        차감액_합계 += 차감액
+
+        산식_목록.append(f"{name}: 대상액 = {대상_배당금:,} × {exclusion_rate} = {대상액:,}원, 차감액 = {A:,} × {book_value:,} / {total_assets_jeoksu:,} × {exclusion_rate} = {차감액:,}원")
+
+        per_investee_results.append({
+            "이름": name,
+            "적용규정": rule_text,
+            "출자비율": ratio,
+            "익금불산입률": exclusion_rate,
+            "수입배당금액": dividend,
+            "제외_배당금": 제외_배당금,
+            "제외_사유": 제외_사유,
+            "대상_배당금": 대상_배당금,
+            "익금불산입_대상액": 대상액,
+            "차감액": 차감액,
+            "익금불산입액": 대상액 - 차감액,
+        })
+
+    if problems:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": problems, "필요 입력": needed}
+
+    # ── 8. 합계 익금불산입액 = max(0, Σ대상액 - Σ차감액) ──
+    총익금불산입액 = max(0, 대상액_합계 - 차감액_합계)
+
+    # ── 9. 세무조정 ──
+    세무조정 = []
+    if 총익금불산입액 > 0:
+        세무조정.append({
+            "구분": "수입배당금 익금불산입",
+            "조정": "익금불산입",
+            "금액": 총익금불산입액,
+            "소득처분": "기타",
+            "근거": "법인세법 제18조의2①",
+            "이유": f"수입배당금 익금불산입 합계 {총익금불산입액:,}원",
+        })
+
+    return {
+        "결과": {
+            "세무조정": 세무조정,
+            "익금불산입액": 총익금불산입액,
+            "피출자법인별": per_investee_results,
+        },
+        "계산": {
+            "차입금이자": A,
+            "자산총액_적수": total_assets_jeoksu if A > 0 else None,
+            "익금불산입_대상액_합계": 대상액_합계,
+            "차감액_합계": 차감액_합계,
+            "산식": 산식_목록,
+        },
+        "판단": 판단_목록,
+        "근거": "법인세법 제18조의2, 시행령 제17조의2·제17조의3",
+    }
+
+
+
+
+# ── 일시상각충당금·압축기장충당금 ──────────────────────────────────
+
+def asset_grant_reserve(
+    year: int,
+    kind: str,
+    received: int,
+    assets: list,
+    lost_book_value: int = None,
+    receipt_year: bool = True,
+    planned_use: int = 0,
+    expired_unused: int = 0,
+    claim_by_return: bool = True,
+    kwargs: dict = None,
+) -> dict:
+    """국고보조금·공사부담금·보험차익 일시상각충당금·압축기장충당금 세무조정."""
+    # 입력 검증: 알 수 없는 키는 모델 검증에서 처리됨 (extra='forbid')
+    if not assets:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["assets 목록이 비어 있음"]}
+
+    if kind == "보험차익":
+        if lost_book_value is None:
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["보험차익은 멸실자산 장부가액(lost_book_value) 필요"]}
+        if len(assets) > 1:
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["보험차익은 자산 1개만"]}
+        보험차익 = max(0, received - lost_book_value)
+    else:
+        보험차익 = None
+
+    # used > received 검사는 국고보조금·공사부담금에만 적용 (보험차익은 used 개념 없음)
+    if kind in ("국고보조금", "공사부담금") and received > 0:
+        if sum(a.get("used", a["cost"]) for a in assets) > received:
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["사용액 합계가 수령액을 넘음"]}
+
+    사용기한 = {"국고보조금": 1, "공사부담금": 1, "보험차익": 2}[kind]
+
+    손금산입한도 = 0
+    설정액 = 0
+    상계액 = 0
+    처분익금 = 0
+    사용계획손금 = 0
+    미사용익금 = 0
+    기말잔액 = 0
+    자산별 = []
+    세무조정 = []
+
+    for a in assets:
+        asset_name = a["asset"]
+        cost = a["cost"]
+        used = a.get("used", cost)
+        depreciable = a["depreciable"]
+        dep_this_year = a.get("depreciation_this_year", 0)
+        disposed = a.get("disposed", False)
+        disposed_ratio = a.get("disposed_ratio", 1.0)
+        prior_dep = a.get("prior_dep_on_grant", 0)
+        book_provision = a.get("book_provision", 0)
+        book_reversal = a.get("book_reversal", 0)
+
+        if receipt_year:
+            if kind == "보험차익":
+                한도 = min(보험차익, max(0, cost - lost_book_value))
+                if not depreciable:
+                    한도 = 0
+            else:
+                한도 = max(0, used - prior_dep)
+
+            구분 = "일시상각충당금" if depreciable else "압축기장충당금"
+
+            if book_provision > 한도:
+                손금불산입 = book_provision - 한도
+                adj = {"과목": f"{구분} 한도초과", "조정": "손금불산입", "금액": 손금불산입,
+                                    "소득처분": "유보"}
+                세무조정.append(adj)
+                설정액 = 한도
+            else:
+                설정액 = book_provision
+                if claim_by_return:
+                    추가손금 = 한도 - book_provision
+                    if 추가손금 > 0:
+                        adj = {"과목": f"{구분} 설정", "조정": "손금산입", "금액": 추가손금,
+                                            "소득처분": "△유보"}
+                        세무조정.append(adj)
+                        설정액 = 한도
+
+            손금산입한도 += 설정액
+
+            # 상계
+            if depreciable and cost > 0 and dep_this_year > 0:
+                상계액 = min(int(dep_this_year * 설정액 / cost), 설정액)
+            else:
+                상계액 = 0
+
+            기말 = 설정액 - 상계액 - (처분익금 if disposed else 0)
+        else:
+            reserve_initial = a.get("reserve_initial", 0)
+            reserve_opening = a.get("reserve_opening", 0)
+            설정액 = reserve_initial
+
+            if book_provision > 0:
+                return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["이후 연도는 book_provision 설정 불가"]}
+
+            구분 = "일시상각충당금" if depreciable else "압축기장충당금"
+
+            if depreciable and cost > 0 and dep_this_year > 0:
+                상계액 = min(int(dep_this_year * reserve_initial / cost), reserve_opening)
+            else:
+                상계액 = 0
+
+            if disposed:
+                if depreciable:
+                    처분익금 = int((reserve_opening - 상계액) * disposed_ratio)
+                else:
+                    처분익금 = int(reserve_opening * disposed_ratio)
+            else:
+                처분익금 = 0
+
+            기말 = reserve_opening - 상계액 - 처분익금
+
+        # 회사 환입과 비교
+        세무상환입 = 상계액 + 처분익금
+        if book_reversal == 0:
+            # 회사가 환입을 계상하지 않은 경우: 세무상 상계액·처분익금을 그대로 익금산입
+            if 상계액 > 0:
+                adj = {"과목": f"{구분} 환입", "조정": "익금산입", "금액": 상계액,
+                                    "소득처분": "유보"}
+                세무조정.append(adj)
+            if 처분익금 > 0:
+                adj = {"과목": f"{구분} 처분", "조정": "익금산입", "금액": 처분익금,
+                                    "소득처분": "유보"}
+                세무조정.append(adj)
+        elif 세무상환입 > book_reversal:
+            차액 = 세무상환입 - book_reversal
+            adj = {"과목": f"{구분} 환입 차액", "조정": "익금산입", "금액": 차액,
+                                "소득처분": "유보"}
+            세무조정.append(adj)
+        elif 세무상환입 < book_reversal:
+            차액 = book_reversal - 세무상환입
+            adj = {"과목": f"{구분} 환입 차액", "조정": "익금불산입", "금액": 차액,
+                                "소득처분": "△유보"}
+            세무조정.append(adj)
+
+        자산별.append({
+            "asset": asset_name,
+            "구분": 구분,
+            "손금산입_한도": 손금산입한도 if receipt_year else 0,
+            "세무상_설정액": 설정액,
+            "회사_설정액": book_provision,
+            "기초_잔액": reserve_opening if not receipt_year else 0,
+            "상계액": 상계액,
+            "처분_익금산입": 처분익금,
+            "회사_환입액": book_reversal,
+            "기말_잔액": 기말,
+        })
+
+        손금산입한도 = 0
+
+    # 사용계획
+    if planned_use > 0:
+        자가사용 = received - sum(a.get("used", a["cost"]) for a in assets)
+        if kind == "보험차익":
+            미사용 = 보험차익 - sum(자산별[i]["손금산입_한도"] for i in range(len(자산별)))
+        else:
+            미사용 = 자가사용
+        사용계획손금 = min(planned_use, 미사용)
+        if 사용계획손금 > 0:
+            adj = {"과목": "사용계획 손금산입", "조정": "손금산입", "금액": 사용계획손금,
+                                "소득처분": "△유보"}
+            세무조정.append(adj)
+        미사용익금 = 미사용 - 사용계획손금
+
+    # 미사용 익금산입
+    if expired_unused > 0:
+        adj = {"과목": "사용계획분 미사용 익금산입", "조정": "익금산입", "금액": expired_unused,
+                            "소득처분": "유보"}
+        세무조정.append(adj)
+
+    # 소득금액 순영향
+    익금합계 = sum(t["금액"] for t in 세무조정 if t["조정"] == "익금산입")
+    손금합계 = sum(t["금액"] for t in 세무조정 if t["조정"] == "손금산입")
+    손금불산입합계 = sum(t["금액"] for t in 세무조정 if t["조정"] == "손금불산입")
+    익금불산입합계 = sum(t["금액"] for t in 세무조정 if t["조정"] == "익금불산입")
+    순영향 = (익금합계 + 손금불산입합계) - (손금합계 + 익금불산입합계)
+
+    return {
+        "결과": {
+            "보험차익": 보험차익,
+            "손금산입_한도": sum(a["손금산입_한도"] for a in 자산별) if receipt_year else 0,
+            "충당금_설정액": sum(a["세무상_설정액"] for a in 자산별) if receipt_year else 0,
+            "상계액": sum(a["상계액"] for a in 자산별),
+            "처분_익금산입": sum(a["처분_익금산입"] for a in 자산별),
+            "사용계획_손금산입": 사용계획손금,
+            "미사용_익금산입": 미사용익금,
+            "기말_충당금_잔액": sum(a["기말_잔액"] for a in 자산별),
+            "사용기한_연": 사용기한,
+            "소득금액_순영향": 순영향,
+        },
+        "세무조정": 세무조정,
+        "계산": {"자산별": 자산별},
+        "판단": [],
+        "근거": "법인세법 제36조·제37조·제38조, 시행령 제64조·제65조·제66조·제98조②",
+    }
+
+
+# ── 재고자산 평가 세무조정 ──────────────────────────────────────
+_METHOD_LITERALS = ("개별법", "선입선출법", "후입선출법", "총평균법", "이동평균법", "매출가격환원법")
+_CATEGORY_LITERALS = ("제품·상품", "반제품·재공품", "원재료", "저장품", "매매목적부동산")
+
+
+def _date_sub_months(dt, months):
+    """날짜에서 months 개월을 뺀 날짜(일은 그대로, 월만 차감)."""
+    m = dt.month - months
+    y = dt.year
+    while m <= 0:
+        m += 12; y -= 1
+    return date(y, m, dt.day)
+
+
+def _date_add_months_last(dt, months):
+    """dt + months 개월 후 그 달의 말일."""
+    m = dt.month + months
+    y = dt.year
+    while m > 12:
+        m -= 12; y += 1
+    import calendar
+    last = calendar.monthrange(y, m)[1]
+    return date(y, m, last)
+
+
+def inventory_valuation_adjustment(
+    year: int,
+    items: list,
+    fy_start: str = None,
+    fy_end: str = None,
+    new_corp: bool = False,
+) -> dict:
+    """재고자산 평가 세무조정(세법상 평가방법 결정·평가차 유보). 근거: 법인세법 제42조, 시행령 제73조·제74조.
+
+    입력:
+      year — 사업연도 개시 연도(2016~2026)
+      fy_start/fy_end — 사업연도 개시일·종료일(YYYY-MM-DD). 생략 시 year-01-01/year-12-31
+      new_corp — 설립(수익사업 개시) 첫 사업연도인지 (최초 신고기한 적용)
+      items — [{'category': '제품·상품'|..., 'name'?, 'reported_method': ...,
+                'reported_lcm'?, 'used_method': ..., 'used_lcm'?,
+                'change_report'?: {method, lcm?, filed_on}, 'book_value': int,
+                'valuations': {방법별: int, 시가?}, 'prior_adjustment'?: int}]
+    """
+    # ── 입력 검사 ──────────────────────────────────────────────────────────
+    if not (2016 <= year <= 2026):
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"year={year}은(는) 2016~2026 범위를 벗어남"]}
+
+    if fy_start is None:
+        fy_start = f"{year}-01-01"
+    if fy_end is None:
+        fy_end = f"{year}-12-31"
+
+    fy_s = date.fromisoformat(fy_start)
+    fy_e = date.fromisoformat(fy_end)
+    if fy_s > fy_e:
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"사업연도 시작일({fy_start})이 종료일({fy_end})보다 늦음"]}
+    mos = months_in(fy_start, fy_end)
+    if mos > 12:
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"사업연도가 {mos}개월로 12개월 초과"]}
+
+    problems = []
+    if not isinstance(items, list) or not items:
+        problems.append("items가 비어 있음")
+    for i, it in enumerate(items):
+        if not isinstance(it, dict):
+            problems.append(f"항목 {i+1}: dict 아님")
+            continue
+        cat = it.get("category")
+        if cat not in _CATEGORY_LITERALS:
+            problems.append(f"항목 {i+1}: category='{cat}' 허용값 아님 "
+                            f"({_CATEGORY_LITERALS})")
+        rm = it.get("reported_method")
+        if rm not in _METHOD_LITERALS + ("무신고",):
+            problems.append(f"항목 {i+1}: reported_method='{rm}' 허용값 아님")
+        if rm == "무신고" and it.get("reported_lcm") is True:
+            problems.append(f"항목 {i+1}: reported_method='무신고'인데 reported_lcm=True")
+        um = it.get("used_method")
+        if um not in _METHOD_LITERALS:
+            problems.append(f"항목 {i+1}: used_method='{um}' 허용값 아님 "
+                            f"({_METHOD_LITERALS})")
+        cr = it.get("change_report")
+        if cr is not None:
+            if not isinstance(cr, dict):
+                problems.append(f"항목 {i+1}: change_report가 dict 아님")
+            else:
+                cm = cr.get("method")
+                if cm not in _METHOD_LITERALS:
+                    problems.append(f"항목 {i+1}: change_report.method='{cm}' 허용값 아님")
+                fo = cr.get("filed_on")
+                if not isinstance(fo, str):
+                    problems.append(f"항목 {i+1}: change_report.filed_on 형식 오류")
+                else:
+                    try:
+                        date.fromisoformat(fo)
+                    except Exception:
+                        problems.append(f"항목 {i+1}: change_report.filed_on='{fo}' 형식 오류")
+        bv = it.get("book_value")
+        if not isinstance(bv, int) or bv < 0:
+            problems.append(f"항목 {i+1}: book_value=int≥0 필요, 현재 {bv}")
+        vals = it.get("valuations")
+        if not isinstance(vals, dict):
+            problems.append(f"항목 {i+1}: valuations=dict 필요")
+
+    if problems:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": problems}
+
+    if not isinstance(items, list) or not items:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["items가 비어 있음"]}
+
+    # ── 기한 계산 ──────────────────────────────────────────────────────────
+    if fy_e.month == 12 and fy_e.day == 31:
+        change_deadline = date(fy_e.year, 9, 30)
+    elif fy_e.month == 3 and fy_e.day == 31:
+        change_deadline = date(fy_e.year - 1, 12, 31)
+    else:
+        change_deadline = _date_sub_months(fy_e, 3)
+
+    if new_corp:
+        first_deadline = _date_add_months_last(fy_e, 3)
+    else:
+        first_deadline = None
+
+    change_dl_str = change_deadline.isoformat()
+    first_dl_str = first_deadline.isoformat() if first_deadline else None
+    fy_start_str = fy_start
+    fy_end_str = fy_end
+
+    # ── 구분별 계산 ──────────────────────────────────────────────────────────
+    정산 = []
+    구분별 = []
+    익금합계 = 0
+    손금합계 = 0
+
+    for item in items:
+        cat = item["category"]
+        name = item.get("name", "")
+        재고구분 = name if name else cat
+        rm = item["reported_method"]
+        rlcm = item.get("reported_lcm", False)
+        um = item["used_method"]
+        ulcm = item.get("used_lcm", False)
+        cr = item.get("change_report")
+        bv = item["book_value"]
+        vals = item["valuations"]
+        prior = item.get("prior_adjustment", 0)
+
+        is_realestate = (cat == "매매목적부동산")
+
+        # ── (가) 유효 신고 방법 결정 ──────────────────────────────────────────
+        if rm == "무신고":
+            # 무신고 + change_report 있는 경우
+            if cr is not None and isinstance(cr, dict):
+                fo_str = cr.get("filed_on", "")
+                try:
+                    fo_date = date.fromisoformat(fo_str)
+                except Exception:
+                    fo_date = None
+                if fo_date is not None:
+                    if new_corp:
+                        on_time = (fo_date <= first_deadline)
+                    else:
+                        on_time = (fo_date <= change_deadline)
+                    filed_ok = on_time
+                else:
+                    fo_date = None
+                    filed_ok = False
+            else:
+                fo_date = None
+                filed_ok = False
+
+            if filed_ok and cr and cr.get("method") in _METHOD_LITERALS:
+                # 기한 내 신고 → (나)로 이어짐 (판정=None)
+                eff_method = cr["method"]
+                eff_lcm = cr.get("lcm", False)
+                판정 = None
+            else:
+                # 무신고 또는 기한 후 신고 → 무신고 판정
+                eff_method = None
+                eff_lcm = False
+                if cr is not None and isinstance(cr, dict) and fo_date is not None:
+                    판정 = "기한후신고(무신고 준용)"
+                else:
+                    판정 = "무신고"
+        else:
+            # 신고 방법 있음 → (나)로 이어짐 (판정=None)
+            eff_method = None
+            eff_lcm = False
+            판정 = None
+
+        # ── (나) 신고된 방법대로 평가했는지 판정 ──────────────────────────────
+        if 판정 is None:
+            # 유효 신고 방법 결정 (변경신고 반영)
+            is_late = False
+            eff_method = rm
+            eff_lcm = rlcm
+            if cr is not None and isinstance(cr, dict):
+                try:
+                    fo_date = date.fromisoformat(cr.get("filed_on", ""))
+                    if fo_date <= change_deadline:
+                        eff_method = cr.get("method", rm)
+                        eff_lcm = cr.get("lcm", rlcm)
+                        if cr.get("method") == rm and cr.get("lcm", rlcm) == rlcm:
+                            판정 = "신고방법"
+                        else:
+                            판정 = "변경신고(기한 내)"
+                    else:
+                        eff_method = cr.get("method", rm)
+                        eff_lcm = cr.get("lcm", rlcm)
+                        판정 = "기한후변경신고(임의변경)"
+                        is_late = True
+                except Exception:
+                    eff_method = cr.get("method", rm) if cr else rm
+                    eff_lcm = cr.get("lcm", rlcm) if cr else rlcm
+                    판정 = "신고방법"
+            else:
+                eff_method = rm
+                eff_lcm = rlcm
+                판정 = "신고방법"
+                # 세방법·평가액 결정 (신고방법과 같음)
+                세법상방법 = eff_method
+                if eff_lcm:
+                    if "시가" not in vals:
+                        return {"error": "입력 확인 필요 — 계산하지 않음",
+                                "문제": [f"{재고구분}: 저가법 판정에 필요한 valuations['시가'] 없음"]}
+                    세법상평가액 = min(vals[eff_method], vals["시가"])
+                    이유 = f"신고({eff_method}·저가법)대로 평가, min({eff_method} {vals[eff_method]:,}원, 시가 {vals['시가']:,}원) = {세법상평가액:,}원"
+                else:
+                    if eff_method not in vals:
+                        return {"error": "입력 확인 필요 — 계산하지 않음",
+                                "문제": [f"{재고구분}: 신고 방법 판정에 필요한 valuations['{eff_method}'] 없음"]}
+                    세법상평가액 = vals[eff_method]
+                    이유 = f"신고({eff_method})대로 평가"
+                근거 = "법인세법 시행령 제74조①·③"
+
+            # ── 세법상 방법·평가액 결정 ────────────────────────────────────────
+            if eff_method is None:
+                # 무신고 (위 (가)에서 처리됨)
+                세법상방법 = "개별법" if is_realestate else "선입선출법"
+                key = "개별법" if is_realestate else "선입선출법"
+                if key not in vals:
+                    return {"error": "입력 확인 필요 — 계산하지 않음",
+                            "문제": [f"{재고구분}: 무신고 판정에 필요한 valuations['{key}'] 없음"]}
+                세법상평가액 = vals[key]
+                근거 = "법인세법 시행령 제74조④1호"
+                if 판정 == "기한후신고(무신고 준용)":
+                    근거 = "법인세법 시행령 제74조④1호·⑤"
+                이유 = f"신고 없음 → {세법상방법} (영 제74조④1호)"
+            elif (eff_method == um) and (eff_lcm == ulcm):
+                # 신고한 방법대로 평가 → 신고 방법 적용
+                세법상방법 = eff_method
+                if eff_lcm:
+                    if "시가" not in vals:
+                        return {"error": "입력 확인 필요 — 계산하지 않음",
+                                "문제": [f"{재고구분}: 저가법 판정에 필요한 valuations['시가'] 없음"]}
+                    if is_late:
+                        old_rm_val = vals.get(rm, 0)
+                        eff_val_new = min(vals[eff_method], vals["시가"])
+                        세법상평가액 = max(old_rm_val, eff_val_new)
+                        이유 = (f"기한 후 변경신고({eff_method}·저가법)대로 평가 → "
+                                f"영 제74조④3호·⑤ max(종전{rm} {old_rm_val:,}원, {eff_method} {eff_val_new:,}원) = {세법상평가액:,}원")
+                    else:
+                        세법상평가액 = min(vals[eff_method], vals["시가"])
+                        이유 = (f"신고({eff_method}·저가법)대로 평가, "
+                                f"min({eff_method} {vals[eff_method]:,}원, 시가 {vals['시가']:,}원) = {세법상평가액:,}원")
+                else:
+                    if eff_method not in vals:
+                        return {"error": "입력 확인 필요 — 계산하지 않음",
+                                "문제": [f"{재고구분}: 신고 방법 판정에 필요한 valuations['{eff_method}'] 없음"]}
+                    if is_late:
+                        old_rm_val = vals.get(rm, 0)
+                        eff_val_new = vals[eff_method]
+                        세법상평가액 = max(old_rm_val, eff_val_new)
+                        이유 = (f"기한 후 변경신고({eff_method})대로 평가 → "
+                                f"영 제74조④3호·⑤ max(종전{rm} {old_rm_val:,}원, {eff_method} {eff_val_new:,}원) = {세법상평가액:,}원")
+                    else:
+                        세법상평가액 = vals[eff_method]
+                        이유 = f"신고({eff_method})대로 평가"
+                근거 = "법인세법 시행령 제74조①·③"
+            else:
+                # 임의변경 → max(선입선출법(부동산 개별법), 유효 신고 방법 평가액)
+                ref_method = "개별법" if is_realestate else "선입선출법"
+                if ref_method not in vals:
+                    return {"error": "입력 확인 필요 — 계산하지 않음",
+                            "문제": [f"{재고구분}: 임의변경 판정에 필요한 valuations['{ref_method}'] 없음"]}
+                ref_val = vals[ref_method]
+                if eff_lcm:
+                    if "시가" not in vals:
+                        return {"error": "입력 확인 필요 — 계산하지 않음",
+                                "문제": [f"{재고구분}: 임의변경·저가법 판정에 필요한 valuations['시가'] 없음"]}
+                    eff_val = min(vals[eff_method], vals["시가"])
+                else:
+                    eff_val = vals[eff_method]
+                세법상평가액 = max(ref_val, eff_val)
+                세법상방법 = eff_method
+                if 판정 == "기한후변경신고(임의변경)":
+                    이유 = (f"회사 평가({um}{'+저가' if ulcm else ''}) ≠ 유효 신고({eff_method}{'+저가' if eff_lcm else ''}) → "
+                            f"영 제74조④3호·⑤ max({ref_method} {ref_val:,}원, {eff_method} {eff_val:,}원) = {세법상평가액:,}원")
+                else:
+                    판정 = "임의변경"
+                    이유 = (f"회사 평가({um}{'+저가' if ulcm else ''}) ≠ 유효 신고({eff_method}{'+저가' if eff_lcm else ''}) → "
+                            f"영 제74조④2호 단서 max({ref_method} {ref_val:,}원, {eff_method} {eff_val:,}원) = {세법상평가액:,}원")
+                근거 = "법인세법 시행령 제74조④2·3호 단서"
+        else:
+            # 무신고 판정 (위 (가)에서 처리)
+            세법상방법 = "개별법" if is_realestate else "선입선출법"
+            key = "개별법" if is_realestate else "선입선출법"
+            if key not in vals:
+                return {"error": "입력 확인 필요 — 계산하지 않음",
+                        "문제": [f"{재고구분}: 무신고 판정에 필요한 valuations['{key}'] 없음"]}
+            세법상평가액 = vals[key]
+            근거 = "법인세법 시행령 제74조④1호"
+            if 판정 == "기한후신고(무신고 준용)":
+                근거 = "법인세법 시행령 제74조④1호·⑤"
+            이유 = f"신고 없음 → {세법상방법} (영 제74조④1호)"
+
+        # ── 조정액 계산 ───────────────────────────────────────────────────────
+        조정액 = 세법상평가액 - bv
+
+        # 구분별 결과
+        구분별판정 = 판정 if 판정 else "신고방법"
+        구분별방법 = 세법상방법
+        구분별.append({
+            "재고구분": 재고구분,
+            "판정": 구분별판정,
+            "세법상_방법": 구분별방법,
+            "세법상_평가액": 세법상평가액,
+            "회사_평가액": bv,
+            "조정액": 조정액,
+            "이유": 이유,
+            "근거": 근거,
+        })
+
+        # 세무조정 항목 구성
+        if 조정액 > 0:
+            정산.append({
+                "재고구분": 재고구분,
+                "구분": "재고자산평가감",
+                "조정": "익금산입",
+                "금액": 조정액,
+                "소득처분": "유보",
+                "근거": 근거,
+                "이유": 이유,
+            })
+            익금합계 += 조정액
+        elif 조정액 < 0:
+            정산.append({
+                "재고구분": 재고구분,
+                "구분": "재고자산평가증",
+                "조정": "손금산입",
+                "금액": -조정액,
+                "소득처분": "△유보",
+                "근거": 근거,
+                "이유": 이유,
+            })
+            손금합계 += -조정액
+
+    # ── 전기 유보 추인 (세무조정 목록 앞쪽에 추가) ───────────────────────────
+    추인목록 = []
+    for item in items:
+        prior = item.get("prior_adjustment", 0)
+        if prior == 0:
+            continue
+        cat = item["category"]
+        name = item.get("name", "")
+        재고구분 = name if name else cat
+        if prior > 0:
+            추인목록.append({
+                "재고구분": 재고구분,
+                "구분": "전기 재고자산평가감 추인",
+                "조정": "손금산입",
+                "금액": prior,
+                "소득처분": "△유보",
+                "근거": "법인세법 시행령 제74조(전기 유보 추인)",
+                "이유": f"전기말 재고자산 평가 유보 {prior:,}원 전액 추인(당기 출고 간주)",
+            })
+            손금합계 += prior
+        else:
+            추인목록.append({
+                "재고구분": 재고구분,
+                "구분": "전기 재고자산평가증 추인",
+                "조정": "익금산입",
+                "금액": -prior,
+                "소득처분": "유보",
+                "근거": "법인세법 시행령 제74조(전기 유보 추인)",
+                "이유": f"전기말 재고자산 평가 유보 {prior:,}원 전액 추인(당기 출고 간주)",
+            })
+            익금합계 += -prior
+
+    정산 = 추인목록 + 정산
+    순조정액 = 익금합계 - 손금합계
+
+    # ── 최종 결과 구성 ────────────────────────────────────────────────────────
+    결과 = {
+        "세무조정": 정산,
+        "구분별": 구분별,
+        "익금산입_합계": 익금합계,
+        "손금산입_합계": 손금합계,
+        "순조정액": 순조정액,
+    }
+    계산 = {
+        "사업연도": f"{fy_start}~{fy_end}",
+        "변경신고_기한": change_dl_str,
+        "최초신고_기한": first_dl_str,
+        "산식": [f"세법상 평가액 − 회사 장부 평가액 = 조정액 (원 단위)"],
+    }
+    판단 = [
+        {"항목": "변경신고 기한", "결론": f"{change_dl_str} (사업연도 종료일 − 3개월, 영 제74조③2호)", "근거": "법인세법 시행령 제74조③2호"},
+        {"항목": "최초 신고기한" if new_corp else "최초 신고기한(해당 없음)",
+         "결론": first_dl_str if new_corp else "신설법인 아님",
+         "근거": "법인세법 제60조①, 시행령 제74조③1호"} if new_corp else
+        {"항목": "최초 신고기한(해당 없음)", "결론": "신설법인 아님", "근거": "해당 없음"},
+    ]
+    return {
+        "결과": 결과,
+        "계산": 계산,
+        "판단": 판단,
+        "근거": "법인세법 제42조①2호·②, 시행령 제73조1호·제74조①~⑥",
     }

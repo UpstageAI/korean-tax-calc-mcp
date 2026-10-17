@@ -5,6 +5,13 @@ import json
 import math
 import os
 
+from .. import vocab
+
+
+def _won(x):
+    """원 미만 절사(⌊x⌋)."""
+    return int(math.floor(x))
+
 # 쟁점 데이터는 korean_tax_calc_mcp/data/issues.json에서 읽음 (SPEC r1d §1 — 하드코딩 금지)
 def _load_issues():
     path = os.path.join(os.path.dirname(__file__), "..", "data", "issues.json")
@@ -273,3 +280,413 @@ def exec_retirement_excess(retire_income, months_before_2012, months_2012_2019, 
     pre = amount_2011 if amount_2011 is not None else (retire_income * m0 / tot if tot else 0)
     lim = exec_retirement_limit(avg_pay_2019, m1, avg_pay_final, m2)
     return int(max(0, retire_income - pre - lim))
+
+
+# ── 특별세액공제 ────────────────────────────────────────────────────
+_KNOWN_KINDS = {
+    "보장성보험", "장애인전용보장성보험",
+    "의료비", "안경", "산후조리원",
+    "미숙아·선천성이상아", "난임시술", "미용성형·건강증진",
+    "교육비_취학전", "교육비_초중고", "교복", "체험학습",
+    "교육비_대학", "대입전형료", "교육비_대학원",
+    "직업훈련", "학자금상환", "직계비속학자금대출지급",
+    "특수교육비", "발달재활서비스",
+}
+
+
+def _is_basic_dependent(p, 기본공제대상자_map):
+    """기본공제대상자 판정 (basic_dependent 오버라이드 지원)."""
+    if p.get("basic_dependent") is not None:
+        return p["basic_dependent"]
+    rel = p["relation"]
+    if rel == "본인":
+        return True
+    if not p.get("income_ok", True):
+        return False
+    if p.get("disabled", False):
+        return True
+    if rel == "배우자":
+        return True
+    if rel in ("직계비속", "입양자"):
+        return p["age"] <= 20
+    if rel == "형제자매":
+        return p["age"] <= 20 or p["age"] >= 60
+    if rel == "직계존속":
+        return p["age"] >= 60
+    # 위탁아동·수급자 등: 나이 무관
+    return True
+
+
+def special_tax_credit(
+    year: int,
+    earner_type: str,
+    total_salary: int,
+    persons: list,
+    expenses: list,
+    wage_computed_tax: int = None,
+    monthly_rent_credit: int = 0,
+    donation_credit: int = 0,
+    special_income_deduction: int = 0,
+):
+    """근로소득자 특별세액공제(보험료·의료비·교육비)와 표준세액공제 비교."""
+    problems = []
+
+    # ── 입력 검사 ──────────────────────────────────────────────────────────
+    if earner_type != "근로":
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"earner_type='{earner_type}'은(는) 지원하지 않음 — '근로'만 계산"]}
+
+    if year < 2016 or year > 2026:
+        problems.append(f"year={year}은(는) 지원 범위(2016~2026) 밖")
+
+    # 본인 수 검사
+    본인_list = [p for p in persons if p.get("relation") == "본인"]
+    if len(본인_list) == 0:
+        problems.append("본인(relation='본인')이 없음")
+    elif len(본인_list) > 1:
+        problems.append("본인(relation='본인')이 2명 이상")
+
+    # name 중복 검사
+    names_seen = {}
+    for p in persons:
+        n = p.get("name", "")
+        if n in names_seen:
+            problems.append(f"name 중복: '{n}'")
+        names_seen[n] = names_seen.get(n, 0) + 1
+
+    # expense.person 존재 검사 + reimbursed 검증 + 모르는 kind 검사
+    person_names = {p["name"] for p in persons}
+    for i, e in enumerate(expenses):
+        k = e.get("kind", "")
+        if k not in _KNOWN_KINDS:
+            problems.append(f"지출 {i+1}: kind='{k}'은(는) 지원하지 않음")
+            continue
+        pn = e.get("person", "")
+        if pn not in person_names:
+            problems.append(f"지출 {i+1}: person='{pn}'이(가) persons 목록에 없음")
+        if e.get("reimbursed", 0) > e.get("amount", 0):
+            problems.append(f"지출 {i+1}: reimbursed({e.get('reimbursed', 0)}) > amount({e.get('amount', 0)})")
+
+    if problems:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": problems}
+
+    persons_dict = {p["name"]: p for p in persons}
+
+    # ── 기본공제대상자 판정 (보험료용) ──────────────────────────────────────
+    기본공제대상자 = {}
+    for p in persons:
+        기본공제대상자[p["name"]] = _is_basic_dependent(p, 기본공제대상자)
+
+    # ── 보험료 (제59조의4①) ──────────────────────────────────────────────
+    일반대상 = 0
+    장애인전용대상 = 0
+    for e in expenses:
+        k = e["kind"]
+        pn = e["person"]
+        if k == "보장성보험":
+            if 기본공제대상자.get(pn, False):
+                일반대상 += e["amount"]
+        elif k == "장애인전용보장성보험":
+            p = persons_dict.get(pn, {})
+            if not p.get("disabled", False):
+                problems.append(f"장애인전용보장성보험: person='{pn}'은(는) 장애인이 아님")
+                continue
+            if 기본공제대상자.get(pn, False):
+                장애인전용대상 += e["amount"]
+            else:
+                problems.append(f"장애인전용보장성보험: person='{pn}'은(는) 기본공제대상자 아님")
+
+    if problems:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": problems}
+
+    voc_p = vocab.rule("특별세액공제_보험료", year)
+    일반한도 = voc_p["그룹_한도"]
+    장애인한도 = voc_p["그룹_한도"]
+    일반대상 = min(일반대상, 일반한도)
+    장애인전용대상 = min(장애인전용대상, 장애인한도)
+    일반공제액 = _won(일반대상 * voc_p["일반_율"])
+    장애인전용공제액 = _won(장애인전용대상 * voc_p["장애인전용_율"])
+    보험료공제 = 일반공제액 + 장애인전용공제액
+
+    # ── 의료비 (제59조의4②) ──────────────────────────────────────────────
+    의료비일반 = 0       # 1호 후보 (일반 지출)
+    의료비특정 = 0       # 2호 후보 (특정 지출)
+    의료미엄숙아 = 0     # 3호 후보 (2022~)
+    의료비난임 = 0       # 4호 후보 (2022~), 3호 (2017~2021), 2호 (2016)
+
+    voc_m = vocab.rule("특별세액공제_의료비", year)
+    문턱 = total_salary * voc_m["문턱_비율"]
+    일반한도_m = voc_m["일반_한도"]
+    안경한도 = voc_m["안경_한도"]
+
+    for e in expenses:
+        k = e["kind"]
+        pn = e["person"]
+        amount = max(0, e["amount"] - e.get("reimbursed", 0))
+
+        if k == "의료비":
+            p = persons_dict.get(pn, {})
+            age = p.get("age", 0)
+            disabled = p.get("disabled", False)
+            severe = p.get("severe_illness", False)
+            is_self = p.get("relation") == "본인"
+
+            # 2호(특정): 본인 / age ≥ 65 / 장애인 / severe_illness(2018~) / 6세 이하(2024~)
+            if is_self:
+                의료비특정 += amount
+            elif voc_m.get("6세이하_특정") and age <= 7:
+                의료비특정 += amount
+            elif age >= 65 or disabled or severe:
+                의료비특정 += amount
+            else:
+                의료비일반 += amount
+
+        elif k == "안경":
+            # 제59조의4② 괄호: persons 목록의 모든 사람이 의료비 공제대상
+            의료비일반 += min(amount, 안경한도)
+
+        elif k == "산후조리원":
+            if not voc_m.get("산후조리", False):
+                continue
+            if not 기본공제대상자.get(pn, False):
+                continue
+            상한 = voc_m.get("산후조리_총급여_상한")
+            if 상한 is not None and total_salary > 상한:
+                continue
+            의료비일반 += min(amount, voc_m["산후조리_한도"])
+
+        elif k == "미숙아·선천성이상아":
+            if voc_m.get("미숙아_율", 0) > 0:
+                의료비미숙아 += amount
+
+        elif k == "난임시술":
+            의료비난임 += amount
+
+        elif k == "미용성형·건강증진":
+            pass  # 공제 제외
+
+    # 미달액 순서로 1호→2호→3호→4호 공제대상 계산
+    미달액 = max(0, 문턱 - 의료비일반)
+    h1_target = min(max(0, 의료비일반 - 문턱), 일반한도_m)
+
+    h2_target = max(0, 의료비특정 - 미달액)
+    미달액 = max(0, 미달액 - 의료비특정)
+
+    h3_target = max(0, 의료미엄숙아 - 미달액)
+    미달액 = max(0, 미달액 - 의료미엄숙아)
+
+    h4_target = max(0, 의료비난임 - 미달액)
+
+    미숙아율 = voc_m.get("미숙아_율", 0)
+    난임율 = voc_m.get("난임_율", 0)
+    의료비공제 = _won(h1_target * 0.15 + h2_target * 0.15 +
+                       h3_target * 미숙아율 + h4_target * 난임율)
+
+    # ── 교육비 (제59조의4③) ──────────────────────────────────────────────
+    교육비대상합계 = 0
+    사람별 = []
+    voc_e = vocab.rule("특별세액공제_교육비", year)
+    체험할아이면 = voc_e.get("체험학습", False)
+    학자금상환이면 = voc_e.get("학자금상환", False)
+    대입전형료이면 = voc_e.get("대입전형료", False)
+    부양가족소득요건 = voc_e.get("부양가족_소득요건", True)  # 2026~ false
+
+    취학전초중고한도 = voc_e["취학전초중고_한도"]
+    대학한도 = voc_e["대학_한도"]
+
+    for p in persons:
+        name = p["name"]
+        rel = p["relation"]
+        age = p["age"]
+        disabled = p.get("disabled", False)
+        income_ok = p.get("income_ok", True)
+
+        person_total = 0
+        취학전초중고합 = 0  # 취학전+초중고+교복+체험학습 합산(한도 300만원 적용용)
+        for e in expenses:
+            if e["person"] != name:
+                continue
+            kind = e["kind"]
+            amount = max(0, e["amount"] - e.get("reimbursed", 0))
+
+            # 본인 외 제외 항목
+            if kind in ("교육비_대학원", "직업훈련"):
+                if rel == "본인":
+                    person_total += amount
+                continue
+            if kind == "학자금상환":
+                if 학자금상환이면 and rel == "본인":
+                    person_total += amount
+                continue
+            if kind == "직계비속학자금대출지급":
+                continue  # 2017~ 공제 제외
+            if kind == "특수교육비":
+                if disabled:
+                    person_total += amount
+                continue
+            if kind == "발달재활서비스":
+                if disabled and age < 18:
+                    person_total += amount
+                continue
+            if rel == "직계존속" and kind not in ("특수교육비", "발달재활서비스"):
+                continue
+
+            # 부양가족 소득 요건 (2026~ 폐지)
+            if rel != "본인" and rel in ("배우자", "직계비속", "입양자", "위탁아동", "형제자매"):
+                if 부양가족소득요건 and not income_ok:
+                    continue
+
+            _교육종류 = ("교육비_취학전", "교육비_초중고", "교복", "체험학습",
+                         "교육비_대학", "대입전형료", "특수교육비", "발달재활서비스")
+            if rel == "본인":
+                if kind in _교육종류:
+                    person_total += amount
+            elif rel in ("배우자", "직계비속", "입양자", "위탁아동", "형제자매"):
+                if kind in ("교육비_취학전", "교육비_초중고", "교복", "체험학습"):
+                    if kind == "교복":
+                        amount = min(amount, voc_e["교복_한도"])
+                    elif kind == "체험학습":
+                        if 체험할아이면:
+                            amount = min(amount, voc_e["체험학습_한도"])
+                        else:
+                            amount = 0
+                    취학전초중고합 += amount
+                    person_total += amount
+                elif kind in ("교육비_대학", "대입전형료"):
+                    if kind == "대입전형료" and not 대입전형료이면:
+                        continue
+                    person_total += min(amount, 대학한도)
+
+        # 취학전+초중고+교복+체험학습 합산 300만원 한도 (본인 외 대상)
+        if rel != "본인" and 취학전초중고합 > 취학전초중고한도:
+            person_total = person_total - 취학전초중고합 + 취학전초중고한도
+
+        사람별.append({"name": name, "대상액": person_total, "한도": None, "공제대상": person_total})
+        교육비대상합계 += person_total
+
+    교육비공제 = _won(교육비대상합계 * voc_e["율"])
+
+    # ── 합계 · 한도 · 표준세액공제 비교 ──────────────────────────────────
+    특별합계 = 보험료공제 + 의료비공제 + 교육비공제
+
+    한도초과액 = 0
+    한도반영 = 특별합계
+    if wage_computed_tax is not None:
+        한도초과액 = max(0, 특별합계 + monthly_rent_credit - wage_computed_tax)
+        한도반영 = max(0, 특별합계 - 한도초과액)
+
+    항목별합계 = 한도반영 + donation_credit + monthly_rent_credit
+    표준세액공제 = 130000
+    표준적용가능 = special_income_deduction == 0
+    if 표준적용가능:
+        선택 = "항목별" if 항목별합계 >= 표준세액공제 else "표준세액공제"
+    else:
+        선택 = "항목별"
+
+    적용세액공제 = 항목별합계 if 선택 == "항목별" else 표준세액공제
+
+    # ── 판단 목록 ──────────────────────────────────────────────────────────
+    판단 = []
+    for e in expenses:
+        k = e["kind"]
+        pn = e["person"]
+        p = persons_dict.get(pn, {})
+
+        if k == "보장성보험":
+            if not 기본공제대상자.get(pn, False):
+                판단.append({"항목": k, "결론": "기본공제대상자 아님 — 보험료 공제 제외",
+                             "근거": "소득세법 제50조①"})
+        elif k == "장애인전용보장성보험":
+            if not p.get("disabled", False):
+                판단.append({"항목": k, "결론": "장애인이 아닌 사람의 장애인전용보장성보험 — 오류 처리됨",
+                             "근거": "소득세법 제59조의4①1호"})
+            elif not 기본공제대상자.get(pn, False):
+                판단.append({"항목": k, "결론": "기본공제대상자 아님 — 보험료 공제 제외",
+                             "근거": "소득세법 제50조①"})
+        elif k == "산후조리원":
+            if not voc_m.get("산후조리", False):
+                판단.append({"항목": k, "결론": f"{year}년 산후조리원 공제 대상 아님",
+                             "근거": "소득세법 시행령 제118조의5①7호"})
+            elif voc_m.get("산후조리_총급여_상한") is not None and total_salary > voc_m["산후조리_총급여_상한"]:
+                판단.append({"항목": k, "결론": f"총급여 {total_salary:,}원이 상한 {voc_m['산후조리_총급여_상한']:,}원 초과 — 산후조리원 공제 제외",
+                             "근거": "소득세법 시행령 제118조의5①7호, 부칙"})
+        elif k == "체험학습":
+            if not 체험할아이면:
+                판단.append({"항목": k, "결론": f"{year}년 체험학습 공제 대상 아님",
+                             "근거": "소득세법 시행령 제118조의6①6호"})
+        elif k == "학자금상환":
+            if not 학자금상환이면:
+                판단.append({"항목": k, "결론": f"{year}년 학자금상환 공제 대상 아님",
+                             "근거": "소득세법 제59조의4③2호라목"})
+        elif k == "대입전형료":
+            if not 대입전형료이면:
+                판단.append({"항목": k, "결론": f"{year}년 대입전형료 공제 대상 아님",
+                             "근거": "소득세법 제59조의4③1호가목, 시행령 제118조의6①7호"})
+        elif k == "직계비속학자금대출지급":
+            판단.append({"항목": k, "결론": "직계비속등이 학자금 대출로 낸 교육비 — 공제 제외(2017~)",
+                         "근거": "소득세법 제59조의4③1호 단서"})
+        elif k == "미용성형·건강증진":
+            판단.append({"항목": k, "결론": "미용·성형·건강증진 의료비 — 공제 제외",
+                         "근거": "소득세법 시행령 제118조의5②"})
+        elif k == "의료비":
+            if not 기본공제대상자.get(pn, False) and p.get("relation") not in ("본인",):
+                pass  # 의료비는 소득·나이 무관 공제대상(제59조의4② 괄호)
+        elif k == "교육비_대학원":
+            if rel != "본인":
+                판단.append({"항목": k, "결론": "본인 외 대학원 교육비 — 공제 제외",
+                             "근거": "소득세법 제59조의4③1호 단서·2호나목"})
+        elif k == "직업훈련":
+            if rel != "본인":
+                판단.append({"항목": k, "결론": "본인 외 직업훈련 교육비 — 공제 제외",
+                             "근거": "소득세법 제59조의4③2호다목"})
+        elif k == "발달재활서비스":
+            if disabled and age >= 18:
+                판단.append({"항목": k, "결론": "발달재활서비스: 종료일 현재 18세 이상 — 공제 제외",
+                             "근거": "소득세법 제59조의4③3호나목"})
+        elif k == "특수교육비":
+            if not disabled:
+                판단.append({"항목": k, "결론": "장애인이 아닌 사람의 특수교육비 — 공제 제외",
+                             "근거": "소득세법 제59조의4③3호가·다목"})
+
+    return {
+        "결과": {
+            "보험료_세액공제": 보험료공제,
+            "의료비_세액공제": 의료비공제,
+            "교육비_세액공제": 교육비공제,
+            "특별세액공제_합계": 특별합계,
+            "한도초과액": 한도초과액,
+            "특별세액공제_한도반영": 한도반영,
+            "표준세액공제": 표준세액공제,
+            "항목별_합계": 항목별합계,
+            "표준세액공제_적용가능": 표준적용가능,
+            "선택": 선택,
+            "적용_세액공제": 적용세액공제,
+        },
+        "계산": {
+            "보험료": {
+                "일반_대상액": 일반대상,
+                "장애인전용_대상액": 장애인전용대상,
+                "일반_공제액": 일반공제액,
+                "장애인전용_공제액": 장애인전용공제액,
+            },
+            "의료비": {
+                "문턱": 문턱,
+                "일반": 의료비일반,
+                "특정": 의료비특정,
+                "미숙아": 의료미엄숙아,
+                "난임": 의료비난임,
+                "1호_공제대상": h1_target,
+                "2호_공제대상": h2_target,
+                "3호_공제대상": h3_target,
+                "4호_공제대상": h4_target,
+                "공제율": {"1호": 0.15, "2호": 0.15,
+                           "3호": 미숙아율 if 미숙아율 else None,
+                           "4호": 난임율 if 난임율 else None},
+            },
+            "교육비": {"사람별": 사람별, "공제대상_합계": 교육비대상합계},
+            "기본공제대상자": 기본공제대상자,
+        },
+        "판단": 판단,
+        "근거": "소득세법 제59조의4①②③⑨, 제61조①, 시행령 제118조의4·제118조의5·제118조의6·제119조의3",
+    }
+

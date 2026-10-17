@@ -76,8 +76,8 @@ def test_actual_expense_exceeding_rate():  # 실제 경비가 정률을 넘으�
 def test_missing_required_fact_rejected():  # 직무발명보상금_퇴직후는 같은 해 근로 비과세액 없이는 계산하지 않음
     r = c("other_income_aggregate", {"year": 2025, "items": [{"kind": "직무발명보상금_퇴직후", "amount": 4_000_000}]})
     assert "error" in r
-    r = c("other_income_aggregate", {"year": 2025, "items": [{"kind": "복권당첨금", "amount": 4_000_000}]})
-    assert "error" in r and "허용값" in r
+    r = c("other_income_aggregate", {"year": 2025, "items": [{"kind": "없는종류", "amount": 4_000_000}]})
+    assert "error" in r and "허용값" in r  # 미지원 kind 예시
 
 
 def test_inconsistent_facts_rejected():  # CodeSolar 리뷰(PR #9) 회귀 (Claude 추가 10-13): 몰수액·계약금 대체액이 총액을 넘으면 계산하지 않음
