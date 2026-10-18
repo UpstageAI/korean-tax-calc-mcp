@@ -4507,7 +4507,7 @@ def inventory_valuation_adjustment(
         return r
     return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r.get("판단", []))
 
-# ── G2: 모든 도구 공통 — 정의되지 않은 최상위 인자 거부 ─────────────
+# ── 모든 도구 공통 — 정의되지 않은 최상위 인자 거부 ─────────────
 # MCP SDK의 arg_model은 기본적으로 extra='ignore'라 모르는 키가 조용히 버려짐.
 # 각 도구의 arg_model을 extra='forbid'로 재창출해 밸리데이션 단계에서 거부한다.
 # (Tool.run은 validate_arguments → arg_model.model_validate → model_dump_one_level 순으로 args를 처리)

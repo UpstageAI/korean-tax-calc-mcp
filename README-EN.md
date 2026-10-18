@@ -6,9 +6,9 @@
 
 [![PyPI](https://img.shields.io/pypi/v/korean-tax-calc-mcp)](https://pypi.org/project/korean-tax-calc-mcp/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-korean--tax--calc--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=korean-tax-calc-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Built with Upstage Solar Pro 4](https://img.shields.io/badge/Built%20with-Upstage%20Solar%20Pro%204-7A3FF2)](https://www.upstage.ai/) · [한국어](README.md)
 
-> **Developed with Upstage Solar Pro 4 since 0.3.0** (0.2.1 and earlier predate it). 2026 corporate tax rates, non-resident withholding and thin capitalisation (0.3.0), 11 tax-audit judgment tools (0.4.0), nine end-to-end calculators that take facts through to tax adjustments plus the facts vocabulary (0.6.0–0.7.0), and adjustment-statement-shaped results with ledger-style input (0.8.0–0.9.0) were written by Solar Pro 4, reviewed by Solar Pro 4-based code review (CodeSolar), and cross-checked by Claude with tests. 50 tools; details in the [CHANGELOG](CHANGELOG.md).
+> **Developed with Upstage Solar Pro 4 since 0.3.0** (0.2.1 and earlier predate it). 2026 corporate tax rates, non-resident withholding and thin capitalisation (0.3.0), 11 tax-audit judgment tools (0.4.0), nine end-to-end calculators that take facts through to tax adjustments plus the facts vocabulary (0.6.0–0.7.0), and adjustment-statement-shaped results with ledger-style input (0.8.0–0.9.0), and six new end-to-end calculators — inheritance tax, gift tax, dividend received deduction, inventory valuation adjustment, special tax credit, and asset grant reserve (0.10.0) — were written by Solar Pro 4, reviewed by Solar Pro 4-based code review (CodeSolar), and cross-checked by Claude with tests. 62 tools; details in the [CHANGELOG](CHANGELOG.md).
 
-**Korean (South Korea) tax calculations for AI agents — code, not guesses.** LLMs often get tax arithmetic wrong. This MCP server computes in code and cites the statute behind every result. It uses year-by-year rate tables (2016–2026); for a year without a verified table it returns an error instead of estimating. 50 tools (38 computation + 12 tax audit judgment). Nothing sent outside your machine for the 32 computation tools.
+**Korean (South Korea) tax calculations for AI agents — code, not guesses.** LLMs often get tax arithmetic wrong. This MCP server computes in code and cites the statute behind every result. It uses year-by-year rate tables (2016–2026); for a year without a verified table it returns an error instead of estimating. 62 tools (59 computation/judgment + 3 PDF). Nothing sent outside your machine for the 59 computation/judgment tools.
 
 ## Try asking
 
@@ -72,6 +72,12 @@ Pair it with [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp) to go
 | `wage_income_tax` | Earned income deduction, tax and earned income tax credit | Income Tax Act Arts. 47, 55, 59 |
 | `daily_worker_withholding` | Withholding for daily workers | Income Tax Act Art. 134 |
 | `deemed_bonus_resettlement` | Year-end resettlement of deemed bonus | Income Tax Decree Art. 192 |
+| `inheritance_tax` | **End-to-end** inheritance tax — taxable estate, deductions, tax base, computed tax, tax payable | Inheritance/Gift Tax Act Arts. 13, 25, 26 |
+| `gift_tax` | **End-to-end** gift tax — taxable value, gift deduction, tax base, computed tax, tax payable | Inheritance/Gift Tax Act Arts. 47, 53, 55, 56 |
+| `dividend_received_deduction` | **End-to-end** dividend received deduction for domestic corporations — per-investee exclusion rate, interest offset, adjustment | CITA Art. 18-2; Decree Arts. 17-2, 17-3 |
+| `special_tax_credit` | **End-to-end** special tax credit for wage earners (insurance, medical, education) vs. standard credit | Income Tax Act Arts. 59-4, 61; Decree Arts. 118-4, 118-5, 118-6, 119-3 |
+| `asset_grant_reserve` | **End-to-end** reserve for government grants, construction contributions, and insurance gains — deduction limit, reserve, disposal | CITA Arts. 36, 37, 38; Decree Arts. 64, 65, 66, 98(2) |
+| `inventory_valuation_adjustment` | Inventory valuation adjustment — statutory method determination and reserve for valuation difference | CITA Art. 42(1)2·(2); Decree Arts. 73(1), 74(1)–(6) |
 
 ### Tax audit judgment (11 tools)
 
@@ -117,7 +123,7 @@ Results lead with `세무조정` (adjustment entries with disposition), `소득�
 
 - **Disclaimer:** Results are a review aid, not tax advice. Verify statutes and rulings with a tax accountant, CPA or attorney before filing, during a tax audit, or in appeals. Check the statute text and case law in the original source.
 - **Not a tax agent service:** This tool does not perform **tax agent services under Article 2 of the Certified Tax Accountant Act** (preparing tax adjustment statements, filing on behalf of a taxpayer, tax consultation); only certified tax accountants and registered CPAs or attorneys may do so (Article 20). It is software that turns statutory formulas into code and shows the computation for the inputs given; please verify the facts and make the final judgment together with a tax professional (tax accountant, CPA or attorney).
-- **AI use notice:** The 29 computation/judgment tools run in code and do not use generative AI. The 3 PDF review tools (`extract_relations`, `tunnelling_from_pdf`, `return_precheck_pdf`) use generative AI (Upstage Solar Pro 4) when UPSTAGE_API_KEY is set, and mark that fact in their results. Without a key, they use pypdf for local text extraction (host_ai mode) and provide 정리 안내 (cleanup guidance) so the next tool input can be prepared manually.
+- **AI use notice:** The 59 computation/judgment tools run in code and do not use generative AI. The 3 PDF review tools (`extract_relations`, `tunnelling_from_pdf`, `return_precheck_pdf`) use generative AI (Upstage Solar Pro 4) when UPSTAGE_API_KEY is set, and mark that fact in their results. Without a key, they use pypdf for local text extraction (host_ai mode) and provide 정리 안내 (cleanup guidance) so the next tool input can be prepared manually.
 - **Data transmission:** Document content is sent to the Upstage API (api.upstage.ai) only when UPSTAGE_API_KEY is set and the PDF tools are used. Without a key (pypdf local extraction), no data is transmitted externally. Do not submit documents containing personal or sensitive information when using the API-based flow.
 
 ## Notes
@@ -125,7 +131,7 @@ Results lead with `세무조정` (adjustment entries with disposition), `소득�
 - Results are a review aid, not tax advice. Check the statute text before filing.
 - Local income tax is not included.
 - Years without a verified rate table return an error rather than an estimate.
-- **Data transmission** — The 29 computation/judgment tools run locally in code; nothing is sent to any external API. Only the 3 PDF tools transmit document content to the Upstage API.
+- **Data transmission** — The 59 computation/judgment tools run locally in code; nothing is sent to any external API. Only the 3 PDF tools transmit document content to the Upstage API.
 
 ## License
 
