@@ -144,14 +144,14 @@ def test_thin_cap_withholding_recalc():
 
 
 def test_사용료_쟁점_수원고등법원_포함():
-    # 사용료 + treaty_rate → 쟁점 3건, 참고에 "수원고등법원-2023-누-15618" 포함, 판단 == "세무사 확인 필요"
+    # 사용료 + treaty_rate → 쟁점 3건, 참고에 "수원고등법원-2023-누-15618" 포함, 판단 == "전문가 확인 필요"
     r = c("nonresident_withholding", {"income_kind": "사용료", "amount": 200_000_000,
                                        "recipient_type": "개인", "residence_country": "US", "treaty_rate": 0.15})
     issues = r["쟁점"]
     assert len(issues) == 3
     refs = [ref for it in issues for ref in it["참고"]]
     assert any("수원고등법원-2023-누-15618" in ref for ref in refs)
-    assert all(it["판단"] == "세무사 확인 필요" for it in issues)
+    assert all(it["판단"] == "전문가 확인 필요" for it in issues)
 
 
 def test_배당_treaty_rate_제156조의6_포함():
@@ -197,7 +197,7 @@ def test_thin_capitalization_쟁점_포함():
     assert len(issues) >= 1
     refs = [ref for it in issues for ref in it["참고"]]
     assert any("제22조" in ref for ref in refs)
-    assert all(it["판단"] == "세무사 확인 필요" for it in issues)
+    assert all(it["판단"] == "전문가 확인 필요" for it in issues)
 
 
 def test_issues_json_패키지_데이터_존재():

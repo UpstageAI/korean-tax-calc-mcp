@@ -13,7 +13,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
-from .engine import calc as K, calc_cit as C, calc_income as I, calc_vat as V
+from .engine import calc as K, calc_cit as C, calc_income as I, calc_vat as V, calc_capgains as CG
 from . import vocab
 
 # ── 세무조사 판정 도구 (audit 패키지) ──
@@ -408,6 +408,35 @@ def corporate_tax(base: WON, year: YEAR,
 입력: 과세표준(과세표준, 원) → base, 사업연도(2016~2026) → year, 월수(1~12) → months.
 결과: 산출세액·과세표준·사업연도·월수와 근거(법인세법 제55조①·②). Corporate income tax on a tax base for a fiscal year (rate table, prorated for short fiscal years)."""
     return _ok({"산출세액": C.corp_tax(base, year, months), "과세표준": base, "사업연도": year, "월수": months}, "법인세법 제55조(세율)·제55조②(1년 미만)")
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def foreign_tax_credit(
+    year: YEAR,
+    base: Annotated[int, Field(description="각 사업연도 소득에 대한 과세표준(원). Gross-up 반영 여부는 base_includes_grossup으로 지정", ge=0)],
+    base_includes_grossup: Annotated[bool, Field(description="base에 간접외국납부세액 익금산입(Gross-up)이 이미 들어 있으면 true, 아니면 false(도구가 더함)")],
+    method: Annotated[Literal["세액공제", "손금산입"], Field(description="외국납부세액 처리 방법. 손금산입은 2020 사업연도까지만(2021~ 삭제)")],
+    countries: Annotated[list, Field(description="국가별 [{country, foreign_income, direct_tax, deemed_tax?, related_costs?, reduction_excluded?, subsidiaries?}] — "
+                                                 "foreign_income: 국외원천소득(Gross-up 전, 수입배당금은 원천징수 전 금액 포함), direct_tax: 직접외국납부세액(자회사 배당 원천징수세 제외), "
+                                                 "deemed_tax: 간주외국납부세액, related_costs: 국외원천소득대응비용, reduction_excluded: 감면·면제 대상 국외원천소득×감면비율, "
+                                                 "subsidiaries: [{name, dividend, withholding_tax?, received_on, ownership, holding_months, resource_dev, sub_income, sub_tax, participation_exempt?}]")],
+    months: Annotated[int, Field(description="사업연도 월수(1~12)", ge=1, le=12)] = 12,
+) -> dict:
+    """법인세 외국납부세액공제(직접·간주·간접, 국가별 한도, 한도초과 이월). 언제: 국외원천소득에 외국 법인세를 낸 내국법인의 공제액·Gross-up·이월액을 구할 때.
+입력:
+  year — 사업연도(2016~2026). 이월기간·손금산입방법 허용 여부가 연도별.
+  base — 과세표준(원). base_includes_grossup — base에 Gross-up 포함 여부.
+  method — '세액공제'|'손금산입'(2020년까지).
+  countries — 국가별 foreign_income(Gross-up 전 국외원천소득), direct_tax, deemed_tax, related_costs(대응비용), reduction_excluded,
+    subsidiaries(외국자회사 배당: dividend 원천징수 전, withholding_tax, received_on, ownership 소수, holding_months 배당기준일 현재, resource_dev, sub_income·sub_tax 자회사 소득금액·법인세액, participation_exempt 2023~ 제18조의4 적용 여부).
+  months — 사업연도 월수.
+결과: 간접외국납부세액, Gross-up 익금산입액, 국가별 국외원천소득·공제한도·공제액·한도초과 이월액·이월배제액, 산출세액, 공제액 합계, 이월공제기간, 산식, 근거.
+  지분율 요건은 배당 받은 날 기준(2022년까지 25%, 2023~ 10%, 해외자원 5%). 손자회사·이월액 공제·이월결손금 안분(영 §94⑥)은 반영 안 함 — 국외원천소득에 미리 반영."""
+    r = C.foreign_tax_credit(year, base, base_includes_grossup, method, countries, months)
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 연도별_근거=r.get("연도별_근거", {}))
 
 
 @mcp.tool(annotations=CALC)
@@ -941,6 +970,425 @@ def deemed_bonus_resettlement(gross_pay: Annotated[int, Field(description="귀�
     return _ok(I.deemed_bonus_resettlement(gross_pay, tax_base, bonus, other_credits, prev_decided, year=year),
                "법인세법 제67조, 소득세법 시행령 제192조, 소득세법 제137조",
                주의="총급여 연동 소득·세액공제(신용카드 공제 등)는 수기 보정 필요")
+
+
+# ───────── 0.2 추가: 근로소득 총급여 ─────────
+# 근거 조문: 소득세법 제20조(근로소득)·제12조3호(비과세)·제47조(근로소득공제), 시행령 제11조·제12조·제17조·제17조의2~제17조의4·제38조·제49조
+_EGP_KIND_필요사실 = {
+    "급여":             ["amount"],
+    "상여":             ["amount"],
+    "잉여금처분상여":   ["amount", "resolution_date"],
+    "인정상여":         ["amount"],
+    "식사대":           ["amount", "months", "meal_provided"],
+    "자가운전보조금":   ["amount", "months", "vehicle", "business_use", "actual_travel_reimbursed"],
+    "출산·보육수당":    ["amount", "purpose"],
+    "직무발명보상금":   ["amount", "retired"],
+    "연장근로수당":     ["amount", "eligible_occupation"],
+    "사택제공이익":     ["amount", "position"],
+    "주택자금대여이익": ["amount", "sme"],
+    "단체보험료":       ["amount"],
+    "학자금":           ["amount", "beneficiary"],
+    "실비변상여비":     ["amount", "actual_cost"],
+    "사회보험료_본인부담분_회사대납": ["amount"],
+    "사회보험료_사용자부담분":        ["amount"],
+}
+
+_EGP_월한도_종류 = {"식사대", "자가운전보조금", "출산·보육수당"}
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def earned_income_gross_pay(year: YEAR,
+                            items: Annotated[list, Field(description="근로소득 항목 [{kind, amount, facts}] — kind: 급여·상여·잉여금처분상여·인정상여·식사대·자가운전보조금·출산·보육수당·직무발명보상금·연장근로수당·사택제공이익·주택자금대여이익·단체보험료·학자금·실비변상여비·사회보험료_본인부담분_회사대납·사회보험료_사용자부담분. facts는 종류별 사실관계 dict(빠지면 필요한 입력을 돌려줌)")]) -> dict:
+    """근로소득 항목별 과세·비과세를 판정하고 귀속연도를 확인해 총급여액·근로소득공제·근로소득금액을 계산한다(소득세법 제20조·제12조3호·제47조, 시행령 제11조·제12조·제17조·제17조의2~4·제38조·제49조).
+    언제: 연말정산·종합소득세 신고에서 급여·상여·수당·복리후생 급여 자료로 총급여액과 근로소득금액을 구할 때.
+    입력: 귀속연도(2016~2026) → year, 항목 목록 [{kind, amount, facts}] → items.
+      kind와 facts(필요한 사실):
+        · 급여·상여 — 다른 해 근로분이면 service_year
+        · 잉여금처분상여 — resolution_date(결의일 연도 귀속) / 인정상여 — service_year
+        · 식사대 — months, meal_provided / 자가운전보조금 — months, vehicle(본인소유|본인명의임차|기타), business_use, actual_travel_reimbursed
+        · 출산·보육수당 — purpose(보육: months, child_age / 출산: 2024~ within_2y_of_birth·payment_count·related_party, 그 전 months)
+        · 직무발명보상금 — retired(퇴직 후면 기타소득), 2024~ related_party
+        · 연장근로수당 — eligible_occupation, 해당 시 monthly_regular_wage·prior_year_gross(광산·일용은 mine_or_daily)
+        · 사택제공이익 — position / 주택자금대여이익 — sme(2024~ related_party)
+        · 학자금 — beneficiary(본인|가족), 본인이면 requirements_met / 실비변상여비 — actual_cost
+        · 단체보험료(연 한도) / 사회보험료_본인부담분_회사대납(과세) / 사회보험료_사용자부담분 — insurance
+    결과: 항목별(과세액·비과세액·근거·사유)·제외 항목(다른 해·다른 소득)·총급여액·비과세 합계·근로소득공제·근로소득금액."""
+
+    # ── 1. vocab 기반 허용값 검증 ──
+    _v = _validate_items(items, "kind", _specs_from_vocab("earned_income_gross_pay", "kind"))
+    if _v: return _v
+
+    # ── 2. 전적 월한도 항목 중복 체크 ──
+    월한도_건수: dict[str, int] = {}
+    for it in items:
+        k = it.get("kind", "")
+        if k in _EGP_월한도_종류:
+            월한도_건수[k] = 월한도_건수.get(k, 0) + 1
+    for k, cnt in 월한도_건수.items():
+        if cnt > 1:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"같은 kind '{k}'가 {cnt}번 입력됨 — 월 한도는 한 항목으로 합쳐 입력하세요"],
+                    "필요 입력": {k: ["amount", "months", "meal_provided" if k == "식사대" else
+                                       "vehicle" if k == "자가운전보조금" else "purpose"]}}
+
+    # ── 3. 필요 사실 누락 체크 ──
+    # facts 자체가 없는 항목({kind, amount}만 있는 경우)은 허용:
+    #   · 급여·상여·인정상여: service_year가 없어도 귀속연도=year로 계산
+    #   · 단체보험료·사회보험료_본인부담분_회사대납·사회보험료_사용자부담분: facts 불필요
+    #   · 그 외 kinds는 필요한 facts가 빠지면 필요 입력 error
+    누락: dict[str, list[str]] = {}
+    for it in items:
+        k = it.get("kind", "")
+        사실과있음 = bool(it.get("facts"))   # facts 키 자체가 없거나 빈 dict면 False
+        facts = it.get("facts", {}) or {}
+        필요 = _EGP_KIND_필요사실.get(k, ["amount"])
+        빠진 = []
+        for f in 필요:
+            if f == "amount":
+                if it.get("amount") in (None, ""):
+                    빠진.append("amount")
+            elif 사실과있음 and (f not in facts or facts.get(f) in (None, "", [])):
+                빠진.append(f)
+        if 빠진:
+            누락[k] = 빠진
+    if 누락:
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"항목 kind='{k}': 필요 사실 {빠진} 누락" for k, 빠진 in 누락.items()],
+                "필요 입력": 누락}
+
+    # ── 4. 항목별 판정 ──
+    항목별: list[dict] = []
+    제외_항목: list[dict] = []
+    총급여액 = 0
+    비과세_합계 = 0
+    근로소득_아님_합계 = 0
+    직무발명보상금_비과세_사용액 = 0
+    산식_목록: list[str] = []
+    근거_목록: list[list[str]] = []
+
+    for it in items:
+        k = it["kind"]
+        amount = int(it.get("amount", 0))
+        facts = it.get("facts", {}) or {}
+        r = vocab.rule(k, year)
+        b = vocab.basis(k, year)
+        구분 = r.get("구분", "과세")
+        과세액 = amount
+        비과세액 = 0
+        비과세_성격 = ""
+        사유 = ""
+
+        # ── 귀속시기 확인 (제외 판정) ──
+        if k in ("급여", "상여"):
+            sy = facts.get("service_year")
+            if sy is not None and int(sy) != year:
+                제외_항목.append({"kind": k, "금액": amount, "사유": f"{int(sy)}년 귀속(근로 제공 연도) — {year}년 총급여에서 제외",
+                                  "근거": b})
+                continue
+        elif k == "잉여금처분상여":
+            rd = facts.get("resolution_date")
+            if rd:
+                결의연도 = int(str(rd)[:4])
+                if 결의연도 != year:
+                    제외_항목.append({"kind": k, "금액": amount, "사유": f"{결의연도}년 귀속(잉여금처분결의일) — {year}년 총급여에서 제외",
+                                      "근거": b})
+                    continue
+        elif k == "인정상여":
+            sy = facts.get("service_year")
+            if sy is not None and int(sy) != year:
+                제외_항목.append({"kind": k, "금액": amount, "사유": f"{int(sy)}년 귀속(근로 제공 사업연도) — {year}년 총급여에서 제외",
+                                  "근거": b})
+                continue
+
+        # ── 항목별 과세·비과세 판정 ──
+        if k == "식사대":
+            months = int(facts.get("months", 0))
+            meal_provided = facts.get("meal_provided", False)
+            월한도 = r["월한도"]
+            if meal_provided:
+                비과세액 = 0
+                과세액 = amount
+                사유 = "현물 식사 별도 제공 — 식사대 전액 과세(영 제17조의2 2호 단서)"
+                비과세_성격 = "과세(현물 식사 제공)"
+            else:
+                비과세액 = min(amount, 월한도 * months)
+                과세액 = amount - 비과세액
+                사유 = f"월 {월한도:,}원 × {months}개월 = {월한도 * months:,}원 이내 비과세"
+                비과세_성격 = "월한도비과세"
+            if 비과세액 > 0:
+                산식_목록.append(f"{k}: min({amount:,}, {월한도:,}×{months}) = {비과세액:,}원 비과세, 과세 {과세액:,}원")
+
+        elif k == "자가운전보조금":
+            months = int(facts.get("months", 0))
+            vehicle = facts.get("vehicle", "기타")
+            business_use = facts.get("business_use", False)
+            actual_travel = facts.get("actual_travel_reimbursed", False)
+            월한도 = r["월한도"]
+            차량요건 = r.get("차량요건", [])
+            비과세_대상 = (vehicle in 차량요건) and bool(business_use) and not actual_travel
+            if 비과세_대상:
+                비과세액 = min(amount, 월한도 * months)
+                과세액 = amount - 비과세액
+                사유 = f"본인 소유·임차 차량 업무 사용, 실제 여비 별도 수령 없음 — 월 {월한도:,}원 × {months}개월 이내 비과세(영 제12조 3호)"
+                비과세_성격 = "월한도비과세"
+            else:
+                과세액 = amount
+                비과세액 = 0
+                if vehicle not in 차량요건:
+                    사유 = f"차량 요건 미충족(차량: {vehicle}, 허용: {차량요건}) — 전액 과세"
+                elif not business_use:
+                    사유 = "업무 사용 아님 — 전액 과세"
+                else:
+                    사유 = "실제 여비 별도 수령 — 전액 과세"
+                비과세_성격 = "과세(요건 미충족)"
+            if 비과세액 > 0:
+                산식_목록.append(f"{k}: min({amount:,}, {월한도:,}×{months}) = {비과세액:,}원 비과세, 과세 {과세액:,}원")
+
+        elif k == "출산·보육수당":
+            purpose = facts.get("purpose", "")
+            months = int(facts.get("months", 0))
+            child_age = facts.get("child_age")
+            within_2y = facts.get("within_2y_of_birth", False)
+            payment_count = facts.get("payment_count", 0)
+            related_party = facts.get("related_party", False)
+            월한도 = r["월한도"]
+            출산전액 = r.get("출산전액비과세", False)
+
+            if purpose == "보육":
+                if child_age is not None and int(child_age) > 6:
+                    과세액 = amount; 비과세액 = 0
+                    사유 = f"자녀 나이 {int(child_age)}세 — 6세 이하 한도 초과, 전액 과세"
+                    비과세_성격 = "과세(연령 초과)"
+                else:
+                    비과세액 = min(amount, 월한도 * months)
+                    과세액 = amount - 비과세액
+                    사유 = f"6세 이하 자녀 보육 — 월 {월한도:,}원 × {months}개월 이내 비과세"
+                    비과세_성격 = "월한도비과세"
+            elif purpose == "출산":
+                if year >= 2024 and 출산전액 and within_2y and payment_count <= r.get("출산지급횟수한도", 2) and not related_party:
+                    비과세액 = amount; 과세액 = 0
+                    사유 = f"출생 후 2년 이내 {int(payment_count)}번째 출산 급여 — 전액 비과세(특수관계자 제외, 영 제17조의2 2호)"
+                    비과세_성격 = "출산전액비과세"
+                else:
+                    비과세액 = min(amount, 월한도 * months)
+                    과세액 = amount - 비과세액
+                    사유 = f"출산 급여 — 월 {월한도:,}원 × {months}개월 이내 비과세(2024년 전 또는 요건 미충족 시 월한도 적용)"
+                    비과세_성격 = "월한도비과세"
+            else:
+                비과세액 = min(amount, 월한도 * months)
+                과세액 = amount - 비과세액
+                사유 = f"출산·보육수당 — 월 {월한도:,}원 × {months}개월 이내 비과세"
+                비과세_성격 = "월한도비과세"
+            if 비과세액 > 0:
+                산식_목록.append(f"{k}: min({amount:,}, {월한도:,}×{months}) = {비과세액:,}원 비과세, 과세 {과세액:,}원")
+
+        elif k == "직무발명보상금":
+            retired = facts.get("retired", False)
+            related_party = facts.get("related_party", False)
+            연한도 = r.get("연한도", 0)
+            근로해당 = r.get("근로소득해당", True)
+            특수관계제외 = r.get("특수관계제외", False)
+
+            if year == 2016:
+                제외_항목.append({"kind": k, "금액": amount, "사유": "기타소득(2016년까지는 근로소득 범위 밖 — 소득세법 제20조 2016 시행본에 직무발명보상금 없음)",
+                                  "근거": b})
+                continue
+            if retired:
+                제외_항목.append({"kind": k, "금액": amount, "사유": "기타소득(퇴직 후 수령 — 발명진흥법 직무발명보상금, 소득세법 제21조 22호의2)",
+                                  "근거": b})
+                continue
+            if year >= 2024 and 특수관계제외 and related_party:
+                과세액 = amount; 비과세액 = 0
+                사유 = "2024년부터 사용자등과 특수관계자는 비과세 제외(영 제17조의3 ②)"
+                비과세_성격 = "과세(특수관계)"
+            else:
+                비과세액 = min(amount, 연한도)
+                과세액 = amount - 비과세액
+                직무발명보상금_비과세_사용액 += 비과세액
+                사유 = f"재직 중 직무발명보상금 — 연 {연한도:,}원 이내 비과세(영 제17조의3)"
+                비과세_성격 = "연한도비과세"
+
+        elif k == "연장근로수당":
+            eligible = facts.get("eligible_occupation", False)
+            mine_or_daily = facts.get("mine_or_daily", False)
+            if eligible:
+                mrw = facts.get("monthly_regular_wage")
+                pYG = facts.get("prior_year_gross")
+                if mrw is None or pYG is None:
+                    return {"error": "입력 확인 필요 — 계산하지 않음",
+                            "문제": ["연장근로수당: eligible_occupation=True이나 월정액급여·직전연도 총급여 누락"],
+                            "필요 입력": {"연장근로수당": ["monthly_regular_wage", "prior_year_gross"]}}
+                월정액한도 = r["월정액급여한도"]
+                총급여한도 = r["직전연도총급여한도"]
+                if int(mrw) > 월정액한도 or int(pYG) > 총급여한도:
+                    과세액 = amount; 비과세액 = 0
+                    사유 = f"월정액급여 {int(mrw):,}원 > {월정액한도:,}원 또는 직전연도 총급여 {int(pYG):,}원 > {총급여한도:,}원 — 비과세 요건 미충족(영 제17조①)"
+                    비과세_성격 = "과세(요건 미충족)"
+                elif mine_or_daily:
+                    비과세액 = amount; 과세액 = 0
+                    사유 = "광산·일용근로자 — 연장근로수당 전액 비과세(영 제17조② 1호)"
+                    비과세_성격 = "연한도비과세(전액)"
+                else:
+                    연한도 = r["연한도"]
+                    비과세액 = min(amount, 연한도)
+                    과세액 = amount - 비과세액
+                    사유 = f"생산직 등 요건 충족 — 연 {연한도:,}원 이내 비과세(영 제17조② 1호)"
+                    비과세_성격 = "연한도비과세"
+            else:
+                과세액 = amount; 비과세액 = 0
+                사유 = "생산직 등 요건 미해당 — 전액 과세"
+                비과세_성격 = "과세(비대상)"
+
+        elif k == "사택제공이익":
+            position = facts.get("position", "")
+            비과세대상 = r.get("비과세대상", [])
+            비과세성격_v = r.get("비과세성격", "비과세")
+            if position in 비과세대상:
+                if 비과세성격_v == "근로소득 아님":
+                    # 2016~2020년: 사택제공이익은 비과세 금액이나 비과세_합계가 아닌 근로소득_아님_합계에 산입
+                    과세액 = 0; 비과세액 = 0
+                    사유 = f"비과세 대상({position}) — 사택 제공 이익 근로소득에서 제외(비과세 성격: 근로소득 아님, 영 제38조①6호 단서)"
+                    비과세_성격 = 비과세성격_v
+                else:
+                    비과세액 = amount; 과세액 = 0
+                    사유 = f"비과세 대상({position}) — 사택 제공 이익 비과세(영 제38조①6호, 영 제17조의4 1호)"
+                    비과세_성격 = 비과세성격_v
+            else:
+                과세액 = amount; 비과세액 = 0
+                사유 = f"비과세 대상 아님({position}) — 전액 과세"
+                비과세_성격 = "과세(비대상)"
+
+        elif k == "주택자금대여이익":
+            sme = facts.get("sme", False)
+            related_party = facts.get("related_party", False)
+            중소기업제외 = r.get("중소기업제외", False)
+            특수관계제외 = r.get("특수관계제외", False)
+            비과세성격_v = r.get("비과세성격", "근로소득 아님")
+            if not sme or not 중소기업제외:
+                # sme=False: 중소기업 종업원 아님 → 전액 과세
+                # 중소기업제외=False(2016~2019): 중소기업 종업원이라도 예외 없음 → 전액 과세
+                과세액 = amount; 비과세액 = 0
+                사유 = "중소기업 종업원 아님 또는 해당 연도 중소기업 예외 없음 — 주택자금 대여이익 전액 과세(영 제38조①7호)"
+                비과세_성격 = "과세(비대상)"
+            elif year >= 2024 and 특수관계제외 and related_party:
+                과세액 = amount; 비과세액 = 0
+                사유 = "2024년부터 중소기업 종업원이라도 특수관계자(지배주주등·친족)는 비과세 제외 — 전액 과세(영 제17조의4 2호 단서, 부칙 2024.2.29)"
+                비과세_성격 = "과세(특수관계)"
+            else:
+                if 비과세성격_v == "근로소득 아님":
+                    # 2020년: 중소기업 종업원 주택자금 대여이익은 근로소득에서 제외(비과세 금액 아님)
+                    과세액 = 0; 비과세액 = 0
+                    사유 = "중소기업 종업원 주택자금 대여이익 — 근로소득에서 제외(비과세 성격: 근로소득 아님, 영 제38조①7호 단서)"
+                    비과세_성격 = 비과세성격_v
+                else:
+                    비과세액 = amount; 과세액 = 0
+                    사유 = "중소기업 종업원 주택자금 대여이익 — 비과세(영 제38조①7호 단서, 영 제17조의4 2호)"
+                    비과세_성격 = 비과세성격_v
+
+        elif k == "단체보험료":
+            연한도 = r["연한도"]
+            비과세액 = min(amount, 연한도)
+            과세액 = amount - 비과세액
+            사유 = f"단체순수보장성·환급부보장성 보험료 — 연 {연한도:,}원 이내 비과세(영 제38조①12호, 영 제17조의4 3호가목)"
+            비과세_성격 = "연한도비과세"
+
+        elif k == "학자금":
+            beneficiary = facts.get("beneficiary", "")
+            if beneficiary == "본인":
+                req = facts.get("requirements_met", False)
+                if req:
+                    비과세액 = amount; 과세액 = 0
+                    사유 = "근로자 본인 학자금 — 업무관련·지급기준·반납조건 3요건 충족, 비과세(영 제11조, 법 제12조3호아목)"
+                    비과세_성격 = "요건비과세"
+                else:
+                    과세액 = amount; 비과세액 = 0
+                    사유 = "근로자 본인 학자금이나 3요건(업무관련·지급기준·반납조건) 미충족 — 전액 과세"
+                    비과세_성격 = "과세(요건 미충족)"
+            else:
+                과세액 = amount; 비과세액 = 0
+                사유 = "가족(자녀 등) 학자금 — 전액 과세(영 제11조, 법 제12조3호아목)"
+                비과세_성격 = "과세(가족 학자금)"
+
+        elif k == "실비변상여비":
+            actual_cost = facts.get("actual_cost")
+            if actual_cost is None:
+                return {"error": "입력 확인 필요 — 계산하지 않음",
+                        "문제": ["실비변상여비: actual_cost(실비 정산 여부, true/false) 누락"],
+                        "필요 입력": {"실비변상여비": ["actual_cost"]}}
+            if not isinstance(actual_cost, bool):
+                return {"error": "입력 확인 필요 — 계산하지 않음",
+                        "문제": ["실비변상여비: actual_cost는 실비 정산 여부(true/false)여야 함 — 숫자가 입력됨"],
+                        "필요 입력": {"실비변상여비": ["actual_cost"]}}
+            if actual_cost:
+                비과세액 = amount; 과세액 = 0
+                사유 = "실비변상 실제 비용 정산 지급 — 전액 비과세(영 제12조 3호, 법 제12조3호자목)"
+                비과세_성격 = "요건비과세"
+            else:
+                과세액 = amount; 비과세액 = 0
+                사유 = "실비변상 실제 비용 정산 미지급 — 전액 과세(영 제12조 3호, 법 제12조3호자목)"
+                비과세_성격 = "과세"
+
+        elif k == "사회보험료_본인부담분_회사대납":
+            과세액 = amount; 비과세액 = 0
+            사유 = "근로자 본인 부담 사회보험료 회사 대납 — 근로소득 과세(법 제20조①1호, 법 제12조3호너목 단서)"
+            비과세_성격 = "과세"
+
+        elif k == "사회보험료_사용자부담분":
+            비과세액 = amount; 과세액 = 0
+            사유 = "사용자 부담 사회보험료 — 근로소득 아님(법 제12조3호너목)"
+            비과세_성격 = "비과세"
+
+        else:
+            # 기타 과세 항목 (급여, 상여, 잉여금처분상여, 인정상여)
+            과세액 = amount; 비과세액 = 0
+            사유 = "과세 근로소득"
+            비과세_성격 = "과세"
+
+        # 항목별 kind는 vocab 정식 이름(별칭이 입력됐어도 정식 이름으로 출력)
+        정식_kind = vocab.resolve(k)["이름"]
+
+        항목별.append({
+            "kind": 정식_kind,
+            "금액": amount,
+            "과세액": 과세액,
+            "비과세액": 비과세액,
+            "비과세_성격": 비과세_성격,
+            "근거": b,
+            "사유": 사유,
+        })
+        총급여액 += 과세액
+        비과세_합계 += 비과세액
+
+        # 근로소득 아님 항목 집계: vocab 판단.비과세성격이 "근로소득 아님"인 항목만
+        # 사택제공이익(2016~2020)·주택자금대여이익(2020) 등. 사회보험료_사용자부담분은
+        #   vocab 판단.비과세성격 필드가 없고 판단.구분="비과세" → 비과세_합계에만 포함.
+        if r.get("비과세성격") == "근로소득 아님":
+            근로소득_아님_합계 += amount
+
+    # ── 5. 근로소득공제·근로소득금액 ──
+    근로소득공제 = I.earned_deduction(총급여액, year)
+    근로소득금액 = 총급여액 - 근로소득공제
+
+    if 직무발명보상금_비과세_사용액 > 0:
+        산식_목록.append(f"직무발명보상금 비과세 사용액: {직무발명보상금_비과세_사용액:,}원 (기타소득 비과세 한도 공유용, 영 제18조②)")
+    산식_목록.append(f"총급여액 = Σ 과세액 = {총급여액:,}원")
+    산식_목록.append(f"근로소득공제 = earned_deduction({총급여액:,}원, {year}) = {근로소득공제:,}원 (소득세법 제47조①)")
+    산식_목록.append(f"근로소득금액 = 총급여액 {총급여액:,}원 − 근로소득공제 {근로소득공제:,}원 = {근로소득금액:,}원")
+
+    근거_목록.extend(b for _, _, b in [(it["kind"], it["금액"], it["근거"]) for it in 항목별])
+
+    return _ok({
+        "총급여액": 총급여액,
+        "비과세_합계": 비과세_합계,
+        "근로소득_아님_합계": 근로소득_아님_합계,
+        "근로소득공제": 근로소득공제,
+        "근로소득금액": 근로소득금액,
+        "직무발명보상금_비과세_사용액": 직무발명보상금_비과세_사용액,
+    }, 근거_목록,
+       항목별=항목별,
+       제외_항목=제외_항목,
+       산식=산식_목록)
 
 
 # ───────── 세무조사 판정 도구 11개 ─────────
@@ -2647,6 +3095,446 @@ def bundled_supply_split(total_price: WON,
     }
 
 
+@mcp.tool(annotations=CALC)
+@_guard
+def depreciation_adjustment(
+    year: YEAR,
+    method: Annotated[Literal["정액법", "정률법", "무신고"], Field(description="신고한 상각방법. 신고하지 않았으면 '무신고'(asset_class로 법정 방법 결정)")],
+    acquisition_cost: Annotated[int, Field(description="기말 재무상태표상 취득가액(원, 자산으로 처리한 자본적 지출 포함)", ge=0)],
+    booked_depreciation: Annotated[int, Field(description="당기 손익계산서 감가상각비(회사계상, 원)", ge=0)],
+    useful_life: Annotated[int | None, Field(description="신고내용연수(무신고면 기준내용연수, 2~60년) — 시행규칙 별표4 상각률을 고름")] = None,
+    rate: Annotated[float | None, Field(description="상각률을 직접 줄 때(소수, 예: 0.259). useful_life와 함께 주면 별표4와 같아야 함", gt=0, lt=1)] = None,
+    asset_class: Annotated[Literal["건축물", "건축물외_유형자산", "무형자산"] | None, Field(description="자산 구분 — 무신고 법정 방법(영 제26조④)과 정률법 허용 여부 판단")] = None,
+    accumulated_dep_begin: Annotated[int | None, Field(description="기초(전기말) 재무상태표상 감가상각누계액(원)", ge=0)] = None,
+    accumulated_dep_end: Annotated[int | None, Field(description="기말 재무상태표상 감가상각누계액(원, 당기 감가상각비 포함)", ge=0)] = None,
+    expensed_capex: Annotated[int, Field(description="당기 수선비 등 비용으로 처리한 자본적 지출(원)", ge=0)] = 0,
+    repair_total: Annotated[int | None, Field(description="이 자산의 당기 수선비 지출 총액(원, 자본적+수익적). 생략하면 expensed_capex", ge=0)] = None,
+    periodic_repair: Annotated[bool, Field(description="3년 미만 주기적 수선 지출 여부(영 제31조③3호)")] = False,
+    prior_book_value: Annotated[int | None, Field(description="직전 사업연도말 재무상태표상 장부가액(취득가액 − 감가상각누계액, 원) — 수선비 5% 기준용", ge=0)] = None,
+    prior_deemed_capex: Annotated[int, Field(description="전기 이전 즉시상각의제액 누계(원) — 정액법 취득가액에 가산", ge=0)] = 0,
+    prior_disallowed: Annotated[int, Field(description="전기말 상각부인누계액(유보 잔액, 원). 감가상각의제 △유보 잔액이면 음수")] = 0,
+    in_service_date: Annotated[str | None, Field(description="사업연도 중 취득해 사업에 사용한 날(YYYY-MM-DD) — 월할 상각")] = None,
+    fy_start: Annotated[str | None, Field(description="사업연도 개시일(YYYY-MM-DD), 생략하면 year-01-01")] = None,
+    fy_end: Annotated[str | None, Field(description="사업연도 종료일(YYYY-MM-DD), 생략하면 year-12-31")] = None,
+    tax_exempt: Annotated[bool, Field(description="당기 법인세를 면제·감면받았는지(영 제30조 감가상각의제)")] = False,
+) -> dict:
+    """법인세 감가상각 시부인 — 개별 자산별 상각범위액과 회사계상액 비교(법인세법 제23조, 시행령 제26조·제28조·제30조·제31조·제32조).
+언제: 감가상각비 세무조정(상각부인액·시인부족액·전기 부인액 추인·감면법인 의제상각)과 세무상 미상각잔액을 구할 때.
+입력:
+  year — 사업연도(2016~2026), method — 정액법|정률법|무신고(asset_class 필요).
+  useful_life 또는 rate — 내용연수(별표4 상각률) 또는 상각률.
+  acquisition_cost·booked_depreciation — 기말 취득가액·당기 감가상각비.
+  accumulated_dep_begin 또는 accumulated_dep_end — 기초 또는 기말 감가상각누계액.
+  expensed_capex·repair_total·periodic_repair·prior_book_value — 비용 처리한 자본적 지출과 즉시상각의제 예외 판단(600만원·2019년까지 300만원 미만, 직전 장부가액 5% 미만, 3년 미만 주기 수선).
+  prior_deemed_capex — 전기 이전 즉시상각의제 누계(정액법).
+  prior_disallowed — 전기말 상각부인누계액(△유보면 음수).
+  in_service_date — 기중 취득·사용개시일(월할, 1개월 미만은 1개월).
+  fy_start·fy_end — 사업연도(12개월만 지원).
+  tax_exempt — 법인세 면제·감면 여부.
+결과: 세무조정(상각부인액 유보, 추인·감가상각의제 △유보)·상각범위액·회사계상액·기말 상각부인누계액·세무상 미상각잔액·판단·근거. 사실이 빠지거나 맞지 않으면 error와 필요 입력을 돌려주고 계산하지 않음."""
+    r = C.depreciation_adjustment(year, method, acquisition_cost, booked_depreciation,
+                                   useful_life, rate, asset_class,
+                                   accumulated_dep_begin, accumulated_dep_end,
+                                   expensed_capex, repair_total, periodic_repair,
+                                   prior_book_value, prior_deemed_capex, prior_disallowed,
+                                   in_service_date, fy_start, fy_end, tax_exempt)
+    if "error" in r:
+        return r
+    # r = {"결과": {...}, "계산": {...}, "판단": [...], "산식": [...]}
+    result_data = r.pop("결과")
+    calc_data = r.pop("계산")
+    판단_data = r.pop("판단")
+    산식_data = r.pop("산식")
+    return {"결과": result_data, "계산": calc_data, "판단": 판단_data,
+            "근거": "법인세법 제23조, 시행령 제26조·제28조·제30조·제31조·제32조, 시행규칙 별표 4",
+            "산식": 산식_data}
+
+
+# ── 끝에서 끝까지: 퇴직급여충당금·확정급여형 퇴직연금충당금 세무조정 (SPEC c6) ──
+# 어휘 항목: 퇴직급여충당금_한도(vocab.rule에서 총급여_비율·추계액_적립비율·처리·지급·퇴직연금_지급 읽음)
+# facts_vocab.json 수정 금지 — 연도표 적립비율은 vocab.rule로 읽는다.
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def retirement_allowance_adjustment(
+    year: YEAR,
+    allowance: Annotated[dict, Field(description="장부상 퇴직급여충당금(원) {opening: 기초, closing: 기말, provision?: 당기 설정(손비 계상), paid_cash?: 회사가 직접 지급하고 충당금과 상계, paid_pension?: 퇴직연금운용자산에서 지급하고 충당금과 상계, other_increase?: 합병·사업양수 승계 등 설정 아닌 증가} — 생략 키는 0, 기초+증가−감소=기말이어야 함")],
+    prior_disallowed: Annotated[int, Field(description="기초 퇴직급여충당금 부인누계(유보 잔액, 원)", ge=0)],
+    estimate: Annotated[dict | None, Field(description="기말 퇴직급여추계액(원) {lump_sum: 일시퇴직기준, actuarial?: 보험수리기준(영 제44조의2④1호의2 금액)} — 설정액이나 퇴직연금이 있으면 필수")] = None,
+    salary: Annotated[dict | None, Field(description="당기 총급여액(원) {total: 전체 임원·직원 총급여, dc_members?: 확정기여형 퇴직연금 설정자분, not_eligible?: 퇴직급여 지급대상 아닌 자(예: 규정상 1년 미만 근속자)분} — 당기 설정액이 있으면 필수")] = None,
+    succeeded_disallowed: Annotated[int, Field(description="other_increase 중 합병 등으로 승계한 부인누계(유보, 원)", ge=0)] = 0,
+    conversion_fund: Annotated[int, Field(description="국민연금 퇴직금전환금 기말잔액(원)", ge=0)] = 0,
+    pension: Annotated[dict | None, Field(description="확정급여형 퇴직연금(원) {asset_closing: 퇴직연금운용자산 기말잔액, prior_deducted: 세무상 퇴직연금충당금 기초잔액(이미 손금산입한 부담금 누계, △유보), book_provision?: 결산에 계상한 퇴직연금충당금(신고조정이면 0), dc_transferred_allowance?: 확정기여형 전환자의 설정 전 기계상 퇴직급여충당금} — 없으면 퇴직연금 조정 생략")] = None,
+) -> dict:
+    """퇴직급여충당금·확정급여형 퇴직연금충당금 세무조정(법인세법 제33조, 시행령 제44조의2·제60조, 시행규칙 제24조).
+    언제: 법인세 세무조정에서 퇴직급여충당금 한도초과, 퇴직금 지급 시 상계·부인액 추인, 퇴직연금 부담금 손금산입 한도를 함께 계산할 때.
+    입력:
+      year — 사업연도(2016~2026), 추계액 적립비율은 연도표(2016년 이후 0%).
+      allowance — 장부상 퇴직급여충당금 {opening, closing, provision?, paid_cash?, paid_pension?, other_increase?}.
+      prior_disallowed — 기초 부인누계(유보). succeeded_disallowed — 합병 등으로 승계한 부인누계.
+      estimate — 기말 추계액 {lump_sum, actuarial?}, 큰 금액을 씀.
+      salary — 총급여 {total, dc_members?, not_eligible?}: 확정기여형 설정자·지급대상 아닌 자 제외.
+      conversion_fund — 퇴직금전환금 기말잔액.
+      pension — 확정급여형 {asset_closing, prior_deducted, book_provision?, dc_transferred_allowance?}.
+    결과: 세무조정(과목·조정 익금산입/손금불산입/손금산입·금액·소득처분 유보/△유보), 소득금액_순영향, 계산(세무상 잔액·한도). 입력이 모자라거나 장부 증감이 맞지 않으면 error."""
+
+    # ── 입력 정리 ──
+    opening = int(allowance.get("opening", 0))
+    closing = int(allowance.get("closing", 0))
+    provision = int(allowance.get("provision", 0) or 0)
+    paid_cash = int(allowance.get("paid_cash", 0) or 0)
+    paid_pension = int(allowance.get("paid_pension", 0) or 0)
+    other_increase = int(allowance.get("other_increase", 0) or 0)
+
+    has_prov = provision > 0
+    has_pension = pension is not None
+    needs_estimate = has_prov or has_pension
+    needs_salary = has_prov
+
+    # ── 입력 누락 검사 ──
+    missing = []
+    if needs_estimate and (estimate is None or int(estimate.get("lump_sum", 0) or 0) == 0):
+        missing.append("estimate.lump_sum — 기말 일시퇴직기준 추계액")
+    if needs_salary and (salary is None or int(salary.get("total", 0) or 0) == 0):
+        missing.append("salary.total — 당기 총급여액")
+    if paid_pension > 0 and pension is None:
+        missing.append("pension.prior_deducted — 세무상 퇴직연금충당금 기초잔액")
+    if missing:
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"input 누락: {', '.join(missing)}"],
+                "필요 입력": missing}
+
+    # ── 장부 증감 검증 ──
+    calc_closing = opening + provision + other_increase - paid_cash - paid_pension
+    if calc_closing != closing:
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"장부 증감 불일치: opening({opening:,}) + provision({provision:,}) + other_increase({other_increase:,}) − paid_cash({paid_cash:,}) − paid_pension({paid_pension:,}) = {calc_closing:,} ≠ closing({closing:,})"],
+                "필요 입력": ["opening + provision + other_increase − paid_cash − paid_pension = closing 확인"]}
+
+    # ── 어휘 규칙 ──
+    rule_h = vocab.rule("퇴직급여충당금_한도", year)
+    급여_비율 = rule_h.get("총급여_비율")
+    적립비율 = rule_h.get("추계액_적립비율")
+    if 급여_비율 is None:
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": ["vocab '퇴직급여충당금_한도'에 총급여_비율이 없음"],
+                "필요 입력": ["vocab 확인"]}
+
+    # ── 추정 추계액 ──
+    lump_sum = int(estimate.get("lump_sum", 0) or 0) if estimate else 0
+    actuarial = int(estimate.get("actuarial", 0) or 0) if estimate else 0
+    추계액 = max(lump_sum, actuarial)
+
+    # ── 대상 총급여 ──
+    총급여_전체 = int(salary.get("total", 0) or 0) if salary else 0
+    dc_members = int(salary.get("dc_members", 0) or 0) if salary else 0
+    not_eligible = int(salary.get("not_eligible", 0) or 0) if salary else 0
+    대상_총급여 = 총급여_전체 - dc_members - not_eligible
+
+    # ── 총급여 기준 한도 ──
+    총급여기준_한도 = int(대상_총급여 * 급여_비율)
+
+    # ── 추계액 기준 누적한도 ──
+    # 누적한도 = max(일시퇴직, 보험수리) × 적립비율 + 퇴직금전환금 − 세무상 설정전 잔액(음수 0 처리 전)
+    # 적립비율 적용 추계액 부분
+    적립_추계액 = int(추계액 * 적립비율)
+    # 세무상 설정전 잔액(아래에서 계산) 차감 전 임시값
+    # 실제 계산시 세무상_설정전잔액을 먼저 구해야 함 — 순환 참조는 아님(세무상 설정전잔액은 당기 설정과 별개)
+    # 명세: "세무상 설정전 잔액 = 기초 − 기초 부인누계 − (상계 중 세무상 잔액 사용분) + (other_increase − succeeded_disallowed)… 구체 산식은 어휘 처리"
+    # 어휘 '처리'에 상세 산식이 없으므로 명세 규칙대로:
+    # 세무상 설정전 잔액 = 기초 − 기초부인누계 − min(지급총액, max(0, 기초 − 기초부인누계)) + other_increase − succeeded_disallowed
+
+    # 세무상 기초 잔액 = opening − prior_disallowed
+    세무_기초_잔액 = opening - prior_disallowed
+
+    # 지급액이 세무상 잔액 초과 여부
+    지급총액 = paid_cash + paid_pension
+    세무상_잔액_사용액 = min(지급총액, max(0, 세무_기초_잔액))
+
+    # 세무상 설정전 잔액 (당기 설정 전)
+    세무상_설정전잔액 = 세무_기초_잔액 - 세무상_잔액_사용액 + other_increase - succeeded_disallowed
+    # 음수면 0 (한도 계산 시)
+    세무_설정전잔액_하한 = max(0, 세무상_설정전잔액)
+
+    # 누적한도 = 적립_추계액 + conversion_fund − 세무상 설정전잔액(음수 0 처리)
+    누적한도 = 적립_추계액 + conversion_fund - 세무_설정전잔액_하한
+    누적한도 = max(0, 누적한도)
+
+    추계액기준_한도 = 누적한도
+    누계액기준_한도 = 추계액기준_한도   # 판단·산식 문자열용 동의어
+
+    # ── 퇴직급여충당금 한도 ──
+    퇴직급여충당금_한도 = min(총급여기준_한도, 추계액기준_한도)
+
+    # ── 한도초과액 ──
+    한도초과액 = max(0, provision - 퇴직급여충당금_한도)
+
+    # prior_deducted는 pension 블록 앞에서 미리 추출(pension 없으면 0) — 부인액_추인 계산에 필요
+    _prior_deducted = int(pension.get("prior_deducted", 0) or 0) if has_pension else 0
+
+    # ── 지급 상계 & 부인액 추인 ──
+    # 1. 세무상 충당금(기초 − 기초 부인누계)과 지급 상계
+    세무상_충당금_기초 = max(0, 세무_기초_잔액)
+    # 2. 연금상계분을 뺀 과세 지급액만 세무상 충당금과 상계
+    #    연금상계 = min(paid_pension, prior_deducted) (pension 있으면), 없으면 0
+    연금상계 = min(paid_pension, _prior_deducted) if has_pension else 0
+    과세_지급액 = paid_cash + (paid_pension - 연금상계)
+    # 3. 과세 지급액이 세무상 잔액을 초과하는 부분 = 부인액과 상계 → 손금산입△유보
+    초과지급액 = max(0, 과세_지급액 - 세무상_충당금_기초)
+    부인액_추인 = min(초과지급액, prior_disallowed)  # 부인누계(유보)와 상계 → 추인
+
+    # ── 지급 후 세무상 잔액(설정 전) 재계산 ──
+    # 실제 세무상 사용 후 잔액 = 세무상_설정전잔액(이미 computed) − 한도초과 반영 전
+    # 한도초과는 provision에서 발생하므로 별도
+
+    # ── 퇴직연금 조정일 때 ──
+    # 연금충당금 상계액은 pension 유무와 무관하게 정의(pension 없으면 0)
+    # 운용자산 지급분(paid_pension)은 먼저 세무상 연금충당금(prior_deducted)과 상계 →
+    #     그 상계액만큼 퇴직연금충당금 익금산입(유보) + 퇴직급여충당금 손금산입(△유보)
+    #     초과분은 퇴직급여충당금 직접 지급으로 보아 부인누계(유보)와 상계 → 손금산입(△유보) 추인
+    연금충당금_상계액 = 0
+    연금초과 = max(0, paid_pension - 연금충당금_상계액)   # pension 없으면 paid_pension 전액
+    dc_transferred = 0   # DC 전환자 설정 전 기계상 퇴직급여충당금 (pension 없을 때 0)
+    퇴직연금_결과 = None
+    if has_pension:
+        asset_closing = int(pension.get("asset_closing", 0) or 0)
+        prior_deducted = int(pension.get("prior_deducted", 0) or 0)
+        book_provision = int(pension.get("book_provision", 0) or 0)
+        dc_transferred = int(pension.get("dc_transferred_allowance", 0) or 0)
+
+        # 운용자산 지급분 처리: 연금충당금 상계액 = min(paid_pension, prior_deducted)
+        연금충당금_상계액 = min(paid_pension, prior_deducted)
+        연금초과 = max(0, paid_pension - 연금충당금_상계액)
+
+        # 이미 손금산입한 부담금 = prior_deducted − 연금충당금 상계액
+        # (시행규칙 제24조②: 이미 손금산입한 부담금 = 누계 − 당기 수령·상계액)
+        이미_손금산입한_부담금 = prior_deducted - 연금충당금_상계액
+
+        # 기말 세무상 퇴직급여충당금(퇴직연금 반영 전)
+        # 설정 후 세무상 잔액 = 세무상_설정전잔액 + (provision − 한도초과액) = 세무_설정전잔액_하한 + min(provision, 한도)
+        세무상_퇴직급여충당금_기말 = 세무_설정전잔액_하한 + (provision - 한도초과액)
+
+        # DC 전환자 설정 전 기계상 퇴직급여충당금이 있으면 그만큼 차감(퇴직연금 한도 계산 시)
+        # 명세: "추계액기준 연금한도 = 추계액 − 세무상 퇴직급여충당금 기말잔액(− dc_transferred_allowance 반영)"
+        dc_조정_기말 = max(0, 세무상_퇴직급여충당금_기말 - dc_transferred)
+        추계액기준_연금한도 = max(0, 추계액 - dc_조정_기말 - 이미_손금산입한_부담금)
+
+        # 운용자산기준 연금한도 = max(0, asset_closing − 이미_손금산입한_부담금)
+        운용자산기준_연금한도 = max(0, asset_closing - 이미_손금산입한_부담금)
+
+        # 손금산입범위 = min(두 한도)
+        손금산입범위 = min(추계액기준_연금한도, 운용자산기준_연금한도)
+        손금산입범위 = max(0, 손금산입범위)
+
+        # 결산 계상(book_provision)과 비교해 부족분 손금산입·△유보, 초과분 손금불산입·유보
+        퇴직연금_납입_부족 = max(0, 손금산입범위 - book_provision)  # 손금산입·△유보
+        퇴직연금_납입_초과 = max(0, book_provision - 손금산입범위)  # 손금불산입·유보
+
+        # 세무상_퇴직연금충당금_기말 = 이미_손금산입한_부담금 + 당기 손금산입액
+        # 당기 손금산입액 = max(0, 손금산입범위 − book_provision) = 퇴직연금_납입_부족
+        세무상_퇴직연금충당금_기말 = 이미_손금산입한_부담금 + 퇴직연금_납입_부족
+
+        퇴직연금_결과 = {
+            "연금충당금_상계액": 연금충당금_상계액,
+            "이미_손금산입한_부담금": 이미_손금산입한_부담금,
+            "추계액기준_연금한도": 추계액기준_연금한도,
+            "운용자산기준_연금한도": 운용자산기준_연금한도,
+            "퇴직연금_손금산입범위액": 손금산입범위,
+            "퇴직연금_납입_부족": 퇴직연금_납입_부족,
+            "퇴직연금_납입_초과": 퇴직연금_납입_초과,
+            "세무상_퇴직연금충당금_기말": max(0, 세무상_퇴직연금충당금_기말),
+        }
+
+    # ── 세무조정 조립 ──
+    settlements = []
+    # 1. 한도초과(손금불산입·유보)
+    if 한도초과액 > 0:
+        settlements.append({"구분": "퇴직급여충당금 한도초과",
+                            "조정": "손금불산입",
+                            "금액": 한도초과액,
+                            "소득처분": "유보",
+                            "근거": "법인세법 제33조①·시행령 제60조①·②",
+                            "이유": f"당기 설정액 {provision:,}원 > 한도 {퇴직급여충당금_한도:,}원 → 초과 {한도초과액:,}원 손금불산입(유보)"})
+    # 2. 부인액 추인(손금산입·△유적)
+    if 부인액_추인 > 0:
+        settlements.append({"구분": "퇴직급여충당금(부인액 추인)",
+                            "조정": "손금산입",
+                            "금액": 부인액_추인,
+                            "소득처분": "△유보",
+                            "근거": "법인세법 제33조②·기본통칙 33-60…5",
+                            "이유": f"지급 총액 {지급총액:,}원 중 세무상 충당금 {세무상_충당금_기초:,}원 초과분 {초과지급액:,}원 → 부인누계(유보)와 상계, {부인액_추인:,}원 추인(△유보)"})
+    # 3. 퇴직연금 부족(손금산입·△유적) — 있으면
+    if has_pension and 퇴직연금_결과:
+        r = 퇴직연금_결과
+        if r["퇴직연금_납입_부족"] > 0:
+            settlements.append({"구분": "퇴직연금충당금",
+                                "조정": "손금산입",
+                                "금액": r["퇴직연금_납입_부족"],
+                                "소득처분": "△유보",
+                                "근거": "법인세법 제33조①·시행령 제44조의2④·시행규칙 제24조②",
+                                "이유": f"손금산입범위 {r['퇴직연금_손금산입범위액']:,}원 − 결산 계상 {book_provision:,}원 = 부족 {r['퇴직연금_납입_부족']:,}원 → 신고조정 손금산입(△유보)"})
+        if r["퇴직연금_납입_초과"] > 0:
+            settlements.append({"구분": "퇴직연금충당금 한도초과",
+                                "조정": "손금불산입",
+                                "금액": r["퇴직연금_납입_초과"],
+                                "소득처분": "유보",
+                                "근거": "법인세법 제33조①·시행령 제44조의2④·시행규칙 제24조②",
+                                "이유": f"결산 계상 {book_provision:,}원 > 손금산입범위 {r['퇴직연금_손금산입범위액']:,}원 → 초과 {r['퇴직연금_납입_초과']:,}원 손금불산입(유보)"})
+        # 퇴직연금 지급 시 상계: 운용자산 지급분은 우선 연금충당금(prior_deducted)과 상계
+        #   → 상계액만큼 퇴직연금충당금 익금산입(유보) + 퇴직급여충당금 손금산입(△유보)
+        #   → 남은 초과분은 퇴직급여충당금 직접 지급으로 보아 부인누계(유보)와 상계 → 추인
+        if paid_pension > 0:
+            if 연금충당금_상계액 > 0:
+                settlements.append({"구분": "퇴직연금충당금(지급 상계)",
+                                    "조정": "익금산입",
+                                    "금액": 연금충당금_상계액,
+                                    "소득처분": "유보",
+                                    "근거": "법인세법 제33조②·어휘 퇴직연금_지급(기본통칙 33-60…5)",
+                                    "이유": f"퇴직연금운용자산에서 {paid_pension:,}원 지급, 그중 {연금충당금_상계액:,}원(min(지급액, prior_deducted {prior_deducted:,}))은 세무상 연금충당금과 상계 → 퇴직연금충당금 익금산입(유보)"})
+                settlements.append({"구분": "퇴직급여충당금(퇴직연금 지급 대체)",
+                                    "조정": "손금산입",
+                                    "금액": 연금충당금_상계액,
+                                    "소득처분": "△유보",
+                                    "근거": "법인세법 제33조②·어휘 퇴직연금_지급(기본통칙 33-60…5)",
+                                    "이유": f"연금충당금 상계액 {연금충당금_상계액:,}원만큼 퇴직급여충당금과 상계 → 손금산입(△유보)"})
+
+
+    # ── 소득처분별 합계 ──
+    유보_합계 = sum(s["금액"] for s in settlements if s["소득처분"] == "유보")
+    델타유보_합계 = sum(s["금액"] for s in settlements if s["소득처분"] == "△유보")
+    손금불산입_합계 = sum(s["금액"] for s in settlements if s["조정"] == "손금불산입")
+    손금산입_합계 = sum(s["금액"] for s in settlements if s["조정"] == "손금산입")
+    익금산입_합계 = sum(s["금액"] for s in settlements if s["조정"] == "익금산입")
+    소득금액_순영향 = 손금불산입_합계 + 익금산입_합계 - 손금산입_합계
+    가산조정 = 손금불산입_합계 + 익금산입_합계
+    차감조정 = 손금산입_합계
+
+    처분별 = {}
+    if 유보_합계 != 0:
+        처분별["유보"] = 유보_합계
+    if 델타유보_합계 != 0:
+        처분별["△유보"] = 델타유보_합계
+
+    result = {
+        "소득처분별_합계": 처분별,
+        "손금불산입_합계": 손금불산입_합계,
+        "소득금액_순영향": 소득금액_순영향,
+        "가산조정": 가산조정,
+        "차감조정": 차감조정,
+    }
+
+    # ── 계산 키 재정의 (명세 기준) ──
+    # 퇴직급여충당금_상계 = (paid_cash + 연금초과) 중 세무상 충당금(기초 − 부인누계)과 실제 상계한 금액
+    # 연금초과 = pension 없으면 paid_pension 전액, pension 있으면 paid_pension − 연금충당금_상계액
+    과세_지급액 = paid_cash + 연금초과
+    퇴직급여충당금_상계 = min(과세_지급액, max(0, 세무_기초_잔액))
+
+    # 누적한도 = 추계액 × 적립비율 + 퇴직금전환금 (세무_설정전잔액 차감 전)
+    누적한도_raw = 적립_추계액 + conversion_fund
+    # 추계액을_기준으로_한도 = max(0, 누적한도 − 세무_설정전잔액)
+    추계액을_기준으로_한도 = max(0, 누적한도_raw - 세무_설정전잔액_하한)
+    # 퇴직급여충당금_한도 = min(총급여기준_한도, 추계액을_기준으로_한도)
+    퇴직급여_한도 = min(총급여기준_한도, 추계액을_기준으로_한도)
+    한도초과액 = max(0, provision - 퇴직급여_한도)
+
+    calc = {
+        "세무상_퇴직급여충당금_지급전잔액": 세무_설정전잔액_하한,
+        "퇴직연금충당금_상계": 연금충당금_상계액,
+        "퇴직급여충당금_상계": 퇴직급여충당금_상계,
+        "부인액_추인": 부인액_추인,
+        "세무상_설정전잔액": 세무_설정전잔액_하한,
+        "대상_총급여": 대상_총급여,
+        "총급여기준_한도": 총급여기준_한도,
+        "추계액": 추계액,
+        "추계액_적립비율": 적립비율,
+        "누적한도": 누적한도_raw,
+        "추계액기준_한도": 추계액을_기준으로_한도,
+        "퇴직급여충당금_한도": 퇴직급여_한도,
+        "세무상_퇴직급여충당금_기말": max(0, 세무_설정전잔액_하한 + min(provision, 퇴직급여_한도)),
+        "퇴직급여충당금_유보_기말": prior_disallowed + succeeded_disallowed + max(0, provision - 퇴직급여_한도) - 부인액_추인 - 연금충당금_상계액,
+    }
+
+    if 퇴직연금_결과:
+        calc.update({
+            "이미_손금산입한_부담금": 퇴직연금_결과["이미_손금산입한_부담금"],
+            "추계액기준_연금한도": 퇴직연금_결과["추계액기준_연금한도"],
+            "운용자산기준_연금한도": 퇴직연금_결과["운용자산기준_연금한도"],
+            "퇴직연금_손금산입범위액": 퇴직연금_결과["퇴직연금_손금산입범위액"],
+            "세무상_퇴직연금충당금_기말": 퇴직연금_결과["세무상_퇴직연금충당금_기말"],
+        })
+
+    근거_목록 = vocab.basis("퇴직급여충당금_한도", year)
+    근거_문자열 = ", ".join(
+        f"{b[0]} {b[1]} {b[2]}" + (f" {b[3]}" if b[3] else "")
+        for b in 근거_목록
+    )
+
+    판단_목록 = [
+        {"항목": "장부 증감 검증", "결론": "일치" if calc_closing == closing else "불일치",
+         "근거": "기본통칙 33-60…5"},
+        {"항목": "대상 총급여", "결론": f"{대상_총급여:,}원 (전체 {총급여_전체:,} − DC 설정자 {dc_members:,} − 지급대상 외 {not_eligible:,})",
+         "근거": "법인세법 시행령 제60조①"},
+        {"항목": "총급여 기준 한도", "결론": f"{총급여기준_한도:,}원 (= {대상_총급여:,} × {급여_비율*100:.0f}%)",
+         "근거": "법인세법 시행령 제60조①"},
+        {"항목": "추계액", "결론": f"{추계액:,}원 (일시퇴직 {lump_sum:,}원, 보험수리 {actuarial:,}원 중 큰 금액)",
+         "근거": "법인세법 시행령 제60조②·제44조의2④"},
+        {"항목": "추계액 적립비율", "결론": f"{적립비율*100:.0f}%",
+         "근거": "법인세법 시행령 제60조②(연도별)"},
+        {"항목": "추계액 기준 누적한도", "결론": f"{누계액기준_한도:,}원 (= {추계액:,} × {적립비율*100:.0f}% + 전환금 {conversion_fund:,} − 세무상 설정전 {세무_설정전잔액_하한:,})",
+         "근거": "법인세법 시행령 제60조②·④"},
+        {"항목": "퇴직급여충당금 한도", "결론": f"{퇴직급여충당금_한도:,}원 (= min(총급여기준 {총급여기준_한도:,}, 추계액기준 {누계액기준_한도:,}))",
+         "근거": "법인세법 제33조①·시행령 제60조①·②"},
+        {"항목": "한도초과", "결론": f"{한도초과액:,}원" if 한도초과액 > 0 else "없음",
+         "근거": "법인세법 제33조①·시행령 제60조③"},
+        {"항목": "퇴직금 지급 상계", "결론": f"지급 {지급총액:,}원 → 세무상 충당금 {세무상_충당금_기초:,}원 상계, 초과 {초과지급액:,}원 → 부인누계 추인 {부인액_추인:,}원",
+         "근거": "법인세법 제33조②·기본통칙 33-60…5"},
+    ]
+
+    if has_pension and 퇴직연금_결과:
+        r = 퇴직연금_결과
+        판단_목록.extend([
+            {"항목": "이미 손금산입한 부담금", "결론": f"{r['이미_손금산입한_부담금']:,}원 (누계 {prior_deducted:,} − 연금충당금 상계액 {r['연금충당금_상계액']:,})",
+             "근거": "법인세법 시행규칙 제24조②"},
+            {"항목": "추계액 기준 연금한도", "결론": f"{r['추계액기준_연금한도']:,}원 (= 추계액 {추계액:,} − (기말 세무상 퇴직급여충당금 {calc['세무상_퇴직급여충당금_기말']:,} − DC전환 {dc_transferred:,}))",
+             "근거": "법인세법 시행령 제44조의2④"},
+            {"항목": "운용자산 기준 연금한도", "결론": f"{r['운용자산기준_연금한도']:,}원 (= 운용자산 기말잔액 {asset_closing:,} − 이미 손금산입한 부담금 {r['이미_손금산입한_부담금']:,})",
+             "근거": "법인세법 시행규칙 별지 제33호서식 ⑨"},
+            {"항목": "퇴직연금 손금산입범위", "결론": f"{r['퇴직연금_손금산입범위액']:,}원 (= min(추계액기준 {r['추계액기준_연금한도']:,}, 운용자산기준 {r['운용자산기준_연금한도']:,}))",
+             "근거": "법인세법 시행규칙 별지 제33호서식 ⑩"},
+            {"항목": "퇴직연금 결산 계상", "결론": f"{book_provision:,}원",
+             "근거": "법인세법 시행령 제44조의2④"},
+            {"항목": "퇴직연금 부족/초과", "결론": (f"부족 {r['퇴직연금_납입_부족']:,}원(손금산입·△유적)" if r['퇴직연금_납입_부족'] > 0 else
+                                                      f"초과 {r['퇴직연금_납입_초과']:,}원(손금불산입·유적)" if r['퇴직연금_납입_초과'] > 0 else "일치"),
+             "근거": "법인세법 시행령 제44조의2④·시행규칙 제24조②"},
+        ])
+
+    result_data = {"세무조정": settlements, **result}
+    산식_str = (
+        f"① 장부 증감: opening({opening:,}) + provision({provision:,}) + other_increase({other_increase:,}) "
+        f"− paid_cash({paid_cash:,}) − paid_pension({paid_pension:,}) = closing({closing:,}) [일치]\n"
+        f"② 세무상 기초 잔액 = opening − prior_disallowed = {opening:,} − {prior_disallowed:,} = {세무_기초_잔액:,}\n"
+        f"③ 세무상 충당금 지급 상계: min(지급액 {지급총액:,}, 세무상 잔액 {세무상_충당금_기초:,}) = {min(지급총액,세무상_충당금_기초):,}원 사용\n"
+        f"④ 부인액 추인: max(0, 지급액 {지급총액:,} − 세무상 잔액 {세무상_충당금_기초:,}) × min(…, prior_disallowed {prior_disallowed:,}) = {부인액_추인:,}원\n"
+        f"⑤ 대상 총급여 = {총급여_전체:,} − DC {dc_members:,} − 지급대상 외 {not_eligible:,} = {대상_총급여:,}원\n"
+        f"⑥ 총급여 기준 한도 = {대상_총급여:,} × {급여_비율*100:.0f}% = {총급여기준_한도:,}원\n"
+        f"⑦ 추계 추계액 = max(일시퇴직 {lump_sum:,}, 보험수리 {actuarial:,}) = {추계액:,}원\n"
+        f"⑧ 추계액 기준 누적한도 = {추계액:,} × {적립비율*100:.0f}% + 전환금 {conversion_fund:,} = {calc['누적한도']:,}원 (세무상 설정전 잔액 차감 전)\n"
+        f"⑨ 추계액을_기준으로_한도 = max(0, ⑧ {calc['누적한도']:,} − 세무상 설정전 {세무_설정전잔액_하한:,}) = {calc['추계액기준_한도']:,}원\n"
+        f"⑩ 퇴직급여충당금 한도 = min(⑥ {총급여기준_한도:,}, ⑨ {calc['추계액기준_한도']:,}) = {calc['퇴직급여충당금_한도']:,}원\n"
+        f"⑪ 한도초과 = max(0, provision {provision:,} − 한도 {calc['퇴직급여충당금_한도']:,}) = {한도초과액:,}원 → 손금불산입(유보)\n"
+        + (f"⑫ 퇴직연금: 이미 손금산입 부담금 = {prior_deducted:,} − 연금충당금 상계액 {r['연금충당금_상계액']:,} = {r['이미_손금산입한_부담금']:,}원\n"
+           f"    추계액을_기준으로 연금한도 = {추계액:,} − (기말 충당금 {calc['세무상_퇴직급여충당금_기말']:,} − DC전환 {dc_transferred:,}) = {r['추계액기준_연금한도']:,}원\n"
+           f"    운용자산 기준 연금한도 = {asset_closing:,} − 이미 손금산입 {r['이미_손금산입한_부담금']:,} = {r['운용자산기준_연금한도']:,}원\n"
+           f"    손금산입범위 = min({r['추계액기준_연금한도']:,}, {r['운용자산기준_연금한도']:,}) = {r['퇴직연금_손금산입범위액']:,}원\n"
+           f"    부족 {r['퇴직연금_납입_부족']:,}원 → 손금산입(△유적), 초과 {r['퇴직연금_납입_초과']:,}원 → 손금불산입(유보)\n"
+           f"    퇴직연금 지급 상계: {r['연금충당금_상계액']:,}원 → 퇴직연금충당금 익금산입(유보) + 퇴직급여충당금 손금산입(△유적)\n"
+           f"    퇴직연금 지급 초과분: {연금초과:,}원 → 퇴직급여충당금 직접 지급(손금산입·△유적)\n"
+           if has_pension and r else "")
+    )
+    return _ok(result_data, 근거_문자열, 계산=calc, 판단=판단_목록, 산식=산식_str)
+
+
 def main():
     import argparse
     p = argparse.ArgumentParser(prog="korean-tax-calc-mcp", description="한국 세금 계산 MCP 서버")
@@ -2658,6 +3546,473 @@ def main():
         uvicorn.run(mcp.streamable_http_app(streamable_http_path="/mcp", host=a.host), host=a.host, port=a.port)
     else:
         mcp.run("stdio")
+
+
+# ── 끝에서 끝까지: 의제배당 — 감자·주식소각·퇴사·탈퇴·해산 (SPEC c6)
+# 어휘 항목: 의제배당_감자 (vocab.rule_on / vocab.basis 사용, facts_vocab.json 수정 금지)
+# 기준일: 결의·퇴사·탈퇴일(YYYY-MM-DD), 해산은 잔여재산가액 확정일
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def deemed_dividend_capital_reduction(
+    shareholder_type: Annotated[Literal["법인", "개인"], Field(description="주주 구분 — 법인세법 제16조·영 제14조(법인) / 소득세법 제17조·영 제27조(개인)")],
+    event: Annotated[Literal["감자", "주식소각", "퇴사·탈퇴", "해산"], Field(description="사유 — 감자(유상감자)·주식소각은 일부 소멸 가능, 퇴사·탈퇴·해산은 보유 주식 전부 소멸")],
+    resolution_date: Annotated[str, Field(description="감자·소각 결의일(퇴사·탈퇴는 그 날, 해산은 잔여재산가액 확정일), YYYY-MM-DD. 단기소각 2년 기간의 기준")],
+    acquisitions: Annotated[list, Field(description="주식 취득·처분 이력 [{date:'YYYY-MM-DD', shares, kind:'유상취득'|'무상주_과세'|'무상주_비과세'|'처분', unit_cost?(유상취득 1주당 취득가액), source?(무상주_비과세 재원: 주식발행초과금·자본준비금·재평가적립금)}] — 무상주 date는 자본전입 결의일")],
+    cash_received: Annotated[int, Field(description="받은 금전(원)", ge=0)],
+    property_value: Annotated[int, Field(description="받은 금전 외 재산의 가액(원) — 취득 당시 시가(주식이면 영 제14조①·소득세법 시행령 제27조① 평가액). 없으면 0", ge=0)] = 0,
+    cancelled_shares: Annotated[int | None, Field(description="소멸(소각·감자)된 주식 수. 퇴사·탈퇴·해산은 생략하면 보유 주식 전부", ge=1)] = None,
+    par_value: Annotated[int | None, Field(description="1주당 액면가액(원) — 무상주_과세가 있으면 필수(취득가액 = 액면가액)", ge=1)] = None,
+) -> dict:
+    """감자·주식소각·퇴사·탈퇴·해산 시 의제배당 = 받은 금전·재산가액 − 소멸 주식 취득가액. 언제: 유상감자·주식소각·퇴사·탈퇴·해산으로 주주가 대가를 받았을 때 의제배당을 계산한다. 무상주 과세 여부는 deemed_dividend_bonus_shares로 먼저 판단해 kind에 넣는다.
+    입력:
+      shareholder_type — '법인' | '개인'.
+      event — '감자' | '주식소각' | '퇴사·탈퇴' | '해산'.
+      resolution_date — 결의일 등(YYYY-MM-DD).
+      acquisitions — [{date, shares, kind, unit_cost?, source?}]: 유상취득은 unit_cost, 무상주_과세는 액면가액, 무상주_비과세는 0. 처분은 보유 감소.
+      cash_received — 받은 금전(원). property_value — 금전 외 재산 시가(원).
+      cancelled_shares — 소멸 주식 수(퇴사·탈퇴·해산은 생략 시 전부).
+      par_value — 1주당 액면가액(무상주_과세가 있으면 필수).
+    결과: 의제배당금액, 단기소각주식수(결의일 전 2년 이내 비과세 무상주 — 먼저 소각, 취득가액 0; 개인은 주식발행초과금 전입분 제외), 평균단가(나머지 주식 총평균), 소멸주식 취득가액, 소각 후 1주당 장부가액, 산식, 근거.
+      사실이 빠지거나 맞지 않으면 'error'와 '필요 입력'을 돌려주고 계산하지 않음."""
+    # ── dates ──
+    try:
+        res_dt = date.fromisoformat(resolution_date)
+    except (ValueError, TypeError):
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"resolution_date='{resolution_date}' YYYY-MM-DD 형식 아님"],
+                "필요 입력": ["resolution_date (YYYY-MM-DD)"]}
+
+    res_yyyymmdd = res_dt.year * 10000 + res_dt.month * 100 + res_dt.day
+    year = res_dt.year
+
+    # ── vocab 규칙 ──
+    rule = vocab.rule_on("의제배당_감자", res_yyyymmdd)
+    basis_list = vocab.basis("의제배당_감자", year)
+
+    단기소각_기간_년 = rule.get("단기소각_기간_년", 2)
+    단기소각_적용사유 = rule.get("단기소각_적용사유", [])
+    취득구분 = rule.get("취득구분", {})
+    단기소각_재원 = rule.get("단기소각_재원", {})
+    사유별근거 = rule.get("사유별_근거", {})
+    취득가액근거 = rule.get("취득가액_근거", {})
+
+    # ── event·shareholder_type 검증 ──
+    if event not in 사유별근거:
+        허용 = list(사유별근거.keys())
+        return {"error": f"지원하지 않는 사유 '{event}' — 계산 안 함",
+                "허용값": {"event": 허용}}
+    if shareholder_type not in ("법인", "개인"):
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"shareholder_type='{shareholder_type}' 은(는) 지원하지 않음"],
+                "허용값": {"shareholder_type": ["법인", "개인"]}}
+
+    # ── acquisitions 검증 ──
+    problems: list[str] = []
+    for i, a in enumerate(acquisitions or []):
+        if not isinstance(a, dict):
+            problems.append(f"항목 {i+1}: dict 아님")
+            continue
+        d = str(a.get("date", ""))
+        if len(d) != 10:
+            problems.append(f"항목 {i+1}({a.get('kind','-')}): date='{d}' — YYYY-MM-DD 필요")
+            continue
+        try:
+            adt = date.fromisoformat(d)
+        except (ValueError, TypeError):
+            problems.append(f"항목 {i+1}({a.get('kind','-')}): date='{d}' 파싱 오류")
+            continue
+        k = a.get("kind", "")
+        if k not in ("유상취득", "무상주_과세", "무상주_비과세", "처분"):
+            problems.append(f"항목 {i+1}: kind='{k}' 지원하지 않음")
+        elif k in ("무상주_과세", "무상주_비과세") and d > resolution_date:
+            problems.append(f"항목 {i+1}({k}): 결의일({resolution_date}) 이후 취득")
+        s = a.get("shares")
+        if not isinstance(s, int) or s <= 0:
+            problems.append(f"항목 {i+1}({k}): shares 양수 정수 필요 (현재 {s!r})")
+        if k == "유상취득" and (a.get("unit_cost") is None or not isinstance(a.get("unit_cost"), int) or a["unit_cost"] <= 0):
+            problems.append(f"항목 {i+1}(유상취득): unit_cost(1주당 취득가액, 양수 정수) 필요")
+
+    # ── par_value 검증 ──
+    has_taxable_bonus = any((a.get("kind") == "무상주_과세") for a in (acquisitions or []))
+    if has_taxable_bonus and (par_value is None or not isinstance(par_value, int) or par_value <= 0):
+        problems.append("무상주_과세가 있는데 par_value(액면가, 양수 정수) 필요")
+
+    # ── cancelled_shares 검증 ──
+    short_term_event = event in 단기소각_적용사유
+    if short_term_event and (cancelled_shares is None or not isinstance(cancelled_shares, int) or cancelled_shares <= 0):
+        problems.append(f"{event}은(는) cancelled_shares(소멸 주식 수, 양수 정수) 필수")
+
+    has_missing_unit_cost = any(a.get("kind") == "유상취득" and a.get("unit_cost") is None for a in (acquisitions or []))
+
+    if problems:
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": problems,
+                "필요 입력": _capital_reduction_필요입력(has_taxable_bonus, short_term_event, problems, event, has_missing_unit_cost),
+                "허용값": {"kind": {"유상취득": "주식 유상 매입", "무상주_과세": "과세 무상주(액면가)", "무상주_비과세": "비과세 무상주(취득가액 0)", "처분": "보유 주식 처분"},
+                           "단기소각_재원": {"주식발행초과금": "주식발행초과금 전입", "자본준비금": "자본준비금 전입", "재평가적립금": "재평가적립금 전입"}}}
+
+    # ── cutoff 계산 + short_term_event 판정 ──
+    cutoff = date(res_dt.year - 단기소각_기간_년, res_dt.month, res_dt.day)
+    try:
+        cutoff = date(res_dt.year - 단기소각_기간_년, res_dt.month, res_dt.day)
+    except ValueError:
+        cutoff = date(res_dt.year - 단기소각_기간_년, 12, 31)
+    short_term_event = event in 단기소각_적용사유
+
+    # ── 날짜순 정렬 후 fra 구축 + 기타 주식 집계 + 처분 처리 ──
+    # (1) 단기소각 대상 비과세 무상주 프로필 추출 (단기소각 이벤트인 경우만)
+    단기소각_대상_프로필 = []  # (date, shares, source)
+    if short_term_event:
+        for a in sorted(acquisitions, key=lambda a: a["date"]):
+            if a.get("kind") != "무상주_비과세":
+                continue
+            adt = date.fromisoformat(a["date"])
+            if adt >= cutoff and adt <= res_dt:
+                src = a.get("source", "")
+                if shareholder_type == "개인" and src == "주식발행초과금":
+                    continue  # 개인: 주식발행초과금 전입분 제외
+                # 개인: 단기소각기간 내 비과세 무상주는 재원(source) 필수 — 재원 따라 단기소각 포함/제외 결정
+                if shareholder_type == "개인" and not src:
+                    return {"error": "입력 확인 필요 — 계산하지 않음",
+                            "문제": [f"항목 ({a['date']}, 무상주_비과세): 개인 주주의 단기소각기간 내 비과세 무상주는 source(재원) 필요"],
+                            "필요 입력": ["acquisitions[i].source — 무상주 재원(주식발행초과금·자본준비금·재평가적립금)"],
+                            "허용값": {"kind": {"유상취득": "주식 유상 매입", "무상주_과세": "과세 무상주(액면가)", "무상주_비과세": "비과세 무상주(취득가액 0)", "처분": "보유 주식 처분"},
+                                       "단기소각_재원": {"주식발행초과금": "주식발행초과금 전입", "자본준비금": "자본준비금 전입", "재평가적립금": "재평가적립금 전입"}}}
+                단기소각_대상_프로필.append((a["date"], int(a["shares"]), src))
+
+    # (2) 처분 목록 (단기소각 기간 중 여부 표시)
+    처분_목록 = []
+    for a in sorted(acquisitions, key=lambda a: a["date"]):
+        if a.get("kind") != "처분":
+            continue
+        adt = date.fromisoformat(a["date"])
+        is_within = short_term_event and adt >= cutoff and adt <= res_dt
+        처분_목록.append((a["date"], int(a["shares"]), is_within))
+
+    # (3) fra 구축 + 기타 주식 집계 + 처분 비례 감소 처리
+    acqs = sorted(acquisitions, key=lambda a: a["date"])
+    held = 0
+    fra = []
+    기타_총취득원가 = 0  # 유상취득 + 무상주_과세 + 비과세(단기 대상 제외)
+    기타_총주식수 = 0
+    # 단기소각 대상 프로필의 현재 주식 수 (처분 시 감소)
+    단기_프로필_상태 = {dp[0]: {"shares": dp[1], "source": dp[2]} for dp in 단기소각_대상_프로필}
+
+    for a in acqs:
+        k = a.get("kind", "")
+        s = int(a["shares"])
+        if k == "유상취득":
+            uc = int(a["unit_cost"])
+            held += s
+            기타_총취득원가 += s * uc
+            기타_총주식수 += s
+            fra.append({"date": a["date"], "kind": k, "shares": s, "unit_cost": uc,
+                        "source": None, "held_after": held})
+        elif k == "무상주_과세":
+            held += s
+            기타_총취득원가 += s * par_value
+            기타_총주식수 += s
+            fra.append({"date": a["date"], "kind": k, "shares": s, "unit_cost": par_value,
+                        "source": None, "held_after": held})
+        elif k == "무상주_비과세":
+            src = a.get("source", "")
+            held += s
+            is_short = (a["date"], src) in {(dp[0], dp[2]) for dp in 단기소각_대상_프로필}
+            if not is_short:
+                기타_총주식수 += s
+                # 취득가액 0이므로 기타_총취득원가 += 0 (변화 없음)
+            fra.append({"date": a["date"], "kind": k, "shares": s, "unit_cost": 0,
+                        "source": src, "held_after": held, "_short_eligible": is_short})
+        elif k == "처분":
+            adt = date.fromisoformat(a["date"])
+            held -= s
+            is_within = short_term_event and adt >= cutoff and adt <= res_dt
+            dispose_ratio = 0.0
+            if is_within:
+                # 단기소각 기간 중 처분 → 비례 처분 (영 제14조③ 후단 / 소득세법 시행령 제27조③ 후단)
+                prev_held = held + s
+                if prev_held > 0:
+                    dispose_ratio = s / prev_held
+                    # 단기소각 대상 주식 수 비례 감소
+                    총_단기 = sum(dp["shares"] for dp in 단기_프로필_상태.values())
+                    if 총_단기 > 0:
+                        감소_총량 = int(총_단기 * dispose_ratio)  # 정수 내림
+                        # 각 항목에 비례 배분 (나머지는 주식 수가 큰 항목에 할당)
+                        배분 = []
+                        for dp_key, dp_val in 단기_프로필_상태.items():
+                            if dp_val["shares"] > 0:
+                                몫 = int(dp_val["shares"] * dispose_ratio)
+                                배분.append((dp_key, 몫))
+                        남은_감소 = 감소_총량 - sum(b[1] for b in 배분)
+                        if 남은_감소 > 0:
+                            배분.sort(key=lambda x: 단기_프로필_상태[x[0]]["shares"], reverse=True)
+                            for i in range(min(남은_감소, len(배분))):
+                                배분[i] = (배분[i][0], 배분[i][1] + 1)
+                        for dp_key, 감소 in 배분:
+                            단기_프로필_상태[dp_key]["shares"] = max(0, 단기_프로필_상태[dp_key]["shares"] - 감소)
+                    # 기타 주식 총취득원가·총주식수 비례 감소
+                    기타_총취득원가 = int(기타_총취득원가 * (1 - dispose_ratio))
+                    기타_총주식수 = int(기타_총주식수 * (1 - dispose_ratio))
+            fra.append({"date": a["date"], "kind": k, "shares": s, "unit_cost": None,
+                        "source": None, "held_after": held, "_dispose_ratio": dispose_ratio,
+                        "_is_within_period": is_within})
+
+    if held < 0:
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"취득이력상 보유 주식 음수({held}) — 처분의 합계 > 취득 합계"],
+                "필요 입력": ["취득·처분 이력 합계 확인"]}
+
+    # 처분 후 단기소각 대상 프로필 재구성
+    단기소각_대상_프로필 = [(dp_key, dp_val["shares"], dp_val["source"]) for dp_key, dp_val in 단기_프로필_상태.items() if dp_val["shares"] > 0]
+    단기소각_대상_주식수 = sum(dp[1] for dp in 단기소각_대상_프로필)
+
+    # ── 소멸 주식 수 결정 ──
+    if event in ("퇴사·탈퇴", "해산"):
+        cs = held if cancelled_shares is None else int(cancelled_shares)
+    else:
+        cs = int(cancelled_shares)
+
+    if cs > held:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"cancelled_shares({cs}) > 결의일 보유 주식({held})"],
+                "필요 입력": [f"cancelled_shares ≤ 결의일 보유 주식({held})"]}
+
+    if cs == 0:
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": ["소멸 주식 수 0 — 계산할 대상 없음"],
+                "필요 입력": ["cancelled_shares ≥ 1"]}
+
+    # ── 소멸 주식 배분: 단기소각 먼저, 나머지를 일반소각 ──
+    D = min(단기소각_대상_주식수, cs)
+    G = cs - D
+
+    # ── 평균단가 계산 (총평균법) ──
+    # 수정 1: 단기소각 대상 비과세 주식은 총평균 계산에서 제외
+    #   평균단가 = (단기소각 제외 기타 주식 총취득원가) ÷ (기타 주식 수)
+    총취득원가 = 기타_총취득원가
+    총주식수 = 기타_총주식수
+    평균단가 = (총취득원가 // 총주식수) if 총주식수 > 0 else 0
+
+    # ── 소멸주식 취득가액 ──
+    # 수정 2: 해산·퇴사·탈퇴는 단기소각 특례 없음 → 평균 없이 전체 취득가액
+    if event in ("퇴사·탈퇴", "해산"):
+        소멸주식_취득가액 = 기타_총취득원가  # 처분 비례 반영 후 기타 총취득원가
+    else:
+        일반취득가액 = G * 평균단가
+        소멸주식_취득가액 = D * 0 + 일반취득가액
+
+    # ── 의제배당 ──
+    받은대가 = cash_received + property_value
+    의제배당 = max(0, 받은대가 - 소멸주식_취득가액)
+
+    # ── 소각 후 잔여 보유주식 + 장부가액 ──
+    소각후_보유주식수 = held - cs
+    소각전_장부가액 = 기타_총취득원가  # 처분 비례 반영 후
+    소각후_장부가액 = 소각전_장부가액 - 소멸주식_취득가액
+    소각후_1주당_장부가액 = (소각후_장부가액 // 소각후_보유주식수) if 소각후_보유주식수 > 0 else 0.0
+
+    # ── 근거 조성 ──
+    # 개인 주주는 단기소각(D) 유무와 무관하게 소득세법 시행령 제27조(취득가액 계산 근거)를 항상 포함
+    # 법인 주주는 D>0일 때만 법인세법 시행령 제14조(취득가액 근거) 포함 (기존 동작 유지)
+    근거_기본 = 사유별근거.get(event, {}).get(shareholder_type, "")
+    if shareholder_type == "개인":
+        근거_전체 = 근거_기본 + f" {취득가액근거.get('개인', '')}"
+    elif D > 0:
+        근거_전체 = 근거_기본 + f" {취득가액근거.get('법인', '')}"
+    else:
+        근거_전체 = 근거_기본
+
+    # 비고/주의 — 최상위 키로 반환 (받은대가 ≤ 소멸주식 취득가액이면 "의제배당 없음"이 첫 원소)
+    주의: list[str] = []
+    if event in ("감자", "주식소각") and 단기소각_재원.get(shareholder_type, {}).get("재평가적립금") == "확인 필요":
+        주의.append(f"개인 주주의 재평가적립금 재원 비과세 무상주는 단기소각 해당 여부를 별도 확인 필요")
+    if G > 0 and 평균단가 == 0:
+        주의.append("평균단가 0 — 소멸주식 취득가액 0, 의제배당 = 받은 대가 전액")
+    if property_value > 0:
+        주의.append(f"받은 재산가액 {property_value:,}원 포함 — 주식이면 결의일 시가(영 제14조①·소득세법 시행령 제27조①) 기준")
+    if 받은대가 <= 소멸주식_취득가액 and 의제배당 == 0:
+        주의.insert(0, f"의제배당 없음 — 받은 대가 {받은대가:,}원이 소멸주식 취득가액 {소멸주식_취득가액:,}원 이하(손실은 의제배당 아님, 주식 처분손실로 별도 처리)")
+
+    # ── 취득이력 상세 (소각분 기록) ──
+    취득이력: list[dict] = []
+    rem_D = D
+    rem_G = G
+    단기소각_대상_날짜소스_현재 = {(dp[0], dp[2]) for dp in 단기소각_대상_프로필}
+
+    for fa in fra:
+        k = fa["kind"]
+        s = fa["shares"]
+        date_str = fa["date"]
+        source = fa.get("source", "") or ""
+        is_short_eligible = (k == "무상주_비과세" and (date_str, source) in 단기소각_대상_날짜소스_현재)
+        is_disposal = (k == "처분")
+
+        if is_short_eligible and not is_disposal:
+            short_take = min(s, rem_D)
+            gen_take = 0
+            if short_take < s:
+                gen_take = min(s - short_take, rem_G)
+            short_take = min(short_take, rem_D)
+            gen_take = min(gen_take, rem_G)
+            rem_D -= short_take
+            rem_G -= gen_take
+            short_reduction = short_take
+            gen_reduction = gen_take
+            value_reduction = gen_take * 평균단가
+            short_flag = True
+        elif is_disposal:
+            short_reduction = 0
+            gen_reduction = 0
+            value_reduction = 0
+            short_flag = False
+        else:
+            gen_take = min(s, rem_G)
+            gen_reduction = gen_take
+            value_reduction = gen_take * 평균단가
+            rem_G -= gen_take
+            short_reduction = 0
+            short_flag = False
+
+        취득이력.append({
+            "일자": date_str,
+            "구분": k,
+            "주식수": s,
+            "취득가액": (fa["unit_cost"] * s) if fa["unit_cost"] else 0,
+            "단기소각": short_flag,
+            "재원": source if k == "무상주_비과세" else "",
+            "단기소각_감소": short_reduction,
+            "일반_감소": gen_reduction,
+            "취득가액_감소": value_reduction,
+        })
+
+    # 산식 문자열
+    산식_parts = [
+        f"의제배당 = 받은 금전 {cash_received:,}원 + 재산가액 {property_value:,}원 − 소멸주식 취득가액 {소멸주식_취득가액:,}원",
+        f"받은 대가 합계 = {받은대가:,}원",
+        f"소멸주식수 = 단기소각 {D}주 + 일반소각 {G}주 = {cs}주",
+    ]
+    if D > 0:
+        산식_parts.append(f"단기소각 {D}주(결의일 전 {단기소각_기간_년}년 이내 비과세 무상주, 먼저 소각, 취득가액 0)")
+    if G > 0:
+        산식_parts.append(f"일반소각 {G}주 × 평균단가 {평균단가:,}원 = 취득가액 {일반취득가액 if event not in ('퇴사·탈퇴', '해산') else 소멸주식_취득가액:,}원")
+        산식_parts.append(f"평균단가 = 총취득원가 {총취득원가:,}원 ÷ 총주식수 {총주식수}주 = {평균단가:,}원 (총평균법: 유상취득 + 무상주_과세 액면가 + 무상주_비과세 0, 단기소각 대상 제외)")
+    산식_parts.append(f"소멸주식 취득가액 = {소멸주식_취득가액:,}원")
+    산식_parts.append(f"의제배당 = {받은대가:,} − {소멸주식_취득가액:,} = {의제배당:,}원 (음수면 0)")
+    산식_parts.append(f"소각후 보유주식수 = 결의일 보유 {held}주 − 소멸 {cs}주 = {소각후_보유주식수}주")
+    산식_parts.append(f"소각후 1주당 장부가액 = (총취득원가 {총취득원가:,} − 소멸 취득가액 {소멸주식_취득가액:,}) ÷ {소각후_보유주식수}주 = {소각후_1주당_장부가액:,}원" if 소각후_보유주식수 > 0 else "소각후 1주당 장부가액 = 0 (보유 주식 없음)")
+
+    return _ok({
+        "의제배당금액": 의제배당,
+        "받은대가": 받은대가,
+        "소멸주식_취득가액": 소멸주식_취득가액,
+        "소멸주식수": cs,
+        "단기소각주식수": D,
+        "단기소각_보유주식수": 단기소각_대상_주식수,
+        "일반소각주식수": G,
+        "평균단가": float(평균단가),
+        "결의일_보유주식수": held,
+        "소각후_보유주식수": 소각후_보유주식수,
+        "소각후_1주당_장부가액": float(소각후_1주당_장부가액),
+        "주주구분": shareholder_type,
+        "사유": event,
+        "근거": 근거_전체,
+        "산식": "\n".join(산식_parts),
+        "취득이력": 취득이력,
+    }, 근거_전체, 주의=주의)
+
+
+def _capital_reduction_필요입력(has_taxable_bonus: bool, short_term_event: bool, problems: list[str], event: str, has_missing_unit_cost: bool) -> list[str]:
+    필요 = []
+    if has_taxable_bonus:
+        필요.append("par_value — 1주당 액면가액(무상주_과세가 있으면 필수)")
+    if short_term_event:
+        필요.append(f"{event}은(는) cancelled_shares(소멸 주식 수, 양수 정수) 필수")
+    if has_missing_unit_cost or any("unit_cost" in p for p in problems):
+        필요.append("acquisitions[].unit_cost — 1주당 취득가액(유상취득)")
+    if not any("date" in p for p in problems):
+        필요.append("date — YYYY-MM-DD")
+    if not any("shares" in p for p in problems):
+        필요.append("shares")
+    if not 필요:
+        필요.append("취득이력(date·shares·kind)·resolution_date·cancelled_shares·par_value 확인")
+    return 필요
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def capital_gains_income(
+        asset_type: Annotated[str, Field(description="양도자산 종류 — '토지'|'건물'(주택 아닌 건물)|'주택'(딸린 토지 포함). 그 밖의 자산은 지원하지 않음")],
+        acquisition_date: Annotated[str, Field(description="취득일 YYYY-MM-DD(대금청산일, 등기접수일이 앞서면 그날)")],
+        transfer_date: Annotated[str, Field(description="양도일 YYYY-MM-DD(대금청산일, 2017-01-01 ~ 2026-12-31)")],
+        transfer_price: Annotated[int, Field(description="양도가액 — 양도 당시 실지거래가액(원)", gt=0)],
+        acquisition_price: Annotated[int, Field(description="취득가액 — 취득 당시 실지거래가액(원, 취득세·취득 중개수수료 등 포함, 재산세 제외)", ge=0)],
+        capital_expenditure: Annotated[int, Field(description="자본적지출액(원, 증명서류로 확인되는 것, 없으면 0)", ge=0)],
+        transfer_expenses: Annotated[int, Field(description="양도비(원, 양도 시 중개수수료 등, 없으면 0)", ge=0)],
+        registered: Annotated[bool, Field(description="등기 여부(False = 미등기양도자산: 비과세·장기보유특별공제·기본공제 배제)")],
+        one_house: Annotated[bool | None, Field(description="주택만: 양도일 현재 1세대 1주택(일시적 2주택 등 1주택으로 보는 경우 포함) 여부")] = None,
+        exempt_met: Annotated[bool | None, Field(description="one_house=True일 때: 1세대 1주택 비과세 요건(보유 2년 이상, 취득 당시 조정대상지역이면 거주 2년 이상) 충족 여부")] = None,
+        residence_years: Annotated[int | None, Field(description="one_house=True일 때: 보유기간 중 거주기간(만 년수, 1년 미만 버림)", ge=0)] = None,
+        heavy_multi_home: Annotated[bool | None, Field(description="one_house=False인 주택: 다주택 중과(제104조⑦) 대상 여부. True면 지원하지 않음")] = None,
+        apply_basic_deduction: Annotated[bool, Field(description="True면 양도소득 기본공제(연 250만원)와 과세표준까지 계산(같은 해 같은 그룹에서 이미 공제받았으면 False)")] = False) -> dict:
+    """토지·건물·주택의 양도차익 → 1세대1주택 비과세·고가주택 안분 → 장기보유특별공제(표1·표2) → 양도소득금액(소득세법 제89조·제92조·제95조·제97조·제103조, 시행령 제154조·제156조·제159조의3(4)·제160조).
+    언제: 부동산 양도소득금액·장기보유특별공제를 양도일 기준 공제율·고가주택 기준(2021.12.8. 전 9억원, 이후 12억원)으로 계산할 때.
+    입력:
+      자산 종류 → asset_type, 취득일·양도일 → acquisition_date·transfer_date,
+      양도가액·취득가액(실지거래가액) → transfer_price·acquisition_price,
+      자본적지출·양도비 → capital_expenditure·transfer_expenses, 등기 여부 → registered,
+      (주택) 1세대1주택 여부 → one_house, 비과세 요건 충족 → exempt_met, 거주기간(년) → residence_years,
+      (주택, 1주택 아님) 다주택 중과 대상 → heavy_multi_home,
+      기본공제·과세표준까지 → apply_basic_deduction.
+      지원하지 않음(error): 분양권·조합원입주권·주식, 다주택·조정대상지역 중과, 환산취득가액, 비과세 보유기간 예외, 주거용 전환, 고가주택 일부 양도.
+    결과: 판단(비과세·고가주택·적용 표)·결과(양도차익·과세대상 양도차익·보유·거주기간·공제율·장기보유특별공제액·양도소득금액, 선택 시 기본공제·과세표준)·산식·근거."""
+    양도일_dt = date.fromisoformat(transfer_date)
+    양도일_int = 양도일_dt.year * 10_000 + 양도일_dt.month * 100 + 양도일_dt.day
+
+    def _vocab_on(name: str, yyyymmdd: int) -> dict:
+        return vocab.rule_on(name, yyyymmdd)
+
+    r = CG.calc_cg({
+        "asset_type": asset_type,
+        "acquisition_date": acquisition_date,
+        "transfer_date": transfer_date,
+        "transfer_price": transfer_price,
+        "acquisition_price": acquisition_price,
+        "capital_expenditure": capital_expenditure,
+        "transfer_expenses": transfer_expenses,
+        "registered": registered,
+        "one_house": one_house,
+        "exempt_met": exempt_met,
+        "residence_years": residence_years,
+        "heavy_multi_home": heavy_multi_home,
+        "apply_basic_deduction": apply_basic_deduction,
+    }, _vocab_on)
+
+    if "error" in r:
+        return r
+
+    # vocab 근거 추가 (양도일 기준 적용 블록 근거 — vocab.rule_on으로 날짜 단위 조회)
+    장기보유_적용근거 = vocab.rule_on("양도소득_장기보유특별공제", 양도일_int)
+    고가주택_적용근거 = vocab.rule_on("1세대1주택_고가주택", 양도일_int)
+    기본공제_적용근거 = vocab.rule_on("양도소득_기본공제", 양도일_int)
+
+    def _근거문자열(rule_dict):
+        items = rule_dict.get("근거", [])
+        return ", ".join(str(x) for x in items) if items else ""
+
+    r["근거"] = r.get("근거", []) + [
+        ["소득세법", "제95조", "②", f"장기보유특별공제 표1·표2 — {_근거문자열(장기보유_적용근거)}"],
+    ]
+    if "고가주택 안분" in str(r.get("판단", [])):
+        r["근거"] = r["근거"] + [
+            ["소득세법", "제89조", "①", f"1세대 1주택 비과세·고가주택 — {_근거문자열(고가주택_적용근거)}"],
+        ]
+    if r["결과"].get("양도소득_기본공제", 0) > 0:
+        r["근거"] = r["근거"] + [
+            ["소득세법", "제103조", "①", f"양도소득 기본공제 연 250만원 — {_근거문자열(기본공제_적용근거)}"],
+        ]
+
+    return _ok(r["결과"], r["근거"], 판단=r.get("판단", []), 산식=r.get("산식", []))
 
 
 if __name__ == "__main__":

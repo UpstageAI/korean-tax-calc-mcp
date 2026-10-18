@@ -156,6 +156,37 @@ def rule(name: str, year: int) -> dict:
     return {}
 
 
+def rule_on(name: str, yyyymmdd: int) -> dict:
+    """특정 기준일(YYYYMMDD 정수)에 맞는 판단 규칙을 반환한다.
+
+    항목의 기본 판단 에 그날 적용 블록(부터 <= yyyymmdd <= 까지)의 판단 을 덮어쓴 dict.
+    까지가 null이면 그날까지 적용 중이면 포함.
+    """
+    data = load()
+    resolved = resolve(name)
+    name = resolved["이름"]
+
+    for item in data["항목"]:
+        if item["이름"] == name:
+            result = dict(item.get("판단", {}))
+
+            for 적용 in item.get("적용", []):
+                from_date = 적용.get("부터")
+                to_date = 적용.get("까지")
+
+                if from_date is not None and yyyymmdd < int(from_date):
+                    continue
+                if to_date is not None and yyyymmdd > int(to_date):
+                    continue
+
+                period_judge = 적용.get("판단", {})
+                result.update(period_judge)
+
+            return result
+
+    return {}
+
+
 def basis(name: str, year: int) -> list:
     """해당 연도에 맞는 근거 목록. 적용 블록의 근거를 우선하고 없으면 기본 근거."""
     data = load()
