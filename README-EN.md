@@ -6,21 +6,35 @@
 
 [![PyPI](https://img.shields.io/pypi/v/korean-tax-calc-mcp)](https://pypi.org/project/korean-tax-calc-mcp/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-korean--tax--calc--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=korean-tax-calc-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Built with Upstage Solar Pro 4](https://img.shields.io/badge/Built%20with-Upstage%20Solar%20Pro%204-7A3FF2)](https://www.upstage.ai/) · [한국어](README.md)
 
-> **Developed with Upstage Solar Pro 4 since 0.3.0** (0.2.1 and earlier predate it). 2026 corporate tax rates, non-resident withholding and thin capitalisation (0.3.0), 11 tax-audit judgment tools (0.4.0), nine end-to-end calculators that take facts through to tax adjustments plus the facts vocabulary (0.6.0–0.7.0), and adjustment-statement-shaped results with ledger-style input (0.8.0–0.9.0), and six new end-to-end calculators — inheritance tax, gift tax, dividend received deduction, inventory valuation adjustment, special tax credit, and asset grant reserve (0.10.0) — were written by Solar Pro 4, reviewed by Solar Pro 4-based code review (CodeSolar), and cross-checked by Claude with tests. 62 tools; details in the [CHANGELOG](CHANGELOG.md).
+> **Code has been written by Solar Pro 4 since 0.3.0**, reviewed by CodeSolar and cross-checked with tests by Claude. 62 tools — see [CHANGELOG](CHANGELOG.md).
 
 **Korean (South Korea) tax calculations for AI agents — code, not guesses.** LLMs often get tax arithmetic wrong. This MCP server computes in code and cites the statute behind every result. It uses year-by-year rate tables (2016–2026); for a year without a verified table it returns an error instead of estimating. 62 tools (59 computation/judgment + 3 PDF). Nothing sent outside your machine for the 59 computation/judgment tools.
+
+## How it works
+
+```mermaid
+flowchart LR
+  Q["AI input<br/>year, amounts, items"] --> V["Input check<br/>unknown or missing fields"]
+  V --> T["That year's values<br/>rates, limits, ratios"]
+  T --> E["Calculation<br/>in statute order"]
+  E --> R["Result<br/>tax, adjustments, citations"]
+  T -.->|no table for the year| X["Stop<br/>no estimate"]
+```
+
+1. **Input check** — unknown arguments, item kinds that are not allowed and missing required values stop the calculation with a list of what to provide. Calling again with the same input adds a "same input, call N" notice.
+2. **That year's values** — rate and limit tables are kept in the calculation code by year (corporate and income tax 2016–2026, VAT 2016 period 1 to 2026 period 2). Item-level criteria (for example the qualified-receipt threshold) are kept in `facts_vocab.json` with their effective periods and statute references, and the value for the calculation year is used. Years without a table stop with an error instead of estimating.
+3. **Calculation** — per-tax code follows the statute order. Example: corporate tax = tax base → that year's brackets → computed tax, prorated by month for a fiscal year shorter than 12 months.
+4. **Result** — the result with intermediate amounts, item-level judgments (allowed, disallowed, included, excluded), tax adjustments with income dispositions, and statute citations.
+
+The 59 calculation and judgment tools run as code on your PC without generative AI. Two audit tools (`related_judge`, `related_provision_at`) look up law.go.kr when `LAW_OC` is set. Only the 3 PDF table-extraction tools use Upstage (Document Parse and Solar Pro 4), and only when `UPSTAGE_API_KEY` is set; without it they extract text locally and tell your AI how to organize it.
 
 ## Try asking
 
 - "Corporate tax on a 500M KRW tax base for fiscal year 2025?"
-- "Under-reported 10M KRW of tax, paying on Oct 7 — what are the penalties?"
 - "Shareholder loan of 200M on Mar 1, 100M repaid Sep 30 — deemed interest?"
-- "SME with 10B KRW revenue spent 50M on entertainment — how much exceeds the limit?"
-- "When does the assessment period expire for a corporate tax return due 2018-03-31? What if it was fraudulent?"
+- "Under-reported 10M KRW of tax, paying on Oct 7 — what are the penalties?"
 - "Retirement income tax on 100M KRW after 15 years of service"
 - "Here are five entertainment-expense ledger lines — give me the FY2025 adjustments (disallowance and income disposition)"
-- "Bad debts: 8M statute-barred, 5M on a note dishonoured 3 months ago; allowance opening 20M, provision 25M — excess and reserve adjustments?"
-- "Mid-sized company, 50B revenue of which 40B from related corporations, controlling shareholder 60% — deemed gift from tunnelling under the 2026 NTS formula"
 
 ## Install
 
