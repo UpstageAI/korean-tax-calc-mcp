@@ -6,9 +6,9 @@
 
 [![PyPI](https://img.shields.io/pypi/v/korean-tax-calc-mcp)](https://pypi.org/project/korean-tax-calc-mcp/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-korean--tax--calc--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=korean-tax-calc-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Built with Upstage Solar Pro 4](https://img.shields.io/badge/Built%20with-Upstage%20Solar%20Pro%204-7A3FF2)](https://www.upstage.ai/) · [English](README-EN.md)
 
-> **0.3.0부터 업스테이지 Solar Pro 4로 개발합니다.** (0.2.1까지는 그 이전 개발분) 2026 법인세율·비거주자 원천징수·과소자본(0.3.0), 세무조사 판정 도구 11개(0.4.0), 사실관계를 받아 세무조정까지 돌려주는 끝에서 끝까지 계산기 9종과 사실관계 어휘(0.6.0~0.7.0), 조정명세서 모양 결과·원장형 입력(0.8.0~0.9.0)은 Solar Pro 4가 코드를 쓰고 Solar Pro 4 기반 코드 리뷰(CodeSolar)가 PR을 검토했으며, Claude가 테스트로 교차 검증했습니다. 50개 도구, 상세는 [CHANGELOG](CHANGELOG.md).
+> **0.3.0부터 업스테이지 Solar Pro 4로 개발합니다.** (0.2.1까지는 그 이전 개발분) 2026 법인세율·비거주자 원천징수·과소자본(0.3.0), 세무조사 판정 도구 11개(0.4.0), 사실관계를 받아 세무조정까지 돌려주는 끝에서 끝까지 계산기 9종과 사실관계 어휘(0.6.0~0.7.0), 조정명세서 모양 결과·원장형 입력(0.8.0~0.9.0), 상속·증여·수입배당금·재고자산·특별세액공제·일시상각충당금 새 계산 도구 6종(0.10.0)은 Solar Pro 4가 코드를 쓰고 Solar Pro 4 기반 코드 리뷰(CodeSolar)가 PR을 검토했으며, Claude가 테스트로 교차 검증했습니다. 62개 도구, 상세는 [CHANGELOG](CHANGELOG.md).
 
-**Korean tax calculations for AI agents — code, not guesses.** Corporate tax, entertainment limits, deemed interest, penalties, limitation periods, withholding, income tax and VAT, using year-by-year rate tables (2016–2026). Each result cites its statute. Years without a verified table stop with an error instead of estimating. 50 tools (38 computation + 12 tax audit judgment) — → [English README](README-EN.md)
+**Korean tax calculations for AI agents — code, not guesses.** Corporate tax, entertainment limits, deemed interest, penalties, limitation periods, withholding, income tax and VAT, using year-by-year rate tables (2016–2026). Each result cites its statute. Years without a verified table stop with an error instead of estimating. 62 tools (59 computation/judgment + 3 PDF) — → [English README](README-EN.md)
 
 ---
 
@@ -92,6 +92,12 @@ Claude Code: `claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp`
 | `wage_income_tax` | 근로소득공제·산출세액·근로소득세액공제 | 소득세법 제47·55·59조 |
 | `daily_worker_withholding` | 일용근로자 원천징수 | 소득세법 제134조 |
 | `deemed_bonus_resettlement` | 소득처분 상여 연말정산 재정산 | 소득세법 시행령 제192조 |
+| `inheritance_tax` | **끝에서 끝까지** 상속세 과세가액·상속공제·과세표준·산출세액·납부할세액 | 상속세 및 증여세법 제13조·제25조·제26조 |
+| `gift_tax` | **끝에서 끝까지** 증여세 과세가액·증여재산공제·과세표준·산출세액·납부할세액 | 상속세 및 증여세법 제47조·제53조·제55조·제56조 |
+| `dividend_received_deduction` | **끝에서 끝까지** 내국법인 수입배당금 익금불산입 — 피출자법인별 익금불산입률·지급이자 차감·세무조정 | 법인세법 제18조의2, 시행령 제17조의2·제17조의3 |
+| `special_tax_credit` | **끝에서 끝까지** 근로소득자 특별세액공제(보험료·의료비·교육비)와 표준세액공제 비교 | 소득세법 제59조의4, 제61조, 시행령 제118조의4·제118조의5·제118조의6·제119조의3 |
+| `asset_grant_reserve` | **끝에서 끝까지** 국고보조금·공사부담금·보험차익 일시상각충당금·압축기장충당금 세무조정 | 법인세법 제36조·제37조·제38조, 시행령 제64조·제65조·제66조·제98조② |
+| `inventory_valuation_adjustment` | 재고자산 평가 세무조정 — 세법상 평가방법 결정·평가차 유보 | 법인세법 제42조①2호·②, 시행령 제73조1호·제74조①~⑥ |
 
 ### 세무조사 판정 (11개)
 
@@ -135,7 +141,7 @@ Claude Code: `claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp`
 
 - **면책:** 이 도구의 결과는 세무 자문이 아닙니다. 법령·해석을 바탕으로 계산·판정 과정을 보여 주는 참고 자료이며, 실제 신고·세무조사·불복 판단은 세무사·회계사·변호사 등 전문가에게 확인하세요. 근거 조문·판례는 원문으로 확인하세요.
 - **세무대리 아님:** 이 도구는 **세무사법 제2조의 세무대리**(세무조정계산서 작성, 신고 대리, 세무상담 등)를 수행하지 않으며, 그 업무는 세무사와 등록한 공인회계사·변호사만 할 수 있습니다(세무사법 제20조). 법령에 적힌 산식을 코드로 옮겨 입력값에 대한 계산 과정을 보여 주는 소프트웨어이고, 입력 사실관계의 확인과 최종 판단은 세무 전문가(세무사·회계사·변호사)와 함께 해 주세요.
-- **AI 사용 고지:** 계산·판정 도구 32개는 코드로 동작하며 생성형 AI를 쓰지 않습니다. PDF 검토 도구 3개(`extract_relations`, `tunnelling_from_pdf`, `return_precheck_pdf`)는 UPSTAGE_API_KEY가 있으면 생성형 AI(Upstage Solar Pro 4)로 표를 추출하며 결과에 그 사실을 표시합니다. 키가 없으면 pypdf로 로컬 텍스트 추출(host_ai 모드) 후 정리 안내에 따라 다음 도구 입력으로 직접 정리할 수 있습니다.
+- **AI 사용 고지:** 계산·판정 도구 59개는 코드로 동작하며 생성형 AI를 쓰지 않습니다. PDF 검토 도구 3개(`extract_relations`, `tunnelling_from_pdf`, `return_precheck_pdf`)는 UPSTAGE_API_KEY가 있으면 생성형 AI(Upstage Solar Pro 4)로 표를 추출하며 결과에 그 사실을 표시합니다. 키가 없으면 pypdf로 로컬 텍스트 추출(host_ai 모드) 후 정리 안내에 따라 다음 도구 입력으로 직접 정리할 수 있습니다.
 - **데이터 전송:** UPSTAGE_API_KEY를 설정해 PDF 도구를 사용할 때만 문서 내용이 Upstage API(api.upstage.ai)로 전송됩니다. 키 없이 사용하면(pypdf 로컬 추출) 외부 전송이 없습니다. 민감정보가 담긴 문서는 API 전송 시 넣지 마세요.
 
 ## 유의
@@ -143,7 +149,7 @@ Claude Code: `claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp`
 - 계산 결과는 검토 보조 자료이며 세무 자문이 아닙니다. 신고 전 원문 조문과 확인하세요.
 - 지방소득세는 별도입니다.
 - 세율표가 검증되지 않은 연도는 계산하지 않고 오류를 돌려줍니다.
-- **데이터 전송 안내** — 계산·판정 도구 32개는 설치한 컴퓨터 안에서 코드로 처리하며 외부 API로 전송하는 내용은 없습니다. PDF 도구 3개만 Upstage API로 문서를 전송합니다.
+- **데이터 전송 안내** — 계산·판정 도구 59개는 설치한 컴퓨터 안에서 코드로 처리하며 외부 API로 전송하는 내용은 없습니다. PDF 도구 3개만 Upstage API로 문서를 전송합니다.
 
 ## 지원 연도
 
