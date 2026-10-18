@@ -2,8 +2,8 @@
 
 ## 0.10.0 (2026-10-18)
 
-- 새 계산 도구 6개: `inheritance_tax`(거주자 피상속인 상속세 과세가액·상속공제·과세표준·산출세액·납부할세액), `gift_tax`(거주자 수증자 증여세 과세가액·증여재산공제·과세표준·산출세액·납부할세액), `dividend_received_deduction`(내국법인 수입배당금액 익금불산입 — 피출자법인별 익금불산입률·지급이자 차감·세무조정), `inventory_valuation_adjustment`(재고자산 평가 세무조정 — 세법상 평가방법 결정·평가차 유보), `special_tax_credit`(근로소득자 특별세액공제 — 보험료·의료비·교육비와 표준세액공제 비교), `asset_grant_reserve`(국고보조금·공사부담금·보험차익 일시상각충당금·압축기장충당금 세무조정)
-- 입력 보강: 정의되지 않은 최상위 인자 거부를 모든 도구에 적용, 목록 금액 칸의 참/거짓·숫자 문자열 거부, 간주임대료 윤년(366일) 반영
+- 새 계산 도구 12개: `capital_gains_income`(토지·건물·주택 양도소득세 — 1세대1주택 비과세·고가주택 안분·장기보유특별공제·기본공제·과세표준), `depreciation_adjustment`(개별 자산 감가상각 시부인 — 상각범위액·회사계상액 비교, 상각부인·유보·추인·감면법인 의제상각·세무상 미상각잔액), `retirement_allowance_adjustment`(퇴직급여충당금·확정급여형 퇴직연금충당금 세무조정 — 한도·지급여부·부인액 추인·부담금 손금산입), `foreign_tax_credit`(외국납부세액공제 — 직접·간주·간접, 국가별 한도, 한도초과 이월, Gross-up), `deemed_dividend_capital_reduction`(감자·주식소각·퇴사·탈퇴·해산 의제배당 — 받은 금전·재산가액 − 소멸 주식 취득가액, 단기소각·평균단가), `earned_income_gross_pay`(근로소득 항목별 과세·비과세 판정 — 총급여액·근로소득공제·근로소득금액), `inheritance_tax`(거주자 피상속인 상속세 과세가액·상속공제·과세표준·산출세액·납부할세액), `gift_tax`(거주자 수증자 증여세 과세가액·증여재산공제·과세표준·산출세액·납부할세액), `dividend_received_deduction`(내국법인 수입배당금액 익금불산입 — 피투자법인별 익금불산입률·지급이자 차감·세무조정), `inventory_valuation_adjustment`(재고자산 평가 세무조정 — 세법상 평가방법 결정·평가차 유보), `special_tax_credit`(근로소득자 특별세액공제 — 보험료·의료비·교육비와 표준세액공제 비교), `asset_grant_reserve`(국고보조금·공사부담금·보험차익 일시상각충당금·압축기장충당금 세무조정)
+- 입력 보강: 정의되지 않은 최상위 인자 거부를 모든 도구에 적용, 목록 금액 칸의 참/거짓·숫자 문자열 거부, 간주임대료 윤년(366일) 반영·rate 인자 추가, vat_deemed_input_credit 운반비 제외 방식 변경(구입액 기준 비율)·base와 taxable_supply가 모두 0이면 오류·used_taxable > 매입가액 거부, deemed_interest fiscal_start(사업연도 개시일) 인자·received_interest 인자 추가, entertainment_adjustment 문화접대비 성격 항목 집계 시 증빙='적격' 필터링, capital_gains_income acquisition_price=0 시 환산취득가액 사용(산정 기준시가 둘 다 필요), other_income_aggregate 산업재산권대여·일시적인적용역에 actual_cost·actual_expense 허용 필드 추가, vat_bad_debt_credit supply_receivable 인자로 공급 대가 채권 여부 판단(아니면 대손세액 0), vat_card_sales_credit individual·prior_year_supply 인자로 법인·직전연도 공급가액 10억 초과 시 공제 0, vat_deemed_rent 윤년 366일 반영·rate 인자 추가·적용_이자율 결과 포함
 - 사실관계 어휘 추가
 - Solar Pro 4 작성, CodeSolar·Claude 검수
 

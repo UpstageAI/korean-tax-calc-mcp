@@ -78,6 +78,12 @@ Pair it with [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp) to go
 | `special_tax_credit` | **End-to-end** special tax credit for wage earners (insurance, medical, education) vs. standard credit | Income Tax Act Arts. 59-4, 61; Decree Arts. 118-4, 118-5, 118-6, 119-3 |
 | `asset_grant_reserve` | **End-to-end** reserve for government grants, construction contributions, and insurance gains — deduction limit, reserve, disposal | CITA Arts. 36, 37, 38; Decree Arts. 64, 65, 66, 98(2) |
 | `inventory_valuation_adjustment` | Inventory valuation adjustment — statutory method determination and reserve for valuation difference | CITA Art. 42(1)2·(2); Decree Arts. 73(1), 74(1)–(6) |
+| `capital_gains_income` | **End-to-end** real estate capital gains — land/building/housing transfer gain → 1-household-1-home 비과세·high-value home apportionment → long-term holding special deduction (Table 1·2) → capital gains amount, basic deduction, tax base | ITA Arts. 89, 92, 95, 97, 103; Decree Arts. 154, 156, 159-3(4), 160, 176-2, 163 |
+| `depreciation_adjustment` | **End-to-end** corporate depreciation tax adjustment — per-asset depreciation range vs. book depreciation (disallowance·reserve·prior-year recapture·tax-exempt deemed depreciation·taxbook undepreciated balance) | CITA Art. 23; Decree Arts. 26, 28, 30, 31, 32; Enforcement Rule App. 4 |
+| `retirement_allowance_adjustment` | **End-to-end** retirement allowance·DB pension reserve tax adjustment — excess over limit, set-off on payment, recapture of disallowed prior balance, DB contribution inclusion limit | CITA Art. 33; Decree Arts. 44-2, 60; Enforcement Rule Art. 24 |
+| `foreign_tax_credit` | Corporate foreign tax credit (direct·deemed·indirect, country-by-country limit, excess carryforward, Gross-up) | CITA Art. 57 |
+| `deemed_dividend_capital_reduction` | **End-to-end** deemed dividend on capital reduction·share cancellation·withdrawal·dissolution — money/property received minus acquisition cost of cancelled shares (short-term cancellation·average unit cost·post-cancellation book value per share) | CITA Art. 16; Decree Art. 14 (corporation) / ITA Art. 17; Decree Art. 27 (individual) |
+| `earned_income_gross_pay` | **End-to-end** earned income per-item taxable/non-taxable judgment — gross pay, earned income deduction, earned income amount, per-item authority and reason | ITA Arts. 20, 12(3), 47; Decree Arts. 11, 12, 17, 17-2~4, 38, 49 |
 
 ### Tax audit judgment (11 tools)
 
