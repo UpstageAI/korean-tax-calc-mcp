@@ -8,7 +8,7 @@
 
 > **Code has been written by Solar Pro 4 since 0.3.0**, reviewed by CodeSolar and cross-checked with tests by Claude. 62 tools — see [CHANGELOG](CHANGELOG.md).
 
-**Korean (South Korea) tax calculations for AI agents — code, not guesses.** LLMs often get tax arithmetic wrong. This MCP server computes in code and cites the statute behind every result. It uses year-by-year rate tables (2016–2026); for a year without a verified table it returns an error instead of estimating. 62 tools (59 computation/judgment + 3 PDF). Nothing sent outside your machine for the 59 computation/judgment tools.
+**Korean tax calculations for AI agents — code, not guesses.** [한국어](README.md)
 
 ## How it works
 
@@ -21,12 +21,12 @@ flowchart LR
   T -.->|no table for the year| X["Stop<br/>no estimate"]
 ```
 
-1. **Input check** — unknown arguments, item kinds that are not allowed and missing required values stop the calculation with a list of what to provide. Calling again with the same input adds a "same input, call N" notice.
-2. **That year's values** — rate and limit tables are kept in the calculation code by year (corporate and income tax 2016–2026, VAT 2016 period 1 to 2026 period 2). Item-level criteria (for example the qualified-receipt threshold) are kept in `facts_vocab.json` with their effective periods and statute references, and the value for the calculation year is used. Years without a table stop with an error instead of estimating.
-3. **Calculation** — per-tax code follows the statute order. Example: corporate tax = tax base → that year's brackets → computed tax, prorated by month for a fiscal year shorter than 12 months.
-4. **Result** — the result with intermediate amounts, item-level judgments (allowed, disallowed, included, excluded), tax adjustments with income dispositions, and statute citations.
+1. **Input check** — unknown or missing fields stop the calculation with a list of what to provide.
+2. **That year's values** — rates and limits come from year tables in the code (corporate and income tax 2016–2026, VAT 2016-1 to 2026-2); item-level criteria come from `facts_vocab.json` with effective periods and statute references.
+3. **Calculation** — follows the statute order, e.g. tax base → that year's brackets → tax.
+4. **Result** — tax, intermediate amounts, item-level judgments, adjustments with income dispositions, and citations.
 
-The 59 calculation and judgment tools run as code on your PC without generative AI. Two audit tools (`related_judge`, `related_provision_at`) look up law.go.kr when `LAW_OC` is set. Only the 3 PDF table-extraction tools use Upstage (Document Parse and Solar Pro 4), and only when `UPSTAGE_API_KEY` is set; without it they extract text locally and tell your AI how to organize it.
+The 59 calculation and judgment tools run on your PC without generative AI. Only the 3 PDF tools use Upstage, and only when `UPSTAGE_API_KEY` is set.
 
 ## Try asking
 
@@ -34,110 +34,35 @@ The 59 calculation and judgment tools run as code on your PC without generative 
 - "Shareholder loan of 200M on Mar 1, 100M repaid Sep 30 — deemed interest?"
 - "Under-reported 10M KRW of tax, paying on Oct 7 — what are the penalties?"
 - "Retirement income tax on 100M KRW after 15 years of service"
-- "Here are five entertainment-expense ledger lines — give me the FY2025 adjustments (disallowance and income disposition)"
+- "Here are five entertainment-expense ledger lines — give me the FY2025 adjustments"
 
 ## Install
 
-With [uv](https://docs.astral.sh/uv/) installed, it runs without a separate install step.
-
-```json
-{
-  "mcpServers": {
-    "korean-tax-calc": { "command": "uvx", "args": ["korean-tax-calc-mcp"] }
-  }
-}
+```bash
+claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp
 ```
 
-Claude Code: `claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp`
-
-Pair it with [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp) to go from "find the authority" to "compute the number".
-
-## Tools
-
-| Tool | Calculation | Statute |
-|---|---|---|
-| `corporate_tax` | Corporate income tax (incl. short fiscal years) | CITA Art. 55 |
-| `entertainment_limit` | Business entertainment expense limit and excess | CITA Art. 25 |
-| `entertainment_adjustment` | **End-to-end** entertainment-expense adjustment from raw spending items: evidence judgment per item (no evidence → representative bonus; non-qualified receipt → other outflow), limit and excess; covers 접대비 (pre-2024 name) | CITA Art. 25; Enforcement Decree Arts. 41, 42 |
-| `bad_debt_adjustment` | **End-to-end** bad-debt and allowance adjustment: recognition per write-off reason (statute of limitation, settlement, 6-month default, uncollectible, SME receivables, memo value), tax-basis receivables, loss rate, limit, adjustments | CITA Arts. 19-2, 34; Decree Arts. 19-2, 61 |
-| `financial_income_aggregate` | **End-to-end** financial income for global taxation: per-item interest/dividend/excluded judgment, Gross-up eligibility, 20M threshold, Gross-up amount | ITA Arts. 14, 16, 17, 56 |
-| `deemed_interest` | Deemed interest on shareholder loans (daily balances, 300M/5% test) | CITA Art. 52; Decree Art. 89 |
-| `unfair_transaction` | Unfair related-party transaction threshold (300M/5% gap from market price) | CITA Decree Art. 88(3) |
-| `loss_carryforward_limit` | Loss carryforward deduction limit rate | CITA Art. 13 |
-| `minimum_tax` | Minimum tax | Restriction of Special Taxation Act Art. 132 |
-| `underreporting_penalty` | Under-reporting penalty (10% / 40%) | Framework Act on National Taxes Art. 47-3 |
-| `late_payment_penalty` | Late payment penalty (prorated across rate changes) | Framework Act on National Taxes Art. 47-4 |
-| `invoice_penalty` | Tax invoice penalties (fictitious, unissued, late, etc.) | VAT Act Art. 60 |
-| `assessment_limitation` | Assessment limitation period and expiry date (incl. offshore, inheritance/gift) | Framework Act on National Taxes Art. 26-2 |
-| `income_tax` | Global income tax | Income Tax Act Art. 55 |
-| `withholding_tax` | Withholding tax by income type and payment year | Income Tax Act Art. 129 |
-| `retirement_income_tax` | Retirement income tax | Income Tax Act Art. 48 |
-| `vat_deemed_rent` | Deemed rent on lease deposits | VAT Decree Art. 65 |
-| `nonbusiness_interest_disallowance` | Interest disallowance for non-business assets | CITA Art. 28 |
-| `business_car_expense` | Business passenger car expenses (business-use ratio, depreciation cap) | CITA Art. 27-2 |
-| `donation_limit` | Donation limit, excess and carryforward | CITA Art. 24 |
-| `bad_debt_allowance` | Bad debt allowance limit | CITA Art. 34 |
-| `missing_receipt_disallowance` | Entertainment expenses without qualified receipts | CITA Art. 25(2) |
-| `vat_deemed_input_credit` | Deemed input tax credit (freight exclusion, common inventory allocation) | VAT Act Art. 42; Decree Art. 81, 84 |
-| `vat_common_input_allocation` | Allocation of common input tax | VAT Decree Art. 81 |
-| `vat_simplified_taxpayer` | Full VAT calculation for simplified taxpayers (tax base, input credit, card credit, penalty, exemption) | VAT Act Art. 46, 63, 68-2, 69 |
-| `vat_card_sales_credit` | Credit for credit-card sales slips | VAT Act Art. 46 |
-| `vat_bad_debt_credit` | Bad debt VAT credit | VAT Act Art. 45 |
-| `wage_income_tax` | Earned income deduction, tax and earned income tax credit | Income Tax Act Arts. 47, 55, 59 |
-| `daily_worker_withholding` | Withholding for daily workers | Income Tax Act Art. 134 |
-| `deemed_bonus_resettlement` | Year-end resettlement of deemed bonus | Income Tax Decree Art. 192 |
-| `inheritance_tax` | **End-to-end** inheritance tax — taxable estate, deductions, tax base, computed tax, tax payable | Inheritance/Gift Tax Act Arts. 13, 25, 26 |
-| `gift_tax` | **End-to-end** gift tax — taxable value, gift deduction, tax base, computed tax, tax payable | Inheritance/Gift Tax Act Arts. 47, 53, 55, 56 |
-| `dividend_received_deduction` | **End-to-end** dividend received deduction for domestic corporations — per-investee exclusion rate, interest offset, adjustment | CITA Art. 18-2; Decree Arts. 17-2, 17-3 |
-| `special_tax_credit` | **End-to-end** special tax credit for wage earners (insurance, medical, education) vs. standard credit | Income Tax Act Arts. 59-4, 61; Decree Arts. 118-4, 118-5, 118-6, 119-3 |
-| `asset_grant_reserve` | **End-to-end** reserve for government grants, construction contributions, and insurance gains — deduction limit, reserve, disposal | CITA Arts. 36, 37, 38; Decree Arts. 64, 65, 66, 98(2) |
-| `inventory_valuation_adjustment` | Inventory valuation adjustment — statutory method determination and reserve for valuation difference | CITA Art. 42(1)2·(2); Decree Arts. 73(1), 74(1)–(6) |
-| `capital_gains_income` | **End-to-end** real estate capital gains — land/building/housing transfer gain → 1-household-1-home 비과세·high-value home apportionment → long-term holding special deduction (Table 1·2) → capital gains amount, basic deduction, tax base | ITA Arts. 89, 92, 95, 97, 103; Decree Arts. 154, 156, 159-3(4), 160, 176-2, 163 |
-| `depreciation_adjustment` | **End-to-end** corporate depreciation tax adjustment — per-asset depreciation range vs. book depreciation (disallowance·reserve·prior-year recapture·tax-exempt deemed depreciation·taxbook undepreciated balance) | CITA Art. 23; Decree Arts. 26, 28, 30, 31, 32; Enforcement Rule App. 4 |
-| `retirement_allowance_adjustment` | **End-to-end** retirement allowance·DB pension reserve tax adjustment — excess over limit, set-off on payment, recapture of disallowed prior balance, DB contribution inclusion limit | CITA Art. 33; Decree Arts. 44-2, 60; Enforcement Rule Art. 24 |
-| `foreign_tax_credit` | Corporate foreign tax credit (direct·deemed·indirect, country-by-country limit, excess carryforward, Gross-up) | CITA Art. 57 |
-| `deemed_dividend_capital_reduction` | **End-to-end** deemed dividend on capital reduction·share cancellation·withdrawal·dissolution — money/property received minus acquisition cost of cancelled shares (short-term cancellation·average unit cost·post-cancellation book value per share) | CITA Art. 16; Decree Art. 14 (corporation) / ITA Art. 17; Decree Art. 27 (individual) |
-| `earned_income_gross_pay` | **End-to-end** earned income per-item taxable/non-taxable judgment — gross pay, earned income deduction, earned income amount, per-item authority and reason | ITA Arts. 20, 12(3), 47; Decree Arts. 11, 12, 17, 17-2~4, 38, 49 |
-
-### Tax audit judgment (11 tools)
-
-| Tool | Judgment/calculation | Authority |
-|---|---|---|
-| `related_judge` | Whether two parties are related under the Framework Act, CIT, or Inheritance/Gift Tax Act; which subparagraph — 기준일 (YYYY-MM-DD) required | Framework Act Decree Art. 1-2; CIT Decree Art. 2; Inheritance/Gift Tax Decree Art. 2-2 |
-| `kinship_check` | Kinship between two individuals (degree, spouse) and whether within the scope at the 기준일 | Framework Act Decree Art. 1-2(1); Inheritance/Gift Tax Decree Art. 2-2(1)1 |
-| `ownership_ratio` | Direct + indirect ownership ratio (holder → corporation), path-by-path product, circular shares reflected | Inheritance/Gift Tax Decree Art. 34-3(2) |
-| `dominant_shareholder` | Dominant shareholder of the beneficiary corporation (highest direct holder among largest shareholders; if corporation, highest direct+indirect individual) | Inheritance/Gift Tax Decree Art. 34-3(1) |
-| `tunnelling_gift` | Deemed gift profit from tunnelling (Inheritance/Gift Tax Act Art. 45-3) — ⑩ excluded sales input, ⑭·⑮ not reflected | Inheritance/Gift Tax Act Art. 45-3; Decree Art. 34-3 |
-| `tunnelling_gift_nts` | Deemed gift profit — NTS 2026 filing guide formula (⑫·⑭1·3·⑮ dividend deduction) | Inheritance/Gift Tax Act Art. 45-3; Decree Art. 34-3; NTS 2026 guide |
-| `related_provision_at` | Where the related-party scope provision was located on the 기준일 (law=국기|법인|상증) — LAW_OC:법제처 API, else fixed table | Framework Act / CIT / Inheritance-Gift Tax Decree |
-| `extract_relations` | Extract relation table (people/family/stakes/officers) from shareholder register·family·officer PDF. Works without UPSTAGE_API_KEY using pypdf local text extraction + 정리 안내 (default). With key: Document Parse + Solar Pro 4 for more precise table extraction | — |
-| `tunnelling_from_pdf` | Tunnelling review PDF → table extraction → dominant shareholder·ownership·gift calculation. Works without UPSTAGE_API_KEY using pypdf local extraction + 정리 안내 (default). With key: Document Parse + Solar Pro 4 for more precise table extraction | Inheritance/Gift Tax Act Art. 45-3 |
-| `return_precheck` | Pre-review of tax return (error suspicion list): data={input key: value}, tax=법인|부가|소득 — uses audit/agents/precheck rule engine | Per-rule authority (see each rule's 근거) |
-| `return_precheck_pdf` | Corporate tax return PDF (Forms 1·3·50) → table extraction → pre-review. Works without UPSTAGE_API_KEY using pypdf local extraction + 정리 안내 (default). With key: Document Parse + Solar Pro 4 for more precise table extraction | Cross-form reconciliation·tax chain recalculation |
-| `precheck_schema` | Returns the input schema for tax return precheck: when tax=corp|vat|income is specified, provides the meaning, unit, and required/optional status of each input key for that tax type. Call before return_precheck or PDF tools | Required/optional classification based on each rule's needs |
-
-CITA = Corporate Income Tax Act.
-
-## Ledger-style input (0.9.0)
-
-The entertainment, simplified-VAT and common-input-tax calculators take facts the way they appear in a ledger: a list of **item name + amount + attributes**. The calculator decides which bucket each item falls into and whether it is included, using `data/facts_vocab.json`; unknown item names are refused with the accepted values instead of being guessed.
-
 ```json
-{"year": 2026, "sme": false,
- "revenue": {"매출액": 25000000000, "특수관계매출": 4000000000, "매출할인등": {"특수관계": 200000000}},
- "ledger": [
-   {"항목": "기업업무추진비(증빙 없음)", "금액": 7000000, "증빙": "없음"},
-   {"항목": "기업업무추진비", "금액": 50000000, "증빙": "적격"},
-   {"항목": "광고비 — 거래처 교제 목적", "금액": 13000000, "증빙": "적격", "성격": "교제목적"},
-   {"항목": "복리후생비 — 직원 단체(법인) 복리시설비", "금액": 12000000, "성격": "직원단체_법인"},
-   {"항목": "제품 사례 제공", "성격": "현물", "시가": 15000000, "장부가액": 11000000}]}
+{ "mcpServers": { "korean-tax-calc": { "command": "uvx", "args": ["korean-tax-calc-mcp"] } } }
 ```
 
-Results lead with `세무조정` (adjustment entries with disposition), `소득처분별_합계` and `손금불산입_합계`, followed by limits, judgments, formulas and citations. Calling again with identical input prefixes the result with a notice that it is the N-th identical calculation.
+No key needed. Optional: `LAW_OC` (law.go.kr lookups in two audit tools), `UPSTAGE_API_KEY` (PDF table extraction).
+Pair with [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp) to go from "find the authority" to "compute the number".
 
-## Issue flags
+## Tools (62)
 
-`nonresident_withholding` and `thin_capitalization` may return an **쟁점 (issues)** list alongside the computed tax. Each entry records a point that can be disputed in practice — e.g. whether software remuneration is royalty or business income, whether a treaty rate applies only after substance-over-form review — and lists **materials to verify** and **reference authorities** (statute articles, ruling numbers, case citations). The tool never concludes ("this is business income"); the `판단` field of every issue is fixed to "세무사 확인 필요" (tax accountant review required). Issue data is read from `korean_tax_calc_mcp/data/issues.json`, not hardcoded.
+| Group | Tools |
+|---|---|
+| Corporate tax (15) | tax `corporate_tax` · foreign tax credit `foreign_tax_credit` · entertainment limit `entertainment_limit` · deemed interest `deemed_interest` · unfair transaction test `unfair_transaction` · loss carryforward limit `loss_carryforward_limit` · minimum tax `minimum_tax` · non-business interest `nonbusiness_interest_disallowance` · company cars `business_car_expense` · donation limit `donation_limit` · bad debt allowance `bad_debt_allowance` · thin capitalization `thin_capitalization` · missing receipts `missing_receipt_disallowance` · dividends received deduction `dividend_received_deduction` · asset grant reserve `asset_grant_reserve` |
+| Income, withholding, transfer, inheritance (11) | income tax `income_tax` · withholding `withholding_tax` · non-resident withholding `nonresident_withholding` · retirement income `retirement_income_tax` · wage income `wage_income_tax` · daily workers `daily_worker_withholding` · deemed bonus resettlement `deemed_bonus_resettlement` · special tax credit `special_tax_credit` · capital gains `capital_gains_income` · inheritance tax `inheritance_tax` · gift tax `gift_tax` |
+| VAT, penalties, limitation (10) | deemed rent `vat_deemed_rent` · deemed input credit `vat_deemed_input_credit` · common input allocation `vat_common_input_allocation` · simplified taxpayer `vat_simplified_taxpayer` · card sales credit `vat_card_sales_credit` · bad debt credit `vat_bad_debt_credit` · under-reporting penalty `underreporting_penalty` · late payment penalty `late_payment_penalty` · invoice penalty `invoice_penalty` · assessment period `assessment_limitation` |
+| Facts and ledgers → tax adjustments (14) | bad debts `bad_debt_adjustment` · entertainment `entertainment_adjustment` · bonus-share deemed dividend `deemed_dividend_bonus_shares` · financial income `financial_income_aggregate` · other income `other_income_aggregate` · employment gross pay `earned_income_gross_pay` · simplified VAT return `simplified_vat_return` · common input tax `common_input_tax` · input tax recalculation `input_tax_recalculation` · land/building split `bundled_supply_split` · depreciation `depreciation_adjustment` · retirement allowance `retirement_allowance_adjustment` · capital-reduction deemed dividend `deemed_dividend_capital_reduction` · inventory valuation `inventory_valuation_adjustment` |
+| Tax audit checks (9) | related parties `related_judge` · kinship `kinship_check` · indirect ownership `ownership_ratio` · dominant shareholder `dominant_shareholder` · tunnelling gift `tunnelling_gift` · tunnelling gift (NTS formula) `tunnelling_gift_nts` · related-party article location `related_provision_at` · return pre-check `return_precheck` · pre-check input schema `precheck_schema` |
+| PDF table extraction (3) | relations `extract_relations` · tunnelling materials `tunnelling_from_pdf` · corporate tax return `return_precheck_pdf` |
+
+- **Ledger input**: adjustment tools take ledger lines as written (name, amount, receipt, nature) and return item judgments, adjustments and income dispositions.
+- **Issue flags**: non-resident withholding and thin capitalization results list points that may be disputed and what to check (no conclusion).
+- **Years**: corporate tax FY2016–2026, income tax 2016–2026, VAT 2016-1 to 2026-2; penalties and limitation periods follow current law. Other years stop with an error. Local income tax is separate.
 
 ## Disclaimers and notices
 
@@ -146,15 +71,6 @@ Results lead with `세무조정` (adjustment entries with disposition), `소득�
 - **AI use notice:** The 59 computation/judgment tools run in code and do not use generative AI. The 3 PDF review tools (`extract_relations`, `tunnelling_from_pdf`, `return_precheck_pdf`) use generative AI (Upstage Solar Pro 4) when UPSTAGE_API_KEY is set, and mark that fact in their results. Without a key, they use pypdf for local text extraction (host_ai mode) and provide 정리 안내 (cleanup guidance) so the next tool input can be prepared manually.
 - **Data transmission:** Document content is sent to the Upstage API (api.upstage.ai) only when UPSTAGE_API_KEY is set and the PDF tools are used. Without a key (pypdf local extraction), no data is transmitted externally. Do not submit documents containing personal or sensitive information when using the API-based flow.
 
-## Notes
-
-- Results are a review aid, not tax advice. Check the statute text before filing.
-- Local income tax is not included.
-- Years without a verified rate table return an error rather than an estimate.
-- **Data transmission** — The 59 computation/judgment tools run locally in code; nothing is sent to any external API. Only the 3 PDF tools transmit document content to the Upstage API.
-
 ## License
 
-MIT © 2026 Upstage
-
-Created by Mia (Seungmi Yoon)
+MIT © 2026 Upstage · Created by Mia (Seungmi Yoon)
