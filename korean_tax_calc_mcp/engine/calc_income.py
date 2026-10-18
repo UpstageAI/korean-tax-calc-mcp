@@ -364,7 +364,15 @@ def special_tax_credit(
         pn = e.get("person", "")
         if pn not in person_names:
             problems.append(f"지출 {i+1}: person='{pn}'이(가) persons 목록에 없음")
-        if e.get("reimbursed", 0) > e.get("amount", 0):
+        amt = e.get("amount", 0)
+        if isinstance(amt, bool) or not isinstance(amt, int):
+            problems.append(f"지출 {i+1}: amount=int 필요, 현재 {amt}")
+            continue
+        reb = e.get("reimbursed", 0)
+        if isinstance(reb, bool) or not isinstance(reb, int):
+            problems.append(f"지출 {i+1}: reimbursed=int 필요, 현재 {reb}")
+            continue
+        if reb > amt:
             problems.append(f"지출 {i+1}: reimbursed({e.get('reimbursed', 0)}) > amount({e.get('amount', 0)})")
 
     if problems:

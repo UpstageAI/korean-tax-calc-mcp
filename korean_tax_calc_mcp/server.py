@@ -4307,30 +4307,6 @@ def capital_gains_income(
     return _ok(r["결과"], r["근거"], 판단=r.get("판단", []), 산식=r.get("산식", []))
 
 
-# ── G2: 모든 도구 공통 — 정의되지 않은 최상위 인자 거부 ─────────────
-# MCP SDK의 arg_model은 기본적으로 extra='ignore'라 모르는 키가 조용히 버려짐.
-# 각 도구의 arg_model을 extra='forbid'로 재창출해 밸리데이션 단계에서 거부한다.
-# (Tool.run은 validate_arguments → arg_model.model_validate → model_dump_one_level 순으로 args를 처리)
-from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase
-from pydantic import ConfigDict, Field, create_model
-
-for _tool_name, _tool in list(mcp._tool_manager._tools.items()):
-    _meta = _tool.fn_metadata
-    _old_model = _meta.arg_model
-    if _old_model is None:
-        continue
-    _new_fields = {}
-    for _fname, _f in _old_model.model_fields.items():
-        # FieldInfo를 그대로 재사용 — ge/le 등 유효성 제약 보존(필수 필드도 마찬가지)
-        _new_fields[_fname] = (_f.annotation, _f)
-    _new_model = create_model(
-        f"{_old_model.__name__}_NoExtra",
-        __base__=ArgModelBase,
-        __config__=ConfigDict(extra='forbid'),
-        **_new_fields,
-    )
-    _meta.arg_model = _new_model
-
 
 # ── 상속세 ──────────────────────────────────────────────────────────
 @mcp.tool(annotations=CALC)
@@ -4484,7 +4460,7 @@ def asset_grant_reserve(
     year: YEAR,
     kind: Annotated[Literal["국고보조금", "공사부담금", "보험차익"], Field(description="재원 구분")],
     received: Annotated[int, Field(description="수령액(금전·현물 가액)")],
-    assets: Annotated[list, Field(description="[{asset, cost, used?, depreciable, depreciation_this_year, disposed?, disposed_ratio?, book_provision?, book_reversal?}]")],
+    assets: Annotated[list, Field(description="[{asset, cost, used?(그 자산에 쓴 보조금·공사부담금 금액, 원), depreciable, depreciation_this_year, disposed?, disposed_ratio?, book_provision?, book_reversal?}]")],
     lost_book_value: Annotated[int | None, Field(description="멸실·손괴 보험대상자산 장부가액")] = None,
     receipt_year: Annotated[bool, Field(description="수령·설정 연도")] = True,
     planned_use: WON = 0,
@@ -4531,6 +4507,29 @@ def inventory_valuation_adjustment(
         return r
     return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r.get("판단", []))
 
+# ── G2: 모든 도구 공통 — 정의되지 않은 최상위 인자 거부 ─────────────
+# MCP SDK의 arg_model은 기본적으로 extra='ignore'라 모르는 키가 조용히 버려짐.
+# 각 도구의 arg_model을 extra='forbid'로 재창출해 밸리데이션 단계에서 거부한다.
+# (Tool.run은 validate_arguments → arg_model.model_validate → model_dump_one_level 순으로 args를 처리)
+from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase
+from pydantic import ConfigDict, Field, create_model
+
+for _tool_name, _tool in list(mcp._tool_manager._tools.items()):
+    _meta = _tool.fn_metadata
+    _old_model = _meta.arg_model
+    if _old_model is None:
+        continue
+    _new_fields = {}
+    for _fname, _f in _old_model.model_fields.items():
+        # FieldInfo를 그대로 재사용 — ge/le 등 유효성 제약 보존(필수 필드도 마찬가지)
+        _new_fields[_fname] = (_f.annotation, _f)
+    _new_model = create_model(
+        f"{_old_model.__name__}_NoExtra",
+        __base__=ArgModelBase,
+        __config__=ConfigDict(extra='forbid'),
+        **_new_fields,
+    )
+    _meta.arg_model = _new_model
 
 if __name__ == "__main__":
     main()
