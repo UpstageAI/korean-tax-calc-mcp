@@ -8,7 +8,7 @@
 
 > **0.3.0부터 Solar Pro 4가 코드를 쓰고** CodeSolar가 리뷰, Claude가 테스트로 교차 검증합니다. 도구 62개, 상세는 [CHANGELOG](CHANGELOG.md).
 
-**Korean tax calculations for AI agents — code, not guesses.** Corporate tax, entertainment limits, deemed interest, penalties, limitation periods, withholding, income tax and VAT, using year-by-year rate tables (2016–2026). Each result cites its statute. Years without a verified table stop with an error instead of estimating. 62 tools (59 computation/judgment + 3 PDF) — → [English README](README-EN.md)
+**Korean tax calculations for AI agents — code, not guesses.** [English](README-EN.md)
 
 ---
 
@@ -25,135 +25,48 @@ flowchart LR
   T -.->|표 없는 연도| X["멈춤<br/>추정 계산 안 함"]
 ```
 
-1. **입력 확인** — 정의되지 않은 인자, 허용되지 않은 항목 종류, 빠진 필수 값이 있으면 계산하지 않고 무엇을 넣어야 하는지 돌려줍니다. 같은 입력으로 다시 부르면 "같은 입력으로 N번째 계산입니다" 안내를 붙입니다.
-2. **그해 기준값** — 세율·한도 같은 연도표는 계산 코드 안에 연도별로 들어 있습니다(법인세·소득세 2016~2026, 부가가치세 2016년 1기~2026년 2기). 항목별 판단 기준(예: 적격증빙 기준금액, 경조금 기준)은 `facts_vocab.json`에 적용 기간과 근거 조문을 함께 적어 두고, 계산하는 연도에 맞는 값을 꺼냅니다. 표가 없는 연도는 추정하지 않고 오류로 멈춥니다.
-3. **계산** — 세목별 계산 코드가 조문 순서대로 계산합니다. 예: 법인세는 과세표준 → 그해 세율 구간 → 산출세액, 사업연도가 1년 미만이면 월할 환산.
-4. **결과** — 결과 값과 함께 중간 계산, 항목별 판단(인정·부인·포함·제외), 세무조정과 소득처분(유보·기타사외유출·상여 등), 근거 조문을 돌려줍니다.
+1. **입력 확인** — 모르는 항목·빠진 값이 있으면 계산하지 않고 무엇이 필요한지 알려 줍니다.
+2. **그해 기준값** — 세율·한도는 코드 안 연도표(법인세·소득세 2016~2026, 부가세 2016년 1기~2026년 2기), 항목별 판단 기준은 `facts_vocab.json`(적용 기간·근거 조문 포함)에서 꺼냅니다.
+3. **계산** — 조문 순서대로 계산합니다. 예: 과세표준 → 그해 세율 구간 → 산출세액.
+4. **결과** — 세액·중간 계산·항목별 판단·세무조정(소득처분)·근거 조문을 함께 돌려줍니다.
 
-계산·판정 도구 59개는 생성형 AI 없이 내 PC의 코드로 동작합니다. 세무조사 판정 도구 2개(`related_judge`·`related_provision_at`)는 `LAW_OC`가 있으면 법제처 조문을 조회합니다. PDF 표 추출 도구 3개만 `UPSTAGE_API_KEY`가 있을 때 Upstage(Document Parse·Solar Pro 4)를 쓰고, 없으면 내 PC에서 텍스트만 뽑아 AI에게 정리 방법을 안내합니다.
+계산·판정 도구 59개는 생성형 AI 없이 내 PC에서 동작합니다. PDF 도구 3개만 `UPSTAGE_API_KEY`가 있을 때 Upstage를 씁니다.
 
-**이렇게 물어보세요**
+## 이렇게 물어보세요
 
 - "2025 사업연도 과세표준 5억 법인세 산출세액은?"
 - "가지급금 3월 1일 2억 대여, 9월 30일 1억 회수 — 인정이자 계산해줘"
 - "과소신고 1천만 원을 10월 7일에 납부하면 가산세는?"
 - "퇴직금 1억, 근속 15년 퇴직소득세"
-- "기업업무추진비 원장 5건 그대로 줄게 — 2025 사업연도 세무조정(손금불산입·소득처분) 뽑아줘"
-
-**설치 한 줄** — `claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp`
-
-- **연도별 세율표** — 2016~2026 사업연도·귀속연도별 세율·한도율, 없는 해는 추정하지 않고 오류
-- **근거 조문** — 모든 결과에 법·시행령 조문 표시
-- **날짜 계산** — 가산세 이율 변경일 안분, 제척기간 만료일, 인정이자 적수
-- **원장 그대로 입력** — 기업업무추진비·대손·간이과세·공통매입세액 등은 원장 항목을 그대로 주면 항목 판단 → 세법상 조정 → 조정명세서 모양 결과까지
-- **계산은 코드로만** — 생성형 AI 없이 설치한 컴퓨터 안에서 계산. PDF 검토 도구 3개만 키를 설정했을 때 Upstage API를 씁니다
+- "기업업무추진비 원장 5건 그대로 줄게 — 2025 사업연도 세무조정 뽑아줘"
 
 ## 설치
 
-[uv](https://docs.astral.sh/uv/)가 있으면 설치 없이 바로 실행됩니다.
-
-```json
-{
-  "mcpServers": {
-    "korean-tax-calc": { "command": "uvx", "args": ["korean-tax-calc-mcp"] }
-  }
-}
+```bash
+claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp
 ```
 
-Claude Code: `claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp`
+```json
+{ "mcpServers": { "korean-tax-calc": { "command": "uvx", "args": ["korean-tax-calc-mcp"] } } }
+```
 
+키 없이 동작합니다. 선택: `LAW_OC`(세무조사 판정 도구 2개의 법제처 조문 조회), `UPSTAGE_API_KEY`(PDF 표 추출).
 근거 조문·해석은 [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp)와 함께 쓰면 "근거 찾기 → 계산"이 이어집니다.
 
-## 도구
+## 도구 (62개)
 
-| 도구 | 계산 | 근거 |
-|---|---|---|
-| `corporate_tax` | 법인세 산출세액 (1년 미만 사업연도 포함) | 법인세법 제55조 |
-| `entertainment_limit` | 기업업무추진비 한도·한도초과 | 법인세법 제25조 |
-| `entertainment_adjustment` | **끝에서 끝까지** 기업업무추진비 세무조정 — **원장 항목 입력**(항목명·금액·증빙·성격·시가·장부가액): 교제 목적 지출·직원 단체(법인) 복리시설비 포함, 비법인 단체·임직원 부담분 제외, 현물은 시가·장부가액 중 큰 금액, 증빙 판단(증빙 없음→대표자상여, 적격증빙 미수취→기타사외유출), 수입금액(매출액·특수관계매출·매출할인등), 한도·한도초과 → `세무조정` 목록·`소득처분별_합계`·`손금불산입_합계`. 접대비(2023년 이전) 포함 | 법인세법 제25조, 영 제40조·제41조·제42조 |
-| `bad_debt_adjustment` | **끝에서 끝까지** 대손금·대손충당금 세무조정: 대손 사유별 인정·부인(소멸시효·화해·부도 6개월·회수불능, 중소기업 외상매출금, 비망가액), 세법상 채권·대손실적률·한도·세무조정 | 법인세법 제19조의2·제34조, 영 제19조의2·제61조 |
-| `financial_income_aggregate` | **끝에서 끝까지** 종합소득 합산 금융소득: 항목별 이자·배당·제외 판단, Gross-up 대상, 2천만 원 기준, 배당가산액 | 소득세법 제14조·제16조·제17조·제56조 |
-| `deemed_dividend_bonus_shares` | **끝에서 끝까지** 잉여금 자본전입 의제배당: 재원별 과세 여부, 자기주식 미배정 지분율 상승분, 주주별 의제배당(법인·개인) | 법인세법 제16조, 소득세법 제17조 |
-| `other_income_aggregate` | **끝에서 끝까지** 기타소득: 항목별 과세·비과세·분리과세 판단, 필요경비(의제율), 원천징수세액, 종합소득 합산 | 소득세법 제21조·제37조·제129조 |
-| `simplified_vat_return` | **끝에서 끝까지** 간이과세자 확정신고 — **원장 항목 입력**(공급·매입 항목명과 금액: 신용카드·현금영수증·마일리지·세금계산서 수취·미수취·계산서 등 항목명으로 역할 판정): 과세표준·납부세액·수취세액공제·발급세액공제·미수취 가산세·납부의무 면제·차가감납부세액 | 부가가치세법 제46조·제63조·제68조의2·제69조 |
-| `common_input_tax` | **끝에서 끝까지** 겸영사업자 공통매입세액 — **원장 항목 입력**(항목·매입세액 또는 매입가액·사용처 과세/면세/공통/실지귀속/불공제, 횟수·면적 비율): 안분·정산·공통사용재화 공급, 예정 불공제 반영 | 부가가치세법 제40조, 영 제63조·제81조~제82조 |
-| `input_tax_recalculation` | **끝에서 끝까지** 감가상각자산 공통매입세액 재계산 — 매입세액 또는 **토지·건물 일괄공급 안분 입력(bundle)**을 받아 기간별 면세비율 변동으로 납부세액 가산·공제 | 부가가치세법 제41조, 영 제83조 |
-| `bundled_supply_split` | 토지·건물 일괄공급 안분(감정평가가액→기준시가→장부가액) | 부가가치세법 제29조⑨, 영 제64조 |
-| `deemed_interest` | 가지급금 인정이자 (적수, 3억·5% 판정) | 법인세법 제52조, 영 제89조 |
-| `unfair_transaction` | 부당행위계산 기준 (시가 차이 3억·5%) | 영 제88조③ |
-| `loss_carryforward_limit` | 이월결손금 공제 한도율 | 법인세법 제13조 |
-| `minimum_tax` | 최저한세 | 조특법 제132조 |
-| `underreporting_penalty` | 과소신고가산세 (10%·40%) | 국세기본법 제47조의3 |
-| `late_payment_penalty` | 납부지연가산세 (이율 변경일 안분) | 국세기본법 제47조의4 |
-| `invoice_penalty` | 세금계산서 가산세 (가공·미발급·지연 등, 공급일 기준) | 부가가치세법 제60조 |
-| `assessment_limitation` | 부과제척기간·만료일 (역외거래·상증 포함) | 국세기본법 제26조의2 |
-| `income_tax` | 종합소득세 산출세액 | 소득세법 제55조 |
-| `withholding_tax` | 원천징수세액 (소득 종류·지급연도) | 소득세법 제129조 |
-| `retirement_income_tax` | 퇴직소득세 | 소득세법 제48조 |
-| `vat_deemed_rent` | 간주임대료 | 부가가치세법 시행령 제65조 |
-| `nonbusiness_interest_disallowance` | 업무무관자산 관련 지급이자 손금불산입 | 법인세법 제28조 |
-| `business_car_expense` | 업무용승용차 관련비용 (업무사용비율·감가상각 한도) | 법인세법 제27조의2 |
-| `donation_limit` | 기부금 한도·한도초과·이월 | 법인세법 제24조 |
-| `bad_debt_allowance` | 대손충당금 한도 | 법인세법 제34조 |
-| `missing_receipt_disallowance` | 적격증빙 미수취 기업업무추진비 | 법인세법 제25조② |
-| `vat_deemed_input_credit` | 의제매입세액공제(연장·운반비 제외·공통분 안분) | 부가가치세법 제42조, 시행령 제81·84조 |
-| `vat_common_input_allocation` | 공통매입세액 안분 | 부가가치세법 시행령 제81조 |
-| `vat_simplified_taxpayer` | 간이과세자 납부세액 전 과정(과세표준·매입공제·카드공제·가산세·면제판정) | 부가가치세법 제46·63·68조의2·69조 |
-| `vat_card_sales_credit` | 신용카드매출전표 발행세액공제 | 부가가치세법 제46조 |
-| `vat_bad_debt_credit` | 대손세액공제 | 부가가치세법 제45조 |
-| `wage_income_tax` | 근로소득공제·산출세액·근로소득세액공제 | 소득세법 제47·55·59조 |
-| `daily_worker_withholding` | 일용근로자 원천징수 | 소득세법 제134조 |
-| `deemed_bonus_resettlement` | 소득처분 상여 연말정산 재정산 | 소득세법 시행령 제192조 |
-| `inheritance_tax` | **끝에서 끝까지** 상속세 과세가액·상속공제·과세표준·산출세액·납부할세액 | 상속세 및 증여세법 제13조·제25조·제26조 |
-| `gift_tax` | **끝에서 끝까지** 증여세 과세가액·증여재산공제·과세표준·산출세액·납부할세액 | 상속세 및 증여세법 제47조·제53조·제55조·제56조 |
-| `dividend_received_deduction` | **끝에서 끝까지** 내국법인 수입배당금 익금불산입 — 피출자법인별 익금불산입률·지급이자 차감·세무조정 | 법인세법 제18조의2, 시행령 제17조의2·제17조의3 |
-| `special_tax_credit` | **끝에서 끝까지** 근로소득자 특별세액공제(보험료·의료비·교육비)와 표준세액공제 비교 | 소득세법 제59조의4, 제61조, 시행령 제118조의4·제118조의5·제118조의6·제119조의3 |
-| `asset_grant_reserve` | **끝에서 끝까지** 국고보조금·공사부담금·보험차익 일시상각충당금·압축기장충당금 세무조정 | 법인세법 제36조·제37조·제38조, 시행령 제64조·제65조·제66조·제98조② |
-| `inventory_valuation_adjustment` | 재고자산 평가 세무조정 — 세법상 평가방법 결정·평가차 유보 | 법인세법 제42조①2호·②, 시행령 제73조1호·제74조①~⑥ |
-| `capital_gains_income` | **끝에서 끝까지** 부동산 양도소득금액 — 토지·건물·주택 양도차익 → 1세대1주택 비과세·고가주택 안분 → 장기보유특별공제(표1·표2) → 양도소득금액·기본공제·과세표준 | 소득세법 제89조·제92조·제95조·제97조·제103조, 시행령 제154조·제156조·제159조의3(4)·제160조·제176조의2·제163조 |
-| `depreciation_adjustment` | **끝에서 끝까지** 법인세 감가상각 시부인 — 개별 자산별 상각범위액과 회사계상액 비교(상각부인·유보·추인·감면법인 의제상각·세무상 미상각잔액) | 법인세법 제23조, 시행령 제26조·제28조·제30조·제31조·제32조, 시행규칙 별표 4 |
-| `retirement_allowance_adjustment` | **끝에서 끝까지** 퇴직급여충당금·확정급여형 퇴직연금충당금 세무조정 — 한도초과·퇴직금 지급 상계·부인액 추인·퇴직연금 부담금 손금산입 | 법인세법 제33조, 시행령 제44조의2·제60조, 시행규칙 제24조 |
-| `foreign_tax_credit` | 법인세 외국납부세액공제(직접·간주·간접, 국가별 한도, 한도초과 이월, Gross-up) | 법인세법 제57조 |
-| `deemed_dividend_capital_reduction` | **끝에서 끝까지** 감자·주식소각·퇴사·탈퇴·해산 시 의제배당 — 받은 금전·재산가액 − 소멸 주식 취득가액(단기소각·평균단가·소각 후 장부가액) | 법인세법 제16조·영 제14조(법인) / 소득세법 제17조·영 제27조(개인) |
-| `earned_income_gross_pay` | **끝에서 끝까지** 근로소득 항목별 과세·비과세 판정 — 총급여액·근로소득공제·근로소득금액, 항목별 근거·사유 | 소득세법 제20조·제12조3호·제47조, 시행령 제11조·제12조·제17조·제17조의2~4·제38조·제49조 |
+| 묶음 | 도구 |
+|---|---|
+| 법인세 (15) | 산출세액 `corporate_tax` · 외국납부세액공제 `foreign_tax_credit` · 기업업무추진비 한도 `entertainment_limit` · 가지급금 인정이자 `deemed_interest` · 부당행위 기준 `unfair_transaction` · 이월결손금 한도 `loss_carryforward_limit` · 최저한세 `minimum_tax` · 업무무관 지급이자 `nonbusiness_interest_disallowance` · 업무용승용차 `business_car_expense` · 기부금 한도 `donation_limit` · 대손충당금 한도 `bad_debt_allowance` · 과소자본 `thin_capitalization` · 적격증빙 미수취 `missing_receipt_disallowance` · 수입배당금 익금불산입 `dividend_received_deduction` · 일시상각충당금 `asset_grant_reserve` |
+| 소득세·원천·양도·상속증여 (11) | 종합소득세 `income_tax` · 원천징수 `withholding_tax` · 비거주자 원천징수 `nonresident_withholding` · 퇴직소득세 `retirement_income_tax` · 근로소득세 `wage_income_tax` · 일용근로자 `daily_worker_withholding` · 소득처분 상여 재정산 `deemed_bonus_resettlement` · 특별세액공제 `special_tax_credit` · 양도소득 `capital_gains_income` · 상속세 `inheritance_tax` · 증여세 `gift_tax` |
+| 부가세·가산세·제척기간 (10) | 간주임대료 `vat_deemed_rent` · 의제매입세액 `vat_deemed_input_credit` · 공통매입세액 안분 `vat_common_input_allocation` · 간이과세 납부세액 `vat_simplified_taxpayer` · 카드 발행세액공제 `vat_card_sales_credit` · 대손세액공제 `vat_bad_debt_credit` · 과소신고가산세 `underreporting_penalty` · 납부지연가산세 `late_payment_penalty` · 세금계산서 가산세 `invoice_penalty` · 부과제척기간 `assessment_limitation` |
+| 사실관계·원장 → 세무조정 (14) | 대손 조정 `bad_debt_adjustment` · 기업업무추진비 조정 `entertainment_adjustment` · 무상주 의제배당 `deemed_dividend_bonus_shares` · 금융소득 합산 `financial_income_aggregate` · 기타소득 `other_income_aggregate` · 근로소득 총급여 `earned_income_gross_pay` · 간이과세 확정신고 `simplified_vat_return` · 공통매입세액 정산 `common_input_tax` · 매입세액 재계산 `input_tax_recalculation` · 토지·건물 안분 `bundled_supply_split` · 감가상각 시부인 `depreciation_adjustment` · 퇴직급여충당금 `retirement_allowance_adjustment` · 감자 의제배당 `deemed_dividend_capital_reduction` · 재고자산 평가 `inventory_valuation_adjustment` |
+| 세무조사 판정 (9) | 특수관계 `related_judge` · 친족관계 `kinship_check` · 간접보유비율 `ownership_ratio` · 지배주주 `dominant_shareholder` · 일감몰아주기 `tunnelling_gift` · 일감몰아주기(국세청 산식) `tunnelling_gift_nts` · 특수관계 조문 위치 `related_provision_at` · 신고서 사전검토 `return_precheck` · 사전검토 입력 목록 `precheck_schema` |
+| PDF 표 추출 (3) | 관계표 `extract_relations` · 일감몰아주기 자료 `tunnelling_from_pdf` · 법인세 신고서 `return_precheck_pdf` |
 
-### 세무조사 판정 (11개)
-
-| 도구 | 계산·판정 | 근거 |
-|---|---|---|
-| `related_judge` | 두 당사자의 특수관계 여부·호수를 국세기본법·법인세법·상증법 기준으로 판정(기준일 YYYY-MM-DD 필수) | 국세기본법 시행령 제1조의2, 법인세법 시행령 제2조, 상증법 시행령 제2조의2 |
-| `kinship_check` | 두 개인의 친족관계(촌수·배우자)와 기준일 친족 범위 해당 여부 | 국세기본법 시행령 제1조의2①, 상증법 시행령 제2조의2①1호 |
-| `ownership_ratio` | 보유자→법인 직접·간접 보유비율(경로별 곱, 순환출자 반영) | 상증법 시행령 제34조의3② |
-| `dominant_shareholder` | 수혜법인 지배주주 판정(최대주주등 중 직접보유 최고자 / 법인이면 직접+간접 최고 개인) | 상증법 시행령 제34조의3① |
-| `tunnelling_gift` | 일감몰아주기 증여의제이익(상증법 제45조의3) — ⑩항 과세제외매출액 입력, ⑭·⑮ 미반영 | 상증법 제45조의3, 시행령 제34조의3 |
-| `tunnelling_gift_nts` | 일감몰아주기 증여의제이익 — 국세청 2026 신고안내 산식(⑫·⑭1·3호·⑮ 배당공제) | 상증법 제45조의3, 시행령 제34조의3, 국세청 2026 신고안내 |
-| `related_provision_at` | 특수관계인 범위 조문이 기준일에 어디 있었는지(law=국기|법인|상증) — LAW_OC 있으면 법제처 API, 없으면 고정 이동표 | 국세기본법·법인세법·상증법 시행령 |
-| `extract_relations` | 주주명부·가족관계·임원명단 PDF → 관계표 추출. UPSTAGE_API_KEY 없이도 pypdf 로컬 추출 후 related_judge 입력으로 정리 가능(기본). 키 설정 시 Document Parse + Solar Pro 4로 더 정교한 표 추출 | — |
-| `tunnelling_from_pdf` | 일감몰아주기 검토 자료 PDF → 표 추출 → 지배주주·출자관계·증여의제이익 계산. UPSTAGE_API_KEY 없이도 pypdf 로컬 추출 후 입력 정리 가능(기본). 키 설정 시 Document Parse + Solar Pro 4로 더 정교한 표 추출 | 상증법 제45조의3 |
-| `return_precheck` | 신고서 사전검토(오류 의심 목록): data={입력키: 값}, tax=법인|부가|소득 — audit/agents/precheck 규칙 엔진 사용 | 서식별 근거 조문(각 규칙 근거 참조) |
-| `return_precheck_pdf` | 법인세 신고서 PDF(별지 1·3·50호) → 표 추출 → 사전검토. UPSTAGE_API_KEY 없이도 pypdf 로컬 추출 후 return_precheck 입력으로 정리 가능(기본). 키 설정 시 Document Parse + Solar Pro 4로 더 정교한 표 추출 | 서식 간 대사·세액 체인 재계산 |
-| `precheck_schema` | 신고서 사전검토 입력스키마 반환: tax=법인|부가|소득 지정 시 해당 세목 입력키의 의미·단위·필수 여부 목록 제공. return_precheck·PDF 도구 입력 전에 먼저 호출 | 각 규칙의 needs 기반 요건별 필수·선택 구분 |
-
-## 원장형 입력 (0.9.0)
-
-기업업무추진비·간이과세·공통매입세액 계산기는 장부·전표에 적힌 모양 그대로 **항목 이름 + 금액 + 속성** 목록을 받습니다. 어느 칸에 들어가는지, 포함인지 제외인지는 계산기가 어휘(`data/facts_vocab.json`)로 판단합니다. 항목 이름이 어휘에 없으면 계산하지 않고 허용값을 돌려줍니다.
-
-```json
-{"year": 2026, "sme": false,
- "revenue": {"매출액": 25000000000, "특수관계매출": 4000000000, "매출할인등": {"특수관계": 200000000}},
- "ledger": [
-   {"항목": "기업업무추진비(증빙 없음)", "금액": 7000000, "증빙": "없음"},
-   {"항목": "기업업무추진비", "금액": 50000000, "증빙": "적격"},
-   {"항목": "광고비 — 거래처 교제 목적", "금액": 13000000, "증빙": "적격", "성격": "교제목적"},
-   {"항목": "복리후생비 — 직원 단체(법인) 복리시설비", "금액": 12000000, "성격": "직원단체_법인"},
-   {"항목": "제품 사례 제공", "성격": "현물", "시가": 15000000, "장부가액": 11000000}]}
-```
-
-결과는 맨 앞에 `세무조정`(구분·금액·소득처분 목록), `소득처분별_합계`, `손금불산입_합계`가 오고 그 뒤에 한도·판단·산식·근거가 따릅니다. 같은 입력으로 다시 부르면 결과 맨 앞에 "같은 입력으로 N번째 계산입니다" 안내가 붙습니다.
-
-## 쟁점 표시
-
-비거주자·외국법인 원천징수(`nonresident_withholding`)와 과소자본(`thin_capitalization`) 결과는 계산된 세액과 함께 **쟁점** 리스트를 반환할 수 있습니다. 쟁점은 "이 소득 구분이 맞는지", "이 조약 세율이 그대로 적용되는지"처럼 실무에서 다툼이 될 수 있는 지점을 정리한 것으로, 도구는 결론을 내리지 않고 **확인할 자료와 참고 근거(조문·적부·판례 번호)**만 제시합니다. 각 쟁점 항목의 `판단` 필드는 항상 "세무사 확인 필요"로 고정되어 있으며, 도구가 "사업소득임", "사용료임" 같은 단정 문구를 결과 어디에도 쓰지 않습니다. 쟁점 데이터는 코드 하드코딩 없이 `korean_tax_calc_mcp/data/issues.json`에서 읽어옵니다.
+- **원장 그대로 입력**: 세무조정 도구는 장부 항목(이름·금액·증빙·성격)을 그대로 받아 항목 판단 → 세무조정 → 소득처분까지 돌려줍니다.
+- **쟁점 표시**: 비거주자 원천징수·과소자본 결과에는 다툼이 될 수 있는 지점과 확인할 자료를 함께 붙입니다(결론은 내리지 않음).
+- **지원 연도**: 법인세 2016~2026 사업연도, 소득세 2016~2026 귀속연도, 부가가치세 2016년 1기~2026년 2기, 가산세·제척기간은 현행 조문. 그 밖의 연도는 오류로 멈춥니다. 지방소득세는 별도입니다.
 
 ## 면책 및 고지
 
@@ -162,33 +75,6 @@ Claude Code: `claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp`
 - **AI 사용 고지:** 계산·판정 도구 59개는 코드로 동작하며 생성형 AI를 쓰지 않습니다. PDF 검토 도구 3개(`extract_relations`, `tunnelling_from_pdf`, `return_precheck_pdf`)는 UPSTAGE_API_KEY가 있으면 생성형 AI(Upstage Solar Pro 4)로 표를 추출하며 결과에 그 사실을 표시합니다. 키가 없으면 pypdf로 로컬 텍스트 추출(host_ai 모드) 후 정리 안내에 따라 다음 도구 입력으로 직접 정리할 수 있습니다.
 - **데이터 전송:** UPSTAGE_API_KEY를 설정해 PDF 도구를 사용할 때만 문서 내용이 Upstage API(api.upstage.ai)로 전송됩니다. 키 없이 사용하면(pypdf 로컬 추출) 외부 전송이 없습니다. 민감정보가 담긴 문서는 API 전송 시 넣지 마세요.
 
-## 유의
-
-- 계산 결과는 검토 보조 자료이며 세무 자문이 아닙니다. 신고 전 원문 조문과 확인하세요.
-- 지방소득세는 별도입니다.
-- 세율표가 검증되지 않은 연도는 계산하지 않고 오류를 돌려줍니다.
-- **데이터 전송 안내** — 계산·판정 도구 59개는 설치한 컴퓨터 안에서 코드로 처리하며 외부 API로 전송하는 내용은 없습니다. PDF 도구 3개만 Upstage API로 문서를 전송합니다.
-
-## 지원 연도
-
-세목별 연도표는 2016~2026을 지원하며, 표에 없는 연도는 추정 계산하지 않고 오류로 멈춘다. 연도는 사업연도·귀속연도·지급연도·과세기간 기준으로 세목마다 적용 기간이 다르다.
-
-| 세목 | 도구 예시 | 지원 연도 | 기준 |
-|---|---|---|---|
-| 법인세 | `corporate_tax`, `entertainment_limit`, `minimum_tax` 등 | 2016~2026 사업연도 | calc_cit.YEAR (법인세법 제55조 등) |
-| 소득세(종합소득세) | `income_tax`, `wage_income_tax` | 2016~2026 귀속연도 | calc_income.RATES (소득세법 제55조) |
-| 원천징수 | `withholding_tax`, `daily_worker_withholding` | 2016~2026 지급연도 | 소득세법 제129조·제134조 |
-| 비거주자·외국법인 원천징수 | `nonresident_withholding` | 조약별 (국내세율은 현행) | 소득세법 제156조 / 법인세법 제98조 |
-| 과소자본 손금불산입 | `thin_capitalization` | 사업연도 기준 (현행 국조법 제22조) | 국제조세조정법 제22조 |
-| 부가가치세 | `vat_deemed_rent`, `vat_simplified_taxpayer` 등 | 2016년 1기 ~ 2026년 2기 | calc_vat 연도표 (부가가치세법) |
-| 가산세·제척기간 등 | `invoice_penalty`, `assessment_limitation` 등 | 현행 조문 (날짜 기준 적용) | 국세기본법·부가가치세법 등 |
-
-## 함께 쓰면 좋은 MCP
-
-- [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp) — 국세청 해석·판례·통칙·시점별 조문
-
 ## 라이선스
 
-MIT © 2026 Upstage
-
-Created by Mia(윤승미)
+MIT © 2026 Upstage · Created by Mia(윤승미)
