@@ -1,4 +1,4 @@
-"""근로소득 총급여(earned_income_gross_pay) 손계산 정답 테스트 — SPEC c6.
+"""근로소득 총급여(earned_income_gross_pay) 손계산 정답 테스트.
 
 근거 조문(모두 facts_vocab.json 항목 근거와 일치):
   · 소득세법 제20조①(근로소득 범위), 제12조3호(비과세 각 목), 제47조①(근로소득공제)
