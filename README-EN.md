@@ -6,9 +6,24 @@
 
 [![PyPI](https://img.shields.io/pypi/v/korean-tax-calc-mcp)](https://pypi.org/project/korean-tax-calc-mcp/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-korean--tax--calc--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=korean-tax-calc-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Built with Upstage Solar Pro 4](https://img.shields.io/badge/Built%20with-Upstage%20Solar%20Pro%204-7A3FF2)](https://www.upstage.ai/) · [한국어](README.md)
 
-> **Developed with Upstage Solar Pro 4 since 0.3.0** (0.2.1 and earlier predate it). 2026 corporate tax rates, non-resident withholding and thin capitalisation (0.3.0), 11 tax-audit judgment tools (0.4.0), nine end-to-end calculators that take facts through to tax adjustments plus the facts vocabulary (0.6.0–0.7.0), and adjustment-statement-shaped results with ledger-style input (0.8.0–0.9.0), and six new end-to-end calculators — inheritance tax, gift tax, dividend received deduction, inventory valuation adjustment, special tax credit, and asset grant reserve (0.10.0) — were written by Solar Pro 4, reviewed by Solar Pro 4-based code review (CodeSolar), and cross-checked by Claude with tests. 62 tools; details in the [CHANGELOG](CHANGELOG.md).
+> **Since 0.3.0** — written by Solar Pro 4, reviewed by CodeSolar, cross-checked by Claude with tests. 62 tools; details in the [CHANGELOG](CHANGELOG.md).
 
 **Korean (South Korea) tax calculations for AI agents — code, not guesses.** LLMs often get tax arithmetic wrong. This MCP server computes in code and cites the statute behind every result. It uses year-by-year rate tables (2016–2026); for a year without a verified table it returns an error instead of estimating. 62 tools (59 computation/judgment + 3 PDF). Nothing sent outside your machine for the 59 computation/judgment tools.
+
+## How it works
+
+```mermaid
+flowchart LR
+    U[User question] --> A[AI app<br/>Claude·Cursor·Solar Work]
+    A -->|Tool selection·input| C[korean-tax-calc-mcp<br/>Calculations·adjustments·checks]
+    C --> E[Calculation engine and yearly rate tables on your PC]
+    E --> C
+    C -->|Results and statute citations| A
+    A --> R[Answer with citations]
+    C -.->|PDF tools only| P[Upstage API]
+```
+
+The AI chooses which tools to call; this MCP returns source text and computed results. Judgment and explanation are done by the AI.
 
 ## Try asking
 
@@ -17,10 +32,6 @@
 - "Shareholder loan of 200M on Mar 1, 100M repaid Sep 30 — deemed interest?"
 - "SME with 10B KRW revenue spent 50M on entertainment — how much exceeds the limit?"
 - "When does the assessment period expire for a corporate tax return due 2018-03-31? What if it was fraudulent?"
-- "Retirement income tax on 100M KRW after 15 years of service"
-- "Here are five entertainment-expense ledger lines — give me the FY2025 adjustments (disallowance and income disposition)"
-- "Bad debts: 8M statute-barred, 5M on a note dishonoured 3 months ago; allowance opening 20M, provision 25M — excess and reserve adjustments?"
-- "Mid-sized company, 50B revenue of which 40B from related corporations, controlling shareholder 60% — deemed gift from tunnelling under the 2026 NTS formula"
 
 ## Install
 

@@ -6,13 +6,28 @@
 
 [![PyPI](https://img.shields.io/pypi/v/korean-tax-calc-mcp)](https://pypi.org/project/korean-tax-calc-mcp/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-korean--tax--calc--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=korean-tax-calc-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Built with Upstage Solar Pro 4](https://img.shields.io/badge/Built%20with-Upstage%20Solar%20Pro%204-7A3FF2)](https://www.upstage.ai/) · [English](README-EN.md)
 
-> **0.3.0부터 업스테이지 Solar Pro 4로 개발합니다.** (0.2.1까지는 그 이전 개발분) 2026 법인세율·비거주자 원천징수·과소자본(0.3.0), 세무조사 판정 도구 11개(0.4.0), 사실관계를 받아 세무조정까지 돌려주는 끝에서 끝까지 계산기 9종과 사실관계 어휘(0.6.0~0.7.0), 조정명세서 모양 결과·원장형 입력(0.8.0~0.9.0), 상속·증여·수입배당금·재고자산·특별세액공제·일시상각충당금 새 계산 도구 6종(0.10.0)은 Solar Pro 4가 코드를 쓰고 Solar Pro 4 기반 코드 리뷰(CodeSolar)가 PR을 검토했으며, Claude가 테스트로 교차 검증했습니다. 62개 도구, 상세는 [CHANGELOG](CHANGELOG.md).
+> **0.3.0부터 Solar Pro 4가 코드를 쓰고** CodeSolar가 리뷰, Claude가 테스트로 교차 검증. 도구 62개, 상세는 [CHANGELOG](CHANGELOG.md).
 
 **Korean tax calculations for AI agents — code, not guesses.** Corporate tax, entertainment limits, deemed interest, penalties, limitation periods, withholding, income tax and VAT, using year-by-year rate tables (2016–2026). Each result cites its statute. Years without a verified table stop with an error instead of estimating. 62 tools (59 computation/judgment + 3 PDF) — → [English README](README-EN.md)
 
 ---
 
 > 세금 계산은 AI가 자주 틀립니다. 이 서버는 계산을 코드로 하고, 결과마다 근거 조문을 붙입니다. 연도표가 없는 해는 추정하지 않고 멈춥니다.
+
+## 작동 방식
+
+```mermaid
+flowchart LR
+    U[사용자 질문] --> A[AI 앱<br/>Claude·Cursor·Solar Work]
+    A -->|도구 선택·입력| C[korean-tax-calc-mcp<br/>계산·세무조정·판정]
+    C --> E[설치한 PC 안<br/>계산 엔진·연도별 세율표]
+    E --> C
+    C -->|결과·근거 조문| A
+    A --> R[근거와 함께 답]
+    C -.->|PDF 도구만| P[Upstage API]
+```
+
+AI가 어떤 도구를 쓸지 고르고, 이 MCP는 원문·계산 결과를 돌려줍니다. 판단과 설명은 AI가 합니다.
 
 **이렇게 물어보세요**
 
@@ -21,14 +36,10 @@
 - "가지급금 3월 1일 2억 대여, 9월 30일 1억 회수 — 인정이자 계산해줘"
 - "중소기업 매출 100억, 기업업무추진비 5천만 원이면 한도초과액은?"
 - "2018년 3월 31일 신고기한인 법인세 부과제척기간 만료일은? 부정행위면?"
-- "퇴직금 1억, 근속 15년 퇴직소득세"
-- "세금계산서 미발급 공급가액 5천만 원 가산세"
-- "보증금 3억 상가 간주임대료 (184일)"
-- "기업업무추진비 원장 5건 그대로 줄게 — 2025 사업연도 세무조정(손금불산입·소득처분) 뽑아줘"
-- "대손: 소멸시효 800만·부도 3개월 어음 500만, 충당금 기초 2천만·설정 2,500만 — 한도초과와 유보 조정은?"
-- "중견기업 매출 500억 중 특수관계법인 400억, 지배주주 60% — 2026 신고안내 산식으로 일감몰아주기 증여의제이익"
 
 **설치 한 줄** — `claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp`
+
+한국 세법 근거를 찾는 MCP 서버입니다. Claude·Cursor 같은 AI 도구에 붙이면 세법 쟁점을 물을 때 국세청 해석·판례·통칙·조문을 문서번호와 함께 찾아 줍니다.
 
 - **연도별 세율표** — 2016~2026 사업연도·귀속연도별 세율·한도율, 없는 해는 추정하지 않고 오류
 - **근거 조문** — 모든 결과에 법·시행령 조문 표시
