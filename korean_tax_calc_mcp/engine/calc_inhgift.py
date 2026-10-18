@@ -122,7 +122,7 @@ def _금융재산공제(year, net_financial_assets):
     한도 = voc["한도"]  # 2억
     if net_financial_assets <= 기준:
         return net_financial_assets
-    return max(_won(net_financial_assets * 율), 최소, key=lambda x: min(x, 한도))
+    return min(max(_won(net_financial_assets * 율), 최소), 한도)
 
 
 def _동거주택공제(year, cohabiting_house):
