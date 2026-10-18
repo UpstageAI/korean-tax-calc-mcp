@@ -1468,6 +1468,10 @@ def dividend_received_deduction(
             problems.append(f"{name}: ratio·shares·lots 중 정확히 하나만 필요")
             continue
 
+        dv = inv.get("dividend")
+        if dv is not None and (isinstance(dv, bool) or not isinstance(dv, int)):
+            problems.append(f"{name}: dividend=int 필요, 현재 {dv}")
+
         # 배당 받은 날
         received_on = inv.get("received_on")
         if received_on is None:
@@ -1686,6 +1690,15 @@ def asset_grant_reserve(
 
     # used > received 검사는 국고보조금·공사부담금에만 적용 (보험차익은 used 개념 없음)
     if kind in ("국고보조금", "공사부담금") and received > 0:
+        for ai, a in enumerate(assets):
+            used_v = a.get("used", a["cost"])
+            if isinstance(used_v, bool) or not isinstance(used_v, int):
+                return {"error": "입력 확인 필요 — 계산하지 않음",
+                        "문제": [f"assets[{ai}].used: 금액(원)을 넣으세요 — true/false 아님"]}
+            cost_v = a["cost"]
+            if isinstance(cost_v, bool) or not isinstance(cost_v, int) or cost_v < 0:
+                return {"error": "입력 확인 필요 — 계산하지 않음",
+                        "문제": [f"assets[{ai}].cost: 금액(원)을 넣으세요 — true/false 아님"]}
         if sum(a.get("used", a["cost"]) for a in assets) > received:
             return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["사용액 합계가 수령액을 넘음"]}
 
@@ -1704,14 +1717,29 @@ def asset_grant_reserve(
     for a in assets:
         asset_name = a["asset"]
         cost = a["cost"]
+        if isinstance(cost, bool) or not isinstance(cost, int) or cost < 0:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"assets[{a}].cost: 금액(원)을 넣으세요 — true/false 아님"]}
         used = a.get("used", cost)
+        if isinstance(used, bool) or not isinstance(used, int) or used < 0:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"assets[{a}].used: 금액(원)을 넣으세요 — true/false 아님"]}
         depreciable = a["depreciable"]
         dep_this_year = a.get("depreciation_this_year", 0)
+        if isinstance(dep_this_year, bool) or not isinstance(dep_this_year, int) or dep_this_year < 0:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"assets[{a}].depreciation_this_year: 금액(원)을 넣으세요 — true/false 아님"]}
         disposed = a.get("disposed", False)
         disposed_ratio = a.get("disposed_ratio", 1.0)
         prior_dep = a.get("prior_dep_on_grant", 0)
         book_provision = a.get("book_provision", 0)
+        if isinstance(book_provision, bool) or not isinstance(book_provision, int):
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"assets[{a}].book_provision: 금액(원)을 넣으세요 — true/false 아님"]}
         book_reversal = a.get("book_reversal", 0)
+        if isinstance(book_reversal, bool) or not isinstance(book_reversal, int):
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"assets[{a}].book_reversal: 금액(원)을 넣으세요 — true/false 아님"]}
 
         if receipt_year:
             if kind == "보험차익":
@@ -1958,11 +1986,14 @@ def inventory_valuation_adjustment(
                     except Exception:
                         problems.append(f"항목 {i+1}: change_report.filed_on='{fo}' 형식 오류")
         bv = it.get("book_value")
-        if not isinstance(bv, int) or bv < 0:
+        if isinstance(bv, bool) or not isinstance(bv, int) or bv < 0:
             problems.append(f"항목 {i+1}: book_value=int≥0 필요, 현재 {bv}")
         vals = it.get("valuations")
         if not isinstance(vals, dict):
             problems.append(f"항목 {i+1}: valuations=dict 필요")
+        pa = it.get("prior_adjustment")
+        if pa is not None and (isinstance(pa, bool) or not isinstance(pa, int)):
+            problems.append(f"항목 {i+1}: prior_adjustment=int 필요, 현재 {pa}")
 
     if problems:
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": problems}

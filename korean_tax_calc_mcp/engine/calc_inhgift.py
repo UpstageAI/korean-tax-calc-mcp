@@ -160,10 +160,16 @@ def _추정상속재산(year, presumed_items):
 
     total = 0
     details = []
-    for item in presumed_items:
+    for _pi, item in enumerate(presumed_items):
         window = item["window"]
         amount = item["amount"]
+        if isinstance(amount, bool) or not isinstance(amount, int):
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"presumed_items[{_pi}].amount: 금액(원)을 넣으세요 — true/false 아님"]}
         unexplained = item["unexplained"]
+        if isinstance(unexplained, bool) or not isinstance(unexplained, int):
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"presumed_items[{_pi}].unexplained: 금액(원)을 넣으세요 — true/false 아님"]}
         kind = item["kind"]
 
         if window == "1년":
