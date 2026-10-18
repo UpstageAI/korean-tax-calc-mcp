@@ -25,9 +25,11 @@ def test_corp_tax_rates_by_year():
     assert C.corp_tax(3500 * 억, 2018) == 78_080 * M
     assert C.corp_tax(3500 * 억, 2023) == 74_580 * M
     assert C.corp_tax(3500 * 억, 2026) == 78_080 * M                                # 2026: 기본세율 2018과 동일
-    # 소규모 임대법인 세율: 2025년 표에는 2억 이하 구간 없음(3억 전액 19% → 5,700만). 2026년 개정표부터 2억 이하 10% 포함.
+    # 소규모 임대법인 세율(제55조①2호): 2억 이하 구간 없음. 2025는 200억 이하 19%(3억 → 5,700만), 2026은 20%(3억 → 6,000만).
     assert C.corp_tax(3 * 억, 2025, small_rental=True) == 57 * M
-    assert C.corp_tax(3 * 억, 2026, small_rental=True) == 39 * M                    # 2026: 2억×10% + 1억×19% = 3,900만
+    assert C.corp_tax(3 * 억, 2026, small_rental=True) == 60 * M                    # 2026: 3억×20% = 6,000만
+    assert C.corp_tax(300 * 억, 2026, small_rental=True) == 6_200 * M               # 40억 + 100억×22% = 62억
+    assert C.corp_tax(5_000 * 억, 2026, small_rental=True) == 115_600 * M           # 656억 + 2,000억×25% = 1,156억
     assert C.corp_tax(3 * 억, 2024, small_rental=True) == 37 * M                    # 2024는 소규모 세율표 없음 → 일반세율
 
 def _ent(y, rev, **kw):
