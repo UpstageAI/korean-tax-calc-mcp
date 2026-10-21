@@ -294,6 +294,48 @@ _KNOWN_KINDS = {
 }
 
 
+# ── persons.relation 허용값 · 동의어 ────────────────────────────────────────
+# 특별세액공제에서 인식하는 relation 값. 이 밖은 '문제'로 거부하고 계산하지 않는다.
+ALLOWED_RELATIONS = (
+    "본인", "배우자", "직계비속", "입양자", "형제자매", "직계존속",
+    "위탁아동", "수급자",
+)
+# 문항 표현 그대로 들어오는 값을 허용값으로 매핑. 매핑에도 없는 값은 거부.
+RELATION_SYNONYMS = {
+    "자녀": "직계비속",
+    "아들": "직계비속",
+    "딸": "직계비속",
+    "부모": "직계존속",
+    "모친": "직계존속",
+    "부친": "직계존속",
+    "어머님": "직계존속",
+    "아버님": "직계존속",
+    "엄마": "직계존속",
+    "아빠": "직계존속",
+}
+
+
+def _validate_relations(persons):
+    """persons 목록의 relation을 검증·정규화한다.
+
+    반환: (문제가 있으면 문제 문자열 목록, 없으면 None).
+    동의어는 허용값으로 매핑하고, 매핑에도 없는 값은 거부한다."""
+    problems = []
+    for p in persons:
+        rel = p.get("relation", "")
+        if rel in ALLOWED_RELATIONS:
+            continue
+        canon = RELATION_SYNONYMS.get(rel)
+        if canon is not None:
+            p["relation"] = canon  # 동의어 → 정식값 치환
+            continue
+        problems.append(
+            f"persons[{persons.index(p)}].relation='{rel}'은(는) 허용값이 아님 "
+            f"— 허용: {', '.join(ALLOWED_RELATIONS)}"
+        )
+    return problems if problems else None
+
+
 def _is_basic_dependent(p, 기본공제대상자_map):
     """기본공제대상자 판정 (basic_dependent 오버라이드 지원)."""
     if p.get("basic_dependent") is not None:
@@ -377,6 +419,11 @@ def special_tax_credit(
 
     if problems:
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": problems}
+
+    # persons.relation 검증·정규화 (동의어 매핑, 허용값 밖은 거부)
+    rel_problems = _validate_relations(persons)
+    if rel_problems:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": rel_problems}
 
     persons_dict = {p["name"]: p for p in persons}
 
@@ -515,7 +562,7 @@ def special_tax_credit(
             if e["person"] != name:
                 continue
             kind = e["kind"]
-            amount = max(0, e["amount"] - e.get("reimbursed", 0))
+            amount = max(0, e["amount"] - e.get("reimbursed", 0) - e.get("tax_exempt_subsidy", 0))
 
             # 본인 외 제외 항목
             if kind in ("교육비_대학원", "직업훈련"):
@@ -655,6 +702,26 @@ def special_tax_credit(
             if not disabled:
                 판단.append({"항목": k, "결론": "장애인이 아닌 사람의 특수교육비 — 공제 제외",
                              "근거": "소득세법 제59조의4③3호가·다목"})
+        elif k in ("교육비_취학전", "교육비_초중고", "교육비_대학", "교육비_대학원", "교복", "체험학습", "대입전형료"):
+            # company subsidy 판단
+            employer_subsidy = e.get("employer_subsidy", 0)
+            tax_exempt_subsidy = e.get("tax_exempt_subsidy", 0)
+            if employer_subsidy > 0:
+                판단.append({"항목": k, "결론": f"회사 지급 학자금 {employer_subsidy:,}원은 근로소득으로 과세되므로 교육비에서 차감하지 않음(시행령 제118조의6②은 소득세·증여세 비과세 학자금·장학금만 제외)",
+                             "근거": "소득세법 시행령 제118조의6②"})
+            if tax_exempt_subsidy > 0:
+                판단.append({"항목": k, "결론": f"비과세 학자금·장학금 {tax_exempt_subsidy:,}원 차감",
+                             "근거": "소득세법 시행령 제118조의6②"})
+
+    # 교육비 지출이 하나라도 있으면 employer_subsidy 입력 여부와 무관하게 규칙을 항상 표기
+    _교육비_종류 = ("교육비_취학전", "교육비_초중고", "교육비_대학", "교육비_대학원",
+                   "교복", "체험학습", "대입전형료", "특수교육비", "발달재활서비스")
+    if any(e.get("kind") in _교육비_종류 for e in expenses) and 교육비대상합계 > 0:
+        판단.append({"항목": "교육비(일반)", "결론": (
+            "회사·학교 등에서 받은 학자금·보조금: 근로소득으로 과세된 것은 교육비에서 차감하지 않음, "
+            "소득세·증여세 비과세인 장학금·학자금만 차감(시행령 제118조의6②). "
+            "차감 전 금액을 amount에 넣고 보조금은 employer_subsidy/tax_exempt_subsidy에 넣을 것"
+        ), "근거": "소득세법 시행령 제118조의6②"})
 
     return {
         "결과": {

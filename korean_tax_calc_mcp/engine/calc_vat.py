@@ -104,9 +104,14 @@ def deemed_input_limit_ratio(period, individual, restaurant, base):
 
 def deemed_input(purchase, base, rate_num=None, rate_den=None, limit_ratio=None, period=None, industry=None, individual=True, sme=True):
     """의제매입세액(부가법 제42조): min(면세농산물 매입, 과세표준 × 한도율) × 공제율.
-    공제율·한도율을 직접 주거나, period·industry로 연도표에서 찾음."""
+    공제율·한도율을 직접 주거나, period·industry로 연도표에서 찾음.
+    limit_ratio=None이고 base=0이면 한도 없이 purchase 전체를 사용."""
     if rate_num is None: rate_num, rate_den = deemed_input_rate(industry, period, individual, base, sme)
-    if limit_ratio is None: limit_ratio = deemed_input_limit_ratio(period, individual, industry == "음식점", base)
+    if limit_ratio is None:
+        if base == 0:
+            limit_ratio = float('inf')  # 한도 없음
+        else:
+            limit_ratio = deemed_input_limit_ratio(period, individual, industry == "음식점", base)
     return int(min(purchase, base * limit_ratio) * rate_num / rate_den)
 
 

@@ -121,10 +121,26 @@ def calc_cg(args: dict[str, Any], vocab_on) -> dict:
 
     # ── 금액 ──
     양도가액 = int(args["transfer_price"])
-    취득가액 = int(args["acquisition_price"])
+    실지거래가액 = int(args["acquisition_price"])
+    취득세 = int(args.get("acquisition_tax", 0))
+    중개수수료 = int(args.get("acquisition_brokerage", 0))
+    보유재산세 = int(args.get("holding_tax_paid", 0))
     자본적지출 = int(args["capital_expenditure"])
     양도비 = int(args["transfer_expenses"])
     등기 = bool(args["registered"])
+    환산취득가액_사용 = bool(args.get("환산취득가액_사용", False))
+    개산공제 = int(args.get("개산공제", 0))
+
+    # 실지거래가액 사용 시 취득세·중개수수료 합산 (환산취득가액 사용 시 제외)
+    if 실지거래가액 > 0 and not 환산취득가액_사용:
+        취득가액 = 실지거래가액 + 취득세 + 중개수수료
+    elif 환산취득가액_사용:
+        # server에서 환산취득가액이 acquisition_price로 전달됨 → 취득가액은 server가 덮어쓰지만
+        # 여기서는 취득세·중개수수료를 합산하지 않은 값으로 계산 (일관성)
+        환산취득가액 = 실지거래가액  # server가 전달한 환산취득가액
+        취득가액 = 환산취득가액 + 개산공제
+    else:
+        취득가액 = 0
 
     # ── 주택 분기 ──
     is_주택 = asset_type == "주택"
@@ -183,6 +199,14 @@ def calc_cg(args: dict[str, Any], vocab_on) -> dict:
 
     # ── 판정 리스트 ──
     판단: list[dict[str, str]] = []
+
+    # 보유 중 재산세는 필요경비 아님 (소득세법 제97조①)
+    if 보유재산세 > 0:
+        판단.append({
+            "항목": "보유 중 재산세",
+            "결론": f"보유 중 재산세 {보유재산세:,}원은 필요경비가 아님(소득세법 제97조①) — 취득가액에 포함하지 않음",
+            "근거": "소득세법 제97조①",
+        })
 
     # ── 양도차익 (제97조) ──
     양도차익 = 양도가액 - 취득가액 - 자본적지출 - 양도비
@@ -351,6 +375,34 @@ def calc_cg(args: dict[str, Any], vocab_on) -> dict:
         "장기보유특별공제액": int(장기보유특별공제액),
         "양도소득금액": int(양도소득금액),
     }
+
+    # 취득가액 구성
+    if 환산취득가액_사용:
+        # 환산취득가액 경로: 취득세·중개수수료는 합산하지 않고 개산공제로 대체
+        # 실지거래가액에는 server가 전달한 환산취득가액 값이 들어있음
+        결과["취득가액_구성"] = {
+            "실지거래가액": 0,
+            "환산취득가액": 실지거래가액,
+            "개산공제": 개산공제,
+            "취득세": 0,
+            "중개수수료": 0,
+            "합계": 실지거래가액 + 개산공제,
+        }
+    elif 실지거래가액 > 0:
+        결과["취득가액_구성"] = {
+            "실지거래가액": 실지거래가액,
+            "취득세": 취득세,
+            "중개수수료": 중개수수료,
+            "합계": 실지거래가액 + 취득세 + 중개수수료,
+        }
+    elif 실지거래가액 == 0 and args.get("acquisition_standard_price") is not None:
+        # 환산취득가액 사용 시 (실지거래가액 0, 기준시가 있음) — server 우회 호출 대응
+        결과["취득가액_구성"] = {
+            "실지거래가액": 0,
+            "환산취득가액": int(args.get("acquisition_standard_price", 0)),
+            "개산공제": 0,
+            "합계": 0,
+        }
 
     if 기본공제_적용:
         결과["양도소득_기본공제"] = int(기본공제액)

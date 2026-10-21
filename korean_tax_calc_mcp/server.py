@@ -790,11 +790,92 @@ def missing_receipt_disallowance(year: YEAR, items: Annotated[list[ReceiptItem],
 
 
 # ───────── 0.2 추가: 부가가치세 ─────────
+def _normalize_usage(usage):
+    """items.usage 허용 3形態 → {구분: 비율%} dict로 정규화.
+
+    ① {'제조': 60, '재판매': 30}          → 그대로 반환
+    ② [{'구분': '제조', '비율': 60}, ...] → dict로 변환
+    ③ {'구분': '제조', '비율': 60}         → ②처럼 처리해 dict로 변환
+    """
+    if not usage:
+        return {}
+    if isinstance(usage, list):
+        out = {}
+        for row in usage:
+            g = row.get("구분", "")
+            b = row.get("비율", 0)
+            out[g] = int(b)
+        return out
+    if isinstance(usage, dict):
+        if "구분" in usage and "비율" in usage:
+            return {usage["구분"]: int(usage["비율"])}
+        return {k: int(v) for k, v in usage.items()}
+    raise TypeError(f"usage 유형 불일치: {type(usage)}")
+
+
+def _merge_items_with_same_identity(items):
+    """같은 name이고 purchase_price·수입·관세·운임 값이 같은 여러 행을 한 품목으로 합쳐 usage를 더한다."""
+    groups = {}
+    for it in items:
+        key = (
+            it.get("name", ""),
+            int(it.get("purchase_price", 0)),
+            bool(it.get("imported", False)),
+            int(it.get("customs_value", 0)),
+            int(it.get("customs_duty", 0)),
+            int(it.get("freight_included", 0)),
+        )
+        groups.setdefault(key, []).append(it)
+    merged = []
+    for key, rows in groups.items():
+        name = key[0]
+        base = rows[0]
+        merged_usage = {}
+        for r in rows:
+            u = _normalize_usage(r.get("usage", {}))
+            for g, b in u.items():
+                merged_usage[g] = merged_usage.get(g, 0) + b
+        merged.append({
+            "name": name,
+            "purchase_price": base.get("purchase_price", 0),
+            "imported": base.get("imported", False),
+            "customs_value": base.get("customs_value", 0),
+            "customs_duty": base.get("customs_duty", 0),
+            "freight_included": base.get("freight_included", 0),
+            "taxable_goods": base.get("taxable_goods", False),
+            "usage": merged_usage,
+        })
+    return merged
+
+
+_USAGE_ERROR_FORMAT = (
+    "items[].usage 형식 오류 — 허용 형태: "
+    "{{'제조': 60, '재판매': 30, '재고': 10}} 또는 "
+    "[{{'구분': '제조', '비율': 60}}, ...]. "
+    "구분 허용값: 제조, 재판매, 재고, 종업원제공, 면세사업. "
+    "비율 합 100."
+)
+
+
 @mcp.tool(annotations=CALC)
 @_guard
 def vat_deemed_input_credit(period: Annotated[str, Field(description="과세기간('YYYY-1' 또는 'YYYY-2')")],
                             industry: Annotated[Literal["음식점", "유흥", "제조", "제조_떡방앗간등", "기타"], Field(description="업종")],
-                            purchase: Annotated[int, Field(description="면세농산물 등 매입가액(원)")] = 0,
+                            purchase: Annotated[int, Field(description=(
+                                "공제대상 매입가액(원) = 과세사업에 사용했거나 사용할 면세농산물 등의 매입가액. "
+                                "다른 사업자에게 그대로 판매한 분은 제외, 기말 재고분은 포함. "
+                                "수입분은 관세의 과세가격 + 운반비 포함 구입액이면 purchase_total·freight_included 사용. "
+                                "품목별로 따로 부르지 말고 합산해서 1회 호출. "
+                                "used_taxable·used_exempt·ending_inventory_common이 모두 0이면 purchase(또는 purchase_total−freight_included)가 공제대상 매입가액이 됨. "
+                                "items와 purchase/purchase_total을 동시에 주면 문제로 거부됨"
+                            ))] = 0,
+                            items: Annotated[list | None, Field(description=(
+                                "품목별 면세농산물 등 목록. 각 항목: {name, purchase_price, imported?, customs_value?, customs_duty?, freight_included?, taxable_goods?, usage: {구분: 비율%}}. "
+                                "usage 허용 형태 3가지 — ① {'제조': 60, '재판매': 30, '재고': 10} ② [{'구분': '제조', '비율': 60}, {'구분': '재판매', '비율': 30}] ③ {'구분': '제조', '비율': 60}(단일). 전부 {'제조': 60, ...} 형태로 자동 정규화됨. "
+                                "usage 구분 허용값: 제조, 재판매, 재고, 종업원제공, 면세사업. 같은 name이고 purchase_price·수입·관세·운임이 같으면 여러 행을 한 품목으로 합쳐 usage를 더함. 비율 합이 100이 아니면 문제로 거부. "
+                                "문항에 품목별 표가 있으면 items에 그대로 넣고(수입품은 관세의 과세가격·관세, 운임 포함액, 사용 비율), 합산·제외는 도구가 함. "
+                                "items와 purchase/purchase_total을 동시에 주면 문제로 거부"
+                            ))] = None,
                             base: Annotated[int, Field(description="해당 과세기간 과세표준(원). 없으면 taxable_supply 사용")] = 0,
                             individual: Annotated[bool, Field(description="개인사업자 여부")] = True, sme: Annotated[bool, Field(description="중소기업 여부(제조 법인)")] = True,
                             purchase_total: Annotated[int, Field(description="면세농산물 등 총 구입액( 운반비 포함 가능, 원)")] = 0,
@@ -809,10 +890,75 @@ def vat_deemed_input_credit(period: Annotated[str, Field(description="과세기�
 결과: 공제대상 매입가액·의제매입세액·공제율·한도율·과세비율·단계별 계산, 근거(부가가치세법 제42조, 시행령 제81조·제84조)."""
     from .engine.calc_vat import deemed_input, deemed_input_rate, deemed_input_limit_ratio
 
-    # base와 taxable_supply가 모두 0이면 한도 계산 불가
-    if base == 0 and taxable_supply == 0:
+    # items와 purchase/purchase_total 동시 입력 거부
+    if items is not None and (purchase > 0 or purchase_total > 0):
         return {"error": "입력 확인 필요 — 계산하지 않음",
-                "문제": ["base와 taxable_supply가 모두 0 — 한도 계산에 과세표준 필요"]}
+                "문제": ["items와 purchase/purchase_total을 동시에 입력할 수 없음 — 둘 중 하나만 사용"]}
+
+    # items 기반 계산
+    품목별_결과 = None
+    if items is not None:
+        try:
+            items = _merge_items_with_same_identity(items)
+            품목별_결과 = []
+            총_공제대상 = 0
+            for item in items:
+                name = item.get("name", "")
+                purchase_price = int(item.get("purchase_price", 0))
+                imported = bool(item.get("imported", False))
+                customs_value = int(item.get("customs_value", 0))
+                customs_duty = int(item.get("customs_duty", 0))
+                freight_included = int(item.get("freight_included", 0))
+                taxable_goods = bool(item.get("taxable_goods", False))
+                usage = _normalize_usage(item.get("usage", {}))
+
+                # usage 비율 합 검증
+                usage_sum = sum(usage.values()) if usage else 0
+                if usage_sum != 100:
+                    return {"error": "입력 확인 필요 — 계산하지 않음",
+                            "문제": [f"품목 '{name}'의 usage 비율 합이 {usage_sum}%로 100이 아님"]}
+
+                # 기준 매입가액 계산
+                if imported:
+                    기준매입가액 = customs_value  # 관세의 과세가격 (관세 미포함)
+                else:
+                    기준매입가액 = max(0, purchase_price - freight_included)
+
+                # taxable_goods (세금계산서 수취 과세 물품)면 공제대상 0
+                if taxable_goods:
+                    공제대상 = 0
+                    판단_문구 = "과세 물품은 의제매입세액 대상 아님"
+                else:
+                    # usage별 포함/제외 판정
+                    포함_usage = {"제조", "재고"}
+                    제외_usage = {"재판매", "종업원제공", "면세사업"}
+                    공제대상 = 0
+                    판단_부분 = []
+                    for 구분, 비율 in usage.items():
+                        비율_int = int(비율)
+                        if 구분 in 포함_usage:
+                            공제대상 += int(기준매입가액 * 비율_int / 100)
+                            판단_부분.append(f"{구분} {비율_int}% 포함")
+                        elif 구분 in 제외_usage:
+                            판단_부분.append(f"{구분} {비율_int}% 제외")
+                        else:
+                            return {"error": "입력 확인 필요 — 계산하지 않음",
+                                    "문제": [f"품목 '{name}'의 usage 구분 '{구분}'은(는) 허용되지 않음 — 허용: 제조, 재판매, 재고, 종업원제공, 면세사업"]}
+                    판단_문구 = ", ".join(판단_부분) if 판단_부분 else ""
+
+                품목별_결과.append({
+                    "name": name,
+                    "기준매입가액": 기준매입가액,
+                    "공제대상": 공제대상,
+                    "판단": 판단_문구,
+                })
+                총_공제대상 += 공제대상
+            eligible_purchase = 총_공제대상
+        except Exception as e:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [_USAGE_ERROR_FORMAT]}
+    else:
+        품목별_결과 = None
 
     # base가 없으면 taxable_supply를 base로 사용 (명세서 검산 예시 호환)
     effective_base = base if base > 0 else taxable_supply
@@ -835,25 +981,31 @@ def vat_deemed_input_credit(period: Annotated[str, Field(description="과세기�
     else:
         taxable_ratio = 1.0  # 과세만 있는 경우
 
-    # 공제대상 매입가액 = 과세 사용분 + 공통 재고 × 과세 공급가액 비율
-    eligible_purchase = used_taxable_adj + int(inventory_adj * taxable_ratio)
+    # items가 제공되면 items 기반 계산 결과 사용, 아니면 기존 로직
+    if items is None:
+        # 공제대상 매입가액 = 과세 사용분 + 공통 재고 × 과세 공급가액 비율
+        eligible_purchase = used_taxable_adj + int(inventory_adj * taxable_ratio)
 
-    # 사용처 구분이 모두 0이면 purchase 또는 purchase_total − freight_included
-    if used_taxable == 0 and used_exempt == 0 and ending_inventory_common == 0:
-        if purchase > 0:
-            eligible_purchase = purchase
-        else:
-            eligible_purchase = max(0, purchase_total - freight_included)
+        # 사용처 구분이 모두 0이면 purchase 또는 purchase_total − freight_included
+        if used_taxable == 0 and used_exempt == 0 and ending_inventory_common == 0:
+            if purchase > 0:
+                eligible_purchase = purchase
+            else:
+                eligible_purchase = max(0, purchase_total - freight_included)
 
-    # used_taxable이 매입가액 초과 시 오류
-    매입가액 = purchase if purchase > 0 else max(0, purchase_total - freight_included)
-    if used_taxable > 매입가액 and 매입가액 > 0:
-        return {"error": "입력 확인 필요 — 계산하지 않음",
-                "문제": [f"used_taxable({used_taxable:,}원) > 매입가액({매입가액:,}원) — used_taxable이 매입가액보다 클 수 없음"]}
+        # used_taxable이 매입가액 초과 시 오류
+        매입가액 = purchase if purchase > 0 else max(0, purchase_total - freight_included)
+        if used_taxable > 매입가액 and 매입가액 > 0:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"used_taxable({used_taxable:,}원) > 매입가액({매입가액:,}원) — used_taxable이 매입가액보다 클 수 없음"]}
 
     # 기존 방식(purchase, base 사용)의 공제율·한도율
     num, den = deemed_input_rate(industry, period, individual, effective_base, sme)
-    limit_ratio = deemed_input_limit_ratio(period, individual, industry == "음식점", effective_base)
+    # effective_base가 0이면 한도 계산 생략 (한도 무한대)
+    if effective_base > 0:
+        limit_ratio = deemed_input_limit_ratio(period, individual, industry == "음식점", effective_base)
+    else:
+        limit_ratio = None  # 한도 없음
 
     # 의제매입세액 계산
     deemed_tax = deemed_input(
@@ -920,6 +1072,10 @@ def vat_deemed_input_credit(period: Annotated[str, Field(description="과세기�
         "안분_정보": allocation,
         "단계별_계산": steps,
     }
+    if 품목별_결과 is not None:
+        return _ok(result, "부가가치세법 제42조, 시행령 제81조·제84조",
+                   계산={"품목별": 품목별_결과},
+                   산식="공제대상 매입 = 과세 사용분 + 공통 재고 × 과세비율(운반비 제외 후), 의제매입세액 = min(공제대상 매입, 과세표준 × 한도율) × 공제율")
     return _ok(result, "부가가치세법 제42조, 시행령 제81조·제84조",
                산식="공제대상 매입 = 과세 사용분 + 공통 재고 × 과세비율(운반비 제외 후), 의제매입세액 = min(공제대상 매입, 과세표준 × 한도율) × 공제율")
 
@@ -4179,14 +4335,19 @@ def capital_gains_income(
         transfer_date: Annotated[str, Field(description="양도일 YYYY-MM-DD(대금청산일, 2017-01-01 ~ 2026-12-31)")],
         transfer_price: Annotated[int, Field(description="양도가액 — 양도 당시 실지거래가액(원)", gt=0)],
         acquisition_price: Annotated[int, Field(description="취득가액 — 취득 당시 실지거래가액(원, 취득세·취득 중개수수료 등 포함, 재산세 제외, 환산취득가액 사용 시 0)", ge=0)],
-        capital_expenditure: Annotated[int, Field(description="자본적지출액(원, 증명서류로 확인되는 것, 없으면 0)", ge=0)],
-        transfer_expenses: Annotated[int, Field(description="양도비(원, 양도 시 중개수수료 등, 없으면 0)", ge=0)],
-        registered: Annotated[bool, Field(description="등기 여부(False = 미등기양도자산: 비과세·장기보유특별공제·기본공제 배제)")],
+        acquisition_tax: Annotated[int, Field(description="취득세(원) — 문항 표의 '취득세'는 이 칸에 넣고, 취득가액 = acquisition_price + 취득세 + 취득 중개수수료로 도구가 합산함")] = 0,
+        acquisition_brokerage: Annotated[int, Field(description="취득 시 중개수수료(원) — 문항 표의 '취득시 중개수수료'는 이 칸에 넣고, 취득가액 = acquisition_price + 취득세 + 취득 중개수수료로 도구가 합산함")] = 0,
+        holding_tax_paid: Annotated[int, Field(description="보유 중 납부한 재산세·종합부동산세(원) — 필요경비에 넣지 않고 판단에서 필요경비가 아님을 명시함")] = 0,
+        capital_expenditure: Annotated[int, Field(description="자본적지출액(원, 증명서류로 확인되는 것, 없으면 0)", ge=0)] = 0,
+        transfer_expenses: Annotated[int, Field(description="양도비(원, 양도 시 중개수수료 등, 없으면 0)", ge=0)] = 0,
+        registered: Annotated[bool, Field(description="등기 여부(False = 미등기양도자산: 비과세·장기보유특별공제·기본공제 배제)")] = True,
         acquisition_standard_price: Annotated[int | None, Field(description="환산취득가액 계산용 취득 당시 기준시가(원). acquisition_price=0일 때 transfer_standard_price와 함께 입력")] = None,
         transfer_standard_price: Annotated[int | None, Field(description="환산취득가액 계산용 양도 당시 기준시가(원). acquisition_price=0일 때 acquisition_standard_price와 함께 입력")] = None,
         one_house: Annotated[bool | None, Field(description="주택만: 양도일 현재 1세대 1주택(일시적 2주택 등 1주택으로 보는 경우 포함) 여부")] = None,
         exempt_met: Annotated[bool | None, Field(description="one_house=True일 때: 1세대 1주택 비과세 요건(보유 2년 이상, 취득 당시 조정대상지역이면 거주 2년 이상) 충족 여부")] = None,
         residence_years: Annotated[int | None, Field(description="one_house=True일 때: 보유기간 중 거주기간(만 년수, 1년 미만 버림)", ge=0)] = None,
+        residence_start: Annotated[str | None, Field(description="거주 시작일 YYYY-MM-DD — residence_end와 함께 입력하면 거주기간(만 년수)을 도구가 계산함. residence_years와 다르면 문제로 거부")] = None,
+        residence_end: Annotated[str | None, Field(description="거주 종료일 YYYY-MM-DD — 생략 시 transfer_date를 사용")] = None,
         heavy_multi_home: Annotated[bool | None, Field(description="one_house=False인 주택: 다주택 중과(제104조⑦) 대상 여부. True면 지원하지 않음")] = None,
         apply_basic_deduction: Annotated[bool, Field(description="True면 양도소득 기본공제(연 250만원)와 과세표준까지 계산(같은 해 같은 그룹에서 이미 공제받았으면 False)")] = False) -> dict:
     """토지·건물·주택의 양도차익 → 1세대1주택 비과세·고가주택 안분 → 장기보유특별공제(표1·표2) → 양도소득금액(소득세법 제89조·제92조·제95조·제97조·제103조, 시행령 제154조·제156조·제159조의3(4)·제160조·제176조의2·제163조).
@@ -4210,6 +4371,7 @@ def capital_gains_income(
 
     # 환산취득가액 처리 (acquisition_price=0, 기준시가 둘 다 있으면 환산)
     사용환산취득가액 = False
+    개산공제 = 0  # 실지거래가액 경로에서도 calc_cg에 전달하기 위한 기본값
     if acquisition_price == 0:
         if acquisition_standard_price is not None and transfer_standard_price is not None:
             사용환산취득가액 = True
@@ -4236,20 +4398,37 @@ def capital_gains_income(
     if not is_주택 and exempt_met is False:
         exempt_met = None
 
+    # residence_start/end로 residence_years 계산 (residence_years가 이미 있으면 검증만)
+    if residence_start is not None:
+        start_dt = date.fromisoformat(residence_start)
+        end_dt = date.fromisoformat(residence_end) if residence_end else 양도일_dt
+        calc_residence_years = CG.full_years(start_dt, end_dt)
+        if residence_years is not None and residence_years != calc_residence_years:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"residence_years({residence_years})와 residence_start/end로 계산한 거주기간({calc_residence_years}년)이 다름"]}
+        effective_residence_years = calc_residence_years
+    else:
+        effective_residence_years = residence_years
+
     r = CG.calc_cg({
         "asset_type": asset_type,
         "acquisition_date": acquisition_date,
         "transfer_date": transfer_date,
         "transfer_price": transfer_price,
         "acquisition_price": acquisition_price if acquisition_price != 0 else 환산취득가액,
+        "acquisition_tax": acquisition_tax,
+        "acquisition_brokerage": acquisition_brokerage,
+        "holding_tax_paid": holding_tax_paid,
         "capital_expenditure": capital_expenditure if acquisition_price != 0 else 0,
         "transfer_expenses": transfer_expenses if acquisition_price != 0 else 0,
         "registered": registered,
         "one_house": one_house,
         "exempt_met": exempt_met,
-        "residence_years": residence_years,
+        "residence_years": effective_residence_years,
         "heavy_multi_home": heavy_multi_home,
         "apply_basic_deduction": apply_basic_deduction,
+        "환산취득가액_사용": 사용환산취득가액,
+        "개산공제": 개산공제,
     }, _vocab_on)
 
     if "error" in r:
@@ -4277,6 +4456,8 @@ def capital_gains_income(
         r["결과"]["과세대상_양도차익"] = int(새양도차익 * 안분비율)
         r["결과"]["양도소득금액"] = max(r["결과"]["과세대상_양도차익"] - 새장기공제, 0)
         r["판단"] = r.get("판단", []) + [{"항목": "필요경비(환산취득가액)", "결론": f"필요경비 {최종필요경비:,}원 = {최종사용} (소득세법 제97조②2호 단서)", "근거": "소득세법 제97조②2호 단서, 시행령 제176조의2②2호·제163조⑥"}]
+        if acquisition_tax > 0 or acquisition_brokerage > 0:
+            r["판단"] = r.get("판단", []) + [{"항목": "취득가액 구성(환산취득가액)", "결론": "환산취득가액 사용 시 취득세·중개수수료는 합산하지 않음(개산공제로 대체, 소득세법 시행령 제163조)", "근거": "소득세법 시행령 제163조"}]
         r["산식"] = r.get("산식", []) + [f"환산취득가액 {환산취득가액:,}원(취득당시 기준시가 {acquisition_standard_price:,}원 ÷ 양도당시 기준시가 {transfer_standard_price:,}원 × 양도가액 {transfer_price:,}원, 원 미만 버림) + 개산공제 {개산공제:,}원(취득기준시가 × {'0.3%' if not registered else '3%'}) = {필요경비_환산:,}원"]
 
     # vocab 근거 추가 (양도일 기준 적용 블록 근거 — vocab.rule_on으로 날짜 단위 조회)
@@ -4434,8 +4615,17 @@ def dividend_received_deduction(
 def special_tax_credit(
     year: YEAR,
     earner_type: Annotated[Literal["근로", "일용근로", "근로소득없음"], Field(description="근로소득 종류")],
-    total_salary: WON,
-    persons: Annotated[list, Field(description="[{name, relation, age, disabled?, income_ok?, severe_illness?}]")],
+    total_salary: Annotated[int, Field(description="총급여액(원). 문항에 총급여액이 없으면 0이 아니라 생략 — 0이면 의료비 문턱(total_salary×문턱비율)이 0이 되어 모든 의료비가 특정지출로 분류됨")],
+    persons: Annotated[list, Field(description=(
+        "[{name, relation, age, disabled?, income_ok?, severe_illness?}] — "
+        "name: 사람 표시 이름(문자열, 중복 불가). "
+        "relation: 공제대상자와의 관계. 허용값: 본인·배우자·직계비속·입양자·형제자매·직계존속·위탁아동·수급자. "
+        "문항 표현 그대로 '자녀'·'아들'·'딸'은 '직계비속', '부모'·'모친'·'부친'은 '직계존속'으로 적을 것. "
+        "age: 만 나이(정수). disabled: 장애인 여부(bool). "
+        "income_ok: 연 소득금액 100만원 이하(근로소득만 있으면 총급여 500만원 이하)면 true — 문항의 '소득 없음'은 true로 입력. "
+        "severe_illness: 중증질환 여부(bool, 2018~ 의료비 특정지출 대상). "
+        "예시: [{'name':'본인','relation':'본인','age':50,'income_ok':true}, {'name':'딸','relation':'직계비속','age':16,'income_ok':true}]"
+    ))],
     expenses: Annotated[list, Field(description="[{kind, amount, person, reimbursed?}]")],
     wage_computed_tax: Annotated[int | None, Field(description="근로소득 종합소득산출세액")] = None,
     monthly_rent_credit: WON = 0,
