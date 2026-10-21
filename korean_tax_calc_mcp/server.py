@@ -790,6 +790,73 @@ def missing_receipt_disallowance(year: YEAR, items: Annotated[list[ReceiptItem],
 
 
 # ───────── 0.2 추가: 부가가치세 ─────────
+def _normalize_usage(usage):
+    """items.usage 허용 3形態 → {구분: 비율%} dict로 정규화.
+
+    ① {'제조': 60, '재판매': 30}          → 그대로 반환
+    ② [{'구분': '제조', '비율': 60}, ...] → dict로 변환
+    ③ {'구분': '제조', '비율': 60}         → ②처럼 처리해 dict로 변환
+    """
+    if not usage:
+        return {}
+    if isinstance(usage, list):
+        out = {}
+        for row in usage:
+            g = row.get("구분", "")
+            b = row.get("비율", 0)
+            out[g] = int(b)
+        return out
+    if isinstance(usage, dict):
+        if "구분" in usage and "비율" in usage:
+            return {usage["구분"]: int(usage["비율"])}
+        return {k: int(v) for k, v in usage.items()}
+    raise TypeError(f"usage 유형 불일치: {type(usage)}")
+
+
+def _merge_items_with_same_identity(items):
+    """같은 name이고 purchase_price·수입·관세·운임 값이 같은 여러 행을 한 품목으로 합쳐 usage를 더한다."""
+    groups = {}
+    for it in items:
+        key = (
+            it.get("name", ""),
+            int(it.get("purchase_price", 0)),
+            bool(it.get("imported", False)),
+            int(it.get("customs_value", 0)),
+            int(it.get("customs_duty", 0)),
+            int(it.get("freight_included", 0)),
+        )
+        groups.setdefault(key, []).append(it)
+    merged = []
+    for key, rows in groups.items():
+        name = key[0]
+        base = rows[0]
+        merged_usage = {}
+        for r in rows:
+            u = _normalize_usage(r.get("usage", {}))
+            for g, b in u.items():
+                merged_usage[g] = merged_usage.get(g, 0) + b
+        merged.append({
+            "name": name,
+            "purchase_price": base.get("purchase_price", 0),
+            "imported": base.get("imported", False),
+            "customs_value": base.get("customs_value", 0),
+            "customs_duty": base.get("customs_duty", 0),
+            "freight_included": base.get("freight_included", 0),
+            "taxable_goods": base.get("taxable_goods", False),
+            "usage": merged_usage,
+        })
+    return merged
+
+
+_USAGE_ERROR_FORMAT = (
+    "items[].usage 형식 오류 — 허용 형태: "
+    "{{'제조': 60, '재판매': 30, '재고': 10}} 또는 "
+    "[{{'구분': '제조', '비율': 60}}, ...]. "
+    "구분 허용값: 제조, 재판매, 재고, 종업원제공, 면세사업. "
+    "비율 합 100."
+)
+
+
 @mcp.tool(annotations=CALC)
 @_guard
 def vat_deemed_input_credit(period: Annotated[str, Field(description="과세기간('YYYY-1' 또는 'YYYY-2')")],
@@ -804,7 +871,8 @@ def vat_deemed_input_credit(period: Annotated[str, Field(description="과세기�
                             ))] = 0,
                             items: Annotated[list | None, Field(description=(
                                 "품목별 면세농산물 등 목록. 각 항목: {name, purchase_price, imported?, customs_value?, customs_duty?, freight_included?, taxable_goods?, usage: {구분: 비율%}}. "
-                                "usage 구분 허용값: 제조, 재판매, 재고, 종업원제공, 면세사업. 비율 합이 100이 아니면 문제로 거부. "
+                                "usage 허용 형태 3가지 — ① {'제조': 60, '재판매': 30, '재고': 10} ② [{'구분': '제조', '비율': 60}, {'구분': '재판매', '비율': 30}] ③ {'구분': '제조', '비율': 60}(단일). 전부 {'제조': 60, ...} 형태로 자동 정규화됨. "
+                                "usage 구분 허용값: 제조, 재판매, 재고, 종업원제공, 면세사업. 같은 name이고 purchase_price·수입·관세·운임이 같으면 여러 행을 한 품목으로 합쳐 usage를 더함. 비율 합이 100이 아니면 문제로 거부. "
                                 "문항에 품목별 표가 있으면 items에 그대로 넣고(수입품은 관세의 과세가격·관세, 운임 포함액, 사용 비율), 합산·제외는 도구가 함. "
                                 "items와 purchase/purchase_total을 동시에 주면 문제로 거부"
                             ))] = None,
@@ -830,60 +898,65 @@ def vat_deemed_input_credit(period: Annotated[str, Field(description="과세기�
     # items 기반 계산
     품목별_결과 = None
     if items is not None:
-        품목별_결과 = []
-        총_공제대상 = 0
-        for item in items:
-            name = item.get("name", "")
-            purchase_price = int(item.get("purchase_price", 0))
-            imported = bool(item.get("imported", False))
-            customs_value = int(item.get("customs_value", 0))
-            customs_duty = int(item.get("customs_duty", 0))
-            freight_included = int(item.get("freight_included", 0))
-            taxable_goods = bool(item.get("taxable_goods", False))
-            usage = item.get("usage", {})
+        try:
+            items = _merge_items_with_same_identity(items)
+            품목별_결과 = []
+            총_공제대상 = 0
+            for item in items:
+                name = item.get("name", "")
+                purchase_price = int(item.get("purchase_price", 0))
+                imported = bool(item.get("imported", False))
+                customs_value = int(item.get("customs_value", 0))
+                customs_duty = int(item.get("customs_duty", 0))
+                freight_included = int(item.get("freight_included", 0))
+                taxable_goods = bool(item.get("taxable_goods", False))
+                usage = _normalize_usage(item.get("usage", {}))
 
-            # usage 비율 합 검증
-            usage_sum = sum(int(v) for v in usage.values()) if usage else 0
-            if usage_sum != 100:
-                return {"error": "입력 확인 필요 — 계산하지 않음",
-                        "문제": [f"품목 '{name}'의 usage 비율 합이 {usage_sum}%로 100이 아님"]}
+                # usage 비율 합 검증
+                usage_sum = sum(usage.values()) if usage else 0
+                if usage_sum != 100:
+                    return {"error": "입력 확인 필요 — 계산하지 않음",
+                            "문제": [f"품목 '{name}'의 usage 비율 합이 {usage_sum}%로 100이 아님"]}
 
-            # 기준 매입가액 계산
-            if imported:
-                기준매입가액 = customs_value  # 관세의 과세가격 (관세 미포함)
-            else:
-                기준매입가액 = max(0, purchase_price - freight_included)
+                # 기준 매입가액 계산
+                if imported:
+                    기준매입가액 = customs_value  # 관세의 과세가격 (관세 미포함)
+                else:
+                    기준매입가액 = max(0, purchase_price - freight_included)
 
-            # taxable_goods (세금계산서 수취 과세 물품)면 공제대상 0
-            if taxable_goods:
-                공제대상 = 0
-                판단_문구 = "과세 물품은 의제매입세액 대상 아님"
-            else:
-                # usage별 포함/제외 판정
-                포함_usage = {"제조", "재고"}
-                제외_usage = {"재판매", "종업원제공", "면세사업"}
-                공제대상 = 0
-                판단_부분 = []
-                for 구분, 비율 in usage.items():
-                    비율_int = int(비율)
-                    if 구분 in 포함_usage:
-                        공제대상 += int(기준매입가액 * 비율_int / 100)
-                        판단_부분.append(f"{구분} {비율_int}% 포함")
-                    elif 구분 in 제외_usage:
-                        판단_부분.append(f"{구분} {비율_int}% 제외")
-                    else:
-                        return {"error": "입력 확인 필요 — 계산하지 않음",
-                                "문제": [f"품목 '{name}'의 usage 구분 '{구분}'은(는) 허용되지 않음 — 허용: 제조, 재판매, 재고, 종업원제공, 면세사업"]}
-                판단_문구 = ", ".join(판단_부분) if 판단_부분 else ""
+                # taxable_goods (세금계산서 수취 과세 물품)면 공제대상 0
+                if taxable_goods:
+                    공제대상 = 0
+                    판단_문구 = "과세 물품은 의제매입세액 대상 아님"
+                else:
+                    # usage별 포함/제외 판정
+                    포함_usage = {"제조", "재고"}
+                    제외_usage = {"재판매", "종업원제공", "면세사업"}
+                    공제대상 = 0
+                    판단_부분 = []
+                    for 구분, 비율 in usage.items():
+                        비율_int = int(비율)
+                        if 구분 in 포함_usage:
+                            공제대상 += int(기준매입가액 * 비율_int / 100)
+                            판단_부분.append(f"{구분} {비율_int}% 포함")
+                        elif 구분 in 제외_usage:
+                            판단_부분.append(f"{구분} {비율_int}% 제외")
+                        else:
+                            return {"error": "입력 확인 필요 — 계산하지 않음",
+                                    "문제": [f"품목 '{name}'의 usage 구분 '{구분}'은(는) 허용되지 않음 — 허용: 제조, 재판매, 재고, 종업원제공, 면세사업"]}
+                    판단_문구 = ", ".join(판단_부분) if 판단_부분 else ""
 
-            품목별_결과.append({
-                "name": name,
-                "기준매입가액": 기준매입가액,
-                "공제대상": 공제대상,
-                "판단": 판단_문구,
-            })
-            총_공제대상 += 공제대상
-        eligible_purchase = 총_공제대상
+                품목별_결과.append({
+                    "name": name,
+                    "기준매입가액": 기준매입가액,
+                    "공제대상": 공제대상,
+                    "판단": 판단_문구,
+                })
+                총_공제대상 += 공제대상
+            eligible_purchase = 총_공제대상
+        except Exception as e:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [_USAGE_ERROR_FORMAT]}
     else:
         품목별_결과 = None
 
