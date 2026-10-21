@@ -52,3 +52,17 @@ def test_education_result_always_states_subsidy_rule():
     r = c("special_tax_credit", a)
     txt = json.dumps(r.get("판단", []), ensure_ascii=False)
     assert "학자금" in txt and "차감" in txt and "비과세" in txt
+
+
+def test_converted_acquisition_breakdown_excludes_tax_and_brokerage():
+    """환산취득가액 경로에서는 취득가액_구성이 환산취득가액+개산공제로 표시되고 취득세·중개수수료는 합산되지 않는다 (리뷰 반영)."""
+    r = c("capital_gains_income", {"asset_type": "주택", "acquisition_date": "1987-07-07", "transfer_date": "2022-08-08", "transfer_price": 500000000,
+                                   "acquisition_price": 0, "acquisition_standard_price": 100000000, "transfer_standard_price": 400000000,
+                                   "acquisition_tax": 5000000, "acquisition_brokerage": 2000000,
+                                   "capital_expenditure": 120000000, "transfer_expenses": 10000000, "registered": True, "one_house": False, "heavy_multi_home": False})
+    res = r["결과"]
+    assert res["양도차익"] == 370000000                                   # 계산 결과는 기존과 동일
+    comp = res["취득가액_구성"]
+    assert comp.get("환산취득가액") == 125000000 and comp.get("개산공제") == 3000000
+    assert comp.get("취득세", 0) == 0 and comp.get("중개수수료", 0) == 0 and "실지거래가액" in comp
+    assert "취득세" in json.dumps(r.get("판단", []), ensure_ascii=False)   # 부대비용을 합산하지 않은 이유를 판단에 명시
