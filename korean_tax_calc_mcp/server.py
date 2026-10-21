@@ -4371,6 +4371,7 @@ def capital_gains_income(
 
     # 환산취득가액 처리 (acquisition_price=0, 기준시가 둘 다 있으면 환산)
     사용환산취득가액 = False
+    개산공제 = 0  # 실지거래가액 경로에서도 calc_cg에 전달하기 위한 기본값
     if acquisition_price == 0:
         if acquisition_standard_price is not None and transfer_standard_price is not None:
             사용환산취득가액 = True
@@ -4426,6 +4427,8 @@ def capital_gains_income(
         "residence_years": effective_residence_years,
         "heavy_multi_home": heavy_multi_home,
         "apply_basic_deduction": apply_basic_deduction,
+        "환산취득가액_사용": 사용환산취득가액,
+        "개산공제": 개산공제,
     }, _vocab_on)
 
     if "error" in r:
@@ -4453,6 +4456,8 @@ def capital_gains_income(
         r["결과"]["과세대상_양도차익"] = int(새양도차익 * 안분비율)
         r["결과"]["양도소득금액"] = max(r["결과"]["과세대상_양도차익"] - 새장기공제, 0)
         r["판단"] = r.get("판단", []) + [{"항목": "필요경비(환산취득가액)", "결론": f"필요경비 {최종필요경비:,}원 = {최종사용} (소득세법 제97조②2호 단서)", "근거": "소득세법 제97조②2호 단서, 시행령 제176조의2②2호·제163조⑥"}]
+        if acquisition_tax > 0 or acquisition_brokerage > 0:
+            r["판단"] = r.get("판단", []) + [{"항목": "취득가액 구성(환산취득가액)", "결론": "환산취득가액 사용 시 취득세·중개수수료는 합산하지 않음(개산공제로 대체, 소득세법 시행령 제163조)", "근거": "소득세법 시행령 제163조"}]
         r["산식"] = r.get("산식", []) + [f"환산취득가액 {환산취득가액:,}원(취득당시 기준시가 {acquisition_standard_price:,}원 ÷ 양도당시 기준시가 {transfer_standard_price:,}원 × 양도가액 {transfer_price:,}원, 원 미만 버림) + 개산공제 {개산공제:,}원(취득기준시가 × {'0.3%' if not registered else '3%'}) = {필요경비_환산:,}원"]
 
     # vocab 근거 추가 (양도일 기준 적용 블록 근거 — vocab.rule_on으로 날짜 단위 조회)
