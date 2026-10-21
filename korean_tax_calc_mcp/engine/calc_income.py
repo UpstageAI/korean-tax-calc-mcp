@@ -294,6 +294,48 @@ _KNOWN_KINDS = {
 }
 
 
+# ── persons.relation 허용값 · 동의어 ────────────────────────────────────────
+# 특별세액공제에서 인식하는 relation 값. 이 밖은 '문제'로 거부하고 계산하지 않는다.
+ALLOWED_RELATIONS = (
+    "본인", "배우자", "직계비속", "입양자", "형제자매", "직계존속",
+    "위탁아동", "수급자",
+)
+# 문항 표현 그대로 들어오는 값을 허용값으로 매핑. 매핑에도 없는 값은 거부.
+RELATION_SYNONYMS = {
+    "자녀": "직계비속",
+    "아들": "직계비속",
+    "딸": "직계비속",
+    "부모": "직계존속",
+    "모친": "직계존속",
+    "부친": "직계존속",
+    "어머님": "직계존속",
+    "아버님": "직계존속",
+    "엄마": "직계존속",
+    "아빠": "직계존속",
+}
+
+
+def _validate_relations(persons):
+    """persons 목록의 relation을 검증·정규화한다.
+
+    반환: (문제가 있으면 문제 문자열 목록, 없으면 None).
+    동의어는 허용값으로 매핑하고, 매핑에도 없는 값은 거부한다."""
+    problems = []
+    for p in persons:
+        rel = p.get("relation", "")
+        if rel in ALLOWED_RELATIONS:
+            continue
+        canon = RELATION_SYNONYMS.get(rel)
+        if canon is not None:
+            p["relation"] = canon  # 동의어 → 정식값 치환
+            continue
+        problems.append(
+            f"persons[{persons.index(p)}].relation='{rel}'은(는) 허용값이 아님 "
+            f"— 허용: {', '.join(ALLOWED_RELATIONS)}"
+        )
+    return problems if problems else None
+
+
 def _is_basic_dependent(p, 기본공제대상자_map):
     """기본공제대상자 판정 (basic_dependent 오버라이드 지원)."""
     if p.get("basic_dependent") is not None:
@@ -377,6 +419,11 @@ def special_tax_credit(
 
     if problems:
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": problems}
+
+    # persons.relation 검증·정규화 (동의어 매핑, 허용값 밖은 거부)
+    rel_problems = _validate_relations(persons)
+    if rel_problems:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": rel_problems}
 
     persons_dict = {p["name"]: p for p in persons}
 

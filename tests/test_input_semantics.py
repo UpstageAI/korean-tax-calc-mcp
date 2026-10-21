@@ -14,7 +14,7 @@ def c(tool, a):
 def _schema(tool):
     tools = asyncio.run(mcp.list_tools())
     t = next(x for x in tools if x.name == tool)
-    return t.inputSchema["properties"]
+    return t.input_schema["properties"]
 
 
 def _args(rel):
