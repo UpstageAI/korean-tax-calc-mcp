@@ -562,7 +562,7 @@ def special_tax_credit(
             if e["person"] != name:
                 continue
             kind = e["kind"]
-            amount = max(0, e["amount"] - e.get("reimbursed", 0))
+            amount = max(0, e["amount"] - e.get("reimbursed", 0) - e.get("tax_exempt_subsidy", 0))
 
             # 본인 외 제외 항목
             if kind in ("교육비_대학원", "직업훈련"):
@@ -702,6 +702,16 @@ def special_tax_credit(
             if not disabled:
                 판단.append({"항목": k, "결론": "장애인이 아닌 사람의 특수교육비 — 공제 제외",
                              "근거": "소득세법 제59조의4③3호가·다목"})
+        elif k in ("교육비_취학전", "교육비_초중고", "교육비_대학", "교육비_대학원", "교복", "체험학습", "대입전형료"):
+            # company subsidy 판단
+            employer_subsidy = e.get("employer_subsidy", 0)
+            tax_exempt_subsidy = e.get("tax_exempt_subsidy", 0)
+            if employer_subsidy > 0:
+                판단.append({"항목": k, "결론": f"회사 지급 학자금 {employer_subsidy:,}원은 근로소득으로 과세되므로 교육비에서 차감하지 않음(시행령 제118조의6②은 소득세·증여세 비과세 학자금·장학금만 제외)",
+                             "근거": "소득세법 시행령 제118조의6②"})
+            if tax_exempt_subsidy > 0:
+                판단.append({"항목": k, "결론": f"비과세 학자금·장학금 {tax_exempt_subsidy:,}원 차감",
+                             "근거": "소득세법 시행령 제118조의6②"})
 
     return {
         "결과": {

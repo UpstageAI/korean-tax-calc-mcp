@@ -121,10 +121,19 @@ def calc_cg(args: dict[str, Any], vocab_on) -> dict:
 
     # ── 금액 ──
     양도가액 = int(args["transfer_price"])
-    취득가액 = int(args["acquisition_price"])
+    실지거래가액 = int(args["acquisition_price"])
+    취득세 = int(args.get("acquisition_tax", 0))
+    중개수수료 = int(args.get("acquisition_brokerage", 0))
+    보유재산세 = int(args.get("holding_tax_paid", 0))
     자본적지출 = int(args["capital_expenditure"])
     양도비 = int(args["transfer_expenses"])
     등기 = bool(args["registered"])
+
+    # 실지거래가액 사용 시 취득세·중개수수료 합산 (환산취득가액 사용 시 제외)
+    if 실지거래가액 > 0:
+        취득가액 = 실지거래가액 + 취득세 + 중개수수료
+    else:
+        취득가액 = 0  # 환산취득가액 경로에서는 engine이 0을 받음 (server에서 환산취득가액 전달)
 
     # ── 주택 분기 ──
     is_주택 = asset_type == "주택"
@@ -183,6 +192,14 @@ def calc_cg(args: dict[str, Any], vocab_on) -> dict:
 
     # ── 판정 리스트 ──
     판단: list[dict[str, str]] = []
+
+    # 보유 중 재산세는 필요경비 아님 (소득세법 제97조①)
+    if 보유재산세 > 0:
+        판단.append({
+            "항목": "보유 중 재산세",
+            "결론": f"보유 중 재산세 {보유재산세:,}원은 필요경비가 아님(소득세법 제97조①) — 취득가액에 포함하지 않음",
+            "근거": "소득세법 제97조①",
+        })
 
     # ── 양도차익 (제97조) ──
     양도차익 = 양도가액 - 취득가액 - 자본적지출 - 양도비
@@ -351,6 +368,23 @@ def calc_cg(args: dict[str, Any], vocab_on) -> dict:
         "장기보유특별공제액": int(장기보유특별공제액),
         "양도소득금액": int(양도소득금액),
     }
+
+    # 취득가액 구성 (실지거래가액 사용 시)
+    if 실지거래가액 > 0:
+        결과["취득가액_구성"] = {
+            "실지거래가액": 실지거래가액,
+            "취득세": 취득세,
+            "중개수수료": 중개수수료,
+            "합계": 실지거래가액 + 취득세 + 중개수수료,
+        }
+    elif 실지거래가액 == 0 and args.get("acquisition_standard_price") is not None:
+        # 환산취득가액 사용 시 (실지거래가액 0, 기준시가 있음)
+        결과["취득가액_구성"] = {
+            "실지거래가액": 0,
+            "환산취득가액": int(args.get("acquisition_standard_price", 0)),
+            "개산공제": 0,  # server에서 계산됨
+            "합계": 0,
+        }
 
     if 기본공제_적용:
         결과["양도소득_기본공제"] = int(기본공제액)
