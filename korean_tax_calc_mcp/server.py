@@ -447,28 +447,28 @@ def corporate_tax(base: WON, year: YEAR,
 def foreign_tax_credit(
     year: YEAR,
     base: Annotated[int, Field(description="각 사업연도 소득에 대한 과세표준(원). Gross-up 반영 여부는 base_includes_grossup으로 지정", ge=0)],
-    base_includes_grossup: Annotated[bool, Field(description="base에 간접외국납부세액 익금산입(Gross-up)이 이미 들어 있으면 true, 아니면 false(도구가 더함)")],
     method: Annotated[Literal["세액공제", "손금산입"], Field(description="외국납부세액 처리 방법. 손금산입은 2020 사업연도까지만(2021~ 삭제)")],
     countries: Annotated[list, Field(description="국가별 [{country, foreign_income, direct_tax, deemed_tax?, related_costs?, reduction_excluded?, subsidiaries?}] — "
                                                  "foreign_income: 국외원천소득(Gross-up 전, 수입배당금은 원천징수 전 금액 포함), direct_tax: 직접외국납부세액(자회사 배당 원천징수세 제외), "
                                                  "deemed_tax: 간주외국납부세액, related_costs: 국외원천소득대응비용, reduction_excluded: 감면·면제 대상 국외원천소득×감면비율, "
                                                  "subsidiaries: [{name, dividend, withholding_tax?, received_on, ownership, holding_months, resource_dev, sub_income, sub_tax, participation_exempt?}]")],
+    base_includes_grossup: Annotated[bool | None, Field(description="base에 간접외국납부세액 익금산입(Gross-up)이 이미 들어 있으면 true, 아니면 false(도구가 더함). 생략(None)하면 포함으로 가정")] = None,
     months: Annotated[int, Field(description="사업연도 월수(1~12)", ge=1, le=12)] = 12,
 ) -> dict:
     """법인세 외국납부세액공제(직접·간주·간접, 국가별 한도, 한도초과 이월). 언제: 국외원천소득에 외국 법인세를 낸 내국법인의 공제액·Gross-up·이월액을 구할 때.
 입력:
   year — 사업연도(2016~2026). 이월기간·손금산입방법 허용 여부가 연도별.
-  base — 과세표준(원). base_includes_grossup — base에 Gross-up 포함 여부.
+  base — 과세표준(원). base_includes_grossup — base에 Gross-up 포함 여부(기본 None → 포함으로 가정).
   method — '세액공제'|'손금산입'(2020년까지).
   countries — 국가별 foreign_income(Gross-up 전 국외원천소득), direct_tax, deemed_tax, related_costs(대응비용), reduction_excluded,
     subsidiaries(외국자회사 배당: dividend 원천징수 전, withholding_tax, received_on, ownership 소수, holding_months 배당기준일 현재, resource_dev, sub_income·sub_tax 자회사 소득금액·법인세액, participation_exempt 2023~ 제18조의4 적용 여부).
   months — 사업연도 월수.
 결과: 간접외국납부세액, Gross-up 익금산입액, 국가별 국외원천소득·공제한도·공제액·한도초과 이월액·이월배제액, 산출세액, 공제액 합계, 이월공제기간, 산식, 근거.
-  지분율 요건은 배당 받은 날 기준(2022년까지 25%, 2023~ 10%, 해외자원 5%). 손자회사·이월액 공제·이월결손금 안분(영 §94⑥)은 반영 안 함 — 국외원천소득에 미리 반영."""
-    r = C.foreign_tax_credit(year, base, base_includes_grossup, method, countries, months)
+  base_includes_grossup 생략 시 base에 간접외국납부세액이 포함된 것으로 가정. 지분율 요건은 배당 받은 날 기준(2022년까지 25%, 2023~ 10%, 해외자원 5%). 손자회사·이월액 공제·이월결손금 안분(영 §94⑥)은 반영 안 함 — 국외원천소득에 미리 반영."""
+    r = C.foreign_tax_credit(year, base, method, countries, base_includes_grossup, months)
     if "error" in r:
         return r
-    return _ok(r["결과"], r["근거"], 연도별_근거=r.get("연도별_근거", {}))
+    return _ok(r["결과"], r["근거"], 연도별_근거=r.get("연도별_근거", {}), 판단=r.get("판단", []))
 
 
 @mcp.tool(annotations=CALC)
@@ -899,6 +899,18 @@ def vat_deemed_input_credit(period: Annotated[str, Field(description="과세기�
     품목별_결과 = None
     if items is not None:
         try:
+            # 과세 가공식품 목록 로드
+            from . import vocab as _vocab
+            과세가공식품목록 = _vocab.rule("의제매입_과세가공식품", 2026).get("목록", [])
+            과세가공식품집합 = set(과세가공식품목록)
+
+            # 원본 items에서 taxable_goods 명시 여부 파악 (명시 우선 처리용)
+            원본_taxable_goods_명시 = {}
+            for it in items or []:
+                n = it.get("name", "")
+                if "taxable_goods" in it:
+                    원본_taxable_goods_명시[n] = bool(it["taxable_goods"])
+
             items = _merge_items_with_same_identity(items)
             품목별_결과 = []
             총_공제대상 = 0
@@ -924,10 +936,20 @@ def vat_deemed_input_credit(period: Annotated[str, Field(description="과세기�
                 else:
                     기준매입가액 = max(0, purchase_price - freight_included)
 
-                # taxable_goods (세금계산서 수취 과세 물품)면 공제대상 0
-                if taxable_goods:
+                # 과세 가공식품 사전 판단: name이 목록에 있고 taxable_goods가 명시되지 않았으면 과세 물품으로 판단
+                # taxable_goods: true를 명시하면 과세 물품(기존 로직), false를 명시하면 명시가 우선(과세 아님)
+                명시적_과세 = name in 원본_taxable_goods_명시 and 원본_taxable_goods_명시[name] is True
+                명시적_비과세 = name in 원본_taxable_goods_명시 and 원본_taxable_goods_명시[name] is False
+                사전_과세 = name in 과세가공식품집합 and not 명시적_과세 and not 명시적_비과세
+
+                if taxable_goods or 명시적_과세 or 사전_과세:
                     공제대상 = 0
-                    판단_문구 = "과세 물품은 의제매입세액 대상 아님"
+                    if 사전_과세:
+                        판단_문구 = "과세 가공식품(사전) — 의제매입세액 대상 아님"
+                    elif taxable_goods or 명시적_과세:
+                        판단_문구 = "과세 물품은 의제매입세액 대상 아님"
+                    else:
+                        판단_문구 = ""
                 else:
                     # usage별 포함/제외 판정
                     포함_usage = {"제조", "재고"}
@@ -3552,6 +3574,7 @@ def depreciation_adjustment(
     fy_start: Annotated[str | None, Field(description="사업연도 개시일(YYYY-MM-DD), 생략하면 year-01-01")] = None,
     fy_end: Annotated[str | None, Field(description="사업연도 종료일(YYYY-MM-DD), 생략하면 year-12-31")] = None,
     tax_exempt: Annotated[bool, Field(description="당기 법인세를 면제·감면받았는지(영 제30조 감가상각의제)")] = False,
+    prior_year: Annotated[dict | None, Field(description="전기 자료(선택). 문항에 전기 자료(전기 기초 누계·기초 부인누계·전기 상각비·전기 범위액)가 있으면 prior_year에 그대로 넣고 당기 기초값(accumulated_dep_begin·prior_disallowed·prior_book_value)은 적지 말 것. tools가 전기 시인부족 추인·감가상각의제를 거쳐 당기 기초값을 계산한다. prior_year와 명시 인자가 함께 있고 값이 다르면 오류로 거부된다. {accumulated_dep_begin, disallowed_begin, booked_depreciation, limit?, in_service_date?, tax_exempt?, expensed_capex?}")] = None,
 ) -> dict:
     """법인세 감가상각 시부인 — 개별 자산별 상각범위액과 회사계상액 비교(법인세법 제23조, 시행령 제26조·제28조·제30조·제31조·제32조).
 언제: 감가상각비 세무조정(상각부인액·시인부족액·전기 부인액 추인·감면법인 의제상각)과 세무상 미상각잔액을 구할 때.
@@ -3566,13 +3589,15 @@ def depreciation_adjustment(
   in_service_date — 기중 취득·사용개시일(월할, 1개월 미만은 1개월).
   fy_start·fy_end — 사업연도(12개월만 지원).
   tax_exempt — 법인세 면제·감면 여부.
+  prior_year — 전기 자료(선택). 문항에 전기 자료가 있으면 prior_year에 그대로 넣고 당기 기초값은 적지 말 것. 도구가 전기 시인부족 추인·감가상각의제를 거쳐 당기 기초값을 계산한다.
 결과: 세무조정(상각부인액 유보, 추인·감가상각의제 △유보)·상각범위액·회사계상액·기말 상각부인누계액·세무상 미상각잔액·판단·근거. 사실이 빠지거나 맞지 않으면 error와 필요 입력을 돌려주고 계산하지 않음."""
     r = C.depreciation_adjustment(year, method, acquisition_cost, booked_depreciation,
                                    useful_life, rate, asset_class,
                                    accumulated_dep_begin, accumulated_dep_end,
                                    expensed_capex, repair_total, periodic_repair,
                                    prior_book_value, prior_deemed_capex, prior_disallowed,
-                                   in_service_date, fy_start, fy_end, tax_exempt)
+                                   in_service_date, fy_start, fy_end, tax_exempt,
+                                   prior_year)
     if "error" in r:
         return r
     # r = {"결과": {...}, "계산": {...}, "판단": [...], "산식": [...]}
