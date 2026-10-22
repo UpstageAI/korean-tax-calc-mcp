@@ -1598,10 +1598,21 @@ def dividend_received_deduction(
         대상액 = int(대상_배당금 * exclusion_rate)
         대상액_합계 += 대상액
 
-        # 차감액 = floor(A × B / C × D)
+        # 차감액 = floor(A × B / C × D), where B는 익금불산입 대상 주식의 장부가액 적수
+        # 3개월 이내 취득분 배당을 제외했으면 그 몫에 대응하는 주식 적수도 차감에서 뺀다
+        #   (법 제18조의2①2호·영 제17조의2③: 익금불산입 대상 주식의 장부가액 적수)
         book_value = inv.get("book_value_jeoksu", 0)
         if A > 0 and not is_excluded:
-            차감액 = int(A * book_value * exclusion_rate / total_assets_jeoksu)
+            # 차감 대상 주식 적수 = book_value_jeoksu × (대상_배당금 ÷ 수입배당금액)
+            # 즉, 3개월 이내 취득분이 제외되었으면 그 배당만큼 주식 적수도 차감에서 뺀다
+            # (법 제18조의2①2호·영 제17조의2③: 익금불산입 대상 주식의 장부가액 적수)
+            if within_3m_dividend > 0 and dividend > 0:
+                target_ratio = (dividend - within_3m_dividend) / dividend
+            elif dividend == 0:
+                target_ratio = 0.0
+            else:
+                target_ratio = 1.0
+            차감액 = int(A * book_value * target_ratio * exclusion_rate / total_assets_jeoksu)
         else:
             차감액 = 0
         차감액_합계 += 차감액
@@ -1619,7 +1630,7 @@ def dividend_received_deduction(
             "대상_배당금": 대상_배당금,
             "익금불산입_대상액": 대상액,
             "차감액": 차감액,
-            "익금불산입액": 대상액 - 차감액,
+            "익금불산입액": max(0, 대상액 - 차감액),
         })
 
     if problems:

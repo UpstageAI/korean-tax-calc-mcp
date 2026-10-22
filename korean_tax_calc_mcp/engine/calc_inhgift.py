@@ -13,14 +13,22 @@ def _won(x):
 
 
 def _parse_legal_share(s):
-    """'분자/분모' → (분자, 분모). 0 초과 1 이하."""
-    parts = s.split("/")
-    if len(parts) != 2:
-        raise ValueError("spouse.legal_share는 0 초과 1 이하 분수(예 '3/7')")
-    num, den = int(parts[0]), int(parts[1])
-    if den <= 0 or num <= 0 or num > den:
-        raise ValueError("spouse.legal_share는 0 초과 1 이하 분수(예 '3/7')")
-    return num, den
+    """'분자/분모' 또는 0 초과 1 이하 소수 → (분자, 분모)."""
+    from fractions import Fraction
+    if isinstance(s, str):
+        parts = s.split("/")
+        if len(parts) != 2:
+            raise ValueError("spouse.legal_share는 '3/5' 같은 분수 문자열 또는 0 초과 1 이하 소수")
+        num, den = int(parts[0]), int(parts[1])
+        if den <= 0 or num <= 0 or num > den:
+            raise ValueError("spouse.legal_share는 '3/5' 같은 분수 문자열 또는 0 초과 1 이하 소수")
+        return num, den
+    # 숫자(소수)
+    x = float(s)
+    if x <= 0 or x > 1:
+        raise ValueError("spouse.legal_share는 '3/5' 같은 분수 문자열 또는 0 초과 1 이하 소수")
+    f = Fraction(x).limit_denominator(100)
+    return f.numerator, f.denominator
 
 
 def _rate_table(year):
