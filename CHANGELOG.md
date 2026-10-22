@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.11.0 (2026-10-22)
+
+- 항목형 입력: `capital_gains_income`에 취득세·취득 중개수수료·보유 중 납부 재산세·거주 시작일/종료일 칸(취득가액 합산과 거주기간 계산을 도구가 함, 환산취득가액 경로의 취득가액 구성 표시), `vat_deemed_input_credit`에 품목별 `items`(수입품 관세의 과세가격·운임 포함액·용도 비율, 용도 표기 3가지 형태 허용·같은 품목 행 병합·한국어 오류 안내), `special_tax_credit` 교육비에 회사 학자금·비과세 장학금 칸(차감 규칙을 결과에 항상 표기)
+- 입력 의미: `persons.relation` 허용값 검증과 동의어(자녀·아들·딸 → 직계비속 등), `income_ok` 설명, 의제매입 `purchase` 산정 규칙 설명
+- 규칙 공백 수정: `common_input_tax` 과세기간 중 공급한 공통사용재화 매입세액을 직전 과세기간 비율로 안분 공제(영 제81조④)·건물 신축 겸용 예정 시 `신축건물`로 예정사용면적비율 우선, `dividend_received_deduction` 배당기준일 전 3개월 취득분 제외 시 지급이자 차감 적수도 제외·피출자법인별 음수 방지, `entertainment_adjustment` 현물 접대비 = max(시가, 장부가액) + 부가세(`부가세별도` 기본 true)·성격 `사적사용`(시부인 제외, 손금불산입·상여), `inheritance_tax` `spouse.legal_share` 소수 허용
+- 2026 소규모 임대법인 세율표 현행화, README 정리
+- Solar Pro 4 작성, CodeSolar·Claude 검수
+
 ## 0.10.0 (2026-10-18)
 
 - 새 계산 도구 12개: `capital_gains_income`(토지·건물·주택 양도소득세 — 1세대1주택 비과세·고가주택 안분·장기보유특별공제·기본공제·과세표준), `depreciation_adjustment`(개별 자산 감가상각 시부인 — 상각범위액·회사계상액 비교, 상각부인·유보·추인·감면법인 의제상각·세무상 미상각잔액), `retirement_allowance_adjustment`(퇴직급여충당금·확정급여형 퇴직연금충당금 세무조정 — 한도·지급여부·부인액 추인·부담금 손금산입), `foreign_tax_credit`(외국납부세액공제 — 직접·간주·간접, 국가별 한도, 한도초과 이월, Gross-up), `deemed_dividend_capital_reduction`(감자·주식소각·퇴사·탈퇴·해산 의제배당 — 받은 금전·재산가액 − 소멸 주식 취득가액, 단기소각·평균단가), `earned_income_gross_pay`(근로소득 항목별 과세·비과세 판정 — 총급여액·근로소득공제·근로소득금액), `inheritance_tax`(거주자 피상속인 상속세 과세가액·상속공제·과세표준·산출세액·납부할세액), `gift_tax`(거주자 수증자 증여세 과세가액·증여재산공제·과세표준·산출세액·납부할세액), `dividend_received_deduction`(내국법인 수입배당금액 익금불산입 — 피투자법인별 익금불산입률·지급이자 차감·세무조정), `inventory_valuation_adjustment`(재고자산 평가 세무조정 — 세법상 평가방법 결정·평가차 유보), `special_tax_credit`(근로소득자 특별세액공제 — 보험료·의료비·교육비와 표준세액공제 비교), `asset_grant_reserve`(국고보조금·공사부담금·보험차익 일시상각충당금·압축기장충당금 세무조정)
