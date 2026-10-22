@@ -71,3 +71,13 @@ def test_inheritance_spouse_legal_share_accepts_decimal():
     assert r["결과"]["과세표준"] == 1990000000
     bad = c("inheritance_tax", {"year": 2021, "estate_value": 3800000000, "spouse": {"actual": 0, "legal_share": "abc"}})
     assert "error" in bad and "3/5" in json.dumps(bad, ensure_ascii=False)
+
+
+def test_entertainment_in_kind_with_only_one_value():
+    """시가 또는 장부가액 중 하나만 있어도 평가해야 한다(하네스 점검 후속 리뷰)."""
+    only_market = c("entertainment_adjustment", {"year": 2022, "sme": True, "revenue": {"매출액": 1000000000},
+                                                 "ledger": [{"항목": "현물", "성격": "현물", "시가": 10000000}]})
+    assert "error" not in only_market and only_market["결과"]["시부인_대상"] == 11000000
+    only_book = c("entertainment_adjustment", {"year": 2022, "sme": True, "revenue": {"매출액": 1000000000},
+                                               "ledger": [{"항목": "현물", "성격": "현물", "장부가액": 8000000}]})
+    assert "error" not in only_book and only_book["결과"]["시부인_대상"] == 8800000
