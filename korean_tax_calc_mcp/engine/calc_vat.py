@@ -24,6 +24,15 @@ def _period(p):
     return (y, h)
 
 
+def _validate_period(period):
+    """period가 'YYYY-1'·'YYYY-2' 형식인지 검증. 아니면 error dict 반환, 맞으면 None."""
+    import re
+    if not isinstance(period, str) or not re.fullmatch(r"\d{4}-(1|2)", period):
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"period '{period}' — 'YYYY-1' 또는 'YYYY-2' 형식(4자리 연도)으로 입력 필요"]}
+    return None
+
+
 def _date(d):
     """날짜 인자('YYYY-MM-DD' 또는 과세기간 'YYYY-h' → 그 과세기간 첫날)."""
     if d is None: return None
@@ -284,3 +293,275 @@ def common_input_recalc(input_tax, asset, acquired, current, prior_ratio, curren
     reduce = max(0.0, 1 - (0.05 if bldg else 0.25) * n)
     return {"재계산": int(round(input_tax * reduce * diff, 6)), "경감률": reduce, "경과과세기간": n, "차이": diff,
             "근거": "부가법 제41조, 부가령 제83조②" + ("1호" if bldg else "2호")}
+
+
+# ── 부가세 판정 도구: 매입세액 공제 판정(부가법 제38조·제39조·제46조, 영 제75조) ──
+
+_VALID_NATURE = {"일반", "접대", "비영업용승용차", "토지관련", "면세사업", "사업무관"}
+_VALID_EVIDENCE = {"세금계산서", "신용카드", "현금영수증", "영수증"}
+_VALID_SUPPLIER = {"일반과세자", "간이과세자_세금계산서", "간이과세자_영수증"}
+
+
+def _is_late_invoice_deduction(supply_date, issue_date, period, filing):
+    """발급일 기준 공제 여부 판정(영 제75조3호·7호).
+    supply_date·issue_date는 'YYYY-MM-DD'. period='YYYY-1'|'YYYY-2', filing='예정'|'확정'.
+    반환: (공제여부, 판단메시지)."""
+    y, h = _period(period)
+    if filing == "예정":
+        deadline = f"{y}-04-25" if h == 1 else f"{y}-10-25"
+    else:
+        deadline = f"{y}-07-25" if h == 1 else f"{y + 1}-01-25"
+    # 기한 후 1년 계산(월 말일 보정 포함)
+    from datetime import date, timedelta
+    dl = date.fromisoformat(deadline)
+    oya = (dl.replace(year=dl.year + 1) + timedelta(days=1)) - timedelta(seconds=1)
+    id_ = date.fromisoformat(issue_date)
+    if id_ <= dl:
+        return True, None
+    if id_ <= oya:
+        return True, f"지연수취 — 가산세 대상(법 제60조⑦, 영 제75조7호)"
+    return False, f"발급일이 확정신고기한({deadline})으로부터 1년 초과 — 불공제(법 제39조①2호, 영 제75조)"
+
+
+def vat_input_tax_deduction(period, filing, items):
+    """매입세액 공제 판정(부가법 제38조·제39조·제46조, 영 제75조).
+    입력: period='YYYY-1'|'YYYY-2', filing='예정'|'확정', items=[{항목, 증빙, 공급가액?|공급대가?, 성격,
+           공급자?, 공급시기?, 발급일?, 실제공급가액?}].
+    결과: {공제매입세액, 불공제매입세액}, 계산.항목별: [{항목, 세액, 공제세액, 불공제사유?}], 판단: [{항목, 결론, 근거}]."""
+    if filing not in ("예정", "확정"):
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"filing='{filing}'은(는) 지원하지 않음 — '예정' 또는 '확정'"]}
+    pv = _validate_period(period)
+    if pv: return pv
+    _period(period)
+
+    항목들 = []
+    for it in items:
+        항목 = it.get("항목", "")
+        증빙 = it.get("증빙", "")
+        성격 = it.get("성격", "")
+        공급자 = it.get("공급자", "일반과세자")
+        공급시기 = it.get("공급시기")
+        발급일 = it.get("발급일")
+        실제공급가액 = it.get("실제공급가액")
+        공급가액 = it.get("공급가액")
+        공급대가 = it.get("공급대가")
+
+        문제 = []
+        # 음수 금액 검증
+        for key, val in (("공급가액", 공급가액), ("공급대가", 공급대가), ("실제공급가액", 실제공급가액)):
+            if val is not None and val < 0:
+                문제.append(f"항목 '{항목}': {key}={val} — 음수 입력 불가")
+        if 증빙 not in _VALID_EVIDENCE:
+            문제.append(f"증빙='{증빙}'은(는) 허용값이 아님 — 허용: {sorted(_VALID_EVIDENCE)}")
+        if 성격 not in _VALID_NATURE:
+            문제.append(f"성격='{성격}'은(는) 허용값이 아님 — 허용: {sorted(_VALID_NATURE)}")
+        if 공급자 not in _VALID_SUPPLIER:
+            문제.append(f"공급자='{공급자}'은(는) 허용값이 아님 — 허용: {sorted(_VALID_SUPPLIER)}")
+        if 공급가액 is None and 공급대가 is None:
+            문제.append("공급가액·공급대가 모두 없음 — 하나 이상 입력 필요")
+        if 문제:
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제}
+        항목들.append(it)
+
+    calc_items = []
+    판단 = []
+    공제합계 = 0
+    불공제합계 = 0
+
+    for it in 항목들:
+        항목 = it["항목"]
+        증빙 = it["증빙"]
+        성격 = it["성격"]
+        공급자 = it.get("공급자", "일반과세자")
+        공급시기 = it.get("공급시기")
+        발급일 = it.get("발급일")
+        실제공급가액 = it.get("실제공급가액")
+        공급가액 = it.get("공급가액")
+        공급대가 = it.get("공급대가")
+
+        불공제사유 = None
+        판단문 = ""
+
+        # 1. 성격별 불공제
+        if 성격 == "접대":
+            불공제사유 = "법 제39조①6호: 접대비 — 매입세액 불공제"
+        elif 성격 == "비영업용승용차":
+            불공제사유 = "법 제39조①5호: 비영업용 소형승용차(사업용 제외) 관련 매입세액 불공제"
+        elif 성격 == "토지관련":
+            불공제사유 = "법 제39조①7호·영 제80조: 토지 조성·형질변경 및 철거 목적 건물 취득·철거비 관련 매입세액 불공제"
+        elif 성격 == "면세사업":
+            불공제사유 = "법 제39조①7호: 면세사업 관련 매입세액 불공제"
+        elif 성격 == "사업무관":
+            불공제사유 = "법 제39조①4호: 사업과 직접 관련 없는 지출에 대한 매입세액 불공제"
+
+        # 2. 증빙 '영수증'
+        if not 불공제사유 and 증빙 == "영수증":
+            불공제사유 = "법 제39조①2호 취지: 적격증빙 아닌 영수증 — 매입세액 불공제"
+
+        # 3. 신용카드·현금영수증 + 간이과세자_영수증
+        if not 불공제사유 and 증빙 in ("신용카드", "현금영수증") and 공급자 == "간이과세자_영수증":
+            불공제사유 = "법 제46조③ 단서·영 제88조⑤: 신규 간이과세자 영수증 발급분 — 매입세액 불공제"
+
+        # 4. 세금계산서 + 공급시기·발급일 있는 경우
+        if not 불공제사유 and 증빙 == "세금계산서" and 공급시기 and 발급일:
+            공제, msg = _is_late_invoice_deduction(공급시기, 발급일, period, filing)
+            if not 공제:
+                불공제사유 = msg
+            elif msg:
+                판단문 = msg
+
+        # 세액 계산
+        if 실제공급가액 is not None:
+            세액 = 실제공급가액 * 10 // 100
+            if 불공제사유:
+                # 다른 불공제 사유가 우선 — 공제세액 0, 착오 기재 문장은 결론 문구로 쓰지 않음
+                공제세액 = 0
+            else:
+                # 실제공급가액으로 공제되는 착오 기재 항목 — 불공제사유는 None, 판단문만 그 문장
+                판단문 = "착오 기재 — 그 밖의 증빙으로 실제 거래 확인 시 실제분 공제 (영 제75조2호)"
+                공제세액 = 실제공급가액 * 10 // 100
+        elif 공급가액 is not None:
+            세액 = 공급가액 * 10 // 100
+            공제세액 = 세액 if not 불공제사유 else 0
+        else:
+            세액 = int(공급대가 * 10 / 110)
+            공제세액 = 세액 if not 불공제사유 else 0
+
+        if 불공제사유:
+            불공제합계 += 세액 - 공제세액
+
+        공제합계 += 공제세액
+        calc_items.append({
+            "항목": 항목,
+            "세액": 세액,
+            "공제세액": 공제세액,
+            "불공제사유": 불공제사유,
+        })
+        if 불공제사유 or 판단문:
+            if 불공제사유:
+                결론 = "불공제"
+            else:
+                결론 = "공제 — " + 판단문
+            판단.append({"항목": 항목, "결론": 결론, "근거": 불공제사유 or 판단문})
+
+    계산 = {
+        "항목별": 계산_항목별(calc_items),
+    }
+    return {"공제매입세액": 공제합계, "불공제매입세액": 불공제합계, "계산": 계산, "판단": 판단}
+
+
+def 계산_항목별(items):
+    """계산.항목별 리스트 정리."""
+    return [{"항목": it["항목"], "세액": it["세액"], "공제세액": it["공제세액"],
+             "불공제사유": it["불공제사유"]} for it in items]
+
+
+# ── 부가세 판정 도구: 간주공급·판매 과세표준 판정(부가법 제10조, 영 제19조의2·제20조·제66조) ──
+
+_VALID_TRADE = {"판매", "면세전용", "비영업용승용차전용", "타사업장반출", "개인적공급", "사업상증여", "폐업시잔존"}
+
+
+def _deemed_market_value(자산, period):
+    """감가상각 간주시가 = 취득가액 × (1 − 체감률 × 경과과세기간수), 0 미만 0.
+    자산: {구분:'건물'|'구축물'|'기타', 취득가액, 취득일, 공급일}. period: 'YYYY-1'|'YYYY-2'."""
+    체감률 = 0.05 if 자산["구분"] in ("건물", "구축물") else 0.25
+    n = elapsed_periods(자산["취득일"], 자산["공급일"])
+    간주시가 = int(자산["취득가액"] * (1 - 체감률 * n))
+    return max(0, 간주시가)
+
+
+def vat_deemed_supply_items(period, items):
+    """간주공급·판매 과세표준 판정(부가법 제10조, 영 제19조의2·제20조·제66조).
+    입력: period, items=[{항목, 거래, 매입세액공제(bool), 금액?|시가?|감가상각?, 1인당_연간금액?, 견본_광고선전물?}].
+    결과: {과세표준}, 계산.항목별: [{항목, 거래, 과세표준, 제외사유?}]."""
+    pv = _validate_period(period)
+    if pv: return pv
+    _period(period)
+
+    항목들 = []
+    for it in items:
+        항목 = it.get("항목", "")
+        거래 = it.get("거래", "")
+        금액 = it.get("금액")
+        시가 = it.get("시가")
+        감가상각 = it.get("감가상각")
+        인당연액 = it.get("1인당_연간금액")
+        문제 = []
+        # 음수 금액 검증
+        for key, val in (("금액", 금액), ("시가", 시가), ("1인당_연간금액", 인당연액)):
+            if val is not None and val < 0:
+                문제.append(f"항목 '{항목}': {key}={val} — 음수 입력 불가")
+        if 감가상각 is not None:
+            if not isinstance(감가상각, dict) or 감가상각.get("취득가액") is not None and 감가상각["취득가액"] < 0:
+                문제.append(f"항목 '{항목}': 감가상각.취득가액={감가상각.get('취득가액')} — 음수 입력 불가")
+        if 문제:
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제}
+        if 거래 not in _VALID_TRADE:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"항목 '{항목}': 거래='{거래}'은(는) 지원하지 않음 — 허용: {sorted(_VALID_TRADE)}"]}
+        if 거래 == "판매" and it.get("금액") is None:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"항목 '{항목}'(판매): '금액' 입력 필요"]}
+        if 거래 == "타사업장반출" and it.get("금액") is None:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"항목 '{항목}'(타사업장반출): '금액' 입력 필요"]}
+        if 거래 in ("면세전용", "비영업용승용차전용", "개인적공급", "사업상증여", "폐업시잔존"):
+            if it.get("매입세액공제") is None:
+                return {"error": "입력 확인 필요 — 계산하지 않음",
+                        "문제": [f"항목 '{항목}'({거래}): '매입세액공제' 입력 필요"]}
+            if it.get("시가") is None and it.get("감가상각") is None:
+                return {"error": "입력 확인 필요 — 계산하지 않음",
+                        "문제": [f"항목 '{항목}'({거래}): '시가' 또는 '감가상각' 입력 필요"]}
+        항목들.append(it)
+
+    calc_items = []
+    과세표준합계 = 0
+    판단 = []
+
+    for it in 항목들:
+        항목 = it["항목"]
+        거래 = it["거래"]
+        매입세액공제 = it.get("매입세액공제")
+        금액 = it.get("금액")
+        시가 = it.get("시가")
+        감가상각 = it.get("감가상각")
+        인당연액 = it.get("1인당_연간금액")
+        견본 = it.get("견본_광고선전물")
+
+        과세표준 = 0
+        제외사유 = None
+
+        if 거래 == "판매":
+            과세표준 = 금액
+        elif 거래 == "타사업장반출":
+            과세표준 = 금액
+        elif 거래 in ("면세전용", "비영업용승용차전용", "개인적공급", "사업상증여", "폐업시잔존"):
+            if not 매입세액공제:
+                제외사유 = "매입세액 공제받지 않은 재화 — 간주공급 아님 (법 제10조 괄호)"
+            else:
+                if 감가상각:
+                    과세표준 = _deemed_market_value(감가상각, period)
+                else:
+                    과세표준 = 시가
+                if 거래 == "개인적공급":
+                    과세표준 = max(0, 과세표준 - 100_000)
+                    if 과세표준 == 0:
+                        제외사유 = f"1인당 연간 10만원 이하 — 공급 아님 (영 제19조의2, 2022.2.15. 이후)"
+                if 거래 == "사업상증여" and 견본:
+                    과세표준 = 0
+                    제외사유 = "견본·광고선전물 — 공급 아님 (법 제10조⑤ 단서)"
+
+        과세표준합계 += 과세표준
+        계산항목 = {"항목": 항목, "거래": 거래, "과세표준": 과세표준}
+        if 제외사유:
+            계산항목["제외사유"] = 제외사유
+            판단.append({"항목": 항목, "결론": "공급 아님(제외)", "근거": 제외사유})
+        else:
+            판단.append({"항목": 항목, "결론": f"과세표준 {과세표준:,}원", "근거": f"{거래} — 과세표준"})
+        calc_items.append(계산항목)
+
+    계산 = {"항목별": calc_items}
+    if 판단:
+        계산["판단"] = 판단
+    return {"과세표준": 과세표준합계, "계산": 계산, "판단": 판단}
