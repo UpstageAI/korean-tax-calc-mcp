@@ -1,6 +1,6 @@
 # SPEC_export_workbook — 계산 근거 엑셀 내보내기 · 작성 Claude 2026-10-24
 
-브랜치 `feat/export-workbook`(main에서, gaps3~6 머지 뒤 rebase). 정답 테스트 `tests/test_export_workbook.py` 3개 + 기존 전부 통과. 커밋 1개(제목은 실행 지시대로). push 금지, 테스트 수정 금지.
+브랜치 `feat/export-workbook`(main에서). 정답 테스트 `tests/test_export_workbook.py` 3개 + 기존 전부 통과. 커밋 1개(제목은 실행 지시대로). push 금지, 테스트 수정 금지.
 
 ## 왜
 계산 결과를 실무자가 검토할 수 있는 형식으로 남긴다. 보고서(쟁점·판단 요지·과세소득 집계)는 한글(korean-report-hwpx), 금액이 어떻게 나왔는지는 엑셀. 우리 도구는 이미 입력·항목별 판단·근거 조문·산식·세무조정을 돌려주므로 그것을 탭으로 펼친다.
