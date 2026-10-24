@@ -71,3 +71,32 @@ def test_disaster_loss_credit_includes_liable_third_party_assets():
                      {"구분": "타인소유_변상책임있음", "장부가액": 100000000, "상실액": 100000000}],
           "current_tax": 300000000, "other_credits": 30000000, "penalty": 6000000})
     assert r["결과"]["자산상실비율"] == 0.4 and r["결과"]["재해손실세액공제"] == 110400000
+
+
+# 재해손실세액공제 공제대상 법인세 항목형 입력(영 제95조③, 법 제58조①) — 10/24 보강
+def test_disaster_credit_items_other_law_credit_and_penalty_kinds():
+    r = c("disaster_loss_credit", {"year": 2023,
+          "assets": [{"구분": "사업용", "장부가액": 500000000, "상실액": 140000000},
+                     {"구분": "타인소유_변상책임있음", "장부가액": 100000000, "상실액": 100000000}],
+          "current_tax": 300000000,
+          "credit_items": [{"종류": "조세특례제한법", "금액": 30000000}],
+          "penalty_items": [{"근거": "국세기본법 제47조의5", "금액": 6000000}]})
+    assert r["결과"]["공제대상 법인세"] == 276000000 and r["결과"]["재해손실세액공제"] == 110400000
+
+
+def test_disaster_credit_foreign_tax_credit_not_deducted_book_penalty_included():
+    r = c("disaster_loss_credit", {"year": 2025,
+          "assets": [{"구분": "사업용", "장부가액": 370000000, "상실액": 190000000},
+                     {"구분": "토지", "장부가액": 300000000, "상실액": 0},
+                     {"구분": "타인소유_변상책임있음", "장부가액": 30000000, "상실액": 30000000}],
+          "current_tax": 20000000, "unpaid_prior_tax": 11000000,
+          "credit_items": [{"종류": "법인세법", "금액": 1000000}, {"종류": "조세특례제한법", "금액": 2000000}]})
+    assert r["결과"]["자산상실비율"] == 0.55
+    assert r["결과"]["공제대상 법인세"] == 29000000 and r["결과"]["재해손실세액공제"] == 15950000
+
+
+def test_disaster_credit_excluded_penalty_and_input_conflict():
+    base = {"year": 2025, "assets": [{"구분": "사업용", "장부가액": 100000000, "상실액": 50000000}], "current_tax": 10000000}
+    r = c("disaster_loss_credit", {**base, "penalty_items": [{"근거": "기타", "금액": 1000000}, {"근거": "법인세법 제75조의3", "금액": 500000}]})
+    assert r["결과"]["공제대상 법인세"] == 10500000
+    assert "입력 확인 필요" in json.dumps(c("disaster_loss_credit", {**base, "other_credits": 1, "credit_items": [{"종류": "조세특례제한법", "금액": 1}]}), ensure_ascii=False)
