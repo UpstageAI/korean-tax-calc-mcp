@@ -5513,6 +5513,30 @@ def _format_basis(v: list) -> str:
     return "\n".join(lines)
 
 
+def _format_basis_short(v: list) -> str:
+    """근거 목록([법령, 조, 항, 요지] 목록)을 법조문 번호만 중복 없이 `, `로 이어 한 줄로 변환.
+
+    요약 시트용: 요지 문장 없이 법령 조항만 추출하며, 중복 제거 후 한 줄로 연결한다.
+    """
+    seen: list[str] = []
+    for item in v:
+        if not item:
+            continue
+        law_name = item[0] if len(item) > 0 and item[0] else ""
+        article = item[1] if len(item) > 1 and item[1] else ""
+        clause = item[2] if len(item) > 2 and item[2] else ""
+        if not law_name:
+            continue
+        law_article = law_name
+        if article:
+            law_article += " " + article
+        if clause:
+            law_article += clause
+        if law_article not in seen:
+            seen.append(law_article)
+    return ", ".join(seen)
+
+
 # ── 계산식 이름 치환 헬퍼 (SPEC_export_workbook_c) ─────────────────────────
 import re as _re
 from openpyxl.workbook.defined_name import DefinedName
@@ -5676,9 +5700,10 @@ def export_workbook(
                     vc.value = _cell_value(v)
                 c += 2
             if cd["basis"]:
-                bc = ws_sum.cell(r, c, _cell_value(cd["basis"]))
                 if isinstance(cd["basis"], list) and _is_basis_list(cd["basis"]):
-                    bc.alignment = Alignment(wrap_text=True)
+                    bc = ws_sum.cell(r, c, _format_basis_short(cd["basis"]))
+                else:
+                    bc = ws_sum.cell(r, c, _cell_value(cd["basis"]))
                 c += 1
 
     # 고지 행
