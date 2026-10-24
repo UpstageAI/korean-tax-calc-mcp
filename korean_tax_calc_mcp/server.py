@@ -5524,7 +5524,7 @@ def export_workbook(
             # 방향별 합계 행: 가산 합계 / 차감 합계 / 순액
             가산_sumif_cond = f"B{가산first_row}:B{처분last_row}"   # B열 = 조정 열
             차감_sumif_cond = f"B{가산first_row}:B{처분last_row}"
-            금액_sumif_addr = f"D{가산first_row}:D{처분last_row}"    # D열 = 금액 열
+            금액_sumif_addr = f"C{가산first_row}:C{처분last_row}"    # C열 = 금액 열
 
             ws.cell(행, 1, "가산 합계").font = bold
             ws.cell(행, 3, f'=SUMIF({가산_sumif_cond},"가산",{금액_sumif_addr})')
@@ -5541,7 +5541,7 @@ def export_workbook(
             행 += 1
 
             ws.cell(행, 1, "순액").font = bold
-            ws.cell(행, 3, f"=D{가산_수식행}-D{차감_수식행}")
+            ws.cell(행, 3, f"=C{가산_수식행}-C{차감_수식행}")
             ws.cell(행, 3).number_format = money_fmt
             ws.cell(행, 3).font = bold
             행 += 1
@@ -5583,11 +5583,11 @@ def export_workbook(
             if isinstance(v_익금, (int, float)) and isinstance(v_손금, (int, float)):
                 # 가산 합계 vs 익금산입_손금불산입
                 ws.cell(행, 1, "확인 (익금산입_손금불산입)").font = bold
-                ws.cell(행, 3, f'=IF(D{가산_수식행}={v_익금},"일치","확인 필요")')
+                ws.cell(행, 3, f'=IF(C{가산_수식행}={v_익금},"일치","확인 필요")')
                 행 += 1
                 # 차감 합계 vs 손금산입_익금불산입
                 ws.cell(행, 1, "확인 (손금산입_익금불산입)").font = bold
-                ws.cell(행, 3, f'=IF(D{차감_수식행}={v_손금},"일치","확인 필요")')
+                ws.cell(행, 3, f'=IF(C{차감_수식행}={v_손금},"일치","확인 필요")')
                 행 += 1
             else:
                 # 기존 동작: 임의적립금 키 중 첫 번째 숫자 값을 합계와 비교
@@ -5601,7 +5601,7 @@ def export_workbook(
                         break
                 if 도구합계 is not None:
                     ws.cell(행, 1, f"확인 ({도구합계키})").font = bold
-                    ws.cell(행, 3, f'=IF(D{합계_수식행}={도구합계},"일치","확인 필요")')
+                    ws.cell(행, 3, f'=IF(C{합계_수식행}={도구합계},"일치","확인 필요")')
                     행 += 1
 
         # ④ 산식
