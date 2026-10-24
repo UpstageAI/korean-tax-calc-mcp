@@ -24,6 +24,15 @@ def _period(p):
     return (y, h)
 
 
+def _validate_period(period):
+    """period가 'YYYY-1'·'YYYY-2' 형식인지 검증. 아니면 error dict 반환, 맞으면 None."""
+    import re
+    if not isinstance(period, str) or not re.fullmatch(r"\d{4}-(1|2)", period):
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"period '{period}' — 'YYYY-1' 또는 'YYYY-2' 형식(4자리 연도)으로 입력 필요"]}
+    return None
+
+
 def _date(d):
     """날짜 인자('YYYY-MM-DD' 또는 과세기간 'YYYY-h' → 그 과세기간 첫날)."""
     if d is None: return None
@@ -322,6 +331,8 @@ def vat_input_tax_deduction(period, filing, items):
     if filing not in ("예정", "확정"):
         return {"error": "입력 확인 필요 — 계산하지 않음",
                 "문제": [f"filing='{filing}'은(는) 지원하지 않음 — '예정' 또는 '확정'"]}
+    pv = _validate_period(period)
+    if pv: return pv
     _period(period)
 
     항목들 = []
@@ -337,6 +348,10 @@ def vat_input_tax_deduction(period, filing, items):
         공급대가 = it.get("공급대가")
 
         문제 = []
+        # 음수 금액 검증
+        for key, val in (("공급가액", 공급가액), ("공급대가", 공급대가), ("실제공급가액", 실제공급가액)):
+            if val is not None and val < 0:
+                문제.append(f"항목 '{항목}': {key}={val} — 음수 입력 불가")
         if 증빙 not in _VALID_EVIDENCE:
             문제.append(f"증빙='{증빙}'은(는) 허용값이 아님 — 허용: {sorted(_VALID_EVIDENCE)}")
         if 성격 not in _VALID_NATURE:
@@ -457,12 +472,28 @@ def vat_deemed_supply_items(period, items):
     """간주공급·판매 과세표준 판정(부가법 제10조, 영 제19조의2·제20조·제66조).
     입력: period, items=[{항목, 거래, 매입세액공제(bool), 금액?|시가?|감가상각?, 1인당_연간금액?, 견본_광고선전물?}].
     결과: {과세표준}, 계산.항목별: [{항목, 거래, 과세표준, 제외사유?}]."""
+    pv = _validate_period(period)
+    if pv: return pv
     _period(period)
 
     항목들 = []
     for it in items:
         항목 = it.get("항목", "")
         거래 = it.get("거래", "")
+        금액 = it.get("금액")
+        시가 = it.get("시가")
+        감가상각 = it.get("감가상각")
+        인당연액 = it.get("1인당_연간금액")
+        문제 = []
+        # 음수 금액 검증
+        for key, val in (("금액", 금액), ("시가", 시가), ("1인당_연간금액", 인당연액)):
+            if val is not None and val < 0:
+                문제.append(f"항목 '{항목}': {key}={val} — 음수 입력 불가")
+        if 감가상각 is not None:
+            if not isinstance(감가상각, dict) or 감가상각.get("취득가액") is not None and 감가상각["취득가액"] < 0:
+                문제.append(f"항목 '{항목}': 감가상각.취득가액={감가상각.get('취득가액')} — 음수 입력 불가")
+        if 문제:
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제}
         if 거래 not in _VALID_TRADE:
             return {"error": "입력 확인 필요 — 계산하지 않음",
                     "문제": [f"항목 '{항목}': 거래='{거래}'은(는) 지원하지 않음 — 허용: {sorted(_VALID_TRADE)}"]}
