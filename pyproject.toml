@@ -9,7 +9,7 @@ description = "Korea (South Korea) tax calculator MCP server — 50 tools: tax c
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
-dependencies = ["mcp>=2.2", "pypdf>=5.0", "uvicorn>=0.30"]
+dependencies = ["mcp>=2.2", "pypdf>=5.0", "uvicorn>=0.30", "openpyxl>=3.1"]
 keywords = ["mcp", "mcp-server", "korea", "south-korea", "tax", "tax-calculator", "세금", "세법", "가산세"]
 
 [project.urls]
