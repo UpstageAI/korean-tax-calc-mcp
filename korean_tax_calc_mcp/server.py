@@ -5355,18 +5355,23 @@ def _is_wrapped_basis_list(v: list) -> bool:
 
 
 def _format_basis(v: list) -> str:
-    """근거 목록([법령, 조, 항, 요지] 목록)을 사람이 읽는 문장으로 변환."""
+    """근거 목록([법령, 조, 항, 요지] 목록)을 사람이 읽는 문장으로 변환.
+
+    각 항목의 자리(0 법령·1 조·2 항·3 요지)로 먼저 읽고, 빈 값만 생략한다.
+    빈 값을 먼저 걸러내면 요지가 항 자리에 붙는 문제(예: 제40조실지귀속)가 생긴다.
+    """
     lines = []
     for item in v:
-        parts = [x for x in item if x]  # 빈 값 제외
-        if not parts:
+        if not item:
             continue
-        law_name = parts[0]
-        article = parts[1] if len(parts) > 1 else ""
-        clause = parts[2] if len(parts) > 2 else ""
-        gist = parts[3] if len(parts) > 3 else ""
+        law_name = item[0] if len(item) > 0 and item[0] else ""
+        article = item[1] if len(item) > 1 and item[1] else ""
+        clause = item[2] if len(item) > 2 and item[2] else ""
+        gist = item[3] if len(item) > 3 and item[3] else ""
+        if not law_name:
+            continue
 
-        # 법령 + 조항
+        # 법령 + 조항(+ 항)
         law_article = law_name
         if article:
             law_article += " " + article
@@ -5639,6 +5644,7 @@ def export_workbook(
             ws.cell(행, 3, f"=SUM({금액_sumif_addr})")
             ws.cell(행, 3).number_format = money_fmt
             ws.cell(행, 3).font = bold
+            합계_수식행 = 행
             행 += 1
 
             # 소득처분별 합계 (=SUMIF)
@@ -5655,14 +5661,6 @@ def export_workbook(
                 ws.cell(행, 3, f'=SUMIF({sumif_cond},"{처분}",{금액_sumif_addr})')
                 ws.cell(행, 3).number_format = money_fmt
                 행 += 1
-
-            # 합계 행(=SUM 금액열) — 기존 유지
-            ws.cell(행, 1, "합계").font = bold
-            ws.cell(행, 3, f"=SUM({금액_sumif_addr})")
-            ws.cell(행, 3).number_format = money_fmt
-            ws.cell(행, 3).font = bold
-            합계_수식행 = 행
-            행 += 1
 
         # ③ 확인 셀: 도구 결과의 합계 값과 수식 합계 비교
         if 합계_수식행 is not None:
