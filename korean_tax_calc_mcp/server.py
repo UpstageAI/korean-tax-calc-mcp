@@ -286,6 +286,8 @@ _도구별_필수필드 = {
         "비상장법인현금배당": {"필요": ["amount"]},
         "의제배당_잉여금자본전입": {"필요": ["amount", "source"], "허용": ["self_stock_shift"]},
         "인정배당": {"필요": ["amount"]},
+        "손해배상법정이자": {"필요": ["amount"]},
+        "공익신탁이익": {"필요": ["amount"]},
     },
     "bad_debt_adjustment": {
         "소멸시효완성": {"필요": ["amount", "arose_in"]},
@@ -306,6 +308,8 @@ _도구별_필수필드 = {
         "주택입주지체상금": {"필요": ["amount"]},
         "연금외수령": {"필요": ["amount"]},
         "직무발명보상금_퇴직후": {"필요": ["amount", "employment_exempt_used"]},
+        "승마투표권환급금": {"필요": ["amount"], "허용": ["unit_bet"]},
+        "슬롯머신당첨금": {"필요": ["amount"]},
     },
     "earned_income_gross_pay": {
         "급여": {"허용": ["facts", "service_year"]},
@@ -2035,8 +2039,9 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
         · 적격 — 적격증명서류(세금계산서·계산서·신용카드·현금영수증) 수취 건(한도 시부인 대상)
       성격 판단(어휘 기업업무추진비_포함항목.판단.성격별):
         · 없음·교제목적 → 포함(법 제25조①) / 직원단체_법인 → 포함(영 제40조②) / 직원단체_비법인 → 제외(복리후생비)
-        · 임직원부담 → 제외(영 제40조①) / 현물 → 포함(max(시가, 장부가액) + 부가세, 부가세별도 기본 True, 영 제42조⑥·법 제36조①3호) / 경조금·문화 → 기존과 동일
+        · 임직원부담 → 제외(영 제40조①) / 현물 → 포함(max(시가, 장부가액) + 부가세, 부가세별도 기본 True, 영 제42조⑥·법 제36조①3호) / 경조금·문화·전통시장 → 기존과 동일
         · 사적사용 → 시부인 대상 제외, 직접 손금불산입(상여, 법인세법 제19조②·시행령 제40조①)
+        · 전통시장 → 포함(「전통시장 및 상점가 육성을 위한 특별법」상 전통시장에서 쓴 적격 기업업무추진비, 조특법 제136조⑥, 2025.1.1. 이후 지출분 추가한도 대상)
     결과: 판단(항목별·근거)·결과(한도·한도초과)·세무조정(구분·금액·소득처분)·소득처분별_합계·손금불산입_합계·계산. 기업업무추진비 세액공제."""
 
     # ── 빈 원장 거부 ──
@@ -2162,16 +2167,20 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
                 judgments.append({"항목": 항목명, "성격": 성격, "결론": "시부인 대상(문화접대비)", "금액": 금액, "근거": "법인세법 제25조④(문화접대비)", "이유": ("적격증빙·문화비 지출 → 한도 계산 시 문화접대비 포함" + (f" — {_현물_판단_이유}" if _현물_판단_이유 else ""))})
             elif 성격 == "경조금":
                 judgments.append({"항목": 항목명, "성격": 성격, "결론": "시부인 대상(경조금)", "금액": 금액, "근거": "법인세법 제25조①", "이유": ("적격증빙·경조금 지출 → 한도 계산 대상" + (f" — {_현물_판단_이유}" if _현물_판단_이유 else ""))})
+            elif 성격 == "전통시장":
+                judgments.append({"항목": 항목명, "성격": 성격, "결론": "시부인 대상(전통시장 기업업무추진비)", "금액": 금액, "근거": "조세특례제한법 제136조⑥", "이유": ("적격증빙·전통시장 지출 → 한도 계산 시 전통시장 추가한도 대상" + (f" — {_현물_판단_이유}" if _현물_판단_이유 else ""))})
             else:
                 judgments.append({"항목": 항목명, "성격": 성격, "결론": 결론, "금액": 금액, "근거": 근거, "이유": ("적격증명서류 수취 → 한도 계산 대상" + (f" — {_현물_판단_이유}" if _현물_판단_이유 else ""))})
 
     si_bu_shin = sum(items_for_limit)
     culture_total = sum(int(item.get("금액", 0)) for item in ledger if item.get("성격") == "문화" and item.get("증빙", "적격") == "적격")
+    전통시장_총액 = sum(int(item.get("금액", 0)) for item in ledger if item.get("성격") == "전통시장" and item.get("증빙", "적격") == "적격")
     기본한도_중소 = vocab.rule("기업업무추진비_적격수취", year).get("기본한도", {}).get("중소", 36000000)
     기본한도_일반 = vocab.rule("기업업무추진비_적격수취", year).get("기본한도", {}).get("일반", 12000000)
 
     # ── 한도 계산 ──
-    ent = C.entertain(year, sme, revenue_general, revenue_related, si_bu_shin, culture=culture_total, months=months)
+    ent = C.entertain(year, sme, revenue_general, revenue_related, si_bu_shin, culture=culture_total,
+                      market=전통시장_총액 if year >= 2025 else 0, months=months)
     limit = ent["한도"]
     over_limit = ent["한도초과(기타사외유출)"]
 
@@ -2184,12 +2193,23 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
     if over_limit > 0:
         settlements.append({"구분": "한도초과", "금액": over_limit, "소득처분": "기타사외유출"})
 
+    if year >= 2025:
+        if 전통시장_총액 > 0:
+            judgments.append({"항목": "전통시장 추가한도", "성격": "전통시장", "결론": f"전통시장 지출 {전통시장_총액:,}원 → 추가한도 min({전통시장_총액:,}, 기본한도 {ent['일반한도']:,} × 10%) = {ent['전통시장한도']:,}원 (조특법 제136조⑥)",
+                              "금액": 전통시장_총액, "근거": "조세특례제한법 제136조⑥",
+                              "이유": f"전통시장(「전통시장 및 상점가 육성을 위한 특별법」)에서 쓴 적격 기업업무추진비 — 기본한도 × 10%와 지출액 중 작은 금액이 추가한도"})
+    else:
+        judgments.append({"항목": "전통시장 추가한도", "성격": "전통시장", "결론": "전통시장 추가한도는 2025.1.1. 이후 지출분부터 — 일반 한도로 처리", "금액": 0,
+                          "근거": "조세특례제한법 제136조⑥",
+                          "이유": "전통시장에서 쓴 기업업무추진비이나 2025.1.1. 이전 지출이므로 추가한도 미적용 — 일반 기업업무추진비로 시부인"})
+
     result = {"한도": limit, "한도초과": over_limit, "직부인_대표자상여": no_receipt_total + private_use_total, "직부인_기타사외유출": no_qual_total, "시부인_대상": si_bu_shin}
-    calc_dict = {"기본한도": ent["일반한도"], "문화한도": ent["문화한도"], "시부인 대상": si_bu_shin, "직부인(증빙없음·심사비)": no_receipt_total + no_qual_total}
+    calc_dict = {"기본한도": ent["일반한도"], "문화한도": ent["문화한도"], "전통시장한도": ent["전통시장한도"],
+               "시부인 대상": si_bu_shin, "직부인(증빙없음·심사비)": no_receipt_total + no_qual_total}
     근거_목록 = vocab.basis("기업업무추진비_적격수취", year)
     근거_문자열 = ", ".join(f"{조문[0]} {조문[1]} {조문[2]} {조문[3]}" if 조문[3] else f"{조문[0]} {조문[1]} {조문[2]}" for 조문 in 근거_목록)
     unified = _build_tax_adjustment_result(settlements, result, calc_dict)
-    return _ok(unified, 근거_문자열, 세무조정=settlements, 판단=judgments, 계산=calc_dict, 산식=f"기본한도 = 중소 {기본한도_중소:,}원·일반 {기본한도_일반:,}원 × 월수/12, 수입금액 한도 = 수입금액 구간별 비율을 적용한 금액(+ 특수관계 10%), 문화한도 = min(문화비, 일반한도 × 20%), 한도 = 기본 + 수입금액 + 문화, 한도초과 = 시부인 대상 − 한도")
+    return _ok(unified, 근거_문자열, 세무조정=settlements, 판단=judgments, 계산=calc_dict, 산식=f"기본한도 = 중소 {기본한도_중소:,}원·일반 {기본한도_일반:,}원 × 월수/12, 수입금액 한도 = 수입금액 구간별 비율을 적용한 금액(+ 특수관계 10%), 문화한도 = min(문화비, 일반한도 × 20%), 전통시장한도 = min(전통시장 지출, 일반한도 × 10%) [2025.1.1. 이후], 한도 = 기본 + 수입금액 + 문화 + 전통시장, 한도초과 = 시부인 대상 − 한도")
 
 
 # ───────── 끝에서 끝까지: 의제배당(잉여금 자본전입) ─────────
@@ -2244,7 +2264,7 @@ def _income_basis(source, shareholder_type, has_self_stock_shift):
 @_guard
 def deemed_dividend_bonus_shares(
     year: YEAR,
-    source: Annotated[str, Field(description="재원 — 어휘 '의제배당_잉여금자본전입.판단.재원별' 키: 주식발행초과금·자본준비금·재평가적립금·자기주식처분이익·이익잉여금·재평가적립금_토지1%")],
+    source: Annotated[str, Field(description="재원 — 어휘 '의제배당_잉여금자본전입.판단.재원별' 키: 주식발행초과금·자본준비금·재평가적립금·자기주식처분이익·이익잉여금·재평가적립금_토지1%·상환주식_주식발행초과금·자기주식소각이익_2년내·자기주식소각이익")],
     capitalized_amount: WON,
     par_value: Annotated[int, Field(description="액면가(원/주), 신주 1주의 액면금액")],
     shareholders: Annotated[list, Field(description="[{name, shares, self_stock?:bool}] — 무상증자 직전 보유주식수, 발행법인 자기주식은 self_stock=true")],
@@ -2254,7 +2274,7 @@ def deemed_dividend_bonus_shares(
     """잉여금을 자본에 전입(무상증자)할 때 주주별 의제배당 금액. 언제: 법인이 잉여금을 자본에 전입해 무상주를 발행할 때 주주별 의제배당을 계산한다.
 입력:
   year — 사업연도(2016~2026).
-  source — 재원(어휘 '의제배당_잉여금자본전입.판단.재원별' 키): 주식발행초과금·자본준비금·재평가적립금(과세 제외), 이익잉여금·자기주식처분이익(과세 대상), 재평가적립금_토지1%(과세 대상·Gross-up 비대상).
+  source — 재원(어휘 '의제배당_잉여금자본전입.판단.재원별' 키): 주식발행초과금·자본준비금·재평가적립금(과세 제외), 이익잉여금·자기주식처분이익·상환주식_주식발행초과금·자기주식소각이익_2년내(과세 대상), 재평가적립금_토지1%(과세 대상·Gross-up 비대상), 자기주식소각이익(과세 제외).
   capitalized_amount — 자본전입액(원).
   par_value — 액면가(원/주).
   shareholders — [{name, shares, self_stock?:bool}]: 무상증자 직전 보유주식수, 발행법인 자기주식은 self_stock=true.
@@ -2391,7 +2411,7 @@ def deemed_dividend_bonus_shares(
 @mcp.tool(annotations=CALC)
 @_guard
 def financial_income_aggregate(year: YEAR,
-                               items: Annotated[list, Field(description="금융소득 항목 [{kind, amount, ...}] — kind: 예금이자·비영업대금이익·소비대차전환이자·외상매출금지급기일연장이자·저축성보험차익·투자신탁환매이익·파생결합사채이익·장내파생상품이익·상장법인현금배당·비상장법인현금배당·의제배당_잉여금자본전입·인정배당")]) -> dict:
+                               items: Annotated[list, Field(description="금융소득 항목 [{kind, amount, ...}] — kind: 예금이자·비영업대금이익·소비대차전환이자·외상매출금지급기일연장이자·저축성보험차익·투자신탁환매이익·파생결합사채이익·장내파생상품이익·상장법인현금배당·비상장법인현금배당·의제배당_잉여금자본전입·인정배당·손해배상법정이자·공익신탁이익")]) -> dict:
     """종합소득 합산 금융소득(이자·배당)과 Gross-up 계산(소득세법 제14조·제16조·제17조·제56조).
     언제: 종합소득세 신고에서 금융소득 종합과세 대상 여부와 배당가산(Gross-up)액을 계산할 때.
     입력: 귀속연도(2016~2026) → year, 금융소득 항목 목록 [{kind, amount, ...}] → items.
@@ -2413,6 +2433,8 @@ def financial_income_aggregate(year: YEAR,
         · 환매조건부매매차익 — RP(환매조건부매매) 차익(이자소득, 조건부 종합과세)
         · 법원보증금이자 — 법원 공탁보증금 이자(무조건 분리과세, 금융소득 합계·합산액 제외)
         · 직장공제회초과반환금 — 직장공제회 초과 반환금(무조건 분리과세, 금융소득 합계·합산액 제외)
+        · 손해배상법정이자 — 계약 위약·해약에 따른 손해배상금의 법정이자(이자소득 아님, 기타소득 소득세법 제21조①10호, 금융소득 합계 제외)
+        · 공익신탁이익 — 공익신탁의 이익(비과세 소득세법 제12조1호, 금융소득 합계 제외)
     결과: 판단(항목별 이자/배당/제외·Gross-up 대상 여부)·결과(이자소득금액·배당소득금액·합산액)·계산(중간값). 금융소득 종합과세·배당가산."""
 
     # 어휘의 항목 이름과 다른 흔한 표기를 정식 이름으로 해결(예: 장내파생상품→장내파생상품이익)
@@ -2507,6 +2529,10 @@ def financial_income_aggregate(year: YEAR,
         elif k == "직장공제회초과반환금":
             원천징수세액 = int(amt * vocab.rule("직장공제회초과반환금", year).get("원천징수세율", 0.2))
             add(k, "제외", amt, "소득세법 제16조①1호, 제14조③3호, 제129조①4호", f"무조건 분리과세 — 금융소득 합계·합산액 모두 제외, 원천징수 {원천징수세액:,}원")
+        elif k == "손해배상법정이자":
+            add(k, "제외", amt, "소득세법 제21조①10호, 제16조", "이자소득 아님 — 기타소득(소득세법 제21조①10호)")
+        elif k == "공익신탁이익":
+            add(k, "제외", amt, "소득세법 제12조1호", "비과세 — 공익신탁의 이익(소득세법 제12조1호)")
         else:
             판단.append({"항목": k, "결론": "확인 필요", "금액": amt, "근거": "", "이유": "지원하지 않는 항목 — 직접 판단 필요"})
 
@@ -2540,7 +2566,7 @@ def financial_income_aggregate(year: YEAR,
 @mcp.tool(annotations=CALC)
 @_guard
 def other_income_aggregate(year: YEAR,
-                           items: Annotated[list, Field(description="기타소득 항목 [{kind, amount, ...}] — kind: 산업재산권대여·일시적인적용역·뇌물·위약금·배상금·주택입주지체상금·연금외수령·직무발명보상금_퇴직후")]) -> dict:
+                           items: Annotated[list, Field(description="기타소득 항목 [{kind, amount, ...}] — kind: 산업재산권대여·일시적인적용역·뇌물·위약금·배상금·주택입주지체상금·연금외수령·직무발명보상금_퇴직후·승마투표권환급금·슬롯머신당첨금")]) -> dict:
     """거주자의 기타소득 항목을 원래 사실관계로 받아 ① 항목별 과세 구분(종합/분리/비과세/제외) ② 비과세·필요경비 ③ 소득금액·원천징수세액 ④ 종합소득 합산액과 기납부세액까지 계산한다(소득세법 제21조·제12조·제14조③·제127조·제129조, 시행령 제18조②·제87조).
     언제: 종합소득세 신고에서 기타소득의 과세 구분·필요경비·원천징수세액·종합소득 합산액을 계산할 때.
     입력: 귀속연도(2016~2026) → year, 기타소득 항목 목록 [{kind, amount, ...}] → items.
@@ -2555,6 +2581,8 @@ def other_income_aggregate(year: YEAR,
         · 배임수재 — 배임수재로 받은 금품(무조건 종합과세, 원천징수 제외, 소득세법 제21조①24호)
         · 알선수재 — 알선수재로 받은 금품(무조건 종합과세, 원천징수 제외, 소득세법 제21조①24호)
         · 복권당첨금 — 복권당첨금(무조건 분리과세, 제14조③8호 단서·제129조, 필요경비는 actual_cost만)
+        · 승마투표권환급금 — 승마투표권 적중 환급금(소득세법 제21조①4호·제37조②2호·제84조3호, 원천징수 20%, 무조건 분리과세, unit_bet=단위투표금액 기본 0, 소득금액=amount−unit_bet, amount≤2,000,000이고 amount≤unit_bet×100이면 과세최저한)
+        · 슬롯머신당첨금 — 슬롯머신 당첨금(소득세법 제21조①4호·제84조2호, 원천징수 20%, 무조건 분리과세, 건별 2,000,000원 이하 과세최저한)
     결과: 판단(항목별 과세 구분·근거)·결과(종합소득 합산액·기납부세액·분리과세·비과세·선택적 분리과세 가능)·계산(항목별 소득금액·원천징수세액)."""
 
     _v = _validate_items(items, "kind", _specs_from_vocab("other_income_aggregate", "kind"))
@@ -2672,6 +2700,48 @@ def other_income_aggregate(year: YEAR,
                 산식_목록.append(f"{k}: {amount:,}원 − 구입비 {actual_cost:,}원 = 소득금액 {금액 - actual_cost:,}원 → 건별 5만원 이하 과세최저한(제84조)으로 과세 제외, 원천징수 0")
             else:
                 산식_목록.append(f"{k}: {amount:,}원 − 구입비 {actual_cost:,}원 = 소득금액 {소득:,}원, 원천징수 {소득:,} × 20%{' + 초과분 × 30%' if 복권_고율기준 is not None and 소득 > 복권_고율기준 else ''} = {원천징수세액:,}원 (제14조③8호 단서 무조건 분리과세)")
+            근거_목록.extend(basis)
+
+        elif k == "승마투표권환급금":
+            unit_bet = int(it.get("unit_bet", 0))
+            소득 = amount - unit_bet
+            과세최저한_금액 = 2000000
+            과세최저한_조건 = amount <= 과세최저한_금액 and amount <= unit_bet * 100
+            if 과세최저한_조건:
+                소득 = 0
+                원천징수세액 = 0
+                과세구분표시 = "과세최저한"
+            else:
+                원천징수세액 = int(소득 * rule["원천징수세율"])
+                과세구분표시 = "분리과세"
+            분리과세_기타소득금액 += 소득
+            분리과세_원천징수세액 += 원천징수세액
+            항목별.append({"kind": k, "총수입금액": amount, "비과세": 0, "필요경비": unit_bet,
+                           "소득금액": 소득, "과세구분": 과세구분표시, "원천징수세액": 원천징수세액, "근거": basis})
+            if 과세최저한_조건:
+                산식_목록.append(f"{k}: 수령액 {amount:,}원 ≤ 2,000,000원이고 ≤ 단위투표금액 {unit_bet:,}원 × 100 → 과세최저한(소득세법 제84조3호)으로 과세 제외, 원천징수 0")
+            else:
+                산식_목록.append(f"{k}: 수령액 {amount:,}원 − 단위투표금액 {unit_bet:,}원 = 소득금액 {소득:,}원, 원천징수 {소득:,} × 20% = {원천징수세액:,}원 (소득세법 제21조①4호·제37조②2호·제84조3호, 무조건 분리과세)")
+            근거_목록.extend(basis)
+
+        elif k == "슬롯머신당첨금":
+            과세최저한 = 2000000
+            if amount <= 과세최저한:
+                소득 = 0
+                원천징수세액 = 0
+                과세구분표시 = "과세최저한"
+            else:
+                소득 = amount
+                원천징수세액 = int(amount * rule["원천징수세율"])
+                과세구분표시 = "분리과세"
+            분리과세_기타소득금액 += 소득
+            분리과세_원천징수세액 += 원천징수세액
+            항목별.append({"kind": k, "총수입금액": amount, "비과세": 0, "필요경비": 0,
+                           "소득금액": 소득, "과세구분": 과세구분표시, "원천징수세액": 원천징수세액, "근거": basis})
+            if 소득 == 0:
+                산식_목록.append(f"{k}: 당첨금 {amount:,}원 ≤ 2,000,000원 → 과세최저한(소득세법 제84조2호)으로 과세 제외, 원천징수 0")
+            else:
+                산식_목록.append(f"{k}: 당첨금 {amount:,}원, 원천징수 {amount:,} × 20% = {원천징수세액:,}원 (소득세법 제21조①4호·제84조2호, 무조건 분리과세)")
             근거_목록.extend(basis)
 
         elif k in ("산업재산권대여", "일시적인적용역", "주택입주지체상금"):
@@ -4380,8 +4450,8 @@ def capital_gains_income(
         asset_type: Annotated[str, Field(description="양도자산 종류 — '토지'|'건물'(주택 아닌 건물)|'주택'(딸린 토지 포함). 그 밖의 자산은 지원하지 않음")],
         acquisition_date: Annotated[str, Field(description="취득일 YYYY-MM-DD(대금청산일, 등기접수일이 앞서면 그날)")],
         transfer_date: Annotated[str, Field(description="양도일 YYYY-MM-DD(대금청산일, 2017-01-01 ~ 2026-12-31)")],
-        transfer_price: Annotated[int, Field(description="양도가액 — 양도 당시 실지거래가액(원)", gt=0)],
-        acquisition_price: Annotated[int, Field(description="취득가액 — 취득 당시 실지거래가액(원, 취득세·취득 중개수수료 등 포함, 재산세 제외, 환산취득가액 사용 시 0)", ge=0)],
+        transfer_price: Annotated[int, Field(description="양도가액 — 양도 당시 실지거래가액(원). burdened_gift 입력 시 생략 가능(생략 시 0)", ge=0)] = 0,
+        acquisition_price: Annotated[int, Field(description="취득가액 — 취득 당시 실지거래가액(원, 취득세·취득 중개수수료 등 포함, 재산세 제외, 환산취득가액 사용 시 0). burdened_gift 입력 시 생략 가능(생략 시 0)", ge=0)] = 0,
         acquisition_tax: Annotated[int, Field(description="취득세(원) — 문항 표의 '취득세'는 이 칸에 넣고, 취득가액 = acquisition_price + 취득세 + 취득 중개수수료로 도구가 합산함")] = 0,
         acquisition_brokerage: Annotated[int, Field(description="취득 시 중개수수료(원) — 문항 표의 '취득시 중개수수료'는 이 칸에 넣고, 취득가액 = acquisition_price + 취득세 + 취득 중개수수료로 도구가 합산함")] = 0,
         holding_tax_paid: Annotated[int, Field(description="보유 중 납부한 재산세·종합부동산세(원) — 필요경비에 넣지 않고 판단에서 필요경비가 아님을 명시함")] = 0,
@@ -4396,7 +4466,8 @@ def capital_gains_income(
         residence_start: Annotated[str | None, Field(description="거주 시작일 YYYY-MM-DD — residence_end와 함께 입력하면 거주기간(만 년수)을 도구가 계산함. residence_years와 다르면 문제로 거부")] = None,
         residence_end: Annotated[str | None, Field(description="거주 종료일 YYYY-MM-DD — 생략 시 transfer_date를 사용")] = None,
         heavy_multi_home: Annotated[bool | None, Field(description="one_house=False인 주택: 다주택 중과(제104조⑦) 대상 여부. True면 지원하지 않음")] = None,
-        apply_basic_deduction: Annotated[bool, Field(description="True면 양도소득 기본공제(연 250만원)와 과세표준까지 계산(같은 해 같은 그룹에서 이미 공제받았으면 False)")] = False) -> dict:
+        apply_basic_deduction: Annotated[bool, Field(description="True면 양도소득 기본공제(연 250만원)와 과세표준까지 계산(같은 해 같은 그룹에서 이미 공제받았으면 False)")] = False,
+        burdened_gift: Annotated[dict | None, Field(description="부담부증여(소득세법 시행령 제159조) — {증여가액, 채무액, 평가:'시가'|'기준시가', 취득_기준시가?(평가='기준시가'면 필수), 취득가액_실지?(평가='시가'면 필수)}. 증여가액·채무액으로 양도가액과 취득가액을 자동 계산. transfer_price나 acquisition_price와 함께 입력 불가")] = None) -> dict:
     """토지·건물·주택의 양도차익 → 1세대1주택 비과세·고가주택 안분 → 장기보유특별공제(표1·표2) → 양도소득금액(소득세법 제89조·제92조·제95조·제97조·제103조, 시행령 제154조·제156조·제159조의3(4)·제160조·제176조의2·제163조).
     언제: 부동산 양도소득금액·장기보유특별공제를 양도일 기준 공제율·고가주택 기준(2021.12.8. 전 9억원, 이후 12억원)으로 계산할 때.
     입력:
@@ -4404,6 +4475,7 @@ def capital_gains_income(
       양도가액·취득가액(실지거래가액) → transfer_price·acquisition_price,
       자본적지출·양도비 → capital_expenditure·transfer_expenses, 등기 여부 → registered,
       (환산취득가액) acquisition_price=0이고 취득·양도 당시 기준시가 둘 다 있으면 환산취득가액 자동 계산(소득세법 시행령 제176조의2②2호, 제163조⑥).
+      (부담부증여) burdened_gift={증여가액, 채무액, 평가:'시가'|'기준시가', 취득_기준시가?, 취득가액_실지?} — 비율=채무액÷증여가액, 양도가액=증여가액×비율(=채무액), 취득가액: 평가='기준시가'면 취득_기준시가×비율+개산공제(토지·건물 3%, 미등기 0.3%), '시가'면 취득가액_실지×비율. transfer_price·acquisition_price와 함께 입력 불가.
       (주택) 1세대1주택 여부 → one_house, 비과세 요건 충족 → exempt_met, 거주기간(년) → residence_years,
       (주택, 1주택 아님) 다주택 중과 대상 → heavy_multi_home,
       기본공제·과세표준까지 → apply_basic_deduction.
@@ -4416,16 +4488,61 @@ def capital_gains_income(
     def _vocab_on(name: str, yyyymmdd: int) -> dict:
         return vocab.rule_on(name, yyyymmdd)
 
+    # 부담부증여 처리 (소득세법 시행령 제159조) — 환산취득가액 처리보다 먼저 실행하여
+    # acquisition_price가 0인 상태에서의 환산취득가액 오류 체크를 우회
+    if burdened_gift is not None:
+        if transfer_price > 0 or acquisition_price > 0:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": ["burdened_gift와 transfer_price·acquisition_price를 함께 입력할 수 없음 — 둘 중 하나만 사용"]}
+        증여가액 = int(burdened_gift["증여가액"])
+        채무액 = int(burdened_gift["채무액"])
+        평가 = burdened_gift["평가"]
+        비율 = 채무액 / 증여가액
+        양도_가액 = int(증여가액 * 비율)  # = 채무액
+        if 평가 == "기준시가":
+            취득_기준시가 = int(burdened_gift["취득_기준시가"])
+            취득_기준시가_비율 = int(취득_기준시가 * 비율)
+            필요경비개산공제 = int(취득_기준시가_비율 * (0.003 if not registered else 0.03))  # 토지·건물 3%, 미등기 0.3% (영 제159조①·제163조⑥)
+            취득_가액 = 취득_기준시가_비율 + 필요경비개산공제
+            부담부판단 = (f"비율 = 채무액 {채무액:,}원 ÷ 증여가액 {증여가액:,}원 = {비율:.4f}; "
+                          f"양도가액 = 증여가액 {증여가액:,}원 × 비율 = {양도_가액:,}원(= 채무액); "
+                          f"취득가액 = 취득기준시가 {취득_기준시가:,}원 × 비율 = {취득_기준시가_비율:,}원 + 개산공제 {필요경비개산공제:,}원(취득기준시가×비율 × {'0.3%' if not registered else '3%'}) = {취득_가액:,}원 (영 제159조①·제163조⑥)")
+        elif 평가 == "시가":
+            취득_실지 = int(burdened_gift["취득가액_실지"])
+            취득_가액 = int(취득_실지 * 비율)
+            부담부판단 = (f"비율 = 채무액 {채무액:,}원 ÷ 증여가액 {증여가액:,}원 = {비율:.4f}; "
+                          f"양도가액 = 증여가액 {증여가액:,}원 × 비율 = {양도_가액:,}원(= 채무액); "
+                          f"취득가액 = 실지취득가액 {취득_실지:,}원 × 비율 = {취득_가액:,}원 (영 제159조①)")
+        else:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"burdened_gift 평가='{평가}' 은(는) '시가'|'기준시가' 중 하나여야 함"]}
+        # burden_gift 계산값을 이후 calc_cg 호출에 사용
+        _bp = 양도_가액
+        _ba = 취득_가액
+        _bt = 0
+        _bb = 0
+        _bce = 0
+        _be = 0
+        _burdensome = True
+    else:
+        _bp = transfer_price
+        _ba = acquisition_price
+        _bt = acquisition_tax
+        _bb = acquisition_brokerage
+        _bce = capital_expenditure
+        _be = transfer_expenses
+        _burdensome = False
+
     # 환산취득가액 처리 (acquisition_price=0, 기준시가 둘 다 있으면 환산)
     사용환산취득가액 = False
     개산공제 = 0  # 실지거래가액 경로에서도 calc_cg에 전달하기 위한 기본값
-    if acquisition_price == 0:
+    if not _burdensome and _ba == 0:
         if acquisition_standard_price is not None and transfer_standard_price is not None:
             사용환산취득가액 = True
-            환산취득가액 = int(transfer_price * acquisition_standard_price / transfer_standard_price)  # 원 미만 버림 (시행령 제176조의2②2호)
+            환산취득가액 = int(_bp * acquisition_standard_price / transfer_standard_price)  # 원 미만 버림 (시행령 제176조의2②2호)
             개산공제 = int(acquisition_standard_price * (0.003 if not registered else 0.03))   # 미등기 0.3%, 등기 3% (시행령 제163조⑥)
             필요경비_환산 = 환산취득가액 + 개산공제
-            실제필요경비 = capital_expenditure + transfer_expenses
+            실제필요경비 = _bce + _be
             if 필요경비_환산 >= 실제필요경비:
                 최종취득가격 = 0  # 환산취득가액 사용
                 최종필요경비 = 필요경비_환산
@@ -4433,7 +4550,7 @@ def capital_gains_income(
             else:
                 최종취득가격 = 0
                 최종필요경비 = 실제필요경비
-                취사용근거 = f"환산취득가액 {환산취득가액:,}원 + 개산공제 {개산공제:,}원 = {필요경비_환산:,}원 < 실제 필요경비(자본적지출 {capital_expenditure:,} + 양도비 {transfer_expenses:,} = {실제필요경비:,}원) → 제97조②2호 단서로 실제 필요경비 사용"
+                취사용근거 = f"환산취득가액 {환산취득가액:,}원 + 개산공제 {개산공제:,}원 = {필요경비_환산:,}원 < 실제 필요경비(자본적지출 {_bce:,} + 양도비 {_be:,} = {실제필요경비:,}원) → 제97조②2호 단서로 실제 필요경비 사용"
         else:
             return {"error": "입력 확인 필요 — 계산하지 않음",
                     "문제": [f"acquisition_price=0: 환산취득가액 계산 필요 — acquisition_standard_price와 transfer_standard_price 둘 다 입력 필요 (소득세법 시행령 제176조의2②2호)"]}
@@ -4457,29 +4574,55 @@ def capital_gains_income(
     else:
         effective_residence_years = residence_years
 
-    r = CG.calc_cg({
-        "asset_type": asset_type,
-        "acquisition_date": acquisition_date,
-        "transfer_date": transfer_date,
-        "transfer_price": transfer_price,
-        "acquisition_price": acquisition_price if acquisition_price != 0 else 환산취득가액,
-        "acquisition_tax": acquisition_tax,
-        "acquisition_brokerage": acquisition_brokerage,
-        "holding_tax_paid": holding_tax_paid,
-        "capital_expenditure": capital_expenditure if acquisition_price != 0 else 0,
-        "transfer_expenses": transfer_expenses if acquisition_price != 0 else 0,
-        "registered": registered,
-        "one_house": one_house,
-        "exempt_met": exempt_met,
-        "residence_years": effective_residence_years,
-        "heavy_multi_home": heavy_multi_home,
-        "apply_basic_deduction": apply_basic_deduction,
-        "환산취득가액_사용": 사용환산취득가액,
-        "개산공제": 개산공제,
-    }, _vocab_on)
+    if _burdensome:
+        r = CG.calc_cg({
+            "asset_type": asset_type,
+            "acquisition_date": acquisition_date,
+            "transfer_date": transfer_date,
+            "transfer_price": _bp,
+            "acquisition_price": _ba,
+            "acquisition_tax": _bt,
+            "acquisition_brokerage": _bb,
+            "holding_tax_paid": holding_tax_paid,
+            "capital_expenditure": _bce,
+            "transfer_expenses": _be,
+            "registered": registered,
+            "one_house": one_house,
+            "exempt_met": exempt_met,
+            "residence_years": effective_residence_years,
+            "heavy_multi_home": heavy_multi_home,
+            "apply_basic_deduction": apply_basic_deduction,
+            "환산취득가액_사용": False,
+            "개산공제": 0,
+        }, _vocab_on)
+    else:
+        r = CG.calc_cg({
+            "asset_type": asset_type,
+            "acquisition_date": acquisition_date,
+            "transfer_date": transfer_date,
+            "transfer_price": _bp,
+            "acquisition_price": _ba if _ba != 0 else 환산취득가액,
+            "acquisition_tax": _bt,
+            "acquisition_brokerage": _bb,
+            "holding_tax_paid": holding_tax_paid,
+            "capital_expenditure": _bce if _ba != 0 else 0,
+            "transfer_expenses": _be if _ba != 0 else 0,
+            "registered": registered,
+            "one_house": one_house,
+            "exempt_met": exempt_met,
+            "residence_years": effective_residence_years,
+            "heavy_multi_home": heavy_multi_home,
+            "apply_basic_deduction": apply_basic_deduction,
+            "환산취득가액_사용": 사용환산취득가액,
+            "개산공제": 개산공제,
+        }, _vocab_on)
 
     if "error" in r:
         return r
+
+    # 부담부증여 판단 추가
+    if burdened_gift is not None:
+        r["판단"] = r.get("판단", []) + [{"항목": "부담부증여(양도가액·취득가액)", "결론": 부담부판단, "근거": "소득세법 시행령 제159조"}]
 
     # 환산취득가액 사용 시 필요경비 재계산 및 결과 덮어쓰기
     if 사용환산취득가액:
