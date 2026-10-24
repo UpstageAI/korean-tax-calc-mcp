@@ -4798,7 +4798,7 @@ def corporate_deemed_rent_income(
         구분 = r.get("구분", "")
         보증금 = int(r.get("보증금", 0) or 0)
         건설비 = int(r.get("건설비", 0) or 0)
-        임대면적비율 = float(r.get("임대면적비율", 1) or 1)
+        임대면적비율 = _rate_norm(r.get("임대면적비율")) or 1
         일수 = int(r.get("일수", 0) or year_days)
         if 구분 == "주택":
             제외_주택보증금 += 보증금
@@ -4846,7 +4846,22 @@ def estimated_business_income(
 결과: 사업소득금액·계산(수입금액·장부구분·적용방법·주요경비·기준경비율_소득·한도), 판단(수입금액 구성·제외·적용방법 사유·주요경비 제외), 근거(소득세법 시행령 제143조·제208조⑤)."""
     base_rate = _rate_norm(base_rate)
     simple_rate = _rate_norm(simple_rate)
-    multiplier = _rate_norm(multiplier)
+    if isinstance(multiplier, str):
+        multiplier = float(multiplier.strip().replace("%", ""))
+    elif multiplier is not None:
+        multiplier = float(multiplier)
+
+    # revenues·expenses 구분 검증
+    _rev_kinds = {"매출", "보조금", "유형자산처분", "기타"}
+    _exp_kinds = {"매입", "임차료", "인건비", "기타", "자산취득"}
+    for i, r in enumerate(revenues or []):
+        if r.get("구분") not in _rev_kinds:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"revenues 항목 {i+1}: 구분='{r.get('구분')}' 허용값 아님 — {sorted(_rev_kinds)}"]}
+    for i, e in enumerate(expenses or []):
+        if e.get("구분") not in _exp_kinds:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"expenses 항목 {i+1}: 구분='{e.get('구분')}' 허용값 아님 — {sorted(_exp_kinds)}"]}
 
     # 기준금액표
     기준표 = {"가": {"간편장부": 300_000_000, "단순경비율": 60_000_000},
@@ -4975,6 +4990,10 @@ def vat_exempt_use_deemed_supply(
         매입세액공제 = bool(a.get("매입세액공제", True))
         시가 = a.get("시가")
 
+        if 구분 not in ("건물", "구축물", "기타", "토지", "비상각"):
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"assets: 구분='{구분}'은(는) 허용값 아님 — '건물'|'구축물'|'기타'|'토지'|'비상각'"]}
+
         # 토지 제외
         if 구분 == "토지":
             자산별.append({"구분": 구분, "제외사유": "토지 — 면세 재화(부가법 제10조① 괄호)",
@@ -4996,7 +5015,7 @@ def vat_exempt_use_deemed_supply(
             if 시가 is None:
                 return {"error": "입력 확인 필요 — 계산하지 않음",
                         "문제": [f"assets: 비상각 자산은 시가 필수"]}
-            간주시가 = int(시가를) if isinstance(시가, (int, float)) else int(시가)
+            간주시가 = int(시가) if isinstance(시가, (int, float)) else int(시가)
             자산별.append({"구분": 구분, "경과과세기간수": 0, "간주시가": 간주시가})
             간주시가_합 += 간주시가
             판단.append({"항목": f"{구분} {취득일} 취득가액 {취득가액:,}원, 시가 {간주시가:,}원",
@@ -5007,6 +5026,9 @@ def vat_exempt_use_deemed_supply(
         # 감가상각자산
         체감률 = 0.05 if 구분 in ("건물", "구축물") else 0.25
         경과 = V.elapsed_periods(취득일, use_date)
+        if 경과 < 0:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"자산 '{구분}': 전용일이 취득일보다 앞섬"]}
         간주시가 = int(max(0, 취득가액 * (1 - 체감률 * 경과)))
         자산별.append({"구분": 구분, "경과과세기간수": 경과, "간주시가": 간주시가})
         간주시가_합 += 간주시가
@@ -5151,6 +5173,10 @@ def income_adjustment_total(
             방향 = 방향_입력 if 방향_입력 is not None else kd["방향"]
             소득처분 = 소득처분_입력 if 소득처분_입력 is not None else kd["소득처분"]
             근거 = kd["근거"]
+
+        if 방향 not in ("가산", "차감", "없음", "차가감 이후"):
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"항목 '{항목명}': 방향 '{방향}' 허용값 아님 — '가산'|'차감'|'없음'"]}
 
         # 기부금 한도초과 — 차가감 이후 가산
         if 종류 == "기부금 한도초과":
