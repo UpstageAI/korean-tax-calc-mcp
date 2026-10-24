@@ -56,25 +56,25 @@ GIFT = {"kind": "증여", "valuation_date": "2023-07-01", "supplementary_value":
 
 
 def test_valuation_own_appraisal_over_similar_sale_and_mortgage():
-    r = c("property_valuation", GIFT)
+    r = c("inheritance_gift_valuation", GIFT)
     assert r["결과"]["평가액"] == 200000000
     assert r["계산"]["시가"] == 200000000 and r["계산"]["담보채권액"] == 180000000
 
 
 def test_valuation_similar_sale_when_no_own_value():
-    r = c("property_valuation", {**GIFT, "market_values": [GIFT["market_values"][0]], "secured_debt": None})
+    r = c("inheritance_gift_valuation", {**GIFT, "market_values": [GIFT["market_values"][0]], "secured_debt": None})
     assert r["결과"]["평가액"] == 250000000
 
 
 def test_valuation_outside_window_falls_back():
     mv = [{"대상": "해당재산", "종류": "감정", "가액": 200000000, "날짜": "2023-10-15"}]
-    r = c("property_valuation", {**GIFT, "market_values": mv, "secured_debt": None})
+    r = c("inheritance_gift_valuation", {**GIFT, "market_values": mv, "secured_debt": None})
     assert r["결과"]["평가액"] == 150000000 and r["계산"]["시가"] is None
 
 
 def test_valuation_inheritance_window_and_mortgage_floor():
     mv = [{"대상": "해당재산", "종류": "매매", "가액": 200000000, "날짜": "2023-12-20"}]
-    r = c("property_valuation", {"kind": "상속", "valuation_date": "2023-07-01", "supplementary_value": 150000000,
+    r = c("inheritance_gift_valuation", {"kind": "상속", "valuation_date": "2023-07-01", "supplementary_value": 150000000,
                                  "market_values": mv, "secured_debt": {"채권최고액": 234000000, "채무액": 260000000}})
     assert r["계산"]["시가"] == 200000000 and r["결과"]["평가액"] == 234000000
 
@@ -82,5 +82,5 @@ def test_valuation_inheritance_window_and_mortgage_floor():
 def test_valuation_two_appraisals_averaged_and_closest_sale():
     mv = [{"대상": "해당재산", "종류": "감정", "가액": 200000000, "날짜": "2023-06-01"},
           {"대상": "해당재산", "종류": "감정", "가액": 220000000, "날짜": "2023-06-10"}]
-    r = c("property_valuation", {**GIFT, "market_values": mv, "secured_debt": None})
+    r = c("inheritance_gift_valuation", {**GIFT, "market_values": mv, "secured_debt": None})
     assert r["결과"]["평가액"] == 210000000
