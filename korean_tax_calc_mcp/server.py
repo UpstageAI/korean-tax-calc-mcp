@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from .engine import calc as K, calc_cit as C, calc_income as I, calc_vat as V, calc_capgains as CG
 from .engine import calc_inhgift as IG
+from .engine import calc_gold_gaps6 as GG
 from . import vocab
 
 # ── 세무조사 판정 도구 (audit 패키지) ──
@@ -4629,6 +4630,73 @@ def gift_tax(
         share_appraisal_fee=share_appraisal_fee, share_appraisal_count=share_appraisal_count,
         generation_skip=generation_skip, prior_gift_tax_paid=prior_gift_tax_paid,
         other_credits=other_credits, filed=filed,
+    )
+
+
+# ── 연금계좌 인출(연금수령한도·인출순서) ─────────────────────────────
+@mcp.tool(annotations=CALC)
+@_guard
+def pension_account_withdrawal(
+    year: Annotated[int, Field(description="귀속연도(과세기간)")],
+    birth_date: Annotated[str, Field(description="출생일(YYYY-MM-DD)")],
+    join_date: Annotated[str, Field(description="연금계좌 가입일(YYYY-MM-DD)")],
+    start_request_date: Annotated[str, Field(description="연금수령 개시 신청일(YYYY-MM-DD)")],
+    balance_at_period_start: WON,
+    withdrawal: WON,
+    contributions_total: WON,
+    contributions_not_deducted: WON,
+    deferred_retirement_income: WON = 0,
+    investment_income: WON = 0,
+) -> dict:
+    """연금계좌 연금수령한도·인출순서 계산(소득세법 시행령 제40조의2·제40조의3, 2024.1.1. 시행본).
+    언제: 연금계좌에서 인출할 때 연금수령분(연금소득)과 연금외수령분(기타소득)을 구분한다.
+    입력:
+      year — 귀속연도(과세기간)
+      birth_date — 출생일
+      join_date — 연금계좌 가입일
+      start_request_date — 연금수령 개시 신청일
+      balance_at_period_start — 과세기간 개시일 현재 평가액(개시 신청 연도는 신청일 현재)
+      withdrawal — 당해 인출액
+      contributions_total — 납입액 합계
+      contributions_not_deducted — 세액공제 받지 못한 납입액(과세제외금액)
+      deferred_retirement_income — 이연퇴직소득(있으면 가입 5년 요건 생략)
+      investment_income — 운용수익
+    결과: 연금수령분·연금외수령분 각 {과세제외금액, 이연퇴직소득, 그밖}, 사적연금_총연금액(종합과세 대상 사적연금),
+      이연퇴직_연금수령(연금소득·분리과세), 기타소득_연금외수령, 계산.연금수령연차·연금수령한도, 판단.
+    주의: contributions_not_deducted > contributions_total, 음수, 날짜 형식 오류 → error."""
+    return GG.pension_account_withdrawal(
+        year=year, birth_date=birth_date, join_date=join_date,
+        start_request_date=start_request_date, balance_at_period_start=balance_at_period_start,
+        withdrawal=withdrawal, contributions_total=contributions_total,
+        contributions_not_deducted=contributions_not_deducted,
+        deferred_retirement_income=deferred_retirement_income,
+        investment_income=investment_income,
+    )
+
+
+# ── 상속·증여재산 평가 ────────────────────────────────────────────────
+@mcp.tool(annotations=CALC)
+@_guard
+def inheritance_gift_valuation(
+    kind: Annotated[Literal["상속", "증여"], Field(description="'상속' 또는 '증여'")],
+    valuation_date: Annotated[str, Field(description="상속개시일 또는 증여일(YYYY-MM-DD)")],
+    supplementary_value: Annotated[int, Field(description="보충적 평가액(개별공시지가 등, 원)")],
+    market_values: Annotated[list | None, Field(description="[{대상:'해당재산'|'유사재산', 종류:'매매'|'감정'|'수용'|'경매'|'공매', 가액, 날짜}]")] = None,
+    secured_debt: Annotated[dict | None, Field(description="{채권최고액?, 채무액} — 저당권·근저당 등 담보")] = None,
+) -> dict:
+    """상속·증여재산 평가: 시가 우선 → 보충적 평가 → 담보권 특례(상증법 제60조·제66조, 영 제49조·제63조).
+    언제: 상속·증여재산의 시가를 구할 때. 해당재산 가액이 있으면 시가, 없으면 유사재산, 둘 다 없으면 보충적 평가액(법 제61조).
+    입력:
+      kind — '상속' 또는 '증여'
+      valuation_date — 상속개시일·증여일
+      supplementary_value — 보충적 평가액(개별공시지가 등)
+      market_values — [{대상, 종류, 가액, 날짜}] 선택
+      secured_debt — {채권최고액?, 채무액} 선택
+    결과: 평가액, 계산.시가·적용·담보채권액, 판단.
+    주의: 평가기간 밖 가액은 시가에서 제외(상속=전후 6개월, 증여=전 6개월~후 3개월)."""
+    return GG.inheritance_gift_valuation(
+        kind=kind, valuation_date=valuation_date, supplementary_value=supplementary_value,
+        market_values=market_values, secured_debt=secured_debt,
     )
 
 
