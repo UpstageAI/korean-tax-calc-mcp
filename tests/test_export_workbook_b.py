@@ -147,9 +147,14 @@ def test_demo_case_exports_all_calls(tmp_path):
 
 def test_basis_lines_keep_positions(tmp_path):
     _, wb = build(tmp_path, DEMO_CALLS)
-    lines = [ln for v in cells(wb["요약"]) if isinstance(v, str) for ln in v.split("\n")]
-    assert "부가가치세법 제40조 — 실지귀속 우선, 공통매입세액은 안분기준으로 안분" in lines
-    assert any(ln.startswith("부가가치세법 시행령 제81조① — ") for ln in lines)
+    # 요약에는 법조문 번호만(SPEC_export_workbook_d) — 요지 문장 없이, 중복 없이 한 줄
+    basis = [v for v in cells(wb["요약"]) if isinstance(v, str) and "부가가치세법 제40조" in v]
+    assert basis, "요약에 부가세 근거 조문"
+    b = basis[0]
+    assert " — " not in b and "\n" not in b and "실지귀속" not in b
+    assert "부가가치세법 시행령 제81조①" in b
+    parts = [x.strip() for x in b.split(",")]
+    assert len(parts) == len(set(parts))
     for s in [s for s in wb.sheetnames if s.startswith("계산")]:
         labels = [r[0] for r in wb[s].iter_rows(values_only=True)]
         assert labels.count("합계") == 0 or "금액 합계(방향 무관)" not in labels
