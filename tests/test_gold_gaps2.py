@@ -190,3 +190,10 @@ def test_deemed_rent_area_ratio_zero_kept_zero():
     rentals = [{"구분": "비주택", "보증금": 50000000, "건설비": 100000000, "임대면적비율": 0}]
     r = c("corporate_deemed_rent_income", {"year": 2024, "rentals": rentals, "rate": 0.05})
     assert r["계산"]["건설비상당액적수"] == 0 and r["결과"]["간주익금"] == 2500000
+
+
+def test_estimated_income_multiplier_percent_string():
+    a = {"year": 2024, "industry_group": "나", "prior_year_revenue": 40000000,
+         "revenues": [{"구분": "매출", "금액": 100000000}], "expenses": [], "base_rate": 0.1, "simple_rate": 0.9}
+    assert c("estimated_business_income", {**a, "multiplier": "280%"})["결과"]["사업소득금액"] == 28000000
+    assert c("estimated_business_income", {**a, "multiplier": "2.8"})["결과"]["사업소득금액"] == 28000000

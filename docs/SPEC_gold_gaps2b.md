@@ -10,3 +10,4 @@
 
 ## 리뷰 반영(2026-10-24, PR #30 CodeSolar)
 6. `corporate_deemed_rent_income`: `임대면적비율 = _rate_norm(...) or 1`은 0을 1로 바꾼다. 키가 없거나 None일 때만 1, 0은 0으로 둔다. 테스트 `test_deemed_rent_area_ratio_zero_kept_zero`.
+7. `estimated_business_income.multiplier`: 숫자·숫자 문자열은 그대로(2.8, "2.8"), "%"로 끝나는 문자열만 ÷100("280%" → 2.8). 필드 설명을 `배율(예 2.8 또는 '280%', 생략 시 간편 2.8·복식 3.4)`로. 테스트 `test_estimated_income_multiplier_percent_string`.
