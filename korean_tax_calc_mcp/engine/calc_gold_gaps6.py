@@ -59,6 +59,15 @@ def pension_account_withdrawal(
     jd = _parse_date(join_date)
     srd = _parse_date(start_request_date)
 
+    # 날짜 순서 검증 (다른 검사보다 먼저)
+    문제목록 = []
+    if jd > srd:
+        문제목록.append(f"join_date({jd.isoformat()})가 start_request_date({srd.isoformat()})보다 늦습니다")
+    if bd > jd:
+        문제목록.append(f"birth_date({bd.isoformat()})가 join_date({jd.isoformat()})보다 늦습니다")
+    if 문제목록:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제목록}
+
     #総잔액 (인출순서 나누기의 기준)
     잔액_과세제외 = contributions_not_deducted
     잔액_이연퇴직 = deferred_retirement_income
