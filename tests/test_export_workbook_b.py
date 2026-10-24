@@ -159,6 +159,7 @@ def test_basis_lines_keep_positions(tmp_path):
     wage = [v for v in cells(wb["요약"]) if isinstance(v, str) and "소득세법 제20조①" in v]
     assert wage and " — " not in wage[0] and "\n" not in wage[0] and "수입시기" not in wage[0]
     assert "소득세법 제20조①1호" in wage[0]
+    assert "제17조의41호" not in wage[0] and "소득세법 시행령 제17조의4 1호" in wage[0]   # 항이 없으면 조와 호 사이 띄움
     for s in [s for s in wb.sheetnames if s.startswith("계산")]:
         labels = [r[0] for r in wb[s].iter_rows(values_only=True)]
         assert labels.count("합계") == 0 or "금액 합계(방향 무관)" not in labels
