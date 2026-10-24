@@ -42,12 +42,12 @@ def test_workbook_tabs_values_and_live_formulas(tmp_path):
     assert any(isinstance(v, str) and "세무 자문이 아닙니다" in v for v in summ)
 
 
-def test_workbook_records_tool_error_and_rejects_unknown_tool(tmp_path):
+def test_workbook_records_tool_error_and_unknown_tool(tmp_path):
     r = build(tmp_path, [{"label": "잘못된 입력", "tool": "income_adjustment_total", "args": {"net_income": 1, "items": [{"항목": "가", "종류": "없는 종류", "금액": 1}]}}])
     wb = openpyxl.load_workbook(r["결과"]["파일"])
     assert any(isinstance(v, str) and "입력 확인 필요" in v for row in wb["요약"].iter_rows() for v in [c.value for c in row])
     r = build(tmp_path, [{"label": "x", "tool": "no_such_tool", "args": {}}])
-    assert "입력 확인 필요" in json.dumps(r, ensure_ascii=False)
+    assert r["결과"]["오류_call"] == ["x"]  # 없는 도구는 그 call만 오류로 기록(SPEC_export_workbook_b 5)
 
 
 def test_workbook_no_overwrite_and_no_recursion(tmp_path):

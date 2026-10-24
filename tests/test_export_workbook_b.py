@@ -63,5 +63,67 @@ def test_unknown_tool_is_recorded_and_others_continue(tmp_path):
                              {"label": "차가감", "tool": "income_adjustment_total", "args": ADJ}])
     assert r["결과"]["오류_call"] == ["없는도구"]
     assert any(s.startswith("계산") for s in wb.sheetnames)
-    assert 108000000 in cells(wb["계산 1"])
+    assert 106000000 in cells(wb["계산 1"])  # 100 + 8 − 2
     assert any(isinstance(v, str) and "no_such_tool" in v for v in cells(wb["요약"]))
+
+
+# ── 수식을 직접 계산해 값까지 확인(엑셀 없이) ──
+_REF = re.compile(r"^([A-Z]+)(\d+)$")
+
+
+def _col(letters):
+    n = 0
+    for ch in letters:
+        n = n * 26 + ord(ch) - 64
+    return n
+
+
+def _range(ws, a):
+    (c1, r1), (c2, r2) = [_REF.match(x).groups() for x in a.split(":")]
+    return [ws.cell(r, c).value for r in range(int(r1), int(r2) + 1) for c in range(_col(c1), _col(c2) + 1)]
+
+
+def _val(ws, ref):
+    c, r = _REF.match(ref).groups()
+    return _eval(ws, ws.cell(int(r), _col(c)).value)
+
+
+def _eval(ws, v):
+    if not (isinstance(v, str) and v.startswith("=")):
+        return v
+    f = v[1:]
+    m = re.fullmatch(r"SUM\(([A-Z]+\d+:[A-Z]+\d+)\)", f, re.I)
+    if m:
+        return sum(x for x in _range(ws, m.group(1)) if isinstance(x, (int, float)))
+    m = re.fullmatch(r'SUMIF\(([A-Z]+\d+:[A-Z]+\d+),"([^"]*)",([A-Z]+\d+:[A-Z]+\d+)\)', f, re.I)
+    if m:
+        crit, vals = _range(ws, m.group(1)), _range(ws, m.group(3))
+        return sum(x for k, x in zip(crit, vals) if k == m.group(2) and isinstance(x, (int, float)))
+    m = re.fullmatch(r"([A-Z]+\d+)-([A-Z]+\d+)", f)
+    if m:
+        return _val(ws, m.group(1)) - _val(ws, m.group(2))
+    m = re.fullmatch(r'IF\(([A-Z]+\d+)=(-?[\d.]+),"([^"]*)","([^"]*)"\)', f, re.I)
+    if m:
+        return m.group(3) if _val(ws, m.group(1)) == float(m.group(2)) else m.group(4)
+    raise AssertionError(f"해석 못 하는 수식: {v}")
+
+
+def _labelled(ws):
+    """A열 라벨 → 같은 행에서 처음 나오는 수식의 계산값."""
+    out = {}
+    for row in ws.iter_rows():
+        lab = row[0].value
+        f = next((c for c in row[1:] if isinstance(c.value, str) and c.value.startswith("=")), None)
+        if isinstance(lab, str) and f is not None:
+            out[lab] = _eval(ws, f.value)
+    return out
+
+
+def test_formulas_evaluate_to_tool_values(tmp_path):
+    _, wb = build(tmp_path, [{"label": "접대비", "tool": "entertainment_adjustment", "args": ENT},
+                             {"label": "차가감", "tool": "income_adjustment_total", "args": ADJ}])
+    e, a = _labelled(wb["계산 1"]), _labelled(wb["계산 2"])
+    assert a["가산 합계"] == 8000000 and a["차감 합계"] == 2000000 and a["순액"] == 6000000
+    checks = [v for d in (e, a) for k, v in d.items() if k.startswith("확인")]
+    assert len(checks) >= 3 and all(v == "일치" for v in checks)
+    assert e["가산 합계"] == 13000000

@@ -1,6 +1,6 @@
 # SPEC_export_workbook_b — 엑셀 내보내기 검수 반영 · 작성 Claude 2026-10-24
 
-브랜치 `feat/export-workbook`(이어서). 정답 테스트 `tests/test_export_workbook_b.py` 4개 + 기존 전부 통과(`tests/test_export_workbook.py` 포함). 커밋 1개(제목은 실행 지시대로). push 금지, 테스트 수정 금지.
+브랜치 `feat/export-workbook`(이어서). 정답 테스트 `tests/test_export_workbook_b.py` 5개 + 기존 전부 통과(`tests/test_export_workbook.py` 포함). 커밋 1개(제목은 실행 지시대로). push 금지, 테스트 수정 금지.
 
 ## 고칠 것
 1. **계산 시트가 다른 call의 `계산` 값을 씀.** `calc_dict = data.get("계산")`의 `data`가 실행 루프의 마지막 값이라, 모든 `계산 N` 시트에 마지막 call의 `계산`이 들어간다. 각 시트는 **자기 call의 결과 dict**(`cd["data"]`)에서 `계산`을 읽는다.
@@ -12,6 +12,9 @@
 4. **income_adjustment_total 세무조정 항목에 `조정` 키 추가**: 익금산입 쪽은 `"조정": "익금산입"`, 손금산입 쪽은 `"조정": "손금산입"`. 기존 키(구분·금액·소득처분)와 다른 결과 키는 그대로.
 5. **없는 도구 이름이면 전체 중단하던 것** → 그 call만 오류로 기록하고 계속(명세 원문: "결과에 error가 있어도 중단하지 않고 그 call을 오류로 기록"). `오류_call`에 label, 요약 시트에 오류 문장. tool 이름이 비었거나 `export_workbook` 자신이면 지금처럼 전체 error.
 6. 입력·가정 시트의 args는 call 순서(인덱스)로 찾는다(label이 겹쳐도 맞는 args). 세무조정 `금액`이 숫자가 아니면 `int()`로 죽지 말고 셀에 그대로 쓰고 합계 수식에서는 빠지게(문자 셀은 SUM에서 무시됨).
+
+7. **(2차) 수식이 엉뚱한 열을 가리킴.** 세무조정 표는 `A 구분 | B 조정 | C 금액 | D 소득처분`인데 SUMIF 합계 범위·순액·확인 셀이 D열(소득처분)을 가리킨다. 금액 범위는 C열, 소득처분 조건 범위는 D열, 순액은 `=C가산행-C차감행`, 확인 셀은 C열 합계 셀을 참조. 정답 테스트 `test_formulas_evaluate_to_tool_values`가 수식을 직접 계산해 가산 8,000,000·차감 2,000,000·순액 6,000,000과 모든 확인 셀 "일치"를 본다.
+- 정정(Claude): 테스트의 차가감 기대값 108,000,000은 Claude 오기 → 106,000,000(100 + 8 − 2). 기존 `test_export_workbook.py`의 없는 도구 거절 기대도 이 명세 5번에 맞춰 Claude가 고침(오류 call 기록).
 
 ## 금지
 - 다른 도구·결과 키 변경 금지(4번 추가 키만 허용). 네트워크 호출 금지. 버전·CHANGELOG·README 건드리지 않음.
