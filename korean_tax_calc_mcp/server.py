@@ -5319,13 +5319,19 @@ def income_adjustment_total(
     for idx, item in enumerate(calc_items_add, 1):
         계산식_입력.append({"이름": f"항목{idx}", "값": item["금액"],
                              "설명": f"{item['항목명']} — {item['종류']} (익금산입)"})
-    가산_start = len(계산식_입력)
+    가산_start = len(calc_items_add)
     for idx, item in enumerate(calc_items_sub, 1):
         계산식_입력.append({"이름": f"항목{가산_start + idx}", "값": item["금액"],
                              "설명": f"{item['항목명']} — {item['종류']} (손금산입)"})
 
     add_refs = "+".join(f"항목{i}" for i in range(1, len(calc_items_add) + 1)) or "0"
     sub_refs = "+".join(f"항목{i}" for i in range(가산_start + 1, 가산_start + len(calc_items_sub) + 1)) or "0"
+
+    각사_식 = "차가감소득금액"
+    if int(donation_excess) > 0:
+        각사_식 += "+기부금한도초과"
+    if int(donation_carryover_deduction) > 0:
+        각사_식 += "-기부금이월공제"
 
     계산식: list[dict] = [
         {"이름": "익금산입_손금불산입", "식": add_refs,
@@ -5334,7 +5340,7 @@ def income_adjustment_total(
          "값": 손금산입, "설명": "손금산입·익금불산입 항목 합계"},
         {"이름": "차가감소득금액", "식": "당기순이익+익금산입_손금불산입-손금산입_익금불산입",
          "값": 차가감소득금액, "설명": "당기순이익 + 익금산입 − 손금산입"},
-        {"이름": "각사업연도소득금액", "식": f"차가감소득금액+{"기부금한도초과" if int(donation_excess) > 0 else "0"}-{"기부금이월공제" if int(donation_carryover_deduction) > 0 else "0"}",
+        {"이름": "각사업연도소득금액", "식": 각사_식,
          "값": 각사업연도소득금액, "설명": "차가감소득금액 + 기부금한도초과 − 이월공제"},
     ]
 
@@ -5581,8 +5587,25 @@ def _이름_치환(식: str, 이름_맵: dict[str, str]) -> str:
             tok.append(","); i += 1; continue
         if c.isdigit() or (c == "." and i + 1 < n and 식[i + 1].isdigit()):
             j = i
-            while j < n and (식[j].isdigit() or 식[j] in ".eE+-"):
+            # 정수부
+            while j < n and 식[j].isdigit():
                 j += 1
+            # 소수부
+            if j < n and 식[j] == "." and j + 1 < n and 식[j + 1].isdigit():
+                j += 1
+                while j < n and 식[j].isdigit():
+                    j += 1
+            # 지수부: e/E 뒤에 숫자(또는 부호+숫자)가 있을 때만 포함
+            if j < n and 식[j] in "eE":
+                k = j + 1
+                if k < n and 식[k] in "+-":
+                    k += 1
+                if k < n and 식[k].isdigit():
+                    j = k
+                    while j < n and 식[j].isdigit():
+                        j += 1
+                # e/E 뒤에 숫자(부호+숫자)가 없으면 거기서 숫자를 끝내고
+                # e/E부터는 다음 반복에서 이름으로 읽는다
             tok.append(식[i:j]); i = j; continue
         m = _NAME_RE.match(식, i)
         if m:
