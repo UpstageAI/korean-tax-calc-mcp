@@ -1639,6 +1639,45 @@ def earned_income_gross_pay(year: YEAR,
 
     근거_목록.extend(b for _, _, b in [(it["kind"], it["금액"], it["근거"]) for it in 항목별])
 
+    # ── 계산식 단계 (SPEC_export_workbook_f) ──────────────────────────────
+    # 항목별 과세액을 계산식_입력으로 추가
+    계산식_입력 = []
+    항목식_parts = []
+    for idx, item in enumerate(항목별, 1):
+        과세액 = item["과세액"]
+        계산식_입력.append({"이름": f"항목{idx}", "값": 과세액, "설명": f"{item['kind']} 과세액 = {과세액:,}원"})
+        항목식_parts.append(f"항목{idx}")
+
+    # 근로소득공제 구간표 (2016~2026 동일)
+    # 500만 이하 70%, 1500만 이하 40%, 4500만 이하 15%, 1억 이하 5%, 초과 2%
+    # 2020년부터 한도 2,000만
+    한도적용 = year >= 2020
+
+    if len(항목식_parts) > 0:
+        총급여_식 = "+".join(항목식_parts)
+    else:
+        총급여_식 = "0"
+
+    # 근로소득공제 식 (중첩 IF)
+    공제_식 = (
+        f"IF(총급여액<=5000000,총급여액*0.7,"
+        f"IF(총급여액<=15000000,5000000*0.7+(총급여액-5000000)*0.4,"
+        f"IF(총급여액<=45000000,5000000*0.7+10000000*0.4+(총급여액-15000000)*0.15,"
+        f"IF(총급여액<=100000000,5000000*0.7+10000000*0.4+30000000*0.15+(총급여액-45000000)*0.05,"
+        f"5000000*0.7+10000000*0.4+30000000*0.15+55000000*0.05+(총급여액-100000000)*0.02))))"
+    )
+    if 한도적용:
+        공제_식 = f"MIN({공제_식},20000000)"
+
+    계산식 = [
+        {"이름": "총급여액", "식": 총급여_식, "값": 총급여액,
+         "설명": f"총급여액 = Σ 항목별 과세액 = {총급여액:,}원 (비과세 판정 후 금액 합계)"},
+        {"이름": "근로소득공제", "식": 공제_식, "값": 근로소득공제,
+         "설명": f"근로소득공제 = 구간별 공제율 적용 (500만↓70%, 1500만↓40%, 4500만↓15%, 1억↓5%, 초과2%) {'+ 한도 2,000만(2020~)' if 한도적용 else '(한도 없음)'} = {근로소득공제:,}원 (소득세법 제47조①)"},
+        {"이름": "근로소득금액", "식": "총급여액-근로소득공제", "값": 근로소득금액,
+         "설명": f"근로소득금액 = 총급여액 − 근로소득공제 = {총급여액:,} − {근로소득공제:,} = {근로소득금액:,}원"},
+    ]
+
     return _ok({
         "총급여액": 총급여액,
         "비과세_합계": 비과세_합계,
@@ -1649,7 +1688,9 @@ def earned_income_gross_pay(year: YEAR,
     }, 근거_목록,
        항목별=항목별,
        제외_항목=제외_항목,
-       산식=산식_목록)
+       산식=산식_목록,
+       계산식_입력=계산식_입력,
+       계산식=계산식)
 
 
 # ───────── 세무조사 판정 도구 11개 ─────────
@@ -2603,6 +2644,48 @@ def financial_income_aggregate(year: YEAR,
         grossup = int(gu_base * rate)
         합산 = cond_total + grossup + partner_div
         분리과세 = False
+    # ── 계산식 단계 (SPEC_export_workbook_f) ──────────────────────────────
+    결과_배당소득금액 = (div_n + div_g + grossup) if not 분리과세 else 0
+    결과_합산액 = 합산
+    결과_Grossup = grossup
+
+    계산식_입력 = [
+        {"이름": "threshold", "값": 20000000, "설명": "금융소득 종합과세 기준액 = 2,000만 원 (소득세법 제14조③6호)"},
+        {"이름": "rate", "값": rate, "설명": f"Gross-up 가산율 = {rate} ({year}년 기준, 소득세법 제56조)"},
+        {"이름": "이자소득금액_input", "값": inc, "설명": f"이자소득금액 = {inc:,}원"},
+        {"이름": "배당_non_GU_input", "값": div_n, "설명": f"배당소득 중 Gross-up 비대상 = {div_n:,}원 (출자공동사업자배당 등)"},
+        {"이름": "배당_GU_input", "값": div_g, "설명": f"배당소득 중 Gross-up 대상 = {div_g:,}원 ( 상장법인·비상장법인 배당, 의제배당 등)"},
+        {"이름": "partner_div_input", "값": partner_div, "설명": f"출자공동사업자배당(always 합산 포함) = {partner_div:,}원"},
+        {"이름": "제외합계_input", "값": exc, "설명": f"분리과세·제외 금융소득 합계 = {exc:,}원 (법원보증금이자, 직장공제회초과반환금 등)"},
+    ]
+
+    # 수식 구성 (분리과세 여부 반영)
+    # Gross-up 기준액 = MAX(0, MIN(배당_GU, 배당_GU - MAX(0, threshold - MIN(threshold, 이자 + 배당_non_GU - partner_div))))
+    grossup_기준액_식 = f"MAX(0,MIN(배당_GU_input,배당_GU_input-MAX(0,threshold-MIN(threshold,이자소득금액_input+배당_non_GU_input-partner_div_input))))"
+    grossup_식 = f"ROUNDDOWN({grossup_기준액_식}*rate,0)"
+    # 분리과세 여부: cond_total <= threshold이면 배당소득금액=0, 아니면 배당_non_GU+배당_GU+grossup
+    배당소득금액_식 = f"IF(threshold>이자소득금액_input+배당_non_GU_input+배당_GU_input,0,배당_non_GU_input+배당_GU_input+{grossup_식})"
+    # 합산액 = 분리과세면 partner_div, 아니면 (inc+div_n+div_g-partner_div)+grossup+partner_div
+    합산액_식 = f"IF(threshold>이자소득금액_input+배당_non_GU_input+배당_GU_input,partner_div_input,이자소득금액_input+배당_non_GU_input+배당_GU_input-partner_div_input+{grossup_식}+partner_div_input)"
+
+    배당소득금액_설명 = f"배당_non_GU + 배당_GU + Gross-up = {div_n:,} + {div_g:,} + {grossup:,} = {결과_배당소득금액:,}원"
+    합산액_설명 = f"조건부 합계 + Gross-up + partner_div = {cond_total:,} + {grossup:,} + {partner_div:,} = {결과_합산액:,}원"
+
+    계산식 = [
+        {"이름": "배당소득금액",
+         "식": 배당소득금액_식,
+         "값": 결과_배당소득금액,
+         "설명": 배당소득금액_설명},
+        {"이름": "합산액",
+         "식": 합산액_식,
+         "값": 결과_합산액,
+         "설명": 합산액_설명},
+        {"이름": "GrossUp",
+         "식": grossup_식,
+         "값": 결과_Grossup,
+         "설명": f"Gross-up = MAX(0, MIN(배당_GU, 배당_GU − MAX(0, threshold − MIN(threshold, 이자 + 배당_non_GU − partner_div)))) × rate = {grossup:,}원"},
+    ]
+
     return _ok({"이자소득금액": inc if not 분리과세 else 0,
                 "배당소득금액": (div_n + div_g + grossup) if not 분리과세 else 0,
                 "합산액": 합산, "분리과세": 분리과세, "Gross-up": grossup},
@@ -2611,7 +2694,9 @@ def financial_income_aggregate(year: YEAR,
                      "금융소득 합계(조건부)": cond_total, "출자공동사업자배당(always 포함)": partner_div,
                      "제외 합계": exc, "Gross-up 기준액": gu_base, "가산율": rate},
                판단=판단,
-               산식="합계 ≤ 2천만 원이면 분리과세(합산 0, 출자공동사업자배당만 합산). 초과 시 이자 → 비대상 배당(출자공동 제외) → 대상 배당 순으로 2천만 원을 채우고, 2천만 원을 넘는 대상 배당 × 가산율 = Gross-up. 출자공동사업자배당은 항상 합산액에 포함.")
+               산식="합계 ≤ 2천만 원이면 분리과세(합산 0, 출자공동사업자배당만 합산). 초과 시 이자 → 비대상 배당(출자공동 제외) → 대상 배당 순으로 2천만 원을 채우고, 2천만 원을 넘는 대상 배당 × 가산율 = Gross-up. 출자공동사업자배당은 항상 합산액에 포함.",
+               계산식_입력=계산식_입력,
+               계산식=계산식)
 
 
 @mcp.tool(annotations=CALC)
@@ -3345,6 +3430,120 @@ def common_input_tax(year: YEAR,
         ),
         "근거": "부가가치세법 제40조, 시행령 제81조"})
 
+    # ── 계산식 단계 (SPEC_export_workbook_f) ──────────────────────────────
+    # 공통사용재화 공급 계산 관련 입력/식
+    계산식_입력 = [
+        {"이름": "과세공급가액", "값": 확정_과세 + 예정_과세, "설명": f"당기 과세 공급가액 합계 = 확정 {확정_과세:,} + 예정 {예정_과세:,} = {확정_과세 + 예정_과세:,}원"},
+        {"이름": "면세공급가액", "값": 확정_면세 + 예정_면세, "설명": f"당기 면세 공급가액 합계 = 확정 {확정_면세:,} + 예정 {예정_면세:,} = {확정_면세 + 예정_면세:,}원"},
+        {"이름": "직전과세공급가액", "값": int((prior_period_supplies or {}).get("taxable", 0)), "설명": f"직전 과세기간 과세 공급가액 = {int((prior_period_supplies or {}).get('taxable', 0)):,}원"},
+        {"이름": "직전면세공급가액", "값": int((prior_period_supplies or {}).get("exempt", 0)), "설명": f"직전 과세기간 면세 공급가액 = {int((prior_period_supplies or {}).get('exempt', 0)):,}원"},
+        {"이름": "공급가액_전액기준", "값": 500000, "설명": "공급가액 50만 원 미만 전액 과세표준 기준 (영 제63조③2호)"},
+    ]
+
+    # 공통사용재화 공급 과세표준 계산 (공통사용재화_공급_과세표준을 구하는 식)
+    계산식 = []
+
+    if common_asset_sales:
+        # 각 공통사용재화 공급에 대한 식 생성
+        for idx, sale in enumerate(common_asset_sales, 1):
+            sale_price = int(sale.get("sale_price", 0))
+            sale_input_tax = int(sale.get("input_tax", 0))
+
+            # 판단 결과에 따른 과세표준 계산 방식 결정
+            직전_총계 = int((prior_period_supplies or {}).get("taxable", 0)) + int((prior_period_supplies or {}).get("exempt", 0))
+            직전_면세비율 = int((prior_period_supplies or {}).get("exempt", 0)) / 직전_총계 if 직전_총계 > 0 else 0
+            직전_과세비율 = int((prior_period_supplies or {}).get("taxable", 0)) / 직전_총계 if 직전_총계 > 0 else 0
+
+            if new_business:
+                # 신규 사업: 전액 과세표준
+                과세표준_식 = f"공급가액{idx}"
+                설명_이유 = "신규 사업 (영 제63조③3호)"
+            elif sale_price < 500000:
+                # 50만 원 미만: 전액 과세표준
+                과세표준_식 = f"공급가액{idx}"
+                설명_이유 = "50만 원 미만 (영 제63조③2호)"
+            elif 직전_총계 > 0 and 직전_면세비율 < 0.05 and sale_price < 50000000:
+                # 직전 면세비율 5% 미만 & 5천만 원 미만: 전액 과세표준
+                과세표준_식 = f"공급가액{idx}"
+                설명_이유 = f"직전 면세비율 {직전_면세비율:.1%} < 5% & 5천만 원 미만 (영 제63조③1호)"
+            elif prior_period_supplies is not None and 직전_총계 > 0:
+                # 직전 과세기간 과세비율로 안분
+                비율_이름 = f"직전과세비율{idx}" if len(common_asset_sales) > 1 else "직전과세비율"
+                과세표준_식 = f"ROUNDDOWN(공급가액{idx}*{비율_이름},0)"
+                설명_이유 = f"직전 과세비율 {직전_과세비율:.4f} 안분 (영 제63조①)"
+            else:
+                과세표준_식 = "0"
+                설명_이유 = "안분 불가"
+
+            계산식_입력.extend([
+                {"이름": f"공급가액{idx}", "값": sale_price, "설명": f"공통사용재화 공급가액 {idx} = {sale_price:,}원"},
+            ])
+
+            if prior_period_supplies is not None and 직전_총계 > 0:
+                계산식_입력.append({
+                    "이름": f"직전과세비율{idx}" if len(common_asset_sales) > 1 else "직전과세비율",
+                    "값": 직전_과세비율,
+                    "설명": f"직전 과세기간 과세비율 = {직전_과세비율:.4f} (직전 과세 {int((prior_period_supplies or {}).get('taxable', 0)):,} / 직전 합계 {직전_총계:,})",
+                })
+
+            계산식.append({
+                "이름": f"과세표준{idx}" if len(common_asset_sales) > 1 else "공통사용재화_공급_과세표준",
+                "식": 과세표준_식,
+                "값": int(sale_price * 직전_과세비율) if (prior_period_supplies is not None and 직전_총계 > 0 and not (new_business or sale_price < 500000 or (직전_총계 > 0 and 직전_면세비율 < 0.05 and sale_price < 50000000))) else sale_price,
+                "설명": f"공통사용재화 {idx} 과세표준: {설명_이유}",
+            })
+
+        # 공통사용재화_공급_과세표준 합계 식 (여러 개인 경우)
+        if len(common_asset_sales) > 1:
+            과세표준_parts = "+".join([f"과세표준{n}" for n in range(1, len(common_asset_sales) + 1)])
+            계산식.append({
+                "이름": "공통사용재화_공급_과세표준",
+                "식": 과세표준_parts,
+                "값": 공통사용재화_공급_과세표준,
+                "설명": f"공통사용재화 공급 과세표준 합계 = Σ 과세표준(1~{len(common_asset_sales)}) = {공통사용재화_공급_과세표준:,}원",
+            })
+            추가_매출세액_식 = "ROUNDDOWN(공통사용재화_공급_과세표준*0.1,0)"
+        else:
+            추가_매출세액_식 = "ROUNDDOWN(공통사용재화_공급_과세표준*0.1,0)"
+
+        계산식.append({
+            "이름": "추가_매출세액",
+            "식": 추가_매출세액_식,
+            "값": 추가_매출세액,
+            "설명": f"추가 매출세액 = 공통사용재화_공급_과세표준 × 10% = {공통사용재화_공급_과세표준:,} × 0.1 = {추가_매출세액:,}원 (영 제63조)",
+        })
+    else:
+        # 공통사용재화 공급이 없는 경우
+        계산식_입력.append({"이름": "공통사용재화_공급_과세표준", "값": 0, "설명": "공통사용재화 공급 없음"})
+        계산식.append({
+            "이름": "공통사용재화_공급_과세표준",
+            "식": "0",
+            "값": 0,
+            "설명": "공통사용재화 공급 없음 → 과세표준 0",
+        })
+        계산식.append({
+            "이름": "추가_매출세액",
+            "식": "0",
+            "값": 0,
+            "설명": "공통사용재화 공급 없음 → 추가 매출세액 0",
+        })
+
+    # 공제매입세액 식
+    계산식.append({
+        "이름": "공제매입세액",
+        "식": f"ROUNDDOWN((과세전용매입세액-불공제매입세액)+실지귀속공제+공통매입세액공제+공통사용재화매입세액공제,0)",
+        "값": 공제매입세액,
+        "설명": f"공제매입세액 = (과세전용 − 불공제) + 실지귀속 + 공통매입세액 + 공통사용재화매입세액 = {공제매입세액:,}원 (법 제40조, 영 제81조)",
+    })
+
+    계산식_입력.extend([
+        {"이름": "과세전용매입세액", "값": taxable_only - taxable_only_nondeductible, "설명": f"과세전용 매입세액 = {taxable_only:,} − 불공제 {taxable_only_nondeductible:,} = {taxable_only - taxable_only_nondeductible:,}원"},
+        {"이름": "불공제매입세액", "값": taxable_only_nondeductible, "설명": f"불공제 매입세액 = {taxable_only_nondeductible:,}원"},
+        {"이름": "실지귀속공제", "값": 실지귀속_공제, "설명": f"실지귀속 공제 = {실지귀속_공제:,}원"},
+        {"이름": "공통매입세액공제", "값": 공통매입세액_공제, "설명": f"공통매입세액 공제 = {공통매입세액_공제:,}원"},
+        {"이름": "공통사용재화매입세액공제", "값": 공통사용재화_매입세액_공제, "설명": f"공통사용재화 매입세액 공제 = {공통사용재화_매입세액_공제:,}원"},
+    ])
+
     return {
         "판단": 판단_목록,
         "계산": {
@@ -3365,6 +3564,8 @@ def common_input_tax(year: YEAR,
         },
         "산식": 산식_목록,
         "근거": vocab.basis("공통매입세액_안분", year) + vocab.basis("공통사용재화_공급", year),
+        "계산식_입력": 계산식_입력,
+        "계산식": 계산식,
     }
 
 
@@ -3595,6 +3796,42 @@ def bundled_supply_split(total_price: WON,
     산식_목록.append(f"토지 가액 = {total_price:,} − {B:,} − {부가가치세:,} = {토지_가액:,}원" if vat_included else
                      f"토지 가액 = {total_price:,} − {B:,} = {토지_가액:,}원")
 
+    # ── 계산식 단계 (SPEC_export_workbook_f) ──────────────────────────────
+    L_B비 = 기준_토지 / 기준_건물 if 기준_건물 > 0 else 0
+
+    계산식_입력 = [
+        {"이름": "total_price", "값": total_price, "설명": f"일괄 거래가액 = {total_price:,}원"},
+        {"이름": "vat_included", "값": vat_included, "설명": f"부가세 포함 여부 = {vat_included}"},
+        {"이름": "기준건물", "값": int(기준_건물), "설명": f"건물 기준가액({기준_명칭}) = {기준_건물:,.0f}원"},
+        {"이름": "기준토지", "값": int(기준_토지), "설명": f"토지 기준가액({기준_명칭}) = {기준_토지:,.0f}원"},
+        {"이름": "기준총계", "값": int(기준_총계), "설명": f"기준가액 합계 = {기준_총계:,.0f}원"},
+        {"이름": "건물비율", "값": 건물비율, "설명": f"건물비율 = 기준건물 / 기준총계 = {건물비율:.4f}"},
+    ]
+
+    # L_B비는 항상 입력으로 추가 (수식에서 참조됨)
+    계산식_입력.append({"이름": "L_B비", "값": L_B비, "설명": f"토지/건물 비율 = 기준토지 / 기준건물 = {L_B비:.4f} (부가세 포함 시 사용)"})
+
+    계산식 = [
+        {
+            "이름": "건물_공급가액",
+            "식": f"IF(vat_included,ROUNDDOWN(total_price/(1+L_B비+0.1),0),ROUNDDOWN(total_price*건물비율,0))",
+            "값": B,
+            "설명": f"부가세 포함: B = total_price ÷ (1 + L/B비 + 0.1) = {B:,}원, 부가세 별도: B = total_price × 건물비율 = {B:,}원 (영 제64조①)",
+        },
+        {
+            "이름": "부가가치세",
+            "식": "ROUNDDOWN(건물_공급가액*0.1,0)",
+            "값": 부가가치세,
+            "설명": f"부가가치세 = 건물_공급가액 × 10% = {B:,} × 0.1 = {부가가치세:,}원",
+        },
+        {
+            "이름": "토지_가액",
+            "식": "IF(vat_included,total_price-건물_공급가액-부가가치세,total_price-건물_공급가액)",
+            "값": 토지_가액,
+            "설명": f"토지 가액 = total_price − 건물_공급가액{' − 부가가치세' if vat_included else ''} = {토지_가액:,}원",
+        },
+    ]
+
     return {
         "판단": 판단_목록,
         "결과": {
@@ -3604,6 +3841,8 @@ def bundled_supply_split(total_price: WON,
         },
         "산식": 산식_목록,
         "근거": vocab.basis("토지건물_일괄공급_안분", 2026),
+        "계산식_입력": 계산식_입력,
+        "계산식": 계산식,
     }
 
 
@@ -3657,9 +3896,52 @@ def depreciation_adjustment(
     calc_data = r.pop("계산")
     판단_data = r.pop("판단")
     산식_data = r.pop("산식")
+
+    # ── 계산식 단계 (SPEC_export_workbook_f) ──────────────────────────────
+    methodName = calc_data["상각방법"]
+    상각률 = calc_data["상각률"]
+    사용월수 = calc_data["사용월수"]
+    세무상취득가액 = calc_data["세무상 취득가액"]
+    기초미상각잔액 = calc_data["기초 미상각잔액(즉시상각의제 포함)"]
+    회사계상액 = result_data["회사계상액"]
+    is_정액법 = (methodName == "정액법")
+
+    계산식_입력 = [
+        {"이름": "method", "값": methodName, "설명": f"상각방법 ({methodName}) — 신고 또는 무신고 법정방법"},
+        {"이름": "is_정액법", "값": is_정액법, "설명": f"상각방법이 정액법이면 TRUE, 정률 법이면 FALSE"},
+        {"이름": "취득가액", "값": acquisition_cost, "설명": "기말 재무상태표상 취득가액(원, 자본적 지출 포함)"},
+        {"이름": "상각률", "값": 상각률, "설명": f"시행규칙 별표4 상각률 ({상각률}) — 내용연수 {useful_life or '직접입력'}년"},
+        {"이름": "사용월수", "값": 사용월수, "설명": f"월할 상각 월수 ({사용월수}개월) — 사업연도 12개월"},
+        {"이름": "월수12", "값": 12, "설명": "연간 월수(기준)"},
+        {"이름": "정액법_취득가액", "값": 세무상취득가액, "설명": f"세무상 취득가액(정액법용: 취득가액 + prior_deemed_capex + 당기즉시상각의제) = {세무상취득가액:,}원"},
+        {"이름": "정률법_기초미상각잔액", "값": 기초미상각잔액, "설명": f"기초 미상각잔액(정률법용: 취득가액 − 기초누계 + prior_disallowed + 당기즉시상각의제) = {기초미상각잔액:,}원"},
+        {"이름": "회사계상액", "값": 회사계상액, "설명": f"회사계상 감가상각비 = booked_depreciation + 당기즉시상각의제 = {회사계상액:,}원"},
+        {"이름": "전기부인누계", "값": prior_disallowed, "설명": f"전기말 상각부인누계액(유보 잔액) = {prior_disallowed:,}원"},
+    ]
+
+    계산식 = [
+        {"이름": "상각범위액",
+         "식": f"IF(is_정액법,ROUNDDOWN(정액법_취득가액*상각률*사용월수/월수12,0),ROUNDDOWN(정률법_기초미상각잔액*상각률*사용월수/월수12,0))",
+         "값": result_data["상각범위액"],
+         "설명": f"정액법: 세무상취득가액 × 상각률 × 사용월수/12, 정률 법: 기초미상각잔액 × 상각률 × 사용월수/12 (법인세법 시행령 제26조⑥⑦)"},
+        {"이름": "상각부인액",
+         "식": "MAX(회사계상액-상각범위액,0)",
+         "값": result_data["상각부인액"],
+         "설명": "MAX(회사계상액 − 상각범위액, 0) — 손금산입 부인액 (유보)"},
+        {"이름": "시인부족액",
+         "식": "MAX(상각범위액-회사계상액,0)",
+         "값": result_data["시인부족액"],
+         "설명": "MAX(상각범위액 − 회사계상액, 0) — 시인부족액"},
+        {"이름": "전기부인액_추인",
+         "식": "MIN(시인부족액,전기부인누계)",
+         "값": result_data["전기부인액_추인"],
+         "설명": "MIN(시인부족액, 전기부인누계) — 전기 상각부인액 추인 (△유보, 영 제32조①)"},
+    ]
+
     return {"결과": result_data, "계산": calc_data, "판단": 판단_data,
             "근거": "법인세법 제23조, 시행령 제26조·제28조·제30조·제31조·제32조, 시행규칙 별표 4",
-            "산식": 산식_data}
+            "산식": 산식_data,
+            "계산식_입력": 계산식_입력, "계산식": 계산식}
 
 
 # ── 끝에서 끝까지: 퇴직급여충당금·확정급여형 퇴직연금충당금 세무조정 ──
@@ -4726,12 +5008,99 @@ def dividend_received_deduction(
     """내국법인 수입배당금액 익금불산입(피출자법인별 익금불산입률·지급이자 차감·세무조정). 언제: 법인세 세무조정에서 수입배당금 익금을 부인할 때.
 입력: 사업연도 → year, 피출자법인 목록 → investees, 지급이자 → interest_paid, 차감 이자 → interest_excluded, 자산총액 적수 → total_assets_jeoksu.
 결과: 익금불산입액의 피출자법인별 내역·세무조정·근거. 수입배당금 익금불산입 계산."""
-    return C.dividend_received_deduction(
+    r = C.dividend_received_deduction(
         year=year, investees=investees, interest_paid=interest_paid,
         interest_excluded=interest_excluded, total_assets_jeoksu=total_assets_jeoksu,
         fy_start=fy_start, fy_end=fy_end, company_type=company_type,
         holding_legacy_election=holding_legacy_election,
     )
+    if "error" in r:
+        return r
+    result_data = r.pop("결과")
+    calc_data = r.pop("계산")
+    판단_data = r.pop("판단")
+    근거_data = r.pop("근거")
+
+    # ── 계산식 단계 (SPEC_export_workbook_f) ──────────────────────────────
+    A = calc_data["차입금이자"]  # max(0, interest_paid - interest_excluded)
+    total_assets = calc_data["자산총액_적수"]  # total_assets_jeoksu if A > 0 else None
+
+    계산식_입력 = [
+        {"이름": "차입금이자", "값": A, "설명": f"차감 대상 지급이자 = max(0, interest_paid − interest_excluded) = max(0, {interest_paid:,} − {interest_excluded:,}) = {A:,}원 (법 제18조의2①2호)"},
+        {"이름": "자산총액적수", "값": total_assets if total_assets else 0, "설명": f"자산총계 적수(원·일) = {total_assets:,}" if total_assets else "자산총계 적수 없음 (차입금이자 0)"},
+    ]
+
+    # 입력 investees에서 book_value_jeoksu 등 추가 정보 추출 (결과에는 없는 값)
+    inv_input_map = {inv.get("name"): inv for inv in investees}
+
+    계산식 = []
+    대상액_합 = 0
+    차감액_합 = 0
+
+    for idx, inv_result in enumerate(result_data.get("피출자법인별", []), 1):
+        name = inv_result.get("이름", f"피출자법인{idx}")
+        대상액 = inv_result.get("익금불산입_대상액", 0)
+        차감액 = inv_result.get("차감액", 0)
+        대상배당금 = inv_result.get("대상_배당금", 0)
+        익금불산입률 = inv_result.get("익금불산입률", 0)
+        수입배당금액 = inv_result.get("수입배당금액", 0)
+        제외배당금 = inv_result.get("제외_배당금", 0)
+
+        # 입력에서 book_value_jeoksu 가져오기
+        inv_input = inv_input_map.get(name, {})
+        장부가액적수 = inv_input.get("book_value_jeoksu", 0)
+
+        대상액_합 += 대상액
+        차감액_합 += 차감액
+
+        계산식_입력.extend([
+            {"이름": f"수입배당금액{idx}", "값": 수입배당금액, "설명": f"{name} 수입배당금액 = {수입배당금액:,}원"},
+            {"이름": f"제외배당금{idx}", "값": 제외배당금, "설명": f"{name} 3개월 이내 취득 주식 배당 제외분 = {제외배당금:,}원 (법 제18조의2②)" if 제외배당금 else f"{name} 3개월 이내 취득분 없음"},
+            {"이름": f"대상배당금{idx}", "값": 대상배당금, "설명": f"{name} 익금불산입 대상 배당 = 수입배당금액 − 제외배당금 = {대상배당금:,}원"},
+            {"이름": f"익금불산입률{idx}", "값": 익금불산입률, "설명": f"{name} 적용 익금불산입률 = {익금불산입률} (출자비율·상장 여부·연도 기준, 법 제18조의2①)"},
+            {"이름": f"장부가액적수{idx}", "값": 장부가액적수, "설명": f"{name} 익금불산입 대상 주식 장부가액 적수 = {장부가액적수:,}원·일 (법 제18조의2①2호·영 제17조의2③)"},
+        ])
+
+        계산식.append({
+            "이름": f"대상액{idx}",
+            "식": f"ROUNDDOWN(대상배당금{idx}*익금불산입률{idx},0)",
+            "값": 대상액,
+            "설명": f"{name} 대상액 = 대상배당금 × 익금불산입률 = {대상배당금:,} × {익금불산입률} = {대상액:,}원",
+        })
+        if A > 0 and total_assets:
+            계산식.append({
+                "이름": f"차감액{idx}",
+                "식": f"ROUNDDOWN(차입금이자*장부가액적수{idx}/자산총액적수*익금불산입률{idx},0)",
+                "값": 차감액,
+                "설명": f"{name} 차감액 = 차입금이자 × 장부가액적수 / 자산총액적수 × 익금불산입률 = {A:,} × {장부가액적수:,} / {total_assets:,} × {익금불산입률} = {차감액:,}원",
+            })
+        else:
+            계산식.append({
+                "이름": f"차감액{idx}",
+                "식": "0",
+                "값": 차감액,
+                "설명": f"{name} 차감액 = 0 (차입금이자 0 또는 자산총액적수 없음)",
+            })
+
+    # 익금불산입액 식 구성
+    n = len(result_data.get('피출자법인별', []))
+    if n > 1:
+        대상액_parts = "+".join([f"대상액{i}" for i in range(1, n + 1)])
+        차감액_parts = "+".join([f"차감액{i}" for i in range(1, n + 1)])
+        익금불산입액_식 = f"MAX(0,{대상액_parts}-({차감액_parts}))"
+    else:
+        익금불산입액_식 = "MAX(0,대상액1-차감액1)"
+
+    계산식.append({
+        "이름": "익금불산입액",
+        "식": 익금불산입액_식,
+        "값": result_data["익금불산입액"],
+        "설명": f"익금불산입액 = max(0, Σ대상액 − Σ차감액) = max(0, {대상액_합:,} − {차감액_합:,}) = {result_data['익금불산입액']:,}원 (법 제18조의2①)",
+    })
+
+    return {"결과": result_data, "계산": calc_data, "판단": 판단_data,
+            "근거": 근거_data,
+            "계산식_입력": 계산식_입력, "계산식": 계산식}
 
 
 # ── 특별세액공제 ────────────────────────────────────────────────────
