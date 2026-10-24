@@ -3,6 +3,7 @@
 세율·한도·가산세는 사업연도·과세기간·공급일 기준 연도표(2016~2026)로 계산하고, 표에 없는 연도는 추정하지 않고 멈춘다.
 결과마다 근거 조문을 붙인다. 근거 원문은 korean-tax-mcp(law_article)로 확인한다.
 """
+import asyncio
 import functools
 import math
 import os
@@ -5242,6 +5243,397 @@ for _tool_name, _tool in list(mcp._tool_manager._tools.items()):
         **_new_fields,
     )
     _meta.arg_model = _new_model
+
+# ── export_workbook: 계산 근거 엑셀 내보내기 ─────────────────────────────
+_INVALID_NAME_CHARS = frozenset("/\\:*?\"<>|")
+
+
+def _sanitize_name(s: str) -> str:
+    return "".join("_" if c in _INVALID_NAME_CHARS else c for c in s)
+
+
+def _unique_path(dir_path: str, base_name: str, ext: str = ".xlsx") -> str:
+    """이미 있으면 (2), (3)… 접미사를 붙여 새 경로 반환."""
+    safe = _sanitize_name(base_name)
+    candidate = os.path.join(dir_path, safe + ext)
+    if not os.path.exists(candidate):
+        return candidate
+    n = 2
+    while True:
+        candidate = os.path.join(dir_path, f"{safe} ({n}){ext}")
+        if not os.path.exists(candidate):
+            return candidate
+        n += 1
+
+
+def _flatten_args(args, prefix: str = "") -> list[tuple[str, Any]]:
+    """중첩 dict/list를 경로|값 튜플 목록으로 펼침. 예: revenue.매출액, ledger[0].금액."""
+    rows: list[tuple[str, Any]] = []
+    if isinstance(args, dict):
+        for k, v in args.items():
+            path = f"{prefix}.{k}" if prefix else str(k)
+            if isinstance(v, (dict, list)):
+                rows.extend(_flatten_args(v, path))
+            else:
+                rows.append((path, v))
+    elif isinstance(args, list):
+        for i, v in enumerate(args):
+            path = f"{prefix}[{i}]"
+            if isinstance(v, (dict, list)):
+                rows.extend(_flatten_args(v, path))
+            else:
+                rows.append((path, v))
+    else:
+        rows.append((prefix, args))
+    return rows
+
+
+def _numeric_items(d: dict) -> list[tuple[str, Any]]:
+    """결과 dict에서 숫자·문자 값을 (키, 값) 튜플로 추출."""
+    out: list[tuple[str, Any]] = []
+    for k, v in d.items():
+        if isinstance(v, (int, float)) or (isinstance(v, str) and v):
+            out.append((str(k), v))
+    return out
+
+
+@mcp.tool(annotations=CALC)
+def export_workbook(
+    title: Annotated[str, Field(description="문서 제목 — 파일명 기본값")],
+    calls: Annotated[list, Field(description="[{label, tool, args}] 1~30개")],
+    output_dir: Annotated[str, Field(description="내보낼 폴더 경로(기본: 현재 작업 폴더)")] = ".",
+    filename: Annotated[str | None, Field(description="파일명 기본값(제목), 확장자 .xlsx 자동)")] = None,
+) -> dict:
+    """계산 도구 결과를 엑셀(.xlsx)로 정리한다. 각 call은 서버가 직접 다시 실행하며, 결과·계산·세무조정·판단·산식을 탭으로 펼친다.
+언제: 계산 결과(세무조정·소득처분·판단·산식)를 실무자가 검토할 수 있는 엑셀 파일로 남길 때.
+입력:
+  title — 문서 제목(파일명 기본값).
+  calls — [{label, tool, args}] 목록(1~30개). tool 이름이 없거나 'export_workbook'이면 오류(재귀 금지).
+  output_dir — 저장할 폴더(기본: '.'). 없으면 오류.
+  filename — 파일명(기본: title, .xlsx 자동). '/ \\ : * ? " < > |'는 '_'로 대체.
+
+결과:
+  결과.파일 — 절대경로.
+  결과.시트 — 시트 이름 목록.
+  결과.call_수 — calls 길이.
+  결과.오류_call — 오류 발생한 call의 label 목록.
+  근거 — '계산 도구 결과 정리(세무 자문 아님)'."""
+    # ── 입력 검증 ──
+    if not calls:
+        return {"error": "입력 확인 필요 — calls가 비어 있음", "안내": "1~30개 call을 주세요"}
+    if len(calls) > 30:
+        return {"error": "입력 확인 필요 — calls가 30개 초과", "안내": "최대 30개까지"}
+    if output_dir is None or output_dir == "":
+        return {"error": "입력 확인 필요 — output_dir 없음", "안내": "output_dir을 지정하세요"}
+    if not os.path.isdir(output_dir):
+        return {"error": "입력 확인 필요 — output_dir이 폴더가 아님", "안내": f"'{output_dir}'은(는) 폴더가 아님"}
+
+    오류_call: list[str] = []
+    결과들: list[dict] = []  # 각 call의 (label, tool, result_or_error, basis)
+
+    # ── 각 call 실행 ──
+    for call in calls:
+        label = call.get("label", "")
+        tool = call.get("tool", "")
+        args = call.get("args", {})
+
+        if not tool or tool == "export_workbook":
+            return {"error": "입력 확인 필요 — 도구 이름 없음 또는 export_workbook 재귀 호출 금지",
+                    "안내": "calls에서 tool 이름을 확인하세요"}
+
+        try:
+            r = asyncio.run(mcp.call_tool(tool, args))
+            raw = r.content[0].text if hasattr(r, "content") else r[0][0].text
+            data = _json.loads(raw)
+        except Exception as e:
+            오류_call.append(label)
+            결과들.append({"label": label, "tool": tool,
+                           "error": f"입력 확인 필요 — 호출 오류: {e}",
+                           "basis": "", "result": None})
+            return {"error": f"입력 확인 필요 — 호출 오류: {e}",
+                    "안내": "calls에서 tool 이름을 확인하세요"}
+
+        if "error" in data:
+            오류_call.append(label)
+            결과들.append({"label": label, "tool": tool,
+                           "error": data.get("error", str(data)),
+                           "basis": data.get("안내") or data.get("문제") and "\n".join(data["문제"]) or "",
+                           "result": data,
+                           "data": data})
+            continue
+        else:
+            결과들.append({"label": label, "tool": tool,
+                           "error": "",
+                           "basis": data.get("근거", ""),
+                           "result": data.get("결과", data),
+                           "data": data})
+
+    # ── 워크북 생성 ──
+    import openpyxl
+    from openpyxl.styles import Font, Alignment, PatternFill, numbers
+    from openpyxl.utils import get_column_letter
+
+    wb = openpyxl.Workbook()
+    ws_sum = wb.active
+    ws_sum.title = "요약"
+
+    # 번호 서식
+    money_fmt = "#,##0"
+    bold = Font(bold=True)
+    header_fill = PatternFill("solid", fgColor="D9E1F2")
+
+    def _set_money(cell, val):
+        cell.value = val
+        cell.number_format = money_fmt
+
+    # ── 1. 요약 시트 ──
+    오늘 = date.today().isoformat()
+    ws_sum["A1"] = "제목"; ws_sum["B1"] = title
+    ws_sum["A2"] = "작성일"; ws_sum["B2"] = 오늘
+    ws_sum["A3"] = "call 수"; ws_sum["B3"] = len(calls)
+    for c in ("A1", "A2", "A3"):
+        ws_sum[c].font = bold
+
+    # 헤더 행 (4행)
+    hdr_row = 4
+    ws_sum.cell(hdr_row, 1, "label").font = bold
+    ws_sum.cell(hdr_row, 2, "도구").font = bold
+    첫데이터행 = hdr_row + 1
+
+    for i, cd in enumerate(결과들):
+        r = 첫데이터행 + i
+        ws_sum.cell(r, 1, cd["label"])
+        ws_sum.cell(r, 2, cd["tool"])
+        c = 3
+        if cd["error"]:
+            ws_sum.cell(r, c, cd["error"]); c += 1
+        else:
+            for k, v in _numeric_items(cd["result"] or {}):
+                kc = ws_sum.cell(r, c, k); kc.font = bold
+                vc = ws_sum.cell(r, c + 1)
+                if isinstance(v, (int, float)):
+                    _set_money(vc, v)
+                else:
+                    vc.value = v
+                c += 2
+            if cd["basis"]:
+                ws_sum.cell(r, c, cd["basis"]); c += 1
+
+    # 고지 행
+    고지행 = 첫데이터행 + len(결과들) + 1
+    ws_sum.cell(고지행, 1,
+                "이 파일은 계산 도구의 결과를 정리한 참고 자료이며 세무 자문이 아닙니다. 판단과 신고는 세무 전문가와 확인하세요.")
+    ws_sum.cell(고지행, 1).font = Font(italic=True, color="C00000")
+    ws_sum.merge_cells(start_row=고지행, start_column=1, end_row=고지행, end_column=8)
+
+    ws_sum.column_dimensions["A"].width = 20
+    ws_sum.column_dimensions["B"].width = 28
+    for c in range(3, 20):
+        ws_sum.column_dimensions[get_column_letter(c)].width = 16
+    ws_sum.freeze_panes = "A5"
+
+    # ── 2. 계산 시트들 ──
+    시트이름들: list[str] = ["요약"]
+    calc_idx = 0
+
+    for cd in 결과들:
+        if cd["error"] or not cd["result"]:
+            continue
+        calc_idx += 1
+        sh_name = f"계산 {calc_idx}"
+        ws = wb.create_sheet(sh_name)
+        시트이름들.append(sh_name)
+        res = cd["result"] or {}
+        calc_dict = data.get("계산") if isinstance(data, dict) else None
+
+        # ① 결과·계산 dict → 항목 | 금액 표
+        행 = 1
+        ws.cell(행, 1, "항목").font = bold
+        ws.cell(행, 2, "금액").font = bold
+        ws.cell(행, 1).fill = header_fill
+        ws.cell(행, 2).fill = header_fill
+        행 += 1
+
+        calc_start = 행
+        all_items: list[tuple[str, Any]] = []
+        all_items.extend(_numeric_items(res))
+        if isinstance(calc_dict, dict):
+            all_items.extend(_numeric_items(calc_dict))
+
+        # 중복 키 방지: 뒤에 나온 값으로 덮기 위해 dict로
+        항목맵: dict[str, Any] = {}
+        for k, v in all_items:
+            항목맵[k] = v
+
+        for k, v in 항목맵.items():
+            ws.cell(행, 1, k)
+            if isinstance(v, (int, float)):
+                _set_money(ws.cell(행, 2), v)
+            else:
+                ws.cell(행, 2, v)
+            행 += 1
+
+        calc_end = 행 - 1
+        합계_셀_행 = 행  # 합계 행을 둘 행 번호
+
+        # ② 세무조정 목록
+        정착_start = 행 + 1
+        settlements = res.get("세무조정", [])
+        if settlements:
+            행 = 정착_start
+            ws.cell(행, 1, "구분").font = bold
+            ws.cell(행, 2, "금액").font = bold
+            ws.cell(행, 3, "소득처분").font = bold
+            for cc in range(1, 4):
+                ws.cell(행, cc).fill = header_fill
+            행 += 1
+            처분별: dict[str, int] = {}
+            처분first_row = 행
+            for s in settlements:
+                amt = int(s.get("금액", 0))
+                처분 = s.get("소득처분", "")
+                ws.cell(행, 1, s.get("구분", ""))
+                _set_money(ws.cell(행, 2), amt)
+                ws.cell(행, 3, 처분)
+                처분별[처분] = 처분별.get(처분, 0) + amt
+                행 += 1
+            처분last_row = 행 - 1
+
+            # 합계 행 (=SUM)
+            ws.cell(행, 1, "합계").font = bold
+            sum_cell_addr = f"B{처분first_row}:B{처분last_row}"
+            ws.cell(행, 2, f"=SUM({sum_cell_addr})")
+            ws.cell(행, 2).number_format = money_fmt
+            ws.cell(행, 2).font = bold
+            합계_수식행 = 행
+            행 += 1
+
+            # 소득처분별 합계 (=SUMIF)
+            ws.cell(행, 1, "소득처분별 합계").font = bold
+            ws.cell(행, 2, "소득처분").font = bold
+            ws.cell(행, 3, "금액").font = bold
+            for cc in range(1, 4):
+                ws.cell(행, cc).fill = header_fill
+            행 += 1
+            for 처분, tot in 처분별.items():
+                ws.cell(행, 1, "")
+                ws.cell(행, 2, 처분)
+                sumif_addr = f"B{처분first_row}:B{처분last_row}"
+                sumif_cond = f"C{처분first_row}:C{처분last_row}"
+                ws.cell(행, 3, f'=SUMIF({sumif_cond},"{처분}",{sumif_addr})')
+                ws.cell(행, 3).number_format = money_fmt
+                행 += 1
+
+        # ③ 확인 셀: 도구 결과의 합계 값과 수식 합계 비교
+        # 도구 결과의 합계: res에서 "손금불산입_합계" 또는 "한도초과" 등 합계성 키 탐색
+        도구합계 = None
+        for key in ("손금불산입_합계", "한도초과", "소득처분별_합계"):
+            v = res.get(key)
+            if isinstance(v, (int, float)):
+                도구합계 = v
+                도구합계키 = key
+                break
+        if 도구합계 is not None:
+            ws.cell(행, 1, f"확인 ({도구합계키})").font = bold
+            ws.cell(행, 2, f'=IF(B{합계_수식행}="{도구합계}","일치","확인 필요")')
+            행 += 1
+
+        # ④ 산식
+        산식 = (cd.get("data") or {}).get("산식") or ""
+        if 산식:
+            행 += 1
+            ws.cell(행, 1, "산식").font = bold
+            ws.cell(행, 2, 산식)
+            ws.cell(행, 2).alignment = Alignment(wrap_text=True)
+
+        ws.column_dimensions["A"].width = 32
+        ws.column_dimensions["B"].width = 20
+        ws.column_dimensions["C"].width = 16
+        ws.freeze_panes = "A2"
+
+    # ── 3. 입력·가정 시트 ──
+    ws_inp = wb.create_sheet("입력·가정")
+    시트이름들.append("입력·가정")
+    행 = 1
+    ws_inp.cell(행, 1, "call").font = bold
+    ws_inp.cell(행, 2, "경로").font = bold
+    ws_inp.cell(행, 3, "값").font = bold
+    for cc in range(1, 4):
+        ws_inp.cell(행, cc).fill = header_fill
+    행 += 1
+    for cd in 결과들:
+        if cd["error"]:
+            continue
+        label = cd["label"]
+        args = (calls[결과들.index(cd)] or {}).get("args", {})
+        # calls 목록에서 해당 call의 args 가져오기
+        for i, c in enumerate(calls):
+            if c.get("label") == label and c.get("tool") == cd["tool"]:
+                args = c.get("args", {})
+                break
+        for 경로, 값 in _flatten_args(args):
+            ws_inp.cell(행, 1, label)
+            ws_inp.cell(행, 2, 경로)
+            vc = ws_inp.cell(행, 3)
+            if isinstance(값, (int, float)):
+                _set_money(vc, 값)
+            else:
+                vc.value = 값
+            행 += 1
+    ws_inp.column_dimensions["A"].width = 20
+    ws_inp.column_dimensions["B"].width = 36
+    ws_inp.column_dimensions["C"].width = 18
+    ws_inp.freeze_panes = "A2"
+
+    # ── 4. 판단·근거 시트 ──
+    ws_jud = wb.create_sheet("판단·근거")
+    시트이름들.append("판단·근거")
+    행 = 1
+    for cc, h in enumerate(["call", "항목", "결론", "금액", "근거", "이유"], 1):
+        c = ws_jud.cell(행, cc, h); c.font = bold; c.fill = header_fill
+    행 += 1
+    for cd in 결과들:
+        if cd["error"]:
+            continue
+        label = cd["label"]
+        판단목록 = (cd.get("data") or {}).get("판단", [])
+        if not 판단목록:
+            continue
+        for j in 판단목록:
+            ws_jud.cell(행, 1, label)
+            ws_jud.cell(행, 2, j.get("항목", ""))
+            ws_jud.cell(행, 3, j.get("결론", ""))
+            amt = j.get("금액", 0)
+            if isinstance(amt, (int, float)):
+                _set_money(ws_jud.cell(행, 4), amt)
+            else:
+                ws_jud.cell(행, 4, amt)
+            ws_jud.cell(행, 5, j.get("근거", ""))
+            ws_jud.cell(행, 6, j.get("이유", ""))
+            행 += 1
+    ws_jud.column_dimensions["A"].width = 20
+    ws_jud.column_dimensions["B"].width = 16
+    ws_jud.column_dimensions["C"].width = 40
+    ws_jud.column_dimensions["D"].width = 16
+    ws_jud.column_dimensions["E"].width = 30
+    ws_jud.column_dimensions["F"].width = 36
+    ws_jud.freeze_panes = "A2"
+
+    # ── 저장 ──
+    base = filename if filename else title
+    fpath = _unique_path(output_dir, base)
+    wb.save(fpath)
+
+    return {
+        "결과": {
+            "파일": os.path.abspath(fpath),
+            "시트": 시트이름들,
+            "call_수": len(calls),
+            "오류_call": 오류_call,
+        },
+        "근거": "계산 도구 결과 정리(세무 자문 아님)",
+    }
+
 
 if __name__ == "__main__":
     main()
