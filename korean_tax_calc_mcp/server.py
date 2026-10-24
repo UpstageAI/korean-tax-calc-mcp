@@ -5513,6 +5513,50 @@ def _format_basis(v: list) -> str:
     return "\n".join(lines)
 
 
+# ── 계산식 이름 치환 헬퍼 (SPEC_export_workbook_c) ─────────────────────────
+import re as _re
+from openpyxl.workbook.defined_name import DefinedName
+
+_NAME_RE = _re.compile(r"[가-힣A-Za-z][가-힣A-Za-z0-9_]*")
+
+_FUNCTIONS = frozenset({"MIN", "MAX", "IF", "ROUNDDOWN", "TRUE", "FALSE"})
+
+
+def _이름_치환(식: str, 이름_맵: dict[str, str]) -> str:
+    """엑셀 수식 문법의 식에서 각 이름(식별자)을 정의 이름(호출N_이름)으로 치환한다.
+
+    함수명(MIN/MAX/IF/ROUNDDOWN)과 TRUE/FALSE는 치환하지 않는다.
+    괄호·쉼표·연산자·숫자는 그대로 보존하며, Excel이 연산자 우선순위를 해석한다.
+    """
+    tok: list[str] = []
+    i, n = 0, len(식)
+    while i < n:
+        c = 식[i]
+        if c in " \t":
+            i += 1
+            continue
+        if c in "+-*/()":
+            tok.append(c); i += 1; continue
+        if c == ",":
+            tok.append(","); i += 1; continue
+        if c.isdigit() or (c == "." and i + 1 < n and 식[i + 1].isdigit()):
+            j = i
+            while j < n and (식[j].isdigit() or 식[j] in ".eE+-"):
+                j += 1
+            tok.append(식[i:j]); i = j; continue
+        m = _NAME_RE.match(식, i)
+        if m:
+            name = m.group(0)
+            i = m.end()
+            if name not in _FUNCTIONS:
+                tok.append(이름_맵.get(name, name))
+            else:
+                tok.append(name)
+        else:
+            tok.append(c); i += 1
+    return "".join(tok)
+
+
 @mcp.tool(annotations=CALC)
 def export_workbook(
     title: Annotated[str, Field(description="문서 제목 — 파일명 기본값")],
@@ -5664,8 +5708,63 @@ def export_workbook(
         res = cd["result"] or {}
         calc_dict = (cd.get("data") or {}).get("계산") if isinstance(cd.get("data"), dict) else None
 
+        # ── 계산식 시트 (SPEC_export_workbook_c) ────────────────────────────
+        formula = (cd.get("data") or {}).get("계산식") if isinstance(cd.get("data"), dict) else None
+        if formula:
+            호출접두사 = f"호출{calc_idx}_"
+            # 이름 → 정의 이름 맵 (입력 + 계산 단계)
+            dname_map: dict[str, str] = {}
+            for inp in (cd.get("data") or {}).get("계산식_입력", []) or []:
+                dname_map[inp["이름"]] = f"{호출접두사}{inp['이름']}"
+            for s in formula:
+                dname_map[s["이름"]] = f"{호출접두사}{s['이름']}"
+
+            # ── 위쪽 표: 입력 ──
+            행 = 1
+            for cc, h in enumerate(["이름", "값", "설명"], 1):
+                c = ws.cell(행, cc, h); c.font = bold; c.fill = header_fill
+            행 += 1
+            for inp in (cd.get("data") or {}).get("계산식_입력", []) or []:
+                ws.cell(행, 1, inp["이름"])
+                vc = ws.cell(행, 2)
+                v = inp["값"]
+                if isinstance(v, bool):
+                    vc.value = v
+                elif isinstance(v, (int, float)):
+                    _set_money(vc, v)
+                else:
+                    vc.value = v
+                wb.defined_names[f"{호출접두사}{inp['이름']}"] = DefinedName(
+                    name=f"{호출접두사}{inp['이름']}", attr_text=f"'{sh_name}'!$B${행}")
+                ws.cell(행, 3, inp.get("설명", ""))
+                행 += 1
+
+            # ── 아래 표: 계산 ──
+            calc_hdr_row = 행
+            for cc, h in enumerate(["단계", "수식", "도구 값", "확인", "설명"], 1):
+                c = ws.cell(행, cc, h); c.font = bold; c.fill = header_fill
+            행 += 1
+            for s in formula:
+                단계명 = s["이름"]
+                dname = f"{호출접두사}{단계명}"
+                ws.cell(행, 1, 단계명)
+                수식셀 = ws.cell(행, 2, f"={_이름_치환(s['식'], dname_map)}")
+                수식셀.number_format = money_fmt
+                wb.defined_names[dname] = DefinedName(
+                    name=dname, attr_text=f"'{sh_name}'!$B${행}")
+                도구값 = s["값"]
+                vc = ws.cell(행, 3)
+                if isinstance(도구값, (int, float)):
+                    _set_money(vc, 도구값)
+                else:
+                    vc.value = 도구값
+                ws.cell(행, 4, f'=IF(B{행}=C{행},"일치","확인 필요")')
+                ws.cell(행, 5, s.get("설명", ""))
+                행 += 1
+            next_table_row = 행  # 수식 섹션 종료 후 항목·금액 섹션 시작 행
+
         # ① 결과·계산 dict → 항목 | 금액 표
-        행 = 1
+        행 = next_table_row if formula else 1
         ws.cell(행, 1, "항목").font = bold
         ws.cell(행, 2, "금액").font = bold
         ws.cell(행, 1).fill = header_fill
