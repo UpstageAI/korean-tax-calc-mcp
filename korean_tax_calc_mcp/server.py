@@ -5196,12 +5196,12 @@ def income_adjustment_total(
 
         if 방향 == "가산":
             익금산입 += 금액
-            세무조정.append({"구분": 항목명, "금액": 금액, "소득처분": 소득처분})
+            세무조정.append({"구분": 항목명, "금액": 금액, "소득처분": 소득처분, "조정": "익금산입"})
             판단.append({"항목": 항목명, "결론": f"익금산입(가산) +{금액:,}원, 소득처분 {소득처분}",
                          "근거": 근거})
         elif 방향 == "차감":
             손금산입 += 금액
-            세무조정.append({"구분": 항목명, "금액": 금액, "소득처분": 소득처분})
+            세무조정.append({"구분": 항목명, "금액": 금액, "소득처분": 소득처분, "조정": "손금산입"})
             판단.append({"항목": 항목명, "결론": f"손금산입(차감) −{금액:,}원, 소득처분 {소득처분}",
                          "근거": 근거})
 
@@ -5209,7 +5209,7 @@ def income_adjustment_total(
     각사업연도소득금액 = 차가감소득금액 + int(donation_excess) - int(donation_carryover_deduction)
 
     if int(donation_excess) > 0:
-        세무조정.append({"구분": "기부금 한도초과", "금액": int(donation_excess), "소득처분": "기타사외유출"})
+        세무조정.append({"구분": "기부금 한도초과", "금액": int(donation_excess), "소득처분": "기타사외유출", "조정": "익금산입"})
         판단.append({"항목": "기부금 한도초과", "결론": f"차가감 이후 가산 +{int(donation_excess):,}원 (법 제24조)",
                      "근거": "법 제24조"})
 
@@ -5350,8 +5350,7 @@ def export_workbook(
             결과들.append({"label": label, "tool": tool,
                            "error": f"입력 확인 필요 — 호출 오류: {e}",
                            "basis": "", "result": None})
-            return {"error": f"입력 확인 필요 — 호출 오류: {e}",
-                    "안내": "calls에서 tool 이름을 확인하세요"}
+            continue
 
         if "error" in data:
             오류_call.append(label)
@@ -5444,7 +5443,7 @@ def export_workbook(
         ws = wb.create_sheet(sh_name)
         시트이름들.append(sh_name)
         res = cd["result"] or {}
-        calc_dict = data.get("계산") if isinstance(data, dict) else None
+        calc_dict = (cd.get("data") or {}).get("계산") if isinstance(cd.get("data"), dict) else None
 
         # ① 결과·계산 dict → 항목 | 금액 표
         행 = 1
@@ -5474,38 +5473,84 @@ def export_workbook(
             행 += 1
 
         calc_end = 행 - 1
-        합계_셀_행 = 행  # 합계 행을 둘 행 번호
+        합계_셀_행 = 행  # 합계 행을 둘 행 번호(단위: 행 번호만 저장, 실제 합계는 세무조등기임원이 계산할 때 사용)
 
         # ② 세무조정 목록
         정착_start = 행 + 1
         settlements = res.get("세무조정", [])
+        합계_수식행 = None
         if settlements:
             행 = 정착_start
             ws.cell(행, 1, "구분").font = bold
-            ws.cell(행, 2, "금액").font = bold
-            ws.cell(행, 3, "소득처분").font = bold
-            for cc in range(1, 4):
+            ws.cell(행, 2, "조정").font = bold
+            ws.cell(행, 3, "금액").font = bold
+            ws.cell(행, 4, "소득처분").font = bold
+            for cc in range(1, 5):
                 ws.cell(행, cc).fill = header_fill
             행 += 1
             처분별: dict[str, int] = {}
-            처분first_row = 행
+            가산first_row = 행
             for s in settlements:
-                amt = int(s.get("금액", 0))
+                raw = s.get("금액", 0)
+                if isinstance(raw, (int, float)):
+                    amt = raw
+                    numeric = True
+                else:
+                    amt = raw
+                    numeric = False
+                raw_조정 = s.get("조정", "")
+                if raw_조정 in ("익금산입", "손금불산입"):
+                    조정 = "가산"
+                elif raw_조정 in ("손금산입", "익금불산입"):
+                    조정 = "차감"
+                elif raw_조정 == "":
+                    처분_tmp = s.get("소득처분", "")
+                    조정 = "차감" if 처분_tmp.startswith("△") else "가산"
+                else:
+                    조정 = raw_조정
                 처분 = s.get("소득처분", "")
                 ws.cell(행, 1, s.get("구분", ""))
-                _set_money(ws.cell(행, 2), amt)
-                ws.cell(행, 3, 처분)
-                처분별[처분] = 처분별.get(처분, 0) + amt
+                ws.cell(행, 2, 조정)
+                if numeric:
+                    _set_money(ws.cell(행, 3), amt)
+                else:
+                    ws.cell(행, 3, amt)
+                ws.cell(행, 4, 처분)
+                if numeric:
+                    처분별[처분] = 처분별.get(처분, 0) + amt
                 행 += 1
             처분last_row = 행 - 1
 
-            # 합계 행 (=SUM)
-            ws.cell(행, 1, "합계").font = bold
-            sum_cell_addr = f"B{처분first_row}:B{처분last_row}"
-            ws.cell(행, 2, f"=SUM({sum_cell_addr})")
-            ws.cell(행, 2).number_format = money_fmt
-            ws.cell(행, 2).font = bold
-            합계_수식행 = 행
+            # 방향별 합계 행: 가산 합계 / 차감 합계 / 순액
+            가산_sumif_cond = f"B{가산first_row}:B{처분last_row}"   # B열 = 조정 열
+            차감_sumif_cond = f"B{가산first_row}:B{처분last_row}"
+            금액_sumif_addr = f"D{가산first_row}:D{처분last_row}"    # D열 = 금액 열
+
+            ws.cell(행, 1, "가산 합계").font = bold
+            ws.cell(행, 3, f'=SUMIF({가산_sumif_cond},"가산",{금액_sumif_addr})')
+            ws.cell(행, 3).number_format = money_fmt
+            ws.cell(행, 3).font = bold
+            가산_수식행 = 행
+            행 += 1
+
+            ws.cell(행, 1, "차감 합계").font = bold
+            ws.cell(행, 3, f'=SUMIF({차감_sumif_cond},"차감",{금액_sumif_addr})')
+            ws.cell(행, 3).number_format = money_fmt
+            ws.cell(행, 3).font = bold
+            차감_수식행 = 행
+            행 += 1
+
+            ws.cell(행, 1, "순액").font = bold
+            ws.cell(행, 3, f"=D{가산_수식행}-D{차감_수식행}")
+            ws.cell(행, 3).number_format = money_fmt
+            ws.cell(행, 3).font = bold
+            행 += 1
+
+            # 금액 합계(방향 무관) — SUM은 문자열 셀을 무시하므로 비숫자 금액도 범위에 포함 가능
+            ws.cell(행, 1, "금액 합계(방향 무관)").font = bold
+            ws.cell(행, 3, f"=SUM({금액_sumif_addr})")
+            ws.cell(행, 3).number_format = money_fmt
+            ws.cell(행, 3).font = bold
             행 += 1
 
             # 소득처분별 합계 (=SUMIF)
@@ -5518,25 +5563,46 @@ def export_workbook(
             for 처분, tot in 처분별.items():
                 ws.cell(행, 1, "")
                 ws.cell(행, 2, 처분)
-                sumif_addr = f"B{처분first_row}:B{처분last_row}"
-                sumif_cond = f"C{처분first_row}:C{처분last_row}"
-                ws.cell(행, 3, f'=SUMIF({sumif_cond},"{처분}",{sumif_addr})')
+                sumif_cond = f"D{가산first_row}:D{처분last_row}"
+                ws.cell(행, 3, f'=SUMIF({sumif_cond},"{처분}",{금액_sumif_addr})')
                 ws.cell(행, 3).number_format = money_fmt
                 행 += 1
 
-        # ③ 확인 셀: 도구 결과의 합계 값과 수식 합계 비교
-        # 도구 결과의 합계: res에서 "손금불산입_합계" 또는 "한도초과" 등 합계성 키 탐색
-        도구합계 = None
-        for key in ("손금불산입_합계", "한도초과", "소득처분별_합계"):
-            v = res.get(key)
-            if isinstance(v, (int, float)):
-                도구합계 = v
-                도구합계키 = key
-                break
-        if 도구합계 is not None:
-            ws.cell(행, 1, f"확인 ({도구합계키})").font = bold
-            ws.cell(행, 2, f'=IF(B{합계_수식행}="{도구합계}","일치","확인 필요")')
+            # 합계 행(=SUM 금액열) — 기존 유지
+            ws.cell(행, 1, "합계").font = bold
+            ws.cell(행, 3, f"=SUM({금액_sumif_addr})")
+            ws.cell(행, 3).number_format = money_fmt
+            ws.cell(행, 3).font = bold
+            합계_수식행 = 행
             행 += 1
+
+        # ③ 확인 셀: 도구 결과의 합계 값과 수식 합계 비교
+        if 합계_수식행 is not None:
+            v_익금 = res.get("익금산입_손금불산입")
+            v_손금 = res.get("손금산입_익금불산입")
+            if isinstance(v_익금, (int, float)) and isinstance(v_손금, (int, float)):
+                # 가산 합계 vs 익금산입_손금불산입
+                ws.cell(행, 1, "확인 (익금산입_손금불산입)").font = bold
+                ws.cell(행, 3, f'=IF(D{가산_수식행}={v_익금},"일치","확인 필요")')
+                행 += 1
+                # 차감 합계 vs 손금산입_익금불산입
+                ws.cell(행, 1, "확인 (손금산입_익금불산입)").font = bold
+                ws.cell(행, 3, f'=IF(D{차감_수식행}={v_손금},"일치","확인 필요")')
+                행 += 1
+            else:
+                # 기존 동작: 임의적립금 키 중 첫 번째 숫자 값을 합계와 비교
+                도구합계 = None
+                도구합계키 = None
+                for key in ("손금불산입_합계", "한도초과", "소득처분별_합계"):
+                    v = res.get(key)
+                    if isinstance(v, (int, float)):
+                        도구합계 = v
+                        도구합계키 = key
+                        break
+                if 도구합계 is not None:
+                    ws.cell(행, 1, f"확인 ({도구합계키})").font = bold
+                    ws.cell(행, 3, f'=IF(D{합계_수식행}={도구합계},"일치","확인 필요")')
+                    행 += 1
 
         # ④ 산식
         산식 = (cd.get("data") or {}).get("산식") or ""
@@ -5561,16 +5627,11 @@ def export_workbook(
     for cc in range(1, 4):
         ws_inp.cell(행, cc).fill = header_fill
     행 += 1
-    for cd in 결과들:
+    for i, cd in enumerate(결과들):
         if cd["error"]:
             continue
         label = cd["label"]
-        args = (calls[결과들.index(cd)] or {}).get("args", {})
-        # calls 목록에서 해당 call의 args 가져오기
-        for i, c in enumerate(calls):
-            if c.get("label") == label and c.get("tool") == cd["tool"]:
-                args = c.get("args", {})
-                break
+        args = (calls[i] or {}).get("args", {})
         for 경로, 값 in _flatten_args(args):
             ws_inp.cell(행, 1, label)
             ws_inp.cell(행, 2, 경로)
