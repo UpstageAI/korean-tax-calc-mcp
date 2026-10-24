@@ -8,6 +8,214 @@ import os
 from .. import vocab
 
 
+def _load_income_rules():
+    """personal_income_rules.json 로드. 항목형 소득 입력 처리 규칙."""
+    path = os.path.join(os.path.dirname(__file__), "..", "data", "personal_income_rules.json")
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _process_income_items(year, income_items, rules):
+    """income_items: [{kind, amount}] → 처리 후 소득금액, wage_only_gross, 항목별 처리 내역.
+
+    반환: {"income": Effective 소득금액, "wage_only_gross": 총급여(근로소득만 있을 때) or None,
+           "processing": [{kind, amount, 처리, 반영금액, 근거}]}
+    """
+    if not income_items:
+        return {"income": 0, "wage_only_gross": None, "processing": []}
+
+    VALID_KINDS = set(rules["rules"].keys())
+    요약 = {k: 0 for k in VALID_KINDS}
+    processing = []
+    근로소득만_총급여 = None  # 근로소득 항목만 있고 다른 항목 없으면 총급여 저장
+
+    for item in income_items:
+        kind = item["kind"]
+        amount = int(item["amount"])
+        if kind not in VALID_KINDS:
+            raise ValueError(f"지원하지 않는 income_items kind='{kind}' — 허용: {sorted(VALID_KINDS)}")
+        요약[kind] += amount
+        processing.append({"kind": kind, "amount": amount, "처리": "", "반영금액": 0, "근거": ""})
+
+    # 이자·배당 합산 분리과세 판단 (제14조③6호)
+    이자합계 = 요약["이자"]
+    배당합계 = 요약["배당"]
+    이자배당합계 = 이자합계 + 배당합계
+    separate_이자배당 = 이자배당합계 > 0 and 이자배당합계 <= rules["rules"]["이자"]["분리과세_기준금액"]
+
+    # 기타소득 분리과세 판단 (제14조③8호)
+    기타금액 = 요약["기타소득금액"]
+    separate_기타 = 기타금액 > 0 and 기타금액 <= rules["rules"]["기타소득금액"]["분리과세_기준금액"]
+
+    # 사적연금 기준금액 (연도별)
+    사적연금금액 = 요약["사적연금"]
+    if year <= 2023:
+        사적연금한도 = rules["rules"]["사적연금"]["분리과세_기준금액_2023이하"]
+    else:
+        사적연금한도 = rules["rules"]["사적연금"]["분리과세_기준금액_2024이상"]
+    separate_사적연금 = 사적연금금액 > 0 and 사적연금금액 <= 사적연금한도
+
+    # 전통주 비과세 한도 (제12조2호라목, 시행령 제9조의2)
+    전통주금액 = 요약["전통주_제조소득_농어촌"]
+    전통주한도 = rules["rules"]["전통주_제조소득_농어촌"]["비과세_한도금액"]
+    전통주비과세 = 전통주금액 > 0 and 전통주금액 <= 전통주한도
+
+    # 근로소득 공제 — 근로소득만 있는지에 따라 wage_only_gross 판단
+    근로소득금액 = 요약["근로_총급여"]
+    근로소득공제후 = 0
+    if 근로소득금액 > 0:
+        근로소득공제후 = earned_deduction(근로소득금액, year)
+        total_other = sum(요약[k] for k in VALID_KINDS if k not in ("근로_총급여", "이자", "배당", "비과세"))
+        total_other += (이자합계 if not separate_이자배당 else 0) + (배당합계 if not separate_이자배당 else 0)
+        if total_other == 0:
+            근로소득만_총급여 = 근로소득금액  # 근로소득만 있음
+
+    # 소득금액 계산
+    소득 = 0
+
+    # 1) 이자·배당
+    if separate_이자배당:
+        for proc in processing:
+            if proc["kind"] in ("이자", "배당"):
+                proc["처리"] = f"분리과세(소득세법 제14조③6호, 이자·배당 합계 2천만 이하)"
+                proc["반영금액"] = 0
+                proc["근거"] = "소득세법 제14조③6호"
+        # 소득에는 포함 안 함
+    else:
+        for proc in processing:
+            if proc["kind"] == "이자":
+                if 이자합계 > 0:
+                    proc["처리"] = "종합과세(이자·배당 합계 2천만 초과)"
+                    proc["반영금액"] = amount
+                    proc["근거"] = "소득세법 제14조③6호"
+                    소득 += amount
+            elif proc["kind"] == "배당":
+                if 배당합계 > 0:
+                    proc["처리"] = "종합과세(이자·배당 합계 2천만 초과)"
+                    proc["반영금액"] = amount
+                    proc["근거"] = "소득세법 제14조③6호"
+                    소득 += amount
+
+    # 2) 근로소득
+    if 근로소득금액 > 0:
+        for proc in processing:
+            if proc["kind"] == "근로_총급여":
+                공제후 = 근로소득공제후
+                proc["처리"] = f"근로소득공제(제47조①) 적용 → 공제 후 {공제후:,}원"
+                proc["반영금액"] = 공제후
+                proc["근거"] = "소득세법 제47조①"
+                소득 += 공제후
+
+    # 3) 사업소득
+    if 요약["사업소득금액"] > 0:
+        for proc in processing:
+            if proc["kind"] == "사업소득금액":
+                proc["처리"] = "사업소득금액(필요경비 차감 후) 그대로 합산"
+                proc["반영금액"] = 요약["사업소득금액"]
+                proc["근거"] = "소득세법 제19조"
+                소득 += 요약["사업소득금액"]
+
+    # 4) 공적연금
+    if 요약["공적연금"] > 0:
+        공제 = _pension_deduction(요약["공적연금"])
+        for proc in processing:
+            if proc["kind"] == "공적연금":
+                proc["처리"] = f"연금소득공제(제47조의2) 적용 → 공제 후 {요약['공적연금'] - 공제:,}원"
+                proc["반영금액"] = 요약["공적연금"] - 공제
+                proc["근거"] = "소득세법 제47조의2"
+                소득 += 요약["공적연금"] - 공제
+
+    # 5) 사적연금
+    if 사적연금금액 > 0:
+        if separate_사적연금:
+            for proc in processing:
+                if proc["kind"] == "사적연금":
+                    proc["처리"] = f"분리과세 선택(기본 분리, {'1,200만' if year <= 2023 else '1,500만'} 이하)"
+                    proc["반영금액"] = 0
+                    proc["근거"] = "소득세법 제14조③9호다목"
+        else:
+            공제 = _pension_deduction(사적연금금액)
+            for proc in processing:
+                if proc["kind"] == "사적연금":
+                    proc["처리"] = f"종합과세(분리과세 기준 {'1,200만' if year <= 2023 else '1,500만'} 초과)"
+                    proc["반영금액"] = 사적연금금액 - 공제
+                    proc["근거"] = "소득세법 제14조③9호다목"
+                    소득 += 사적연금금액 - 공제
+
+    # 6) 기타소득
+    if 기타금액 > 0:
+        if separate_기타:
+            for proc in processing:
+                if proc["kind"] == "기타소득금액":
+                    proc["처리"] = f"분리과세 선택(기본 분리, 300만 이하)"
+                    proc["반영금액"] = 0
+                    proc["근거"] = "소득세법 제14조③8호"
+        else:
+            for proc in processing:
+                if proc["kind"] == "기타소득금액":
+                    proc["처리"] = f"종합과세(300만 초과)"
+                    proc["반영금액"] = 기타금액
+                    proc["근거"] = "소득세법 제14조③8호"
+                    소득 += 기타금액
+
+    # 7) 양도소득금액
+    if 요약["양도소득금액"] > 0:
+        for proc in processing:
+            if proc["kind"] == "양도소득금액":
+                proc["처리"] = "양도소득금액 종합 합산"
+                proc["반영금액"] = 요약["양도소득금액"]
+                proc["근거"] = "소득세법 제14조①"
+                소득 += 요약["양도소득금액"]
+
+    # 8) 퇴직소득금액
+    if 요약["퇴직소득금액"] > 0:
+        for proc in processing:
+            if proc["kind"] == "퇴직소득금액":
+                proc["처리"] = "퇴직소득금액 종합 합산"
+                proc["반영금액"] = 요약["퇴직소득금액"]
+                proc["근거"] = "소득세법 제14조①"
+                소득 += 요약["퇴직소득금액"]
+
+    # 9) 전통주 제조소득
+    if 전통주금액 > 0:
+        if 전통주비과세:
+            for proc in processing:
+                if proc["kind"] == "전통주_제조소득_농어촌":
+                    proc["처리"] = f"비과세(수도권 밖 읍·면 제조, 연 {전통주한도//10000}만 이하)"
+                    proc["반영금액"] = 0
+                    proc["근거"] = "소득세법 제12조2호라목, 시행령 제9조의2"
+        else:
+            for proc in processing:
+                if proc["kind"] == "전통주_제조소득_농어촌":
+                    proc["처리"] = f"비과세 한도({전통주한도//10000}만) 초과 → 전액 과세(질의회신 소득세과-1354) — {전통주금액:,}원 전액 종합 합산"
+                    proc["반영금액"] = 전통주금액
+                    proc["근거"] = "소득세법 제12조2호라목, 시행령 제9조의2, 제14조①, 질의회신 소득세과-1354"
+                    소득 += 전통주금액
+
+    # 10) 비과세
+    if 요약["비과세"] > 0:
+        for proc in processing:
+            if proc["kind"] == "비과세":
+                proc["처리"] = "비과세 → 소득금액 0"
+                proc["반영금액"] = 0
+                proc["근거"] = "소득세법 제12조"
+
+    # 11) 공적연금_과세제외 (소득세법 시행령 제40조 — 소득공제 받지 않은 기여금 기초 연금)
+    과세제외금액 = 요약.get("공적연금_과세제외", 0)
+    if 과세제외금액 > 0:
+        for proc in processing:
+            if proc["kind"] == "공적연금_과세제외":
+                proc["처리"] = "과세 제외 — 소득공제 받지 않은 기여금 기초 연금 (소득세법 시행령 제40조)"
+                proc["반영금액"] = 0
+                proc["근거"] = "소득세법 시행령 제40조"
+
+    return {
+        "income": 소득,
+        "wage_only_gross": 근로소득만_총급여,
+        "processing": processing,
+    }
+
+
 def _won(x):
     """원 미만 절사(⌊x⌋)."""
     return int(math.floor(x))
@@ -764,4 +972,368 @@ def special_tax_credit(
         "판단": 판단,
         "근거": "소득세법 제59조의4①②③⑨, 제61조①, 시행령 제118조의4·제118조의5·제118조의6·제119조의3",
     }
+
+
+# ── 종합소득 인적공제(소득세법 제50조·제51조·제53조, 영 제106조) ────────────────────
+
+
+def personal_deduction(year, taxpayer, persons):
+    """종합소득 인적공제(기본공제·추가공제). 소득세법 제50조·제51조·제53조.
+
+    입력:
+      year: 귀속연도(2016~2026)
+      taxpayer: {sex, birth_year, has_spouse, household_head(False), comprehensive_income, disabled(False)}
+      persons: [{name, relation, birth_year, income(0), wage_only_gross(없으면 생략), disabled(False), cohabiting(True),
+                 income_items([{kind, amount}])}] — income_items가 있으면 income/wage_only_gross 대신 사용.
+        relation: 배우자|직계존속|직계비속|입양자|형제자매|수급자|위탁아동 (동의어: 아들·딸·자녀→직계비속, 부친·모친·부모→직계존속 등)
+    결과: {"기본공제", "추가공제", "공제 전 합계", "인적공제", "사람별": [{name, 기본공제(bool), 사유(str|null), 추가공제:[{항목, 금액}], 소득처리내역(선택)}]}
+    """
+    if year < 2016 or year > 2026:
+        return {"error": f"입력 확인 필요 — 계산하지 않음", "문제": [f"year={year}은(는) 지원 범위(2016~2026) 밖"]}
+
+    # main의 RELATION_SYNONYMS로 정규화 후 허용값 검사
+    for i, p in enumerate(persons):
+        rel = p.get("relation", "")
+        if rel in RELATION_SYNONYMS:
+            p["relation"] = RELATION_SYNONYMS[rel]  # 동의어 → 정식값 치환
+            rel = p["relation"]
+        if rel not in ALLOWED_RELATIONS or rel == "본인":
+            return {"error": "입력 확인 필요 — 계산하기 않음",
+                    "문제": [f"persons '{p.get('name', '?')}': relation '{rel}' 허용값 아님 — 허용: {', '.join(a for a in ALLOWED_RELATIONS if a != '본인')}"]}
+
+    # income_items 처리: rules 로드
+    rules = _load_income_rules()
+
+    # 사람별 소득 처리 — 입력 dict를 복사해 내부 값(_effective_income 등)을 덧붙이지 않음
+    persons_copy = [dict(p) for p in persons]
+    for p in persons_copy:
+        income_items = p.get("income_items")
+        # income_items 없이 income 또는 wage_only_gross만 오면 오류 (옛 금액 입력 거절)
+        if income_items is None:
+            if "income" in p or p.get("wage_only_gross") is not None:
+                return {"error": "입력 확인 필요 — 계산하지 않음",
+                        "문제": [f"{p['name']}: 부양가족 소득은 income_items로 종류별로 넣어 주세요. "
+                                 f"예: [{{\"kind\": \"이자\", \"amount\": 10000000}}] "
+                                 f"근로소득만 있으면 {{\"kind\": \"근로_총급여\", ...}}"]}
+            p["_effective_income"] = 0
+            p["_wage_only_gross"] = None
+            p["_income_processing"] = None
+        else:
+            if "income" in p or p.get("wage_only_gross") is not None:
+                return {"error": "입력 확인 필요 — 계산하기 않음",
+                        "문제": [f"{p['name']}: income과 income_items를 함께 입력할 수 없음 — 둘 중 하나만 사용"]}
+            try:
+                result = _process_income_items(year, income_items, rules)
+            except ValueError as e:
+                return {"error": "입력 확인 필요 — 계산하기 않음",
+                        "문제": [str(e)]}
+            p["_effective_income"] = result["income"]
+            p["_wage_only_gross"] = result["wage_only_gross"]
+            p["_income_processing"] = result["processing"]
+
+    # 본인
+    본인_name = "본인"
+
+    def age(p):
+        return year - p["birth_year"]
+
+    def income_ok(p):
+        """소득 요건: _effective_income ≤ 100만. _wage_only_gross가 있으면 추가로 ≤ 500만 필요.
+        (근로소득만 있는 경우 총급여 500만원 이하는 소득금액이 0이더라도 요건 충족,
+        총급여 500만원 초과는 소득금액이 0이더라도 소득 요건 불충족)"""
+        inc = p.get("_effective_income", 0)
+        wog = p.get("_wage_only_gross")
+        if inc <= 1_000_000:
+            # income 요건 충족. wage_only_gross가 있으면 추가 확인
+            if wog is not None:
+                return wog <= 5_000_000
+            return True
+        if wog is not None and wog <= 5_000_000:
+            return True
+        return False
+
+    def age_ok(rel, a, disabled):
+        """나이 요건 충족 여부. disabled면 나이 요건 면제."""
+        if disabled:
+            return True
+        if rel == "배우자" or rel == "수급자" or rel == "위탁아동":
+            return True  # 나이 요건 없음
+        if rel == "직계존속":
+            return a >= 60
+        if rel in ("직계비속", "입양자"):
+            return a <= 20
+        if rel == "형제자매":
+            return a <= 20 or a >= 60
+        return False
+
+    def cohabiting_ok(rel, p):
+        """동거 요건: 형제자매·수급자는 cohabiting=True 필요.
+        직계존속은 별거해도 인정(제53조③). 그 외 동거 요건 없음."""
+        if rel in ("형제자매", "수급자"):
+            return bool(p.get("cohabiting", True))
+        return True  # 나머지 관계는 동거 요건 없음
+
+    # 기본공제 대상자 판정
+    기본공제대상자 = {}  # name → bool
+    사람별_detail = []  # 출력 순서: 본인(맨 앞) + persons 순서
+
+    # 본인: 항상 기본공제 대상
+    기본공제대상자[본인_name] = True
+    사람별_detail.append({
+        "name": 본인_name,
+        "기본공제": True,
+        "사유": None,
+        "추가공제": [],
+        "_is_self": True,
+        "_relation": None,
+        "_p": {"birth_year": taxpayer["birth_year"], "disabled": taxpayer.get("disabled", False),
+               "income": 0, "wage_only_gross": None},
+    })
+
+    for p in persons_copy:
+        rel = p["relation"]
+        a = age(p)
+        ok_income = income_ok(p)
+        ok_age = age_ok(rel, a, p.get("disabled", False))
+        ok_cohab = cohabiting_ok(rel, p)
+
+        name = p["name"]
+        if ok_income and ok_age and ok_cohab:
+            기본공제대상자[name] = True
+            사유 = None
+        else:
+            기본공제대상자[name] = False
+            # 사유 구성
+            사유_parts = []
+            if not ok_income:
+                inc = p.get("_effective_income", 0)
+                wog = p.get("_wage_only_gross")
+                if wog is not None:
+                    if inc > 1_000_000:
+                        사유_parts.append("소득금액 100만원 초과")
+                    사유_parts.append(f"총급여 {wog:,}원 > 500만원")
+                else:
+                    사유_parts.append("소득금액 100만원 초과")
+            if not ok_age and not p.get("disabled", False):
+                if rel == "직계존속":
+                    사유_parts.append(f"직계존속 {a}세(60세 미만)")
+                elif rel in ("직계비속", "입양자"):
+                    사유_parts.append(f"{rel} {a}세(20세 초과)")
+                elif rel == "형제자매":
+                    사유_parts.append(f"형제자매 {a}세(20세 초과 & 60세 미만)")
+            if not ok_cohab:
+                if rel == "형제자매":
+                    사유_parts.append("형제자매 동거 아님")
+                elif rel == "수급자":
+                    사유_parts.append("수급자 동거 아님")
+            사유 = ", ".join(사유_parts) if 사유_parts else None
+
+        사람별_detail.append({
+            "name": name,
+            "기본공제": 기본공제대상자[name],
+            "사유": 사유,
+            "추가공제": [],
+            "_is_self": False,
+            "_relation": rel,
+            "_p": p,
+        })
+
+    # --- 추가공제 ---
+    # 경로우대 100만: 기본공제대상자 & 70세 이상
+    # 장애인 200만: 기본공제대상자 & disabled (본인도 가능)
+    # 부녀자 50만: 본인 여성 & 종합소득 ≤ 3천만 & (has_spouse 또는 (배우자 없음 + household_head + 기본공제대상 부양가족 1명 이상(배우자 제외)))
+    # 한부모 100만: 배우자 없음 & 기본공제대상 직계비속/입양자 1명 이상. 부녀자와 중복 시 한부모만.
+
+    추가공제_합계 = 0
+    경로우대_대상 = set()
+    장애인_대상 = set()
+    부녀자_대상 = False
+    한부모_대상 = False
+
+    # 경로우대·장애인은 모든 기본공제대상자 대상 (본인 포함)
+    for entry in 사람별_detail:
+        name = entry["name"]
+        if not 기본공제대상자.get(name, False):
+            continue
+        p = entry["_p"]
+        a = age(p) if not entry["_is_self"] else (year - taxpayer["birth_year"])
+        disabled = p.get("disabled", False) if not entry["_is_self"] else taxpayer.get("disabled", False)
+        if a >= 70:
+            경로우대_대상.add(name)
+        if disabled:
+            장애인_대상.add(name)
+
+    # 부녀자 요건
+    spend = taxpayer.get("comprehensive_income", 0)
+    sex = taxpayer.get("sex", "남")
+    has_spouse = taxpayer.get("has_spouse", False)
+    hh = bool(taxpayer.get("household_head", False))
+
+    if sex == "여" and spend <= 30_000_000:
+        if has_spouse:
+            부녀자_대상 = True
+        elif not has_spouse and hh:
+            # 배우자 없는 기본공제대상 부양가족(배우자 제외) 1명 이상
+            fam_deps = [e for e in 사람별_detail
+                        if not e["_is_self"] and e["_relation"] != "배우자" and 기본공제대상자.get(e["name"], False)]
+            if len(fam_deps) >= 1:
+                부녀자_대상 = True
+
+    # 한부모 요건: 배우자 없음 & 기본공제대상 직계비속/입양자 1명 이상
+    if not has_spouse:
+        child_deps = [e for e in 사람별_detail
+                      if not e["_is_self"] and e["_relation"] in ("직계비속", "입양자") and 기본공제대상자.get(e["name"], False)]
+        if len(child_deps) >= 1:
+            한부모_대상 = True
+
+    # 사람별 추가공제 구성
+    for entry in 사람별_detail:
+        name = entry["name"]
+        if not 기본공제대상자.get(name, False):
+            continue
+        extra = []
+        if name in 경로우대_대상:
+            extra.append({"항목": "경로우대", "금액": 1_000_000})
+        if name in 장애인_대상:
+            extra.append({"항목": "장애인", "금액": 2_000_000})
+        if entry["_is_self"] and 부녀자_대상 and not 한부모_대상:
+            extra.append({"항목": "부녀자", "금액": 500_000})
+        if entry["_is_self"] and 한부모_대상:
+            extra.append({"항목": "한부모", "금액": 1_000_000})
+        entry["추가공제"] = extra
+
+    기본공제_금액 = sum(1_500_000 for e in 사람별_detail if 기본공제대상자.get(e["name"], False))
+    추가공제_금액 = sum(e["금액"] for entry in 사람별_detail for e in entry["추가공제"])
+
+    공제전합계 = 기본공제_금액 + 추가공제_금액
+    인적공제 = min(공제전합계, spend)  # 제51조④: comprehensive_income 초과분 없음
+
+    # 사람별 출력: 본인 맨 앞, 추가공제 항목 정리, 소득처리내역 포함
+    결과_사람별 = []
+    for entry in 사람별_detail:
+        name = entry["name"]
+        추가목록 = [{"항목": e["항목"], "금액": e["금액"]} for e in entry["추가공제"]]
+        사람별항목 = {
+            "name": name,
+            "기본공제": 기본공제대상자.get(name, False),
+            "사유": entry["사유"],
+            "추가공제": 추가목록,
+        }
+        # 소득처리내역(income_items 사용 시)
+        p = entry.get("_p", {})
+        if p.get("_income_processing") is not None:
+            사람별항목["소득처리내역"] = p["_income_processing"]
+        결과_사람별.append(사람별항목)
+
+    return {
+        "결과": {
+            "기본공제": 기본공제_금액,
+            "추가공제": 추가공제_금액,
+            "공제 전 합계": 공제전합계,
+            "인적공제": 인적공제,
+            "사람별": 결과_사람별,
+        },
+        "근거": "소득세법 제50조·제51조·제53조",
+    }
+
+
+# ── 연금소득금액(소득세법 제20조의3·제14조③9호·제47조의2·제64조의4) ────────────────────
+
+
+def pension_income(year, public_pension=0, private_pension=0,
+                   retirement_source_pension=0, medical_withdrawal=0,
+                   private_choice="분리", public_pension_detail=None):
+    """연금소득금액 계산. 소득세법 제20조의3·제14조③9호·제47조의2·제64조의4·제40조.
+
+    입력:
+      year: 귀속연도(2016~2026)
+      public_pension: 공적연금 과세분(2002년 이후 기여분 기준 금액). public_pension_detail 사용 시 0이어야 함.
+      private_pension: 연금계좌 연금수령분 중 퇴직소득 재원·의료목적 인출 외
+      retirement_source_pension: 퇴직소득 재원 연금수령 (항상 분리과세)
+      medical_withdrawal: 의료목적·부득이한 사유 인출 (항상 분리과세)
+      private_choice: "분리"|"종합" (기본 "분리")
+      public_pension_detail: {수령액, 환산소득_2002이후, 환산소득_전체, 과세제외기여금?(기본 0)}.
+        공적연금 과세분 = max(0, int(수령액 × 환산소득_2002이후 ÷ 환산소득_전체) − 과세제외기여금) (소득세법 시행령 제40조①, 국민연금 기준).
+    결과: {"총연금액", "분리과세연금소득", "연금소득공제", "연금소득금액", 안내(선택), 근거}
+    """
+    if year < 2016 or year > 2026:
+        return {"error": f"입력 확인 필요 — 계산하기 않음", "문제": [f"year={year}은(는) 지원 범위(2016~2026) 밖"]}
+
+    # public_pension_detail 처리
+    if public_pension_detail is not None:
+        if public_pension != 0:
+            return {"error": "입력 확인 필요 — 계산하기 않음",
+                    "문제": ["public_pension과 public_pension_detail을 함께 입력할 수 없음 — 둘 중 하나만 사용"]}
+        수령액 = int(public_pension_detail["수령액"])
+        환산소득_2002이후 = int(public_pension_detail["환산소득_2002이후"])
+        환산소득_전체 = int(public_pension_detail["환산소득_전체"])
+        과세제외기여금 = int(public_pension_detail.get("과세제외기여금", 0))
+        if 환산소득_전체 <= 0:
+            return {"error": "입력 확인 필요 — 계산하기 않음",
+                    "문제": ["환산소득_전체 ≤ 0 불가능"]}
+        if 환산소득_2002이후 > 환산소득_전체:
+            return {"error": "입력 확인 필요 — 계산하기 않음",
+                    "문제": ["환산소득_2002이후 > 환산소득_전체 불가능"]}
+        # 공적연금 과세분 = max(0, int(수령액 × 환산소득_2002이후 ÷ 환산소득_전체) − 과세제외기여금) (소득세법 시행령 제40조①)
+        public_pension = max(0, int(수령액 * 환산소득_2002이후 / 환산소득_전체) - 과세제외기여금)
+
+    # 분리과세 기준: 2023년 이하 12,000,000, 2024년 이상 15,000,000
+    separate_threshold = 12_000_000 if year <= 2023 else 15_000_000
+
+    # 항상 분리과세연금소득: retirement_source_pension, medical_withdrawal
+    always_separate = retirement_source_pension + medical_withdrawal
+
+    # private_pension 처리
+    included_private = 0
+    private_separate = 0
+    if private_pension > 0:
+        if private_pension <= separate_threshold and private_choice == "분리":
+            private_separate = private_pension
+        else:
+            included_private = private_pension
+
+    # 총연금액 = public_pension + 포함된 private_pension
+    총연금액 = public_pension + included_private
+
+    # 분리과세연금소득 = 항상 분리 + 선택된 분리 private
+    분리과세연금소득 = always_separate + private_separate
+
+    # 연금소득공제(제47조의2)
+    연금소득공제 = _pension_deduction(총연금액)
+
+    연금소득금액 = 총연금액 - 연금소득공제
+
+    # 안내: year ≥ 2023이고 총연금액에 private_pension이 포함되면
+    안내 = None
+    if year >= 2023 and included_private > 0:
+        안내 = f"사적연금 {included_private:,}원은 종합과세 대신 15% 분리 세액계산 선택 가능(제64조의4)"
+
+    return {
+        "결과": {
+            "총연금액": 총연금액,
+            "분리과세연금소득": 분리과세연금소득,
+            "연금소득공제": 연금소득공제,
+            "연금소득금액": 연금소득금액,
+        },
+        "안내": 안내,
+        "근거": "소득세법 제20조의3·제14조③9호·제47조의2·제64조의4",
+    }
+
+
+def _pension_deduction(total_pension):
+    """연금소득공제(제47조의2): 350만 이하 전액 / 700만 이하 350만+(초과분×40%) /
+    1,400만 이하 490만+(초과분×20%) / 초과 630만+(초과분×10%), 최대 9,000,000,
+    총연금액을 넘지 않음."""
+    if total_pension <= 0:
+        return 0
+    if total_pension <= 3_500_000:
+        ded = total_pension
+    elif total_pension <= 7_000_000:
+        ded = 3_500_000 + (total_pension - 3_500_000) * 0.40
+    elif total_pension <= 14_000_000:
+        ded = 4_900_000 + (total_pension - 7_000_000) * 0.20
+    else:
+        ded = 6_300_000 + (total_pension - 14_000_000) * 0.10
+    ded = int(ded)
+    return min(ded, 9_000_000, total_pension)
 
