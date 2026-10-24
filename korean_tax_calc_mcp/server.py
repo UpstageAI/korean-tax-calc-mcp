@@ -5297,6 +5297,91 @@ def _numeric_items(d: dict) -> list[tuple[str, Any]]:
     return out
 
 
+def _cell_value(v: Any) -> Any:
+    """엑셀 셀에 쓸 수 있는 스칼라 값으로 변환. 목록·dict는 규칙에 따라 문자열로."""
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return v
+    if isinstance(v, str):
+        return v
+    if isinstance(v, list):
+        if _is_basis_list(v):
+            return _format_basis(v)
+        # 항목마다 한 겹 더 감싼 근거 목록인가? (earned_income_gross_pay)
+        if _is_wrapped_basis_list(v):
+            return "\n".join(_format_basis(inner) for inner in v if _is_basis_list(inner))
+        return _json.dumps(v, ensure_ascii=False)
+    if isinstance(v, dict):
+        return _json.dumps(v, ensure_ascii=False)
+    return str(v)
+
+
+def _is_basis_list(v: list) -> bool:
+    """v가 [법령, 조, 항, 요지] 목록의 목록인가? (근거 목록 판정)"""
+    if not v or not isinstance(v, list):
+        return False
+    for item in v:
+        if not isinstance(item, list):
+            return False
+        if not (3 <= len(item) <= 4):
+            return False
+        if not all(isinstance(x, str) for x in item):
+            return False
+        # 둘째 요소가 조 번호인가? (예: "제40조", "제81조①")
+        if len(item) >= 2 and not _looks_like_article(item[1]):
+            return False
+    return True
+
+
+def _looks_like_article(s: str) -> bool:
+    """s가 조 번호처럼 보이는가? (예: "제40조", "제81조①")"""
+    if not s.startswith("제"):
+        return False
+    조_idx = s.find("조")
+    if 조_idx <= 1:
+        return False
+    return s[1:조_idx].isdigit()
+
+
+def _is_wrapped_basis_list(v: list) -> bool:
+    """v가 근거 목록들을 한 겹 더 감싼 목록인가? (earned_income_gross_pay 근거)"""
+    if not v or not isinstance(v, list):
+        return False
+    for item in v:
+        if not _is_basis_list(item):
+            return False
+    return True
+
+
+def _format_basis(v: list) -> str:
+    """근거 목록([법령, 조, 항, 요지] 목록)을 사람이 읽는 문장으로 변환."""
+    lines = []
+    for item in v:
+        parts = [x for x in item if x]  # 빈 값 제외
+        if not parts:
+            continue
+        law_name = parts[0]
+        article = parts[1] if len(parts) > 1 else ""
+        clause = parts[2] if len(parts) > 2 else ""
+        gist = parts[3] if len(parts) > 3 else ""
+
+        # 법령 + 조항
+        law_article = law_name
+        if article:
+            law_article += " " + article
+        if clause:
+            law_article += clause
+
+        # 요지 추가
+        if gist:
+            lines.append(f"{law_article} — {gist}")
+        else:
+            lines.append(law_article)
+
+    return "\n".join(lines)
+
+
 @mcp.tool(annotations=CALC)
 def export_workbook(
     title: Annotated[str, Field(description="문서 제목 — 파일명 기본값")],
@@ -5413,10 +5498,13 @@ def export_workbook(
                 if isinstance(v, (int, float)):
                     _set_money(vc, v)
                 else:
-                    vc.value = v
+                    vc.value = _cell_value(v)
                 c += 2
             if cd["basis"]:
-                ws_sum.cell(r, c, cd["basis"]); c += 1
+                bc = ws_sum.cell(r, c, _cell_value(cd["basis"]))
+                if isinstance(cd["basis"], list) and _is_basis_list(cd["basis"]):
+                    bc.alignment = Alignment(wrap_text=True)
+                c += 1
 
     # 고지 행
     고지행 = 첫데이터행 + len(결과들) + 1
@@ -5469,7 +5557,7 @@ def export_workbook(
             if isinstance(v, (int, float)):
                 _set_money(ws.cell(행, 2), v)
             else:
-                ws.cell(행, 2, v)
+                ws.cell(행, 2, _cell_value(v))
             행 += 1
 
         calc_end = 행 - 1
@@ -5609,8 +5697,8 @@ def export_workbook(
         if 산식:
             행 += 1
             ws.cell(행, 1, "산식").font = bold
-            ws.cell(행, 2, 산식)
-            ws.cell(행, 2).alignment = Alignment(wrap_text=True)
+            ac = ws.cell(행, 2, _cell_value(산식))
+            ac.alignment = Alignment(wrap_text=True)
 
         ws.column_dimensions["A"].width = 32
         ws.column_dimensions["B"].width = 20
@@ -5639,7 +5727,7 @@ def export_workbook(
             if isinstance(값, (int, float)):
                 _set_money(vc, 값)
             else:
-                vc.value = 값
+                vc.value = _cell_value(값)
             행 += 1
     ws_inp.column_dimensions["A"].width = 20
     ws_inp.column_dimensions["B"].width = 36
@@ -5663,14 +5751,20 @@ def export_workbook(
         for j in 판단목록:
             ws_jud.cell(행, 1, label)
             ws_jud.cell(행, 2, j.get("항목", ""))
-            ws_jud.cell(행, 3, j.get("결론", ""))
+            con = ws_jud.cell(행, 3, _cell_value(j.get("결론", "")))
             amt = j.get("금액", 0)
             if isinstance(amt, (int, float)):
                 _set_money(ws_jud.cell(행, 4), amt)
             else:
                 ws_jud.cell(행, 4, amt)
-            ws_jud.cell(행, 5, j.get("근거", ""))
-            ws_jud.cell(행, 6, j.get("이유", ""))
+            근거_val = j.get("근거", "")
+            근거_cell = ws_jud.cell(행, 5, _cell_value(근거_val))
+            if isinstance(근거_val, list) and _is_basis_list(근거_val):
+                근거_cell.alignment = Alignment(wrap_text=True)
+            이유_val = j.get("이유", "")
+            이유_cell = ws_jud.cell(행, 6, _cell_value(이유_val))
+            if isinstance(이유_val, list) and (_is_basis_list(이유_val) or _is_wrapped_basis_list(이유_val)):
+                이유_cell.alignment = Alignment(wrap_text=True)
             행 += 1
     ws_jud.column_dimensions["A"].width = 20
     ws_jud.column_dimensions["B"].width = 16
