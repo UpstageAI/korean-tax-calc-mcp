@@ -4798,7 +4798,11 @@ def corporate_deemed_rent_income(
         구분 = r.get("구분", "")
         보증금 = int(r.get("보증금", 0) or 0)
         건설비 = int(r.get("건설비", 0) or 0)
-        임대면적비율 = _rate_norm(r.get("임대면적비율")) or 1
+        _임대면적비율_raw = r.get("임대면적비율")
+        if _임대면적비율_raw is None:
+            임대면적비율 = 1
+        else:
+            임대면적비율 = _rate_norm(_임대면적비율_raw)
         일수 = int(r.get("일수", 0) or year_days)
         if 구분 == "주택":
             제외_주택보증금 += 보증금
@@ -5174,7 +5178,7 @@ def income_adjustment_total(
             소득처분 = 소득처분_입력 if 소득처분_입력 is not None else kd["소득처분"]
             근거 = kd["근거"]
 
-        if 방향 not in ("가산", "차감", "없음", "차가감 이후"):
+        if 방향_입력 is not None and 방향 not in ("가산", "차감", "없음"):
             return {"error": "입력 확인 필요 — 계산하지 않음",
                     "문제": [f"항목 '{항목명}': 방향 '{방향}' 허용값 아님 — '가산'|'차감'|'없음'"]}
 
