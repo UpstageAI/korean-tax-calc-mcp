@@ -998,8 +998,19 @@ def personal_deduction(year, taxpayer, persons):
             p["relation"] = RELATION_SYNONYMS[rel]  # 동의어 → 정식값 치환
             rel = p["relation"]
         if rel not in ALLOWED_RELATIONS or rel == "본인":
-            return {"error": "입력 확인 필요 — 계산하기 않음",
+            return {"error": "입력 확인 필요 — 계산하지 않음",
                     "문제": [f"persons '{p.get('name', '?')}': relation '{rel}' 허용값 아님 — 허용: {', '.join(a for a in ALLOWED_RELATIONS if a != '본인')}"]}
+
+    # birth_year 누락 검증 — KeyError 대신 명확한 오류 문장
+    if "birth_year" not in taxpayer:
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"taxpayer: birth_year 필요 — 기본공제 본인 나이 계산용"]}
+    for i, p in enumerate(persons):
+        if "birth_year" not in p:
+            rel = p.get("relation", "?")
+            name = p.get("name", "")
+            label = f"persons[{i}]" + (f" ({name})" if name else "") + f" ({rel}): birth_year 필요"
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [label]}
 
     # income_items 처리: rules 로드
     rules = _load_income_rules()
@@ -1020,12 +1031,12 @@ def personal_deduction(year, taxpayer, persons):
             p["_income_processing"] = None
         else:
             if "income" in p or p.get("wage_only_gross") is not None:
-                return {"error": "입력 확인 필요 — 계산하기 않음",
+                return {"error": "입력 확인 필요 — 계산하지 않음",
                         "문제": [f"{p['name']}: income과 income_items를 함께 입력할 수 없음 — 둘 중 하나만 사용"]}
             try:
                 result = _process_income_items(year, income_items, rules)
             except ValueError as e:
-                return {"error": "입력 확인 필요 — 계산하기 않음",
+                return {"error": "입력 확인 필요 — 계산하지 않음",
                         "문제": [str(e)]}
             p["_effective_income"] = result["income"]
             p["_wage_only_gross"] = result["wage_only_gross"]
@@ -1257,22 +1268,22 @@ def pension_income(year, public_pension=0, private_pension=0,
     결과: {"총연금액", "분리과세연금소득", "연금소득공제", "연금소득금액", 안내(선택), 근거}
     """
     if year < 2016 or year > 2026:
-        return {"error": f"입력 확인 필요 — 계산하기 않음", "문제": [f"year={year}은(는) 지원 범위(2016~2026) 밖"]}
+        return {"error": f"입력 확인 필요 — 계산하지 않음", "문제": [f"year={year}은(는) 지원 범위(2016~2026) 밖"]}
 
     # public_pension_detail 처리
     if public_pension_detail is not None:
         if public_pension != 0:
-            return {"error": "입력 확인 필요 — 계산하기 않음",
+            return {"error": "입력 확인 필요 — 계산하지 않음",
                     "문제": ["public_pension과 public_pension_detail을 함께 입력할 수 없음 — 둘 중 하나만 사용"]}
         수령액 = int(public_pension_detail["수령액"])
         환산소득_2002이후 = int(public_pension_detail["환산소득_2002이후"])
         환산소득_전체 = int(public_pension_detail["환산소득_전체"])
         과세제외기여금 = int(public_pension_detail.get("과세제외기여금", 0))
         if 환산소득_전체 <= 0:
-            return {"error": "입력 확인 필요 — 계산하기 않음",
+            return {"error": "입력 확인 필요 — 계산하지 않음",
                     "문제": ["환산소득_전체 ≤ 0 불가능"]}
         if 환산소득_2002이후 > 환산소득_전체:
-            return {"error": "입력 확인 필요 — 계산하기 않음",
+            return {"error": "입력 확인 필요 — 계산하지 않음",
                     "문제": ["환산소득_2002이후 > 환산소득_전체 불가능"]}
         # 공적연금 과세분 = max(0, int(수령액 × 환산소득_2002이후 ÷ 환산소득_전체) − 과세제외기여금) (소득세법 시행령 제40조①)
         public_pension = max(0, int(수령액 * 환산소득_2002이후 / 환산소득_전체) - 과세제외기여금)

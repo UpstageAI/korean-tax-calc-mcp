@@ -311,7 +311,7 @@ def income_loss_offset(year, incomes, carryforwards=None, estimated=False, finan
     if history is not None:
         for h in history:
             if h["year"] >= year:
-                return {"error": "입력 확인 필요 — 계산하기 않음",
+                return {"error": "입력 확인 필요 — 계산하지 않음",
                         "문제": [f"history의 year({h['year']})는 대상 연도({year})보다 작아야 함"]}
 
     # history가 있으면 history 연도부터 순서대로 계산
@@ -423,13 +423,13 @@ def disaster_loss_credit(year, assets_before=0, assets_lost=0, current_tax=0,
     결과: {"자산상실비율", "공제대상 법인세", "재해손실세액공제", "판정", "자산계산과정"(assets 사용 시), "판단"(credit_items·penalty_items 사용 시)}
     """
     if year < 2016 or year > 2026:
-        return {"error": f"입력 확인 필요 — 계산하기 않음", "문제": [f"year={year}은(는) 지원 범위(2016~2026) 밖"]}
+        return {"error": f"입력 확인 필요 — 계산하지 않음", "문제": [f"year={year}은(는) 지원 범위(2016~2026) 밖"]}
 
     # credit_items / other_credits 호환 처리
     판단 = []
     if credit_items is not None:
         if other_credits != 0:
-            return {"error": "입력 확인 필요 — 계산하기 않음",
+            return {"error": "입력 확인 필요 — 계산하지 않음",
                     "문제": ["other_credits와 credit_items를 함께 입력할 수 없음 — 둘 중 하나만 사용"]}
         공제대상_조세특례제한법 = 0
         법인세법상_공제 = []
@@ -441,7 +441,7 @@ def disaster_loss_credit(year, assets_before=0, assets_lost=0, current_tax=0,
             elif 종류 == "법인세법":
                 법인세법상_공제.append({"종류": "법인세법", "금액": 금액})
             else:
-                return {"error": "입력 확인 필요 — 계산하기 않음",
+                return {"error": "입력 확인 필요 — 계산하지 않음",
                         "문제": [f"credit_items: 지원하지 않는 종류='{종류}' — 허용: 조세특례제한법, 법인세법"]}
         other_credits = 공제대상_조세특례제한법
         for item in 법인세법상_공제:
@@ -453,7 +453,7 @@ def disaster_loss_credit(year, assets_before=0, assets_lost=0, current_tax=0,
     # penalty_items / penalty 호환 처리
     if penalty_items is not None:
         if penalty != 0:
-            return {"error": "입력 확인 필요 — 계산하기 않음",
+            return {"error": "입력 확인 필요 — 계산하지 않음",
                     "문제": ["penalty와 penalty_items를 함께 입력할 수 없음 — 둘 중 하나만 사용"]}
         penalty = 0
         for item in penalty_items:
@@ -464,7 +464,7 @@ def disaster_loss_credit(year, assets_before=0, assets_lost=0, current_tax=0,
                              "근거": "법인세법 시행령 제95조③"})
                 continue
             if 근거 not in ("법인세법 제75조의3", "국세기본법 제47조의2", "국세기본법 제47조의3", "국세기본법 제47조의4", "국세기본법 제47조의5"):
-                return {"error": "입력 확인 필요 — 계산하기 않음",
+                return {"error": "입력 확인 필요 — 계산하지 않음",
                         "문제": [f"penalty_items: 지원하지 않는 근거='{근거}' — 허용: 법인세법 제75조의3, 국세기본법 제47조의2·제47조의3·제47조의4·제47조의5, 기타"]}
             penalty += 금액
     elif penalty != 0:
