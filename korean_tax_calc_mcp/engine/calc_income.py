@@ -62,11 +62,15 @@ def _process_income_items(year, income_items, rules):
 
     # 근로소득 공제 — 근로소득만 있는지에 따라 wage_only_gross 판단
     근로소득금액 = 요약["근로_총급여"]
+    근로소득공제액 = 0
     근로소득공제후 = 0
     if 근로소득금액 > 0:
-        근로소득공제후 = earned_deduction(근로소득금액, year)
-        total_other = sum(요약[k] for k in VALID_KINDS if k not in ("근로_총급여", "이자", "배당", "비과세"))
+        근로소득공제액 = earned_deduction(근로소득금액, year)
+        근로소득공제후 = 근로소득금액 - 근로소득공제액
+        total_other = sum(요약[k] for k in VALID_KINDS if k not in ("근로_총급여", "이자", "배당", "비과세", "공적연금_과세제외"))
         total_other += (이자합계 if not separate_이자배당 else 0) + (배당합계 if not separate_이자배당 else 0)
+        total_other += (사적연금금액 if not separate_사적연금 else 0)
+        total_other += (기타금액 if not separate_기타 else 0)
         if total_other == 0:
             근로소득만_총급여 = 근로소득금액  # 근로소득만 있음
 
@@ -86,25 +90,24 @@ def _process_income_items(year, income_items, rules):
             if proc["kind"] == "이자":
                 if 이자합계 > 0:
                     proc["처리"] = "종합과세(이자·배당 합계 2천만 초과)"
-                    proc["반영금액"] = amount
+                    proc["반영금액"] = proc["amount"]
                     proc["근거"] = "소득세법 제14조③6호"
-                    소득 += amount
+                    소득 += proc["amount"]
             elif proc["kind"] == "배당":
                 if 배당합계 > 0:
                     proc["처리"] = "종합과세(이자·배당 합계 2천만 초과)"
-                    proc["반영금액"] = amount
+                    proc["반영금액"] = proc["amount"]
                     proc["근거"] = "소득세법 제14조③6호"
-                    소득 += amount
+                    소득 += proc["amount"]
 
     # 2) 근로소득
     if 근로소득금액 > 0:
         for proc in processing:
             if proc["kind"] == "근로_총급여":
-                공제후 = 근로소득공제후
-                proc["처리"] = f"근로소득공제(제47조①) 적용 → 공제 후 {공제후:,}원"
-                proc["반영금액"] = 공제후
+                proc["처리"] = f"근로소득공제(제47조①) {근로소득공제액:,}원 → 근로소득금액 {근로소득공제후:,}원"
+                proc["반영금액"] = 근로소득공제후
                 proc["근거"] = "소득세법 제47조①"
-                소득 += 공제후
+                소득 += 근로소득공제후
 
     # 3) 사업소득
     if 요약["사업소득금액"] > 0:
