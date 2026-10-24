@@ -4843,15 +4843,15 @@ def estimated_business_income(
     base_rate: Annotated[str | float, Field(description="기준경비율(소수 또는 '%' 표기 예 '20%')")],
     simple_rate: Annotated[str | float, Field(description="단순경비율(소수 또는 '%' 표기 예 '60%')")],
     new_business: Annotated[bool, Field(description="신규 사업 여부(기본 False)")] = False,
-    multiplier: Annotated[str | float | None, Field(description="배율(소수 또는 '%' 표기, {간편:2.8, 복식:3.4} 기본)")] = None,
+    multiplier: Annotated[str | float | None, Field(description="배율(예 2.8 또는 '280%', 생략 시 간편 2.8·복식 3.4)")] = None,
 ) -> dict:
     """추계 사업소득금액(소득령 제143조, 제208조⑤). 언제: 장부가 없거나 불충분한 사업자의 사업소득금액을 추계로 계산할 때.
 입력: 귀속연도(2016~2026) → year, 업종군(가·나·다) → industry_group, 직전연도 수입금액(원) → prior_year_revenue, 수입금액 목록 [{구분, 금액}] → revenues, 증빙 입증 지출 목록 [{구분, 금액}] → expenses, 기준경비율 → base_rate, 단순경비율 → simple_rate, 신규 사업 여부 → new_business, 배율(소수·% 허용, 생략 시 업종별 기본) → multiplier.
 결과: 사업소득금액·계산(수입금액·장부구분·적용방법·주요경비·기준경비율_소득·한도), 판단(수입금액 구성·제외·적용방법 사유·주요경비 제외), 근거(소득세법 시행령 제143조·제208조⑤)."""
     base_rate = _rate_norm(base_rate)
     simple_rate = _rate_norm(simple_rate)
-    if isinstance(multiplier, str):
-        multiplier = float(multiplier.strip().replace("%", ""))
+    if isinstance(multiplier, str) and multiplier.strip().endswith("%"):
+        multiplier = float(multiplier.strip()[:-1]) / 100
     elif multiplier is not None:
         multiplier = float(multiplier)
 
@@ -5019,7 +5019,7 @@ def vat_exempt_use_deemed_supply(
             if 시가 is None:
                 return {"error": "입력 확인 필요 — 계산하지 않음",
                         "문제": [f"assets: 비상각 자산은 시가 필수"]}
-            간주시가 = int(시가) if isinstance(시가, (int, float)) else int(시가)
+            간주시가 = int(시가)
             자산별.append({"구분": 구분, "경과과세기간수": 0, "간주시가": 간주시가})
             간주시가_합 += 간주시가
             판단.append({"항목": f"{구분} {취득일} 취득가액 {취득가액:,}원, 시가 {간주시가:,}원",
@@ -5178,9 +5178,9 @@ def income_adjustment_total(
             소득처분 = 소득처분_입력 if 소득처분_입력 is not None else kd["소득처분"]
             근거 = kd["근거"]
 
-        if 방향_입력 is not None and 방향 not in ("가산", "차감", "없음"):
+        if 방향_입력 is not None and 방향_입력 not in ("가산", "차감", "없음"):
             return {"error": "입력 확인 필요 — 계산하지 않음",
-                    "문제": [f"항목 '{항목명}': 방향 '{방향}' 허용값 아님 — '가산'|'차감'|'없음'"]}
+                    "문제": [f"항목 '{항목명}': 방향 '{방향_입력}' 허용값 아님 — '가산'|'차감'|'없음'"]}
 
         # 기부금 한도초과 — 차가감 이후 가산
         if 종류 == "기부금 한도초과":
