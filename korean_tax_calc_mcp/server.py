@@ -2071,6 +2071,7 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
 
     judgments = []
     items_for_limit = []
+    items_for_limit_names = []
     no_receipt_total = 0
     no_qual_total = 0
     private_use_total = 0
@@ -2156,9 +2157,11 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
                 judgments.append({"항목": 항목명, "성격": 성격, "결론": "적격증명서류 미수취 → 손금불산입·기타사외유출", "금액": 금액, "근거": "법인세법 제25조②·시행령 제41조①(적격증빙 미수취)", "이유": (f"{성격 or '일반'} {limit_amount:,}원 초과, 적격증명서류 미수취 → 기타사외유출" + (f" — {_현물_판단_이유}" if _현물_판단_이유 else ""))})
             else:
                 items_for_limit.append(금액)
+                items_for_limit_names.append(항목명)
                 judgments.append({"항목": 항목명, "성격": 성격, "결론": "인정", "금액": 금액, "근거": "법인세법 제25조②", "이유": (f"{성격 or '일반'} {limit_amount:,}원 이하 → 적격증빙 요구 해당 없음" + (f" — {_현물_판단_이유}" if _현물_판단_이유 else ""))})
         elif 증빙 == "적격":
             items_for_limit.append(금액)
+            items_for_limit_names.append(항목명)
             if 성격 == "문화":
                 judgments.append({"항목": 항목명, "성격": 성격, "결론": "시부인 대상(문화접대비)", "금액": 금액, "근거": "법인세법 제25조④(문화접대비)", "이유": ("적격증빙·문화비 지출 → 한도 계산 시 문화접대비 포함" + (f" — {_현물_판단_이유}" if _현물_판단_이유 else ""))})
             elif 성격 == "경조금":
@@ -2171,10 +2174,81 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
     기본한도_중소 = vocab.rule("기업업무추진비_적격수취", year).get("기본한도", {}).get("중소", 36000000)
     기본한도_일반 = vocab.rule("기업업무추진비_적격수취", year).get("기본한도", {}).get("일반", 12000000)
 
-    # ── 한도 계산 ──
-    ent = C.entertain(year, sme, revenue_general, revenue_related, si_bu_shin, culture=culture_total, months=months)
+    # ── 한도 계산 (계산식 단계보다 먼저 실행하여 ent 결과를 계산식 값으로 사용) ──
+    ent = C.entertain(year, sme, revenue_general, revenue_related, si_bu_shin,
+                       culture=culture_total, months=months)
     limit = ent["한도"]
     over_limit = ent["한도초과(기타사외유출)"]
+
+    # ── 계산식 단계 (SPEC_export_workbook_c) ──────────────────────────────
+    ent_일반한도 = ent["일반한도"]
+    ent_문화한도 = ent["문화한도"]
+    ent_한도 = ent["한도"]
+    ent_한도초과 = ent["한도초과(기타사외유출)"]
+
+    # 수입금액 구간 tiers (식 안의 숫자로 표현) — 연도표 원문 전부(3구간) 사용
+    tiers = C.YEAR[year]["접대비_수입"]
+    t1_cap, t1_r = tiers[0]
+    t2_cap, t2_r = tiers[1]
+    t3_cap, t3_r = tiers[2]  # math.inf 가능 (식에서는 그대로 숫자 처리)
+
+    # 일반수입금액 티어 값: t1_r × min(일반, t1) + t2_r × max(0, min(일반, t2) − t1) + t3_r × max(0, 일반 − t2)
+    수입금액일반한도티 = int(t1_r * min(revenue_general, t1_cap) +
+                             t2_r * max(0, min(revenue_general, t2_cap) - t1_cap) +
+                             t3_r * max(0, revenue_general - t2_cap))
+    # 특수관계 포함 합계 티어 값
+    수입금액합계한도티 = int(t1_r * min(revenue_general + revenue_related, t1_cap) +
+                              t2_r * max(0, min(revenue_general + revenue_related, t2_cap) - t1_cap) +
+                              t3_r * max(0, revenue_general + revenue_related - t2_cap))
+
+    계산식_입력: list[dict] = [
+        {"이름": "중소기업여부", "값": True if sme else False, "설명": "중소기업 여부 (한도 기준 차등)"},
+        {"이름": "기본한도_중소", "값": 기본한도_중소, "설명": "중소기업 기본한도(원) — 법인세법 제25조①, 시행령 제42조"},
+        {"이름": "기본한도_일반", "값": 기본한도_일반, "설명": "일반기업 기본한도(원) — 법인세법 제25조①, 시행령 제42조"},
+        {"이름": "월수", "값": months, "설명": "사업연도 월수"},
+        {"이름": "문화금액", "값": culture_total, "설명": "문화접대비 지출 합계(적격증빙·문화 성격)"},
+        {"이름": "일반수입금액", "값": revenue_general, "설명": "일반 수입금액 (매출액 − 특수관계매출 − 매출할인등)"},
+        {"이름": "특수관계수입금액", "값": revenue_related, "설명": "특수관계 수입금액 (특수관계매출 − 매출할인등)"},
+        {"이름": "수입구간1_한도", "값": t1_cap, "설명": f"수입금액 구간1 한도(원) — {t1_cap:,}원 이하"},
+        {"이름": "수입구간1_비율", "값": t1_r, "설명": f"수입금액 구간1 비율 — {t1_cap:,}원 이하"},
+        {"이름": "수입구간2_한도", "값": t2_cap, "설명": f"수입금액 구간2 한도(원) — {t2_cap:,}원 이하"},
+        {"이름": "수입구간2_비율", "값": t2_r, "설명": f"수입금액 구간2 비율 — {t2_cap:,}원 이하"},
+        {"이름": "수입구간3_한도", "값": t3_cap, "설명": f"수입금액 구간3 한도(원) — {t2_cap:,}원 초과"},
+        {"이름": "수입구간3_비율", "값": t3_r, "설명": f"수입금액 구간3 비율 — {t2_cap:,}원 초과"},
+    ]
+    for idx, item in enumerate(items_for_limit, 1):
+        설명 = f"기업업무추진비 시부인 대상 항목 {idx} (적격증빙)"
+        # 원장 항목 원래 이름과 판단 요지 포함
+        항목명 = items_for_limit_names[idx - 1] if idx - 1 < len(items_for_limit_names) else ""
+        if 항목명:
+            설명 = f"{항목명} — " + 설명
+        계산식_입력.append({"이름": f"항목{idx}", "값": item,
+                             "설명": 설명})
+
+    # 시부인대상 식: 항목1+항목2+... (항목 수만큼 동적 생성)
+    항목식parts = [f"항목{i}" for i in range(1, len(items_for_limit) + 1)]
+    시부인대상식 = "+".join(항목식parts) if 항목식parts else "0"
+
+    실제기본한도 = 기본한도_중소 if sme else 기본한도_일반
+    계산식: list[dict] = [
+        {"이름": "기본한도", "식": "IF(중소기업여부,기본한도_중소,기본한도_일반)*월수/12",
+         "값": int(실제기본한도 * months / 12),
+         "설명": "IF(중소기업여부, 중소, 일반) 기본한도 × 월수/12"},
+        {"이름": "수입금액일반한도티", "식": f"수입구간1_비율*MIN(일반수입금액,수입구간1_한도)+수입구간2_비율*MAX(0,MIN(일반수입금액,수입구간2_한도)-수입구간1_한도)+수입구간3_비율*MAX(0,일반수입금액-수입구간2_한도)",
+         "값": 수입금액일반한도티, "설명": "일반 수입금액 구간별 비율 적용액 (3구간)"},
+        {"이름": "수입금액합계한도티", "식": f"수입구간1_비율*MIN(일반수입금액+특수관계수입금액,수입구간1_한도)+수입구간2_비율*MAX(0,MIN(일반수입금액+특수관계수입금액,수입구간2_한도)-수입구간1_한도)+수입구간3_비율*MAX(0,일반수입금액+특수관계수입금액-수입구간2_한도)",
+         "값": 수입금액합계한도티, "설명": "일반+특수관계 수입금액 구간별 비율 적용액 (3구간)"},
+        {"이름": "수입금액한도", "식": "수입금액일반한도티+(수입금액합계한도티-수입금액일반한도티)*0.1",
+         "값": int(ent_일반한도 - 실제기본한도 * months / 12), "설명": "일반 한도 + (특수관계 − 일반) × 10% (영 제42조①)"},
+        {"이름": "문화한도", "식": "MIN(문화금액,(기본한도+수입금액한도)*0.2)",
+         "값": ent_문화한도, "설명": "문화접대비 min(문화비, (기본한도+수입금액한도) × 20%) — 조특법 제136조③"},
+        {"이름": "한도", "식": "기본한도+수입금액한도+문화한도",
+         "값": ent_한도, "설명": "기본한도 + 수입금액한도 + 문화한도"},
+        {"이름": "시부인대상", "식": 시부인대상식,
+         "값": si_bu_shin, "설명": "적격증빙 기업업무추진비 합계 (시부인 대상)"},
+        {"이름": "한도초과", "식": "MAX(0,시부인대상-한도)",
+         "값": ent_한도초과, "설명": "한도초과액 (시부인대상 − 한도, 0 미만 절사) — 기타사외유출"},
+    ]
 
     # ── 세무조정 조립 ──
     # 루프의 settlements(사적사용 등)는 이미 collect 돼 있음 — 덮어쓰지 않고 추가만 한다.
@@ -2190,7 +2264,9 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
     근거_목록 = vocab.basis("기업업무추진비_적격수취", year)
     근거_문자열 = ", ".join(f"{조문[0]} {조문[1]} {조문[2]} {조문[3]}" if 조문[3] else f"{조문[0]} {조문[1]} {조문[2]}" for 조문 in 근거_목록)
     unified = _build_tax_adjustment_result(settlements, result, calc_dict)
-    return _ok(unified, 근거_문자열, 세무조정=settlements, 판단=judgments, 계산=calc_dict, 산식=f"기본한도 = 중소 {기본한도_중소:,}원·일반 {기본한도_일반:,}원 × 월수/12, 수입금액 한도 = 수입금액 구간별 비율을 적용한 금액(+ 특수관계 10%), 문화한도 = min(문화비, 일반한도 × 20%), 한도 = 기본 + 수입금액 + 문화, 한도초과 = 시부인 대상 − 한도")
+    return _ok(unified, 근거_문자열, 세무조정=settlements, 판단=judgments, 계산=calc_dict,
+               산식=f"기본한도 = 중소 {기본한도_중소:,}원·일반 {기본한도_일반:,}원 × 월수/12, 수입금액 한도 = 수입금액 구간별 비율을 적용한 금액(+ 특수관계 10%), 문화한도 = min(문화비, 일반한도 × 20%), 한도 = 기본 + 수입금액 + 문화, 한도초과 = 시부인 대상 − 한도",
+               계산식_입력=계산식_입력, 계산식=계산식)
 
 
 # ───────── 끝에서 끝까지: 의제배당(잉여금 자본전입) ─────────
@@ -5213,12 +5289,62 @@ def income_adjustment_total(
         판단.append({"항목": "기부금 한도초과", "결론": f"차가감 이후 가산 +{int(donation_excess):,}원 (법 제24조)",
                      "근거": "법 제24조"})
 
+    # ── 계산식 단계 (SPEC_export_workbook_c) ──────────────────────────────
+    계산식_입력: list[dict] = [
+        {"이름": "당기순이익", "값": net_income, "설명": "당기순이익(세무조정 전)"},
+    ]
+    if int(donation_excess) > 0:
+        계산식_입력.append({"이름": "기부금한도초과", "값": int(donation_excess),
+                             "설명": "기부금 한도초과액 (법 제24조)"})
+    if int(donation_carryover_deduction) > 0:
+        계산식_입력.append({"이름": "기부금이월공제", "값": int(donation_carryover_deduction),
+                             "설명": "기부금 한도초과 이월액 손금산입"})
+
+    # 항목은 익금산입·손금산입으로 나누어 번호 부여 (방향은 kinds 기준 최종값)
+    calc_items_add: list[dict] = []   # 익금산입·손금불산입 (가산)
+    calc_items_sub: list[dict] = []   # 손금산입·익금불산입 (차감)
+    for it in items:
+        금액 = int(it.get("금액", 0) or 0)
+        if 금액 == 0:
+            continue
+        종류 = it.get("종류", "")
+        kd = kinds.get(종류, {})
+        direction = it.get("방향") or kd.get("방향", "가산")
+        항목명 = it.get("항목", "")
+        if direction == "차감":
+            calc_items_sub.append({"항목명": 항목명, "종류": 종류, "금액": 금액})
+        else:
+            calc_items_add.append({"항목명": 항목명, "종류": 종류, "금액": 금액})
+
+    for idx, item in enumerate(calc_items_add, 1):
+        계산식_입력.append({"이름": f"항목{idx}", "값": item["금액"],
+                             "설명": f"{item['항목명']} — {item['종류']} (익금산입)"})
+    가산_start = len(계산식_입력)
+    for idx, item in enumerate(calc_items_sub, 1):
+        계산식_입력.append({"이름": f"항목{가산_start + idx}", "값": item["금액"],
+                             "설명": f"{item['항목명']} — {item['종류']} (손금산입)"})
+
+    add_refs = "+".join(f"항목{i}" for i in range(1, len(calc_items_add) + 1)) or "0"
+    sub_refs = "+".join(f"항목{i}" for i in range(가산_start + 1, 가산_start + len(calc_items_sub) + 1)) or "0"
+
+    계산식: list[dict] = [
+        {"이름": "익금산입_손금불산입", "식": add_refs,
+         "값": 익금산입, "설명": "익금산입·손금불산입 항목 합계"},
+        {"이름": "손금산입_익금불산입", "식": sub_refs,
+         "값": 손금산입, "설명": "손금산입·익금불산입 항목 합계"},
+        {"이름": "차가감소득금액", "식": "당기순이익+익금산입_손금불산입-손금산입_익금불산입",
+         "값": 차가감소득금액, "설명": "당기순이익 + 익금산입 − 손금산입"},
+        {"이름": "각사업연도소득금액", "식": f"차가감소득금액+{"기부금한도초과" if int(donation_excess) > 0 else "0"}-{"기부금이월공제" if int(donation_carryover_deduction) > 0 else "0"}",
+         "값": 각사업연도소득금액, "설명": "차가감소득금액 + 기부금한도초과 − 이월공제"},
+    ]
+
     return _ok({"차가감소득금액": 차가감소득금액, "각사업연도소득금액": 각사업연도소득금액,
                 "익금산입_손금불산입": 익금산입, "손금산입_익금불산입": 손금산입,
                 "세무조정": 세무조정},
                "법인세법 제18·19·21·23·24·25·28조 등",
                판단=판단,
-               산식=f"당기순이익 {net_income:,} + 익금산입 {익금산입:,} − 손금산입 {손금산입:,} = 차가감 {차가감소득금액:,}원, + 기부금한도초과 {donation_excess:,} − 이월공제 {donation_carryover_deduction:,} = 각사업연도 {각사업연도소득금액:,}원")
+               산식=f"당기순이익 {net_income:,} + 익금산입 {익금산입:,} − 손금산입 {손금산입:,} = 차가감 {차가감소득금액:,}원, + 기부금한도초과 {donation_excess:,} − 이월공제 {donation_carryover_deduction:,} = 각사업연도 {각사업연도소득금액:,}원",
+               계산식_입력=계산식_입력, 계산식=계산식)
 
 # ── 모든 도구 공통 — 정의되지 않은 최상위 인자 거부 ─────────────
 # MCP SDK의 arg_model은 기본적으로 extra='ignore'라 모르는 키가 조용히 버려짐.
