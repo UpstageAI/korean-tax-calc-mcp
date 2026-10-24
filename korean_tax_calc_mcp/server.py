@@ -5517,7 +5517,14 @@ def _format_basis_short(v: list) -> str:
     """근거 목록([법령, 조, 항, 요지] 목록)을 법조문 번호만 중복 없이 `, `로 이어 한 줄로 변환.
 
     요약 시트용: 요지 문장 없이 법령 조항만 추출하며, 중복 제거 후 한 줄로 연결한다.
+    4번째 칸(요지)이 ``N호…``로 시작하면 ``N호``까지만 조항에 붙이고 나머지 문장은 버린다.
+
+    항목별로 한 겹 더 감싼 근거 목록(wrapped basis list)도 같은 규칙으로 펼쳐 한 줄로 만든다.
     """
+    import re as _re
+    # 항목별로 한 겹 더 감싼 근거 목록이면 내부 항목만 평면화
+    if _is_wrapped_basis_list(v):
+        v = [inner for wrapper in v for inner in (wrapper if _is_basis_list(wrapper) else [])]
     seen: list[str] = []
     for item in v:
         if not item:
@@ -5525,6 +5532,7 @@ def _format_basis_short(v: list) -> str:
         law_name = item[0] if len(item) > 0 and item[0] else ""
         article = item[1] if len(item) > 1 and item[1] else ""
         clause = item[2] if len(item) > 2 and item[2] else ""
+        gist = item[3] if len(item) > 3 and item[3] else ""
         if not law_name:
             continue
         law_article = law_name
@@ -5532,6 +5540,9 @@ def _format_basis_short(v: list) -> str:
             law_article += " " + article
         if clause:
             law_article += clause
+        # 요지가 'N호…'로 시작하면 호까지만 조항에 붙이고 나머지 문장은 버림
+        if gist and _re.match(r"^\d+호", gist):
+            law_article += _re.match(r"^\d+호", gist).group(0)
         if law_article not in seen:
             seen.append(law_article)
     return ", ".join(seen)
@@ -5700,7 +5711,7 @@ def export_workbook(
                     vc.value = _cell_value(v)
                 c += 2
             if cd["basis"]:
-                if isinstance(cd["basis"], list) and _is_basis_list(cd["basis"]):
+                if isinstance(cd["basis"], list) and (_is_basis_list(cd["basis"]) or _is_wrapped_basis_list(cd["basis"])):
                     bc = ws_sum.cell(r, c, _format_basis_short(cd["basis"]))
                 else:
                     bc = ws_sum.cell(r, c, _cell_value(cd["basis"]))
