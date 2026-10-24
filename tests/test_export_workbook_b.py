@@ -143,3 +143,13 @@ def test_demo_case_exports_all_calls(tmp_path):
     assert any(320630000 in cells(wb[s]) for s in calc)
     checks = [v for s in calc for k, v in _labelled(wb[s]).items() if k.startswith("확인")]
     assert checks and all(v == "일치" for v in checks)
+
+
+def test_basis_lines_keep_positions(tmp_path):
+    _, wb = build(tmp_path, DEMO_CALLS)
+    lines = [ln for v in cells(wb["요약"]) if isinstance(v, str) for ln in v.split("\n")]
+    assert "부가가치세법 제40조 — 실지귀속 우선, 공통매입세액은 안분기준으로 안분" in lines
+    assert any(ln.startswith("부가가치세법 시행령 제81조① — ") for ln in lines)
+    for s in [s for s in wb.sheetnames if s.startswith("계산")]:
+        labels = [r[0] for r in wb[s].iter_rows(values_only=True)]
+        assert labels.count("합계") == 0 or "금액 합계(방향 무관)" not in labels
