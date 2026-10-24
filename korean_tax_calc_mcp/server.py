@@ -5540,9 +5540,14 @@ def _format_basis_short(v: list) -> str:
             law_article += " " + article
         if clause:
             law_article += clause
-        # 요지가 'N호…'로 시작하면 호까지만 조항에 붙이고 나머지 문장은 버림
+        # 요지가 'N호…'로 시작하면 호까지만 조항에 붙이고 나머지 문장은 버림.
+        # 항이 비어 있으면 조와 호 사이 한 칸 띄움(예: "제17조의4 1호"), 항이 있으면 바로 붙임(예: "제20조①1호").
         if gist and _re.match(r"^\d+호", gist):
-            law_article += _re.match(r"^\d+호", gist).group(0)
+            ho = _re.match(r"^\d+호", gist).group(0)
+            if clause:
+                law_article += ho
+            else:
+                law_article += " " + ho
         if law_article not in seen:
             seen.append(law_article)
     return ", ".join(seen)
