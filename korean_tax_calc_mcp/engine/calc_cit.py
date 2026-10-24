@@ -341,7 +341,8 @@ def depreciation_adjustment(year, method, acquisition_cost, booked_depreciation,
                             accumulated_dep_begin=None, accumulated_dep_end=None,
                             expensed_capex=0, repair_total=None, periodic_repair=False,
                             prior_book_value=None, prior_deemed_capex=0, prior_disallowed=0,
-                            in_service_date=None, fy_start=None, fy_end=None, tax_exempt=False):
+                            in_service_date=None, fy_start=None, fy_end=None, tax_exempt=False,
+                            prior_year=None):
     """법인세 감가상각 시부인(법인세법 제23조, 시행령 제26조·제28조·제30조·제31조·제32조)."""
     from .. import vocab
 
@@ -407,6 +408,96 @@ def depreciation_adjustment(year, method, acquisition_cost, booked_depreciation,
         return {"error": "입력 확인 필요 — 계산하지 않음",
                 "문제": ["useful_life 또는 rate 필요 — 상각률 미확정"],
                 "필요 입력": ["useful_life 또는 rate"]}
+
+    # ── 전기 자료(prior_year)로 당기 기초값 계산 ──────────────────────
+    전기_계산 = None
+    if prior_year is not None:
+        py = prior_year
+        py_accumulated_dep_begin = py.get("accumulated_dep_begin", 0)
+        py_disallowed_begin = py.get("disallowed_begin", 0)
+        py_booked_depreciation = py.get("booked_depreciation", 0)
+        py_limit = py.get("limit")
+        py_in_service_date = py.get("in_service_date")
+        py_tax_exempt = py.get("tax_exempt", False)
+        py_expensed_capex = py.get("expensed_capex", 0)
+
+        # 전기 상각범위액 계산 (limit이 없으면 계산)
+        if py_limit is None:
+            # 월수 계산: in_service_date가 있으면 그 달부터, 없으면 12
+            if py_in_service_date is not None:
+                # 전기 사업연도는 전년
+                py_year = year - 1
+                py_fy_s = f"{py_year}-01-01"
+                py_fy_e = f"{py_year}-12-31"
+                py_사용월수 = months_in(py_in_service_date, py_fy_e)
+            else:
+                py_사용월수 = 12
+            py_월할계수 = py_사용월수 / 12.0
+
+            if 실제방법 == "정액법":
+                py_limit = int(py_accumulated_dep_begin + py_booked_depreciation + py_expensed_capex) * 최종상각률 * py_월할계수 if False else int(acquisition_cost * 최종상각률 * py_월할계수)
+                # 정액법: 취득가액 × 상각률 × 월수/12
+                py_limit = int(acquisition_cost * 최종상각률 * py_월할계수)
+            else:  # 정률법
+                # 정률법 = (취득가액 − accumulated_dep_begin + disallowed_begin(양수분)) × 상각률 × 월수/12
+                양수_disallowed = max(0, py_disallowed_begin)
+                py_기초미상각 = acquisition_cost - py_accumulated_dep_begin + 양수_disallowed
+                py_limit = int(py_기초미상각 * 최종상각률 * py_월할계수)
+        else:
+            py_limit = int(py_limit)
+
+        py_회사계상액 = py_booked_depreciation + py_expensed_capex
+        py_부인액 = max(0, py_회사계상액 - py_limit)
+        py_시인부족액 = max(0, py_limit - py_회사계상액)
+
+        # 전기 부인액 추인 (영 제32조①): 시인부족액은 disallowed_begin 양수 범위에서 추인
+        py_추인액 = 0
+        if py_시인부족액 > 0 and py_disallowed_begin > 0:
+            py_추인액 = min(py_시인부족액, py_disallowed_begin)
+
+        # 감가상각의제 (영 제30조): tax_exempt면 시인부족액(추인 후 남은)을 의제상각액(△유보)으로 처리
+        py_의제상각액 = 0
+        py_추인후시인부족 = py_시인부족액 - py_추인액
+        if py_tax_exempt and py_추인후시인부족 > 0:
+            py_의제상각액 = py_추인후시인부족
+
+        # 당기 기초값 도출
+        derived_accumulated_dep_begin = py_accumulated_dep_begin + py_booked_depreciation
+        derived_prior_disallowed = py_disallowed_begin + py_부인액 - py_추인액 - py_의제상각액
+        derived_prior_book_value = acquisition_cost - derived_accumulated_dep_begin
+
+        # 명시 인자와 충돌 검사
+        if accumulated_dep_begin is not None and accumulated_dep_begin != derived_accumulated_dep_begin:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"prior_year와 accumulated_dep_begin 값이 다름 (prior_year: {derived_accumulated_dep_begin:,}원, 입력: {accumulated_dep_begin:,}원)"],
+                    "필요 입력": ["prior_year와 accumulated_dep_begin 중 하나만 사용"]}
+        if prior_disallowed != 0 and prior_disallowed != derived_prior_disallowed:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"prior_year와 prior_disallowed 값이 다름 (prior_year: {derived_prior_disallowed:,}원, 입력: {prior_disallowed:,}원)"],
+                    "필요 입력": ["prior_year와 prior_disallowed 중 하나만 사용"]}
+        if prior_book_value is not None and prior_book_value != derived_prior_book_value:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"prior_year와 prior_book_value 값이 다름 (prior_year: {derived_prior_book_value:,}원, 입력: {prior_book_value:,}원)"],
+                    "필요 입력": ["prior_year와 prior_book_value 중 하나만 사용"]}
+
+        #derived 값 사용
+        accumulated_dep_begin = derived_accumulated_dep_begin
+        prior_disallowed = derived_prior_disallowed
+        prior_book_value = derived_prior_book_value
+
+        전기_계산 = {
+            "전기_상각범위액": py_limit,
+            "전기_회사계상액": py_회사계상액,
+            "전기_부인액": py_부인액,
+            "전기_추인액": py_추인액,
+            "전기_의제상각액": py_의제상각액,
+            "기초_상각부인누계액": derived_prior_disallowed,
+            "기초_감가상각누계액": derived_accumulated_dep_begin,
+            "직전_장부가액": derived_prior_book_value,
+        }
+
+        판단_목록.append({"항목": "전기 시부인 계산", "결론": f"전기 회사 계상 {py_회사계상액:,}원 − 전기 범위액 {py_limit:,}원 = {'부인액' if py_부인액 > 0 else '시인부족'} {abs(py_회사계상액 - py_limit):,}원, {'전기 부인누계' if py_disallowed_begin > 0 else ''} {abs(py_disallowed_begin):,}원에서 {'추인' if py_추인액 > 0 else ''} {py_추인액:,}원{' + 의제상각' if py_의제상각액 > 0 else ''} → 기초 부인누계 {derived_prior_disallowed:,}원",
+                          "근거": "법인세법 시행령 제32조①·제30조", "이유": f"전기 시인부족 {py_시인부족액:,}원 {'추인' if py_추인액 > 0 else '미추인'} → 기초 부인누계 {derived_prior_disallowed:,}원"})
 
     # 건축물·무형자산 + 정률법 → 오류 (영 제26조①, 어휘 정액법만_허용)
     if method in ("정률법", "무신고") and asset_class in 정액법만_허용:
@@ -584,15 +675,17 @@ def depreciation_adjustment(year, method, acquisition_cost, booked_depreciation,
         "기말 감가상각누계액": 기말누계,
         "소멸 시인부족액": 소멸시인부족,
     }
+    if 전기_계산 is not None:
+        계산["전기_계산"] = 전기_계산
     return {"결과": 결과, "계산": 계산, "판단": 판단_목록, "산식": 계산_근거}
 
 
-def foreign_tax_credit(year, base, base_includes_grossup, method, countries, months=12):
+def foreign_tax_credit(year, base, method, countries, base_includes_grossup=None, months=12):
     """법인세 외국납부세액공제(직접·간주·간접, 국가별 한도, 한도초과 이월).
 
     입력:
       year — 사업연도(2016~2026)
-      base — 과세표준(원). base_includes_grossup — base에 Gross-up 포함 여부.
+      base — 과세표준(원). base_includes_grossup — base에 Gross-up 포함 여부(기본 None → 포함으로 가정).
       method — '세액공제'|'손금산입'(2020년까지).
       countries — 국가별 [{country, foreign_income, direct_tax, deemed_tax?, related_costs?, reduction_excluded?,
                              subsidiaries?}]
@@ -862,7 +955,9 @@ def foreign_tax_credit(year, base, base_includes_grossup, method, countries, mon
         분모 = 과세표준 if 과세표준 > 0 else 1
     else:
         # 세액공제 method: base_includes_grossup=false면 Gross-up합산액을 더함
-        과세표준 = base + (총Grossup익금산입액 if not base_includes_grossup else 0)
+        # base_includes_grossup=None이면 포함으로 가정(기본)
+        grossup_포함 = base_includes_grossup if base_includes_grossup is not None else True
+        과세표준 = base + (총Grossup익금산입액 if not grossup_포함 else 0)
         산출세액 = corp_tax(과세표준, year, months) if 과세표준 > 0 else 0
         분모 = 과세표준 if 과세표준 > 0 else 1
 
@@ -959,7 +1054,9 @@ def foreign_tax_credit(year, base, base_includes_grossup, method, countries, mon
             )
 
     # ── Gross-up 익금산입 세무조정 ───────────────────────────────────
-    if method == "세액공제" and 총Grossup익금산입액 > 0 and not base_includes_grossup:
+    # base_includes_grossup=None이면 포함으로 가정(기본)
+    grossup_포함 = base_includes_grossup if base_includes_grossup is not None else True
+    if method == "세액공제" and 총Grossup익금산입액 > 0 and not grossup_포함:
         세무조정목록.append({
             "구분": "간접외국납부세액 익금산입(Gross-up)",
             "금액": 총Grossup익금산입액,
@@ -1017,12 +1114,18 @@ def foreign_tax_credit(year, base, base_includes_grossup, method, countries, mon
             _seen.add(_key)
             _uniq.append(_x)
 
+    # base_includes_grossup이 미지정(None)이면 판단 텍스트 추가
+    판단목록 = []
+    if base_includes_grossup is None:
+        판단목록.append("base에 간접외국납부세액이 포함된 것으로 가정(미지정)")
+
     return {
         "결과": 결과,
         "근거": _uniq,
         "연도별_근거": {
             "외국납부세액공제": fta_basis,
         },
+        "판단": 판단목록,
     }
 
 
@@ -1074,6 +1177,9 @@ def _calc_ownership_ratio(inv):
     # ratio 방식
     if "ratio" in inv:
         ratio = inv["ratio"]
+        # ratio가 1보다 크고 100 이하이면 백분율로 해석 (100으로 나눔)
+        if ratio > 1 and ratio <= 100:
+            ratio = ratio / 100.0
         within_3m_div = inv.get("within_3m_dividend", 0)
         return ratio, within_3m_div
 
@@ -1489,6 +1595,11 @@ def dividend_received_deduction(
 
         # 출자비율·제외 배당 계산
         ratio, within_3m_dividend = _calc_ownership_ratio(inv)
+
+        # ratio가 백분율로 입력된 경우 판단 기록
+        if "ratio" in inv and inv["ratio"] > 1 and inv["ratio"] <= 100:
+            판단_목록.append({"항목": f"{name} 출자비율 해석", "결론": f"ratio {inv['ratio']} → {inv['ratio']/100:.1%}({inv['ratio']/100:.4f})로 해석(백분율 입력)",
+                              "근거": "법인세법 제18조의2", "이유": "ratio 10 → 10%(0.1)로 해석(백분율 입력)"})
 
         if ratio < 0 or ratio > 1:
             problems.append(f"{name}: ratio({ratio})가 0~1 범위 밖")
