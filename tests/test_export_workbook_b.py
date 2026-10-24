@@ -155,6 +155,10 @@ def test_basis_lines_keep_positions(tmp_path):
     assert "부가가치세법 시행령 제81조①" in b
     parts = [x.strip() for x in b.split(",")]
     assert len(parts) == len(set(parts))
+    # 항목별로 한 겹 더 감싼 근거(earned_income_gross_pay)도 같은 규칙. 4번째 칸이 'N호'로 시작하면 호까지만
+    wage = [v for v in cells(wb["요약"]) if isinstance(v, str) and "소득세법 제20조①" in v]
+    assert wage and " — " not in wage[0] and "\n" not in wage[0] and "수입시기" not in wage[0]
+    assert "소득세법 제20조①1호" in wage[0]
     for s in [s for s in wb.sheetnames if s.startswith("계산")]:
         labels = [r[0] for r in wb[s].iter_rows(values_only=True)]
         assert labels.count("합계") == 0 or "금액 합계(방향 무관)" not in labels
