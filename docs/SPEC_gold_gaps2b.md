@@ -7,3 +7,6 @@
 3. `estimated_business_income`: `multiplier`는 배율이라 `_rate_norm`을 쓰지 않는다(2.8은 2.8). `revenues`·`expenses`의 `구분`이 허용값 밖이면 error(조용히 빼지 않음).
 4. `corporate_deemed_rent_income`: `임대면적비율`도 `_rate_norm`으로(20 → 0.2). 0을 주면 0으로(지금은 `or 1` 때문에 1이 됨), 키가 없을 때만 기본 1.
 5. `income_adjustment_total`: `방향`이 '가산'|'차감'|'없음' 밖이면 error.
+
+## 리뷰 반영(2026-10-24, PR #30 CodeSolar)
+6. `corporate_deemed_rent_income`: `임대면적비율 = _rate_norm(...) or 1`은 0을 1로 바꾼다. 키가 없거나 None일 때만 1, 0은 0으로 둔다. 테스트 `test_deemed_rent_area_ratio_zero_kept_zero`.

@@ -184,3 +184,9 @@ def test_deemed_rent_area_ratio_accepts_percent():
 def test_income_adjustment_rejects_unknown_direction():
     r = c("income_adjustment_total", {"net_income": 10000000, "items": [{"항목": "가", "종류": "법인세비용", "금액": 1000000, "방향": "더하기"}]})
     assert "입력 확인 필요" in json.dumps(r, ensure_ascii=False)
+
+
+def test_deemed_rent_area_ratio_zero_kept_zero():
+    rentals = [{"구분": "비주택", "보증금": 50000000, "건설비": 100000000, "임대면적비율": 0}]
+    r = c("corporate_deemed_rent_income", {"year": 2024, "rentals": rentals, "rate": 0.05})
+    assert r["계산"]["건설비상당액적수"] == 0 and r["결과"]["간주익금"] == 2500000
