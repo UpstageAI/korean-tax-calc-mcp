@@ -91,3 +91,18 @@ def test_formulas_recalculate_to_tool_values(tmp_path):
     wb = openpyxl.load_workbook(next(out.glob("*.xlsx")), data_only=True)
     checks = [c.value for s in ("계산 1", "계산 2") for row in wb[s].iter_rows() for c in row if c.value in ("일치", "확인 필요")]
     assert len(checks) >= 10 and set(checks) == {"일치"}
+
+
+@pytest.mark.parametrize("mod", [{"sme": False}, {"revenue": {"매출액": 80000000000, "특수관계매출": 3000000000}},
+                                 {"revenue": {"매출액": 500000000}}, {"months": 6}, {"year": 2019},
+                                 {"sme": False, "revenue": {"매출액": 120000000000, "특수관계매출": 70000000000}}])
+def test_entertainment_formula_steps_hold_for_other_inputs(mod):
+    r = c("entertainment_adjustment", {**ENT, **mod})
+    steps = evaluate(r)
+    assert steps["한도초과"]["값"] == r["결과"]["한도초과"] and steps["한도"]["값"] == r["결과"]["한도"]
+
+
+def test_item_inputs_carry_original_names():
+    r = c("entertainment_adjustment", ENT)
+    descs = " ".join(i["설명"] for i in r["계산식_입력"] if i["이름"].startswith("항목"))
+    assert "거래처 증정 제품" in descs and "체육활동 입장권" in descs

@@ -109,12 +109,12 @@ def _eval(ws, v):
 
 
 def _labelled(ws):
-    """A열 라벨 → 같은 행에서 처음 나오는 수식의 계산값."""
+    """A열 라벨 → 같은 행에서 처음 나오는 수식의 계산값. 세무조정 표의 합계·확인 행만(계산식 수식 표는 SPEC_c 테스트가 LibreOffice로 확인)."""
     out = {}
     for row in ws.iter_rows():
         lab = row[0].value
         f = next((c for c in row[1:] if isinstance(c.value, str) and c.value.startswith("=")), None)
-        if isinstance(lab, str) and f is not None:
+        if isinstance(lab, str) and f is not None and (lab in ("가산 합계", "차감 합계", "순액", "금액 합계(방향 무관)") or lab.startswith("확인 (")):
             out[lab] = _eval(ws, f.value)
     return out
 
