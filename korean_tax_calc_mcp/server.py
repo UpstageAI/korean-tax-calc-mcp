@@ -4745,6 +4745,450 @@ def inventory_valuation_adjustment(
         return r
     return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r.get("판단", []))
 
+# ── 0.2 추가: 도구 공백 5건 (SPEC_gold_gaps2) ──────────────────────
+
+def _rate_norm(r):
+    """비율 입력 정규화: 1 초과면 ÷100, 아니면 그대로. 0~1 소수 또는 '%' 표기(예 '5%') 둘 다 허용."""
+    if r is None: return None
+    if isinstance(r, str):
+        r = r.strip()
+        if r.endswith("%"):
+            r = r[:-1]
+        r = float(r)
+    else:
+        r = float(r)
+    return r / 100 if r > 1 else r
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def corporate_deemed_rent_income(
+    year: YEAR,
+    rentals: Annotated[list, Field(description="[{구분:'주택'|'비주택', 보증금(원), 건설비(건물 취득·건설 누계, 원), 임대면적비율?(기본1=건물 전체, 소수), 일수?(기본 그 해 일수)}]")],
+    financial_income: Annotated[int, Field(description="비주택 임대사업 금융수익 합계(수입이자·할인료·배당금 등, 원)", ge=0)] = 0,
+    rate: Annotated[str | float | None, Field(description="정기예금이자율(소수 또는 '%' 표기 예 '5%', 1 초과면 ÷100, 생략 시 연도표)")]=None,
+    debt_over_2x: Annotated[bool, Field(description="차입금적수 > 자기자본적수×2 여부(기본 True)")] = True,
+    rental_main_business: Annotated[bool, Field(description="부동산임대업 주업 여부(기본 True)")] = True,
+) -> dict:
+    """법인 임대보증금 간주익금(조특법 제138조, 조특령 제132조). 언제: 법인이 부동산임대업에서 임대보증금을 받을 때 그중 일부를 간주익금으로 익금산입할지 계산한다.
+입력: 사업연도(2016~2026) → year, 임대물건 목록 [{구분, 보증금, 건설비, 임대면적비율, 일수}] → rentals, 비주택 금융수익 합계(원) → financial_income, 정기예금이자율(소수·% 모두 허용, 생략 시 연도표) → rate, 차입금 과다 여부 → debt_over_2x, 부동산임대 주업 여부 → rental_main_business.
+결과: 간주익금·보증금적수·건설비상당액적수·제외_주택보증금·세무조정, 판단(건물별 결론), 근거(조세특례제한법 제138조①·②, 시행령 제132조)."""
+    import calendar as _cal
+    rate = _rate_norm(rate)
+    if rate is None:
+        rate = V.DEEMED_RENT_RATE.get(year)
+        if rate is None:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"{year}년 정기예금이자율 연도표 없음"]}
+    year_days = 366 if _cal.isleap(year) else 365
+
+    if not debt_over_2x or not rental_main_business:
+        return _ok({"간주익금": 0, "세무조정": []},
+                   "조세특례제한법 제138조①",
+                   계산={"보증금적수": 0, "건설비상당액적수": 0, "제외_주택보증금": 0},
+                   판단=[{"항목": "적용요건", "결론": "적용 대상 아님 — 차입금 과다·부동산임대 주업 법인만 (조특법 제138조①)", "근거": "조특법 제138조①"}],
+                   산식=f"적용요건 미충족(부채과다={debt_over_2x}, 주업={rental_main_business}) → 간주익금 0")
+
+    보증금적수 = 0
+    건설비상당액적수 = 0
+    제외_주택보증금 = 0
+    판단 = []
+
+    for r in rentals:
+        구분 = r.get("구분", "")
+        보증금 = int(r.get("보증금", 0) or 0)
+        건설비 = int(r.get("건설비", 0) or 0)
+        임대면적비율 = float(r.get("임대면적비율", 1) or 1)
+        일수 = int(r.get("일수", 0) or year_days)
+        if 구분 == "주택":
+            제외_주택보증금 += 보증금
+            판단.append({"항목": f"{구분} 보증금 {보증금:,}원",
+                         "결론": "제외 — 주택(부수토지 포함) 임대보증금은 간주익금 대상 아님 (조특법 제138조① 괄호)",
+                         "근거": "조특법 제138조①"})
+        elif 구분 == "비주택":
+            보증금적수 += 보증금 * 일수
+            건설비상당액적수 += 건설비 * 임대면적비율 * 일수
+            판단.append({"항목": f"{구분} 보증금 {보증금:,}원 · 건설비 {건설비:,}원 · 비율 {임대면적비율} · 일수 {일수}",
+                         "결론": f"적용 — 보증금적수 {보증금*일수:,}원, 건설비상당액적수 {건설비*임대면적비율*일수:,}원",
+                         "근거": "조특법 제138조①, 조특령 제132조"})
+        else:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"rentals: 구분='{구분}'은(는) 허용값 아님 — '주택'|'비주택'"]}
+
+    net_jeoksu = max(0, 보증금적수 - 건설비상당액적수)
+    간주익금 = int(max(0, net_jeoksu / year_days * rate - financial_income))
+    세무조정 = []
+    if 간주익금 > 0:
+        세무조정.append({"구분": "임대보증금 간주익금", "금액": 간주익금, "소득처분": "기타사외유출"})
+
+    return _ok({"간주익금": 간주익금, "세무조정": 세무조정},
+               "조세특례제한법 제138조①②, 시행령 제132조",
+               계산={"보증금적수": 보증금적수, "건설비상당액적수": 건설비상당액적수, "제외_주택보증금": 제외_주택보증금},
+               판단=판단,
+               산식=f"max(0, ({보증금적수:,} − {건설비상당액적수:,}) ÷ {year_days} × {rate} − {financial_income:,}) = {간주익금:,}원")
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def estimated_business_income(
+    year: YEAR,
+    industry_group: Annotated[Literal["가", "나", "다"], Field(description="업종군: '가'=농업·도소매·부동산매매 등, '나'=제조·숙박음식·건설 등, '다'=부동산임대·서비스 등")],
+    prior_year_revenue: Annotated[int, Field(description="직전연도 수입금액(원)", ge=0)],
+    revenues: Annotated[list, Field(description="[{구분:'매출'|'보조금'|'유형자산처분'|'기타', 금액(원)}]")],
+    expenses: Annotated[list, Field(description="[{구분:'매입'|'임차료'|'인건비'|'기타'|'자산취득', 금액(원)}] — 증빙 입증 지출")],
+    base_rate: Annotated[str | float, Field(description="기준경비율(소수 또는 '%' 표기 예 '20%')")],
+    simple_rate: Annotated[str | float, Field(description="단순경비율(소수 또는 '%' 표기 예 '60%')")],
+    new_business: Annotated[bool, Field(description="신규 사업 여부(기본 False)")] = False,
+    multiplier: Annotated[str | float | None, Field(description="배율(소수 또는 '%' 표기, {간편:2.8, 복식:3.4} 기본)")] = None,
+) -> dict:
+    """추계 사업소득금액(소득령 제143조, 제208조⑤). 언제: 장부가 없거나 불충분한 사업자의 사업소득금액을 추계로 계산할 때.
+입력: 귀속연도(2016~2026) → year, 업종군(가·나·다) → industry_group, 직전연도 수입금액(원) → prior_year_revenue, 수입금액 목록 [{구분, 금액}] → revenues, 증빙 입증 지출 목록 [{구분, 금액}] → expenses, 기준경비율 → base_rate, 단순경비율 → simple_rate, 신규 사업 여부 → new_business, 배율(소수·% 허용, 생략 시 업종별 기본) → multiplier.
+결과: 사업소득금액·계산(수입금액·장부구분·적용방법·주요경비·기준경비율_소득·한도), 판단(수입금액 구성·제외·적용방법 사유·주요경비 제외), 근거(소득세법 시행령 제143조·제208조⑤)."""
+    base_rate = _rate_norm(base_rate)
+    simple_rate = _rate_norm(simple_rate)
+    multiplier = _rate_norm(multiplier)
+
+    # 기준금액표
+    기준표 = {"가": {"간편장부": 300_000_000, "단순경비율": 60_000_000},
+              "나": {"간편장부": 150_000_000, "단순경비율": 36_000_000},
+              "다": {"간편장부": 75_000_000,  "단순경비율": 24_000_000}}
+    if industry_group not in 기준표:
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"industry_group='{industry_group}'은(는) 허용값 아님 — '가'|'나'|'다'"]}
+    기준 = 기준표[industry_group]
+
+    # 장부구분
+    if new_business:
+        장부구분 = "간편장부대상자"
+    elif prior_year_revenue < 기준["간편장부"]:
+        장부구분 = "간편장부대상자"
+    else:
+        장부구분 = "복식부기의무자"
+
+    # 배율
+    if multiplier is None:
+        multiplier = 2.8 if 장부구분 == "간편장부대상자" else 3.4
+
+    # 수입금액
+    매출 = sum(int(r.get("금액", 0) or 0) for r in revenues if r.get("구분") == "매출")
+    보조금 = sum(int(r.get("금액", 0) or 0) for r in revenues if r.get("구분") == "보조금")
+    기타 = sum(int(r.get("금액", 0) or 0) for r in revenues if r.get("구분") == "기타")
+    유형자산처분 = sum(int(r.get("금액", 0) or 0) for r in revenues if r.get("구분") == "유형자산처분")
+
+    수입금액 = 매출 + 보조금 + 기타
+    수입금액_판단 = []
+    if 장부구분 == "복식부기의무자":
+        수입금액 += 유형자산처분
+        수입금액_판단.append(f"복식부기의무자 — 유형자산처분 {유형자산처분:,}원 포함")
+    else:
+        수입금액_판단.append(f"간편장부대상자 — 유형자산처분 {유형자산처분:,}원 제외(소득령 제143조①)")
+
+    # 적용방법
+    if new_business or prior_year_revenue < 기준["단순경비율"]:
+        if 수입금액 < 기준["간편장부"]:
+            적용방법 = "단순경비율"
+        else:
+            적용방법 = "기준경비율"
+    else:
+        적용방법 = "기준경비율"
+
+    판단 = []
+    판단.append({"항목": "직전연도 수입금액", "결론": f"{prior_year_revenue:,}원 — {'단순경비율 기준 미만' if (new_business or prior_year_revenue < 기준['단순경비율']) else '단순경비율 기준 이상'} (기준 {기준['단순경비율']:,}원)",
+                 "근거": "소득령 제143조④"})
+    판단.append({"항목": "당해 수입금액", "결론": f"{수입금액:,}원 — {'간편장부 기준 미만' if 수입금액 < 기준['간편장부'] else '간편장부 기준 이상'} (기준 {기준['간편장부']:,}원)",
+                 "근거": "소득령 제143조④"})
+    판단.append({"항목": "적용방법", "결론": 적용방법, "근거": "소득령 제143조③④"})
+
+    if 적용방법 == "단순경비율":
+        사업소득금액 = int(round(수입금액 * (1 - simple_rate), 6))
+        return _ok({"사업소득금액": 사업소득금액},
+                   "소득세법 시행령 제143조③",
+                   계산={"수입금액": 수입금액, "장부구분": 장부구분, "적용방법": 적용방법, "주요경비": 0,
+                         "기준경비율_소득": 0, "한도": None},
+                   판단=판단 + [{"항목": "단순경비율 소득", "결론": f"{수입금액:,} × (1 − {simple_rate}) = {사업소득금액:,}원",
+                                  "근거": "소득령 제143조③"}])
+
+    # 기준경비율
+    매입 = sum(int(r.get("금액", 0) or 0) for r in expenses if r.get("구분") == "매입")
+    임차료 = sum(int(r.get("금액", 0) or 0) for r in expenses if r.get("구분") == "임차료")
+    인건비 = sum(int(r.get("금액", 0) or 0) for r in expenses if r.get("구분") == "인건비")
+    주요경비 = 매입 + 임차료 + 인건비
+
+    주요경비_판단 = []
+    기타_지출 = sum(int(r.get("금액", 0) or 0) for r in expenses if r.get("구분") == "기타")
+    자산취득_지출 = sum(int(r.get("금액", 0) or 0) for r in expenses if r.get("구분") == "자산취득")
+    if 기타_지출 > 0:
+        주요경비_판단.append(f"기타 지출 {기타_지출:,}원 — 주요경비에서 제외")
+    if 자산취득_지출 > 0:
+        주요경비_판단.append(f"자산취득 지출 {자산취득_지출:,}원 — 주요경비에서 제외")
+
+    적용기준경비율 = base_rate / 2 if 장부구분 == "복식부기의무자" else base_rate
+    기준경비율_소득 = 수입금액 - 주요경비 - 수입금액 * 적용기준경비율
+    기준경비율_소득 = max(0, int(round(기준경비율_소득, 6)))
+    단순경비율_소득 = int(round(수입금액 * (1 - simple_rate), 6))
+    한도 = int(round(단순경비율_소득 * multiplier, 6))
+    사업소득금액 = min(기준경비율_소득, 한도)
+
+    판단.append({"항목": "주요경비", "결론": f"매입 {매입:,} + 임차료 {임차료:,} + 인건비 {인건비:,} = {주요경비:,}원 (기타·자산취득 제외)",
+                 "근거": "소득령 제143조③"})
+    if 주요경비_판단:
+        for j in 주요경비_판단:
+            판단.append({"항목": "주요경비 제외", "결론": j, "근거": "소득령 제143조③"})
+    판단.append({"항목": "기준경비율 소득", "결론": f"{수입금액:,} − {주요경비:,} − {수입금액:,}×{적용기준경비율} = {기준경비율_소득:,}원",
+                 "근거": "소득령 제143조③"})
+    판단.append({"항목": "단순경비율 소득 × 배율", "결론": f"{단순경비율_소득:,} × {multiplier} = {한도:,}원 (한도)",
+                 "근거": "소득령 제143조③ 단서"})
+    판단.append({"항목": "사업소득금액", "결론": f"min({기준경비율_소득:,}, {한도:,}) = {사업소득금액:,}원",
+                 "근거": "소득령 제143조③"})
+
+    return _ok({"사업소득금액": 사업소득금액},
+               "소득세법 시행령 제143조③④, 제208조⑤",
+               계산={"수입금액": 수입금액, "장부구분": 장부구분, "적용방법": 적용방법, "주요경비": 주요경비,
+                     "기준경비율_소득": 기준경비율_소득, "한도": 한도},
+               판단=판단,
+               산식=f"수입금액 {수입금액:,} − 주요경비 {주요경비:,} − {수입금액:,}×{적용기준경비율}={기준경비율_소득:,}, 단순경비율 소득×{multiplier}={한도:,} → min = {사업소득금액:,}원")
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def vat_exempt_use_deemed_supply(
+    use_date: Annotated[str, Field(description="면세사업에 쓰기 시작한 날(YYYY-MM-DD)")],
+    mode: Annotated[Literal["전부", "일부"], Field(description="전용 범위: '전부'=전액 면세전용, '일부'=과세·면세 공통 사용")],
+    assets: Annotated[list, Field(description="[{구분:'건물'|'구축물'|'기타'|'토지'|'비상각', 취득일(YYYY-MM-DD), 취득가액(원), 매입세액공제?(기본True, bool), 시가?(비상각시 필수, 원)}]")],
+    supplies: Annotated[dict | None, Field(description="일부일 때 필수: {taxable: 과세 공급가액(원), exempt: 면세 공급가액(원)}")]=None,
+) -> dict:
+    """면세전용 간주공급 과세표준(부가법 제10조①, 부가령 제66조). 언제: 과세사업에 쓰던 재화를 면세사업에 전용할 때 간주공급 과세표준을 계산한다.
+입력: 전용일(YYYY-MM-DD) → use_date, 전용 범위(전부/일부) → mode, 자산 목록 [{구분, 취득일, 취득가액, 매입세액공제, 시가}] → assets, 일부일 때 공급가액 {taxable, exempt} → supplies.
+결과: 과세표준·계산(자산별 경과과세기간수·간주시가·제외사유, 면세비율)·판단, 근거(부가가치세법 제10조①, 시행령 제66조)."""
+    if mode == "일부" and (supplies is None or not isinstance(supplies, dict) or "taxable" not in supplies or "exempt" not in supplies):
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": ["일부 전용 시 supplies={taxable, exempt} 필요"]}
+
+    판단 = []
+    자산별 = []
+    간주시가_합 = 0
+
+    for a in assets:
+        구분 = a.get("구분", "")
+        취득일 = str(a.get("취득일", ""))
+        취득가액 = int(a.get("취득가액", 0) or 0)
+        매입세액공제 = bool(a.get("매입세액공제", True))
+        시가 = a.get("시가")
+
+        # 토지 제외
+        if 구분 == "토지":
+            자산별.append({"구분": 구분, "제외사유": "토지 — 면세 재화(부가법 제10조① 괄호)",
+                           "근거": "부가법 제10조①"})
+            판단.append({"항목": f"{구분} {취득일} 취득가액 {취득가액:,}원", "결론": "제외 — 토지(면세 재화)",
+                         "근거": "부가법 제10조①"})
+            continue
+
+        # 매입세액공제 받지 않은 자산 제외
+        if not 매입세액공제:
+            자산별.append({"구분": 구분, "제외사유": "매입세액공제 받지 않은 자산(부가법 제10조① 괄호)",
+                           "근거": "부가법 제10조①"})
+            판단.append({"항목": f"{구분} {취득일} 취득가액 {취득가액:,}원", "결론": "제외 — 매입세액공제 미수령 자산",
+                         "근거": "부가법 제10조①"})
+            continue
+
+        # 비상각 재화
+        if 구분 == "비상각":
+            if 시가 is None:
+                return {"error": "입력 확인 필요 — 계산하지 않음",
+                        "문제": [f"assets: 비상각 자산은 시가 필수"]}
+            간주시가 = int(시가를) if isinstance(시가, (int, float)) else int(시가)
+            자산별.append({"구분": 구분, "경과과세기간수": 0, "간주시가": 간주시가})
+            간주시가_합 += 간주시가
+            판단.append({"항목": f"{구분} {취득일} 취득가액 {취득가액:,}원, 시가 {간주시가:,}원",
+                         "결론": f"비상각 재화 — 시가 {간주시가:,}원 적용",
+                         "근거": "부가령 제66조①"})
+            continue
+
+        # 감가상각자산
+        체감률 = 0.05 if 구분 in ("건물", "구축물") else 0.25
+        경과 = V.elapsed_periods(취득일, use_date)
+        간주시가 = int(max(0, 취득가액 * (1 - 체감률 * 경과)))
+        자산별.append({"구분": 구분, "경과과세기간수": 경과, "간주시가": 간주시가})
+        간주시가_합 += 간주시가
+        판단.append({"항목": f"{구분} {취득일} 취득, 취득가액 {취득가액:,}원",
+                     "결론": f"경과과세기간수 {경과}기, 간주시가 {취득가액:,}×(1−{체감률}×{경과})={간주시가:,}원",
+                     "근거": "부가령 제66조①"})
+
+    if mode == "전부":
+        과세표준 = 간주시가_합
+        면세비율 = None
+    else:
+        taxable = int(supplies.get("taxable", 0) or 0)
+        exempt = int(supplies.get("exempt", 0) or 0)
+        total = taxable + exempt
+        면세비율 = exempt / total if total > 0 else 0
+        if 면세비율 < 0.05:
+            과세표준 = 0
+            판단.append({"항목": "면세비율", "결론": f"{면세비율*100:.1f}% < 5% → 과세표준 0 (부가령 제66조③ 단서)",
+                         "근거": "부가령 제66조③"})
+        else:
+            과세표준 = int(간주시가_합 * 면세비율)
+            판단.append({"항목": "면세비율", "결론": f"면세 공급가액 {exempt:,} / 총 {total:,} = {면세비율*100:.1f}% ≥ 5%",
+                         "근거": "부가령 제66조③"})
+
+    계산 = {"자산별": 자산별}
+    if mode == "일부":
+        계산["면세비율"] = 면세비율
+
+    return _ok({"과세표준": 과세표준},
+               "부가가치세법 제10조①, 시행령 제66조",
+               계산=계산,
+               판단=판단,
+               산식=("전부: 간주시가 합 = " + f"{간주시가_합:,}원" if mode == "전부" else
+                     f"간주시가 합 {간주시가_합:,} × 면세비율 {면세비율*100:.1f}% = {과세표준:,}원"))
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def liquidation_income(
+    assets_realized: Annotated[int | list, Field(description="환가 총액(원) 또는 [{항목, 금액(원)}]")],
+    liabilities_paid: WON,
+    capital: WON,
+    surplus: WON,
+    yubo: Annotated[int, Field(description="세무상 유보 잔액(원, △유보는 음수)", ge=None)] = 0,
+    carryforward_loss: Annotated[int, Field(description="세무상 이월결손금 잔액(원)", ge=0)] = 0,
+    capitalized_surplus_2y: Annotated[int, Field(description="해산등기일 전 2년 이내 자본금에 전입한 잉여금(원)", ge=0)] = 0,
+    refund_tax: Annotated[int, Field(description="해산등기일 현재 환급될 법인세(원)", ge=0)] = 0,
+) -> dict:
+    """청산소득금액(법인세법 제79조). 언제: 법인이 해산·청산할 때 청산소득금액을 계산한다.
+입력: 환가 총액(원) 또는 [{항목, 금액}] → assets_realized, 부채 상환액(원) → liabilities_paid, 자본금(원) → capital, 자본잉여금+이익잉여금(원) → surplus, 세무상 유보 잔액(원, △유보는 음수) → yubo, 이월결손금 잔액(원) → carryforward_loss, 2년 이내 자본전입 잉여금(원) → capitalized_surplus_2y, 환급 법인세(원) → refund_tax.
+결과: 청산소득금액·계산(잔여재산가액·자기자본총액·결손금_상계·자본금·잉여금)·판단, 근거(법인세법 제79조)."""
+    # 환가 총액
+    if isinstance(assets_realized, list):
+        환가총액 = sum(int(a.get("금액", 0) or 0) for a in assets_realized)
+    else:
+        환가총액 = int(assets_realized) if assets_realized else 0
+
+    잔여재산가액 = 환가총액 - liabilities_paid
+
+    # 2년 이내 자본전입 잉여금 조정: 전입하지 않은 것으로 봄
+    자본금 = capital - int(capitalized_surplus_2y)
+    잉여금 = int(surplus) + int(yubo) + int(capitalized_surplus_2y)
+
+    판단 = []
+    if int(capitalized_surplus_2y) > 0:
+        판단.append({"항목": "2년 이내 자본전입 잉여금", "결론": f"{int(capitalized_surplus_2y):,}원 — 전입하지 않은 것으로 봄: 자본금 {capital:,}→{자본금:,}원, 잉여금 +{int(capitalized_surplus_2y):,}원 (법 제79조⑤)",
+                     "근거": "법인세법 제79조⑤"})
+
+    # 이월결손금 상계
+    상계액 = min(int(carryforward_loss), 잉여금)
+    잉여금_after = 잉여금 - 상계액
+    if 상계액 > 0:
+        판단.append({"항목": "이월결손금 상계", "결론": f"min({int(carryforward_loss):,}원, 잉여금 {잉여금:,}원) = {상계액:,}원 상계, 잔여 잉여금 {잉여금_after:,}원 (법 제79조④)",
+                     "근거": "법인세법 제79조④"})
+    elif int(carryforward_loss) > 잉여금:
+        판단.append({"항목": "이월결손금", "결론": f"이월결손금 {int(carryforward_loss):,}원 > 잉여금 {잉여금:,}원 → 초과분 없는 것으로 봄 (법 제79조④)",
+                     "근거": "법인세법 제79조④"})
+
+    자기자본총액 = 자본금 + 잉여금_after + int(refund_tax)
+    청산소득금액 = 잔여재산가액 - 자기자본총액
+
+    if 청산소득금액 <= 0:
+        판단.append({"항목": "청산소득금액", "결론": "청산소득 없음", "근거": "법인세법 제79조"})
+
+    return _ok({"청산소득금액": int(청산소득금액)},
+               "법인세법 제79조",
+               계산={"잔여재산가액": 잔여재산가액, "자기자본총액": 자기자본총액,
+                     "결손금_상계": 상계액, "자본금": 자본금, "잉여금": 잉여금_after},
+               판단=판단,
+               산식=f"잔여재산가액 {잔여재산가액:,} − 자기자본총액 {자기자본총액:,} = {청산소득금액:,}원")
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def income_adjustment_total(
+    net_income: WON,
+    items: Annotated[list, Field(description="[{항목(이름), 종류, 금액(원), 방향?('가산'|'차감'|'없음'), 소득처분?}]")],
+    donation_excess: Annotated[int, Field(description="기부금 한도초과액(원), 차가감 이후 가산", ge=0)] = 0,
+    donation_carryover_deduction: Annotated[int, Field(description="기부금 한도초과 이월액 손금산입(원)", ge=0)] = 0,
+) -> dict:
+    """차가감소득금액 집계(법인세 과세표준 및 세액조정계산서). 언제: 당기순이익에서 세법상 익금산입·손금산입을 가감해 차가감소득금액과 각 사업연도소득금액을 구할 때.
+입력: 당기순이익(원) → net_income, 조정 항목 목록 [{항목, 종류, 금액, 방향, 소득처분}] → items, 기부금 한도초과액(원) → donation_excess, 기부금 한도초과 이월액 손금산입(원) → donation_carryover_deduction.
+결과: 차가감소득금액·각사업연도소득금액·익금산입_손금불산입·손금산입_익금불산입·세무조정, 판단, 근거(법인세법 제18·19·21·23·24·25·28조 등)."""
+    kinds = vocab.INCOME_ADJUSTMENT_KINDS
+    익금산입 = 0
+    손금산입 = 0
+    세무조정 = []
+    판단 = []
+
+    # 기부금 한도초과 금액 추출 (items 내 종류='기부금 한도초과' 항목에서)
+    extracted_donation_excess = 0
+    for it in items:
+        if it.get("종류") == "기부금 한도초과":
+            extracted_donation_excess += int(it.get("금액", 0) or 0)
+    donation_excess = int(donation_excess) + extracted_donation_excess
+
+    for it in items:
+        항목명 = it.get("항목", "")
+        종류 = it.get("종류", "")
+        금액 = int(it.get("금액", 0) or 0)
+        방향_입력 = it.get("방향", None)
+        소득처분_입력 = it.get("소득처분", None)
+
+        if 종류 not in kinds:
+            if 방향_입력 is None:
+                return {"error": "입력 확인 필요 — 계산하지 않음",
+                        "문제": [f"항목 '{항목명}': 종류 '{종류}' 사전에 없음, 방향을 주세요"]}
+            # 방향은 있으나 사전에 없는 종류 — 소득처분은 입력값 또는 기본
+            방향 = 방향_입력
+            # 소득처분 기본값: 가산→기타사외유출, 차감→기타, 없음→—
+            if 소득처분_입력:
+                소득처분 = 소득처분_입력
+            elif 방향 == "가산":
+                소득처분 = "기타사외유출"
+            elif 방향 == "차감":
+                소득처분 = "기타"
+            else:
+                소득처분 = "—"
+            근거 = "입력 방향 기준"
+        else:
+            kd = kinds[종류]
+            방향 = 방향_입력 if 방향_입력 is not None else kd["방향"]
+            소득처분 = 소득처분_입력 if 소득처분_입력 is not None else kd["소득처분"]
+            근거 = kd["근거"]
+
+        # 기부금 한도초과 — 차가감 이후 가산
+        if 종류 == "기부금 한도초과":
+            판단.append({"항목": 항목명, "결론": f"차가감소득금액 이후 가산 — 금액 {금액:,}원 (법 제24조)",
+                         "근거": 근거})
+            continue
+
+        if 방향 == "없음":
+            판단.append({"항목": 항목명, "결론": f"조정 없음 — {금액:,}원 (손금 인정, 세무조정 대상 아님)",
+                         "근거": 근거})
+            continue
+
+        if 방향 == "가산":
+            익금산입 += 금액
+            세무조정.append({"구분": 항목명, "금액": 금액, "소득처분": 소득처분})
+            판단.append({"항목": 항목명, "결론": f"익금산입(가산) +{금액:,}원, 소득처분 {소득처분}",
+                         "근거": 근거})
+        elif 방향 == "차감":
+            손금산입 += 금액
+            세무조정.append({"구분": 항목명, "금액": 금액, "소득처분": 소득처분})
+            판단.append({"항목": 항목명, "결론": f"손금산입(차감) −{금액:,}원, 소득처분 {소득처분}",
+                         "근거": 근거})
+
+    차가감소득금액 = net_income + 익금산입 - 손금산입
+    각사업연도소득금액 = 차가감소득금액 + int(donation_excess) - int(donation_carryover_deduction)
+
+    if int(donation_excess) > 0:
+        세무조정.append({"구분": "기부금 한도초과", "금액": int(donation_excess), "소득처분": "기타사외유출"})
+        판단.append({"항목": "기부금 한도초과", "결론": f"차가감 이후 가산 +{int(donation_excess):,}원 (법 제24조)",
+                     "근거": "법 제24조"})
+
+    return _ok({"차가감소득금액": 차가감소득금액, "각사업연도소득금액": 각사업연도소득금액,
+                "익금산입_손금불산입": 익금산입, "손금산입_익금불산입": 손금산입,
+                "세무조정": 세무조정},
+               "법인세법 제18·19·21·23·24·25·28조 등",
+               판단=판단,
+               산식=f"당기순이익 {net_income:,} + 익금산입 {익금산입:,} − 손금산입 {손금산입:,} = 차가감 {차가감소득금액:,}원, + 기부금한도초과 {donation_excess:,} − 이월공제 {donation_carryover_deduction:,} = 각사업연도 {각사업연도소득금액:,}원")
+
 # ── 모든 도구 공통 — 정의되지 않은 최상위 인자 거부 ─────────────
 # MCP SDK의 arg_model은 기본적으로 extra='ignore'라 모르는 키가 조용히 버려짐.
 # 각 도구의 arg_model을 extra='forbid'로 재창출해 밸리데이션 단계에서 거부한다.
