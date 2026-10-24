@@ -144,3 +144,43 @@ def test_income_adjustment_explicit_direction_and_unknown_kind():
     assert r["결과"]["차가감소득금액"] == 9000000
     r = c("income_adjustment_total", {"net_income": 10000000, "items": [{"항목": "나", "종류": "사전에 없는 것", "금액": 1000000}]})
     assert "입력 확인 필요" in json.dumps(r, ensure_ascii=False)
+
+
+# 검수 반영(SPEC_gold_gaps2b)
+def test_exempt_use_non_depreciable_uses_market_value():
+    r = c("vat_exempt_use_deemed_supply", {"use_date": "2024-10-01", "mode": "전부",
+                                           "assets": [{"구분": "비상각", "취득일": "2024-01-10", "취득가액": 1000000, "시가": 3000000}]})
+    assert r["결과"]["과세표준"] == 3000000
+
+
+def test_exempt_use_rejects_unknown_kind_and_use_before_acquisition():
+    r = c("vat_exempt_use_deemed_supply", {"use_date": "2024-10-01", "mode": "전부",
+                                           "assets": [{"구분": "차량", "취득일": "2023-01-10", "취득가액": 1000000}]})
+    assert "입력 확인 필요" in json.dumps(r, ensure_ascii=False)
+    r = c("vat_exempt_use_deemed_supply", {"use_date": "2023-03-01", "mode": "전부",
+                                           "assets": [{"구분": "건물", "취득일": "2024-01-10", "취득가액": 1000000}]})
+    assert "입력 확인 필요" in json.dumps(r, ensure_ascii=False)
+
+
+def test_estimated_income_explicit_multiplier_not_scaled():
+    a = {"year": 2024, "industry_group": "나", "prior_year_revenue": 40000000,
+         "revenues": [{"구분": "매출", "금액": 100000000}], "expenses": [], "base_rate": 0.1, "simple_rate": 0.9}
+    assert c("estimated_business_income", {**a, "multiplier": 2.8})["결과"]["사업소득금액"] == 28000000
+
+
+def test_estimated_income_rejects_unknown_item_kind():
+    r = c("estimated_business_income", {"year": 2024, "industry_group": "나", "prior_year_revenue": 40000000,
+                                        "revenues": [{"구분": "매출액", "금액": 100000000}], "expenses": [],
+                                        "base_rate": 0.1, "simple_rate": 0.9})
+    assert "입력 확인 필요" in json.dumps(r, ensure_ascii=False)
+
+
+def test_deemed_rent_area_ratio_accepts_percent():
+    rentals = [{"구분": "비주택", "보증금": 50000000, "건설비": 100000000, "임대면적비율": 20}]
+    r = c("corporate_deemed_rent_income", {"year": 2024, "rentals": rentals, "financial_income": 100000, "rate": 0.05})
+    assert r["결과"]["간주익금"] == 1400000
+
+
+def test_income_adjustment_rejects_unknown_direction():
+    r = c("income_adjustment_total", {"net_income": 10000000, "items": [{"항목": "가", "종류": "법인세비용", "금액": 1000000, "방향": "더하기"}]})
+    assert "입력 확인 필요" in json.dumps(r, ensure_ascii=False)
