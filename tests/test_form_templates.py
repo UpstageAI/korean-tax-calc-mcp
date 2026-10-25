@@ -39,9 +39,9 @@ def demo(tmp_path_factory):
 def test_sheet_order(demo):
     raw, _ = demo
     n = raw.sheetnames
-    assert n[0] == "목록" and n[1] == GAP and n[2] == EUL, n
+    assert n[0] == "목록" and n.index(EUL) == n.index(GAP) + 1, n
     assert n[-2:] == ["입력·가정", "판단·근거"] and "요약" not in n
-    assert sum(bool(re.fullmatch(r"계산 \d+", x)) for x in n) == 7          # 틀 없는 나머지 7개 call
+    assert sum(bool(re.fullmatch(r"계산 \d+", x)) for x in n) == 4          # 틀 없는 나머지 4개 call(2단계 기준)
 
 
 def test_template_layout(demo):
