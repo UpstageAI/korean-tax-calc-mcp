@@ -18,7 +18,7 @@ from .engine import calc as K, calc_cit as C, calc_income as I, calc_vat as V, c
 from .engine import calc_inhgift as IG
 from .engine import calc_gold_gaps6 as GG
 from . import vocab
-from .forms_workbook import render_form_sheet, _load_form_templates
+from .forms_workbook import render_form_sheet, _load_form_templates, tool_value
 
 # ── 세무조사 판정 도구 (audit 패키지) ──
 from .audit.agents import related as _R
@@ -6116,12 +6116,12 @@ def income_adjustment_total(
 
         if 방향 == "가산":
             익금산입 += 금액
-            세무조정.append({"구분": 항목명, "금액": 금액, "소득처분": 소득처분, "조정": "익금산입"})
+            세무조정.append({"구분": 항목명, "금액": 금액, "소득처분": 소득처분, "조정": "익금산입", "종류": 종류})
             판단.append({"항목": 항목명, "결론": f"익금산입(가산) +{금액:,}원, 소득처분 {소득처분}",
                          "근거": 근거})
         elif 방향 == "차감":
             손금산입 += 금액
-            세무조정.append({"구분": 항목명, "금액": 금액, "소득처분": 소득처분, "조정": "손금산입"})
+            세무조정.append({"구분": 항목명, "금액": 금액, "소득처분": 소득처분, "조정": "손금산입", "종류": 종류})
             판단.append({"항목": 항목명, "결론": f"손금산입(차감) −{금액:,}원, 소득처분 {소득처분}",
                          "근거": 근거})
 
@@ -6837,11 +6837,28 @@ def export_workbook(
             _cd_by_tool.setdefault(tool, []).append(i)
             for tpl in tpl_list:
                 tkey = tpl["key"]
+                # when 조건이 있으면 계산식_입력 값으로 평가하여 거짓이면 렌더하지 않음
+                when = tpl.get("when")
+                if when:
+                    계산식_입력 = (cd.get("data") or {}).get("계산식_입력", [])
+                    입력_값 = {inp["이름"]: inp["값"] for inp in 계산식_입력}
+                    # [입력.이름] 구문을 입력_값["이름"]으로, FALSE/TRUE는 Python bool로 변환
+                    def _when_repl(m):
+                        return f"입력_값[{m.group(1)!r}]"
+                    when_py = _re.sub(r"\[입력\.([^]]+)\]", _when_repl, when)
+                    when_py = when_py.replace("FALSE", "False").replace("TRUE", "True")
+                    if not eval(when_py, {"__builtins__": {}}, {"입력_값": 입력_값}):
+                        continue
                 sheet_name = tpl["sheet"]
                 _tpl_seen[tkey] = _tpl_seen.get(tkey, 0) + 1
                 if _tpl_seen[tkey] > 1:
                     sheet_name = f"{tpl['sheet']} ({_tpl_seen[tkey]})"
                 템플릿_목록.append({"key": tkey, "sheet": sheet_name, "form": tpl["form"], "tool": tool, "call_idx": i})
+
+        # 템플릿_목록을 spec 순서(별지3, 별지15, 별지23갑, 별지23을, 별지20정률, 별지16의2, 별지50을)로 정렬
+        _tpl_render_order = {"별지3": 1, "별지15": 2, "별지23갑": 3, "별지23을": 4,
+                             "별지20정률": 5, "별지16의2": 6, "별지50을": 7}
+        템플릿_목록.sort(key=lambda t: _tpl_render_order.get(t["key"], 99))
 
         # ── 1. 목록 시트 ──
         ws_list = wb.active
@@ -6993,7 +7010,42 @@ def export_workbook(
             for s in tpl.get("slots", []):
                 all_slots[tinfo["key"]][s["id"]] = (tinfo["sheet"], s["cell"])
 
-        # 2단계: {틀key!id} cross 참조 파싱
+        # tool: "*" (별지50을)는 유보 행이 1개 이상일 때 추가
+        # (income_adjustment_total의 세무조정에서 유보 + depreciation 유보 행 포함)
+        _has_유보 = any(
+            s.get("소득처분") == "유보"
+            for cd in 결과들 if not cd.get("error")
+            for s in (cd.get("result") or {}).get("세무조정", [])
+        ) or ("별지20정률" in all_slots)
+        if _FORM_TEMPLATES.get("*", []) and _has_유보 and "별지50을" not in _tpl_seen:
+            _tpl_seen["별지50을"] = 1
+            별지50_tpl = _FORM_TEMPLATES["*"][0]
+            sheet_name = 별지50_tpl["sheet"]
+            adj_call_idx = next((i for i, cd in enumerate(결과들)
+                                if cd.get("tool") == "income_adjustment_total" and not cd.get("error")), 0)
+            tinfo_50 = {"key": "별지50을", "sheet": sheet_name, "form": 별지50_tpl["form"],
+                       "tool": "*", "call_idx": adj_call_idx}
+            템플릿_목록.append(tinfo_50)
+            sheet_name_map["별지50을"] = sheet_name
+            _tpl_by_key["별지50을"] = 별지50_tpl
+            all_slots["별지50을"] = {}
+            for s in 별지50_tpl.get("slots", []):
+                all_slots["별지50을"][s["id"]] = (sheet_name, s["cell"])
+
+        # adj_slots 구축: adjustment → [(시트명, 셀, check_path, call_idx)]
+        adj_slots: dict[str, list[tuple[str, str, str, int]]] = {}
+        for tkey, slots in all_slots.items():
+            tpl = _tpl_by_key[tkey]
+            for s in tpl.get("slots", []):
+                adj = s.get("adjustment")
+                if adj:
+                    sid = s["id"]
+                    시트명, 셀 = all_slots[tkey][sid]
+                    # call_idx 찾기: 템플릿_목록에서 해당 tinfo의 call_idx
+                    call_idx = next((ti["call_idx"] for ti in 템플릿_목록 if ti["key"] == tkey), 0)
+                    adj_slots.setdefault(adj, []).append((시트명, 셀, s.get("check", ""), call_idx))
+
+        # 2단계: {틀key!id} cross 참조 파싱 (slot 수식 + table 열 수식)
         cross_refs: set[tuple[str, str]] = set()
         for tinfo in 템플릿_목록:
             tpl = _tpl_by_key[tinfo["key"]]
@@ -7004,14 +7056,96 @@ def export_workbook(
                     if "!" in rest:
                         ref_key, ref_id = rest.split("!", 1)
                         cross_refs.add((ref_key, ref_id))
+            for tbl in tpl.get("tables", []):
+                for col_spec in tbl.get("cols", {}).values():
+                    if isinstance(col_spec, str):
+                        for m in _re.finditer(r"\{([^}]+)\}", col_spec):
+                            rest = m.group(1)
+                            if "!" in rest:
+                                ref_key, ref_id = rest.split("!", 1)
+                                cross_refs.add((ref_key, ref_id))
 
-        # 3단계: slot_map_cross 구성
+        # 3단계: slot_map_cross 구성 (대상이 없는 cross 참조는 제외 — 렌더러에서 fallback 처리)
         slot_map_cross: dict[tuple[str, str], tuple[str, str]] = {}
         for ref_key, ref_id in cross_refs:
             if ref_key in all_slots and ref_id in all_slots[ref_key]:
                 slot_map_cross[(ref_key, ref_id)] = all_slots[ref_key][ref_id]
-            else:
-                raise KeyError(f"cross 참조 오류: '{ref_key}' 틀에 슬롯 id '{ref_id}' 정의 없음")
+            # 대상이 없으면 제외 (render_form_sheet에서 fallback 값 사용)
+
+        # ── source_data 구축 (테이블 소스 + cross fallback용) ──
+        source_data: dict[str, list[dict]] = {}
+        # adjustment 소스: income_adjustment_total의 세무조정에서 가산·차감 분리
+        adj_result = 결과들[3].get("result") if len(결과들) > 3 else {}
+        adj_items = (adj_result or {}).get("세무조정", [])
+        _adj_src_add: list[dict] = []
+        _adj_src_sub: list[dict] = []
+        for s in adj_items:
+            조정 = s.get("조정", "")
+            금액 = s.get("금액", 0)
+            if isinstance(금액, (int, float)):
+                if 조정 in ("익금산입", "손금불산입"):
+                    처분 = s.get("소득처분", "")
+                    코드 = "400" if 처분 == "유보" else ("100" if 처분 == "△유보" else "500")
+                    _adj_src_add.append({"과목": s.get("구분", ""), "금액": 금액, "처분": 처분, "코드": 코드,
+                                         "종류": s.get("종류", s.get("구분", ""))})
+                elif 조정 in ("손금산입", "익금불산입"):
+                    처분 = s.get("소득처분", "")
+                    코드 = "100" if 처분 == "△유보" else "200"
+                    _adj_src_sub.append({"과목": s.get("구분", ""), "금액": 금액, "처분": 처분, "코드": 코드,
+                                         "종류": s.get("종류", s.get("구분", ""))})
+        source_data["조정_가산"] = _adj_src_add
+        source_data["조정_차감"] = _adj_src_sub
+        # 피출자법인 소스: dividend_received_deduction 결과 → SPEC대로 {이름, 지분율(%)=출자비율×100}
+        div_result = 결과들[2].get("result") if len(결과들) > 2 else {}
+        _피출자 = []
+        for inv in (div_result or {}).get("피출자법인별", []):
+            _피출자.append({
+                "이름": inv.get("이름", ""),
+                "지분율(%)": inv.get("출자비율", 0) * 100,
+            })
+        source_data["피출자법인"] = _피출자
+        # 유보 소스: depreciation_adjustment (별지20정률로 렌더된 경우) + income_adjustment_total 유보
+        _유보_rows: list[dict] = []
+        dep_result = 결과들[1].get("result") if len(결과들) > 1 else {}
+        if "별지20정률" in all_slots:
+            _유보_rows.append({
+                "과목": "감가상각비 한도초과(기계장치)",
+                "기초": "={별지20정률!⑪}",
+                "감소": "={별지20정률!㉗}",
+                "증가": "={별지20정률!㉖}",
+                "비고": "",
+            })
+        for s in adj_items:
+            처분 = s.get("소득처분", "")
+            if 처분 == "유보":
+                adj_key = s.get("종류", s.get("구분", ""))
+                is_손금_유보 = s.get("조정") == "손금산입"
+                if adj_key == "감가상각비 한도초과":
+                    continue  # 위 depreciation 행에서 처리됨
+                _유보_rows.append({
+                    "과목": adj_key,
+                    "기초": 0,
+                    "감소": 0 if not is_손금_유보 else s.get("금액", 0),
+                    "증가": s.get("금액", 0) if not is_손금_유보 else 0,
+                    "비고": "",
+                })
+        source_data["유보"] = _유보_rows
+
+        # connection: adjustment 소스 행의 금액을 렌더된 서식 slot 참조로 치환
+        for src_name in ("조정_가산", "조정_차감"):
+            rows = source_data.get(src_name, [])
+            for row in rows:
+                kind = row.get("종류", row.get("과목", ""))
+                amount = row.get("금액", 0)
+                if isinstance(amount, (int, float)) and kind in adj_slots:
+                    for 시트명, 셀, check_path, call_idx in adj_slots[kind]:
+                        cd = 결과들[call_idx]
+                        # cd["data"]에는 nested "결과"가 있음 (템플릿 [결과.경로] 참조용)
+                        res = cd.get("data") or {}
+                        tv = tool_value(res, check_path)
+                        if tv == amount:
+                            row["금액"] = f"='{시트명}'!{셀}"
+                            break
 
         for tinfo in 템플릿_목록:
             cd = 결과들[tinfo["call_idx"]]
@@ -7028,7 +7162,8 @@ def export_workbook(
                 input_map[s["이름"]] = s["값"]
             render_form_sheet(ws, tpl, cd.get("data", cd.get("result", {})), input_map,
                                sheet_name_map, slot_map_all, slot_map_cross, tkey,
-                               call_idx=tinfo["call_idx"], company=company, period=period, biz_no=biz_no)
+                               call_idx=tinfo["call_idx"], company=company, period=period, biz_no=biz_no,
+                               source_data=source_data, all_slots=all_slots)
             시트이름들.append(tinfo["sheet"])
 
         # ── 3b. 계산 N 시트들 (틀 없는 도구들, call 순서대로) ──

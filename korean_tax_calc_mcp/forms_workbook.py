@@ -60,8 +60,6 @@ def tool_value(res: dict | None, path: str) -> Any:
     if prefix in ("결과", "계산") and prefix in res:
         parts = parts[1:]
         cur = res.get(prefix)
-        if not isinstance(cur, dict):
-            return None
     else:
         cur = res
     for p in parts:
@@ -74,8 +72,46 @@ def tool_value(res: dict | None, path: str) -> Any:
     return cur
 
 
+# cross 참조 대상이 없을 때 반환되는 Sentinel (렌더러에서 fallback 값으로 치환)
+CROSS_FALLBACK = object()
+
+
+def _fmt_val(v: Any) -> str:
+    """도구 값을 엑셀 수식용 숫자 문자열로 변환."""
+    if isinstance(v, bool):
+        return "TRUE" if v else "FALSE"
+    if isinstance(v, int):
+        return str(v)
+    if isinstance(v, float):
+        if v == int(v):
+            return str(int(v))
+        return str(v)
+    return str(v)
+
+
+def _cross_fallback_value(ref_key: str, ref_id: str, tkey: str,
+                          source_data: dict[str, list[dict]] | None,
+                          all_slots: dict[str, dict[str, tuple[str, str]]] | None,
+                          sheet_name_map: dict[str, str] | None) -> Any:
+    """교차 참조 대상이 이번 내보내기에 없을 때 fallback 값 조회.
+
+    source_data{조정_가산|조정_차감}에서 ref_id가 금액 키면 해당 값, 아니면 None.
+    """
+    # source_data의 adjustment 소스에서 ref_id가 금액이면 해당 값 반환
+    for src_name in ("조정_가산", "조정_차감"):
+        rows = (source_data or {}).get(src_name, [])
+        for row in rows:
+            # ref_id가 source 행의 키 중 하나이고 값이 숫자면 반환
+            if ref_id in row and isinstance(row[ref_id], (int, float)):
+                return row[ref_id]
+    # 별지3 102·103 등은 별지15가 항상 같이 렌더되므로 해당 없음
+    return None
+
+
 def resolve_formula(f: str, *, res: dict | None, call_idx: int,
-                    local: dict[str, str], cross: dict[tuple[str, str], tuple[str, str]]) -> str:
+                    local: dict[str, str], cross: dict[tuple[str, str], tuple[str, str]],
+                    sheet_name_map: dict[str, str] | None = None,
+                    all_slots: dict[str, dict[str, tuple[str, str]]] | None = None) -> str:
     """서식 틀 수식 토큰의 토큰을 해석한 엑셀 수식 문자열을 반환한다.
 
     SPEC_form_resolver 3절:
@@ -143,23 +179,36 @@ def resolve_formula(f: str, *, res: dict | None, call_idx: int,
         raise KeyError(f"경로 '{path}' 값 없음 (기본값 없음)")
 
     out = f
-    out = _re.sub(r"\[입력\.([^]]+)\]", _replace_input, out)
-    out = _re.sub(r"\[(계산|결과)\.([^]]+)\]", _replace_calc_result, out)
-
+    # {id}·{틀key!id}를 먼저 치환 ({i} 등 → resolve_formula의 local 치환)
     def _replace_slot(m: _re.Match) -> str:
         rest = m.group(1)
         if "!" in rest:
             ref_key, ref_id = rest.split("!", 1)
             key = (ref_key, ref_id)
-            if key not in cross:
-                raise KeyError(f"알 수 없는 교차 참조 '{rest}' (cross에 없음)")
-            sheet_name, cell = cross[key]
-            return f"'{sheet_name}'!{cell}"
+            if key in cross:
+                sheet_name, cell = cross[key]
+                return f"'{sheet_name}'!{cell}"
+            # cross에 없지만 all_slots에 있으면 직접 조회 (source_data 등 두 번째 패스 참조용)
+            if all_slots is not None and ref_key in all_slots and ref_id in all_slots[ref_key]:
+                sheet_name, cell = all_slots[ref_key][ref_id]
+                return f"'{sheet_name}'!{cell}"
+            # 대상 틀이 이번 내보기에 없음 → fallback sentinel
+            if all_slots is not None and ref_key not in all_slots:
+                return "CROSS_FALLBACK"
+            # ref_key가 all_slots에 있지만 ref_id가 해당 틀에 정의되지 않음 → 오류
+            if all_slots is not None and ref_id not in all_slots.get(ref_key, {}):
+                raise KeyError(f"교차 참조 '{rest}': '{ref_key}' 틀에 슬롯 id '{ref_id}' 정의 없음")
+            if sheet_name_map is not None and ref_key in sheet_name_map:
+                raise KeyError(f"교차 참조 '{rest}': '{ref_key}' 틀에 슬롯 id '{ref_id}' 정의 없음")
+            raise KeyError(f"교차 참조 '{rest}': 알 수 없는 틀 '{ref_key}'")
         if rest not in local:
             raise KeyError(f"알 수 없는 slot id '{rest}' (local에 없음)")
         return local[rest]
 
     out = _re.sub(r"\{([^}]+)\}", _replace_slot, out)
+    # 그다음 [입력...]·[계산...]·[결과...] 치환
+    out = _re.sub(r"\[입력\.([^]]+)\]", _replace_input, out)
+    out = _re.sub(r"\[(계산|결과)\.([^]]+)\]", _replace_calc_result, out)
     return out
 
 
@@ -227,12 +276,14 @@ def fill_text(t: str | None, *, res: dict | None, meta: dict[str, Any]) -> str:
 def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any],
                       sheet_name_map: dict[str, str],
                       slot_map_all: dict[str, str] | None = None,
-                      slot_map_cross: dict[tuple[str, str], str] | None = None,
+                      slot_map_cross: dict[tuple[str, str], tuple[str, str]] | None = None,
                       tkey_override: str | None = None,
                       call_idx: int | None = None,
                       company: str = "",
                       period: str = "",
-                      biz_no: str = "") -> None:
+                      biz_no: str = "",
+                      source_data: dict[str, list[dict]] | None = None,
+                      all_slots: dict[str, dict[str, tuple[str, str]]] | None = None) -> None:
     """폼 템플릿 JSON을 엑셀 시트로 렌더링한다. (SPEC_form_templates 3절)
 
     렌더러의 slot 수식·table 열 수식·문구·검증 값은 모두 tool_value·resolve_formula·fill_text
@@ -322,7 +373,6 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
                 ws.cell(ri, ci).fill = fill
 
     # ── 슬롯(수식) 처리 — resolve_formula 사용 ──
-    # cross_map: slot_map_cross는 이미 (시트이름, 셀) 튜플 형식
     cross_map: dict[tuple[str, str], tuple[str, str]] = dict(slot_map_cross) if slot_map_cross else {}
 
     for s in tpl.get("slots", []):
@@ -332,7 +382,14 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
             continue
         if call_idx is not None:
             f_rendered = resolve_formula(f, res=res, call_idx=call_idx,
-                                         local=local_slot_map, cross=cross_map)
+                                         local=local_slot_map, cross=cross_map,
+                                         sheet_name_map=sheet_name_map, all_slots=all_slots)
+            # cross 참조 대상이 없을 때 fallback 값 치환
+            if f_rendered == "CROSS_FALLBACK":
+                ref_key, ref_id = f.strip("{}").split("!", 1)
+                # source_data에서 해당 slot의 도구 값 또는 source 숫자 조회
+                fallback_val = _cross_fallback_value(ref_key, ref_id, tkey, source_data, all_slots, sheet_name_map)
+                f_rendered = _fmt_val(fallback_val)
         else:
             # call_idx 없으면 {id}만 치환 (local_slot_map 사용)
             def _local_only(m: _re.Match) -> str:
@@ -343,6 +400,72 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
             f_rendered = _re.sub(r"\{([^}]+)\}", _local_only, f)
         ws[cell_addr].value = f_rendered
         ws[cell_addr].font = Font(name="맑은 고딕", size=10)
+
+    # ── 반복 행 tables 렌더링 ──
+    for tbl in tpl.get("tables", []):
+        tbl_id = tbl["id"]
+        source_name = tbl["source"]
+        first_row = tbl["first_row"]
+        max_rows = tbl["max_rows"]
+        cols = tbl["cols"]
+        center_cols = set(tbl.get("center", []))
+        source_rows = (source_data or {}).get(source_name, [])
+        if len(source_rows) > max_rows:
+            raise ValueError(f"table '{tbl_id}': source 행 {len(source_rows)}개 > max_rows {max_rows}")
+        for ri, src_row in enumerate(source_rows):
+            row_num = first_row + ri
+            for col_letter, col_spec in cols.items():
+                ci = ord(col_letter) - 64
+                cell_addr = f"{_col_letter(ci)}{row_num}"
+                if isinstance(col_spec, str) and col_spec.startswith("="):
+                    # 수식 열: {r}→row_num(문자열), {i}→ri+1(문자열), resolve_formula
+                    formula_tpl = col_spec
+                    local_tbl = {"r": str(row_num), "i": str(ri + 1)}
+                    f_resolved = resolve_formula(formula_tpl, res=res, call_idx=call_idx if call_idx is not None else 0,
+                                                 local=local_tbl, cross=cross_map,
+                                                 sheet_name_map=sheet_name_map, all_slots=all_slots)
+                    if f_resolved == "CROSS_FALLBACK":
+                        # cross fallback: {틀key!id} 부분을 source_data 수치로 치환
+                        def _fallback_cross(m2: _re.Match) -> str:
+                            rk, rid = m2.group(1).split("!", 1)
+                            if all_slots is not None and rk not in all_slots:
+                                sv = _cross_fallback_value(rk, rid, tkey, source_data, all_slots, sheet_name_map)
+                                return str(sv) if sv is not None else "0"
+                            raise KeyError(f"교차 참조 '{m2.group(1)}' 해석 불가")
+                        f_resolved = _re.sub(r"\{([^}]+)\}", _fallback_cross, formula_tpl)
+                        # {r}, {i} 치환
+                        f_resolved = f_resolved.replace("{r}", str(row_num)).replace("{i}", str(ri + 1))
+                    ws[cell_addr].value = f_resolved
+                else:
+                    # 값 열: source 행의 키 값
+                    key = col_spec
+                    val = src_row.get(key)
+                    if isinstance(val, (int, float)):
+                        ws[cell_addr].value = val
+                    elif isinstance(val, str) and val.startswith("="):
+                        # source 값이 수식 문자열: resolve_formula
+                        local_tbl2 = {"r": str(row_num), "i": str(ri + 1)}
+                        f_resolved = resolve_formula(val, res=res, call_idx=call_idx if call_idx is not None else 0,
+                                                     local=local_tbl2, cross=cross_map,
+                                                     sheet_name_map=sheet_name_map, all_slots=all_slots)
+                        if f_resolved == "CROSS_FALLBACK":
+                            def _fb2(m2: _re.Match) -> str:
+                                rk, rid = m2.group(1).split("!", 1)
+                                if all_slots is not None and rk not in all_slots:
+                                    sv = _cross_fallback_value(rk, rid, tkey, source_data, all_slots, sheet_name_map)
+                                    return str(sv) if sv is not None else "0"
+                                raise KeyError(f"교차 참조 '{m2.group(1)}' 해석 불가")
+                            f_resolved = _re.sub(r"\{([^}]+)\}", _fb2, val)
+                            f_resolved = f_resolved.replace("{r}", str(row_num)).replace("{i}", str(ri + 1))
+                        ws[cell_addr].value = f_resolved
+                    else:
+                        ws[cell_addr].value = val if val is not None else ""
+                # center 정렬 적용
+                if col_letter in center_cols or (isinstance(col_spec, str) and col_spec in center_cols):
+                    ws[cell_addr].alignment = Alignment(horizontal="center", vertical="center")
+                else:
+                    ws[cell_addr].alignment = Alignment(horizontal="left", vertical="center")
+                ws[cell_addr].font = Font(name="맑은 고딕", size=10)
 
     # ── 금액 열 서식 — slots 작성 후 적용, formats{셀:서식} 우선 ──
     formats = tpl.get("formats", {})
