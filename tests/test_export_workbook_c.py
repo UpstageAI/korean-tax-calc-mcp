@@ -66,7 +66,7 @@ def test_income_adjustment_formula_steps():
 
 
 def _formula_sheet(tmp_path):
-    r = c("export_workbook", {"title": "수식", "calls": [{"label": "기업업무추진비", "tool": "entertainment_adjustment", "args": ENT},
+    r = c("export_workbook", {"layout": "steps", "title": "수식", "calls": [{"label": "기업업무추진비", "tool": "entertainment_adjustment", "args": ENT},
                                                          {"label": "차가감", "tool": "income_adjustment_total", "args": ADJ}],
                                "output_dir": str(tmp_path)})
     return r["결과"]["파일"]

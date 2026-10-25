@@ -24,7 +24,7 @@ def cells(ws):
 
 
 def build(tmp_path, calls):
-    r = c("export_workbook", {"title": "검수", "calls": calls, "output_dir": str(tmp_path)})
+    r = c("export_workbook", {"layout": "steps", "title": "검수", "calls": calls, "output_dir": str(tmp_path)})
     return r, openpyxl.load_workbook(r["결과"]["파일"])
 
 
