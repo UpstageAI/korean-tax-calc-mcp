@@ -5175,6 +5175,140 @@ def special_tax_credit(
     )
 
 
+# ── 종합소득 인적공제(소득세법 제50조·제51조·제53조) ─────────────────────────────
+@mcp.tool(annotations=CALC)
+@_guard
+def personal_deduction(
+    year: YEAR,
+    taxpayer: Annotated[dict, Field(description=(
+        "{sex, birth_year, has_spouse, comprehensive_income, disabled?, household_head?} — "
+        "sex: '남'|'여'. birth_year: 출생연도(정수). has_spouse: 배우자 유무(bool). "
+        "comprehensive_income: 종합소득금액(원, 기본공제 한도 판단용). "
+        "disabled: 장애인 여부(bool, 기본 무시). household_head: 세대주 여부(bool, 부녀자 공제 판단용)."
+    ))],
+    persons: Annotated[list, Field(description=(
+        "[{name, relation, birth_year, income_items?, income?, wage_only_gross?, disabled?, cohabiting?}] — "
+        "name: 사람 표시 이름(문자열, 중복 불가). "
+        "relation: 공제대상자와의 관계. 허용값: 배우자·직계존속·직계비속·입양자·형제자매·수급자·위탁아동. "
+        "문항 표현 그대로 '아들'·'딸'·'자녀'는 '직계비속', '부친'·'모친'·'부모'는 '직계존속'으로 적을 것. "
+        "birth_year: 출생연도(정수, 나이 계산용). "
+        "income_items: [{kind, amount}] — 부양가족 소득 종류·금액 목록. kind 허용값: 근로_총급여·사업소득금액·이자·배당·공적연금·사적연금·기타소득금액·양도소득금액·퇴직소득금액·전통주_제조소득_농어촌·비과세·공적연금_과세제외. "
+        "income_items를 쓰면 income·wage_only_gross는 함께 입력할 수 없음. "
+        "disabled: 장애인 여부(bool). cohabiting: 동거 여부(bool, 기본 True, 형제자매·수급자는 동거 필요). "
+        "소득 없음 → income_items: []. 근로소득만 있음 → income_items: [{\"kind\": \"근로_총급여\", \"amount\": 총급여}]. "
+        "예시: [{\"name\":\"부친\",\"relation\":\"부친\",\"birth_year\":1938,\"income_items\":[{\"kind\":\"공적연금_과세제외\",\"amount\":30000000}]}]"
+    ))],
+) -> dict:
+    """종합소득 인적공제(기본공제·추가공제). 언제: 종합소득세 신고에서 기본공제·추가공제 금액을 구할 때.
+    입력: 귀속연도 → year, 납세자 정보 → taxpayer, 부양가족 목록 → persons.
+    결과: 기본공제·추가공제·인적공제·사람별 내역·근거. 기본공제 1인당 150만원, 추가공제(경로우대 100만·장애인 200만·부녀자 50만·한부모 100만)."""
+    r = I.personal_deduction(year=year, taxpayer=taxpayer, persons=persons)
+    if "error" in r:
+        return r
+    return _ok(r["결과"], "소득세법 제50조·제51조·제53조", 사람별=r["결과"]["사람별"])
+
+
+# ── 연금소득금액(소득세법 제20조의3·제14조③9호·제47조의2·제64조의4·제40조) ────────
+@mcp.tool(annotations=CALC)
+@_guard
+def pension_income(
+    year: YEAR,
+    public_pension: Annotated[int, Field(description="공적연금 과세분(2002년 이후 기여분 기준 금액, 원). public_pension_detail 사용 시 0이어야 함")] = 0,
+    private_pension: Annotated[int, Field(description="연금계좌 연금수령분 중 퇴직소득 재원·의료목적 인출 외(원)")] = 0,
+    retirement_source_pension: Annotated[int, Field(description="퇴직소득 재원 연금수령액(원, 항상 분리과세)")] = 0,
+    medical_withdrawal: Annotated[int, Field(description="의료목적·부득이한 사유 인출액(원, 항상 분리과세)")] = 0,
+    private_choice: Annotated[Literal["분리", "종합"], Field(description="사적연금 처리 선택(기본 '분리')")] = "분리",
+    public_pension_detail: Annotated[dict | None, Field(description=(
+        "{수령액, 환산소득_2002이후, 환산소득_전체, 과세제외기여금?} — "
+        "공적연금 과세분 = max(0, int(수령액 × 환산소득_2002이후 ÷ 환산소득_전체) − 과세제외기여금) (소득세법 시행령 제40조①, 국민연금 기준). "
+        "과세제외기여금: 연금보험료 소득공제를 받지 않은 기여분(소득세법 시행령 제40조 과세제외기여금), 기본 0. "
+        "예: {\"수령액\":45000000, \"환산소득_2002이후\":380000000, \"환산소득_전체\":480000000, \"과세제외기여금\":5625000}"
+    ))] = None,
+) -> dict:
+    """연금소득금액 계산. 언제: 연금소득의 종합과세·분리과세 구분과 연금소득금액을 구할 때.
+    입력: 귀속연도 → year, 공적연금 과세분 → public_pension, 사적연금 → private_pension,
+          퇴직소득 재원 연금 → retirement_source_pension, 의료목적 인출 → medical_withdrawal,
+          사적연금 선택 → private_choice, 공적연금 상세 → public_pension_detail(수령액·환산소득·과세제외기여금).
+    결과: 총연금액·분리과세연금소득·연금소득공제·연금소득금액·안내·근거. 공적연금 과세분은 public_pension_detail로 계산하거나 직접 입력."""
+    return I.pension_income(year=year, public_pension=public_pension, private_pension=private_pension,
+                            retirement_source_pension=retirement_source_pension, medical_withdrawal=medical_withdrawal,
+                            private_choice=private_choice, public_pension_detail=public_pension_detail)
+
+
+# ── 결손금·이월결손금 공제(소득세법 제45조) ──────────────────────────────────────
+@mcp.tool(annotations=CALC)
+@_guard
+def income_loss_offset(
+    year: YEAR,
+    incomes: Annotated[dict, Field(description=(
+        "{부동산임대, 근로, 연금, 기타, 이자, 배당} — 각 소득금액(원). "
+        "부동산임대는 음수=결손금. 사업소득은 business로 입력(사업소득은 incomes['사업']으로 넣지 않음)."
+    ))],
+    carryforwards: Annotated[list | None, Field(description=(
+        "[{year, kind, amount}] — 이월결손금 목록. kind: '사업'|'부동산임대'. "
+        "예: [{\"year\":2022, \"kind\":\"사업\", \"amount\":10000000}]"
+    ))] = None,
+    estimated: Annotated[bool, Field(description="추계 과세 여부(True면 이월결손금 전부 건너뜀)")] = False,
+    financial_flat_rate: Annotated[int, Field(description="이자·배당 중 원천징수세율 적용분 합계(원, 이자에서 먼저 차감)")] = 0,
+    business: Annotated[dict | None, Field(description=(
+        "{book_income, adjustments} — 사업소득 계산용. book_income: 장부상 사업 손익(원, 손실은 음수). "
+        "adjustments: [{kind, amount}]. kind: 사업주_본인_급여·가사관련경비·기타_가산·기타_차감. "
+        "예: {\"book_income\":-90000000, \"adjustments\":[{\"kind\":\"사업주_본인_급여\",\"amount\":30000000}]}"
+    ))] = None,
+    history: Annotated[list | None, Field(description=(
+        "[{year, incomes, business?, financial_flat_rate?, estimated?}] — 대상 연도보다 앞선 연도들. "
+        "year 오름차순으로 계산 후 이월결손금을 다음 연도로 넘김. "
+        "history와 carryforwards 중 하나만 사용. "
+        "예: [{\"year\":2022, \"incomes\":{\"근로\":15000000}, \"business\":{\"book_income\":-30000000, \"adjustments\":[]}}]"
+    ))] = None,
+) -> dict:
+    """결손금·이월결손금 공제 후 종합소득금액. 언제: 사업소득 결손금이나 이월결손금을 다른 종합소득에서 공제할 때.
+    입력: 귀속연도 → year, 소득 목록 → incomes(사업소득 제외), 이월결손금 → carryforwards(선택),
+          추계 여부 → estimated, 금융소득 분리과세분 → financial_flat_rate, 사업소득 상세 → business(선택),
+          이전 연도 이력 → history(선택, carryforwards와 상호 배제).
+    결과: 공제 후 소득금액·종합소득금액·이월결손금(다음 연도)·공제 내역·소멸·이력_계산·근거."""
+    return K.income_loss_offset(year=year, incomes=incomes, carryforwards=carryforwards,
+                                estimated=estimated, financial_flat_rate=financial_flat_rate,
+                                business=business, history=history)
+
+
+# ── 법인 재해손실세액공제(법인세법 제58조, 시행령 제95조) ────────────────────────
+@mcp.tool(annotations=CALC)
+@_guard
+def disaster_loss_credit(
+    year: YEAR,
+    assets_before: Annotated[int, Field(description="재해 전 자산총액(토지 제외 사업용자산 + 변상책임 있는 타인 자산, 장부가액, 원) — assets 사용 시 생략")] = 0,
+    assets_lost: Annotated[int, Field(description="상실 자산가액(토지 제외, 원) — assets 사용 시 생략")] = 0,
+    current_tax: Annotated[int, Field(description="재해 발생 사업연도 법인세 산출세액(원, 공제·감면 전)")] = 0,
+    other_credits: Annotated[int, Field(description="공제대상 법인세에서 차감할 다른 감면·공제세액(원, 기존 호환용 — credit_items와 함께 입력 불가)")] = 0,
+    unpaid_prior_tax: Annotated[int, Field(description="재해일 현재 미납·미부과 법인세(원)")] = 0,
+    penalty: Annotated[int, Field(description="가산세(원, 기존 호환용 — penalty_items와 함께 입력 불가)")] = 0,
+    assets: Annotated[list | None, Field(description=(
+        "[{구분, 장부가액, 상실액}] — assets_before/assets_lost 대신 사용. "
+        "구분: '사업용'(토지 제외)|'토지'|'타인소유_변상책임있음'|'타인소유_변상책임없음'. "
+        "예: [{\"구분\":\"사업용\",\"장부가액\":500000000,\"상실액\":140000000}, {\"구분\":\"타인소유_변상책임있음\",\"장부가액\":100000000,\"상실액\":100000000}]"
+    ))] = None,
+    credit_items: Annotated[list | None, Field(description=(
+        "[{종류, 금액}] — 항목형 공제 입력. 종류: '조세특례제한법'(current_tax에서 차감)|'법인세법'(공제대상 법인세에서 빼지 않음). "
+        "예: [{\"종류\":\"조세특례제한법\",\"금액\":30000000}]"
+    ))] = None,
+    penalty_items: Annotated[list | None, Field(description=(
+        "[{근거, 금액}] — 항목형 가산세 입력. 근거: '법인세법 제75조의3'|'국세기본법 제47조의2'|'국세기본법 제47조의3'|'국세기본법 제47조의4'|'국세기본법 제47조의5'|'기타'(가산세 대상 아님). "
+        "예: [{\"근거\":\"국세기본법 제47조의5\",\"금액\":6000000}]"
+    ))] = None,
+) -> dict:
+    """법인 재해손실세액공제. 언제: 재해로 자산을 상실한 법인의 법인세 세액공제를 계산할 때.
+    입력: 사업연도 → year, 자산(assets 또는 assets_before/assets_lost), 당기 법인세 → current_tax,
+          공제대상 법인세에서 차감할 세액 → other_credits 또는 credit_items, 미납 법인세 → unpaid_prior_tax,
+          가산세 → penalty 또는 penalty_items.
+    결과: 자산상실비율·공제대상 법인세·재해손실세액공제·판정·자산계산과정(assets 사용 시)·판단(credit_items·penalty_items 사용 시)·근거.
+    공제대상 법인세 = 미납 법인세 + max(당기 법인세 − 조세특례제한법 공제, 0) + 가산세(시행령 제95조③ 대상).
+    법인세법 공제(credit_items '법인세법')는 공제대상 법인세에서 빼지 않음. '기타' 가산세도 제외."""
+    return K.disaster_loss_credit(year=year, assets_before=assets_before, assets_lost=assets_lost,
+                                  current_tax=current_tax, other_credits=other_credits, unpaid_prior_tax=unpaid_prior_tax,
+                                  penalty=penalty, assets=assets, credit_items=credit_items, penalty_items=penalty_items)
+
+
 # ── 일시상각충당금·압축기장충당금 ──────────────────────────────────
 @mcp.tool(annotations=CALC)
 @_guard
