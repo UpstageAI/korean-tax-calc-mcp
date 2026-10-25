@@ -80,3 +80,20 @@ def test_reversal_and_two_investees(tmp_path):
     s16 = calc[S16]
     assert [s16.cell(21, col).value for col in range(1, 7)] == ["C", 4000000, 30, 1200000, 300000, 900000]
     assert s16["F28"].value == 8100000
+
+
+@soffice
+def test_fallback_calc_sheets_keep_live_formulas(demo):
+    raw, calc = demo
+    for name in ("계산 1", "계산 2", "계산 3", "계산 4"):
+        fs = [x.value for r in raw[name].iter_rows() for x in r if isinstance(x.value, str) and x.value.startswith("=")]
+        assert len(fs) >= 3, (name, "계산식 단계 수식 없음")               # steps 모양(입력·계산 표 + 확인) 그대로
+        checks = [x.value for r in calc[name].iter_rows() for x in r if x.value in ("일치", "확인 필요")]
+        assert checks and set(checks) == {"일치"}, (name, checks)
+
+
+@soffice
+def test_two_checks_on_same_row(demo):
+    _, calc = demo
+    checks = [x.value for r in calc[S15].iter_rows() for x in r if x.value in ("일치", "확인 필요")]
+    assert checks == ["일치", "일치"]                                        # ②합계(J열)·⑤합계(L열) 둘 다
