@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.12.0 (2026-10-25)
+
+- 계산 근거 엑셀 `export_workbook`(새 도구): 여러 도구 호출을 서버가 다시 실행해 엑셀로 냄. 기본 `layout: forms`는 법정서식 모양 그대로 — 서식 틀 12개(법인세 별지 제3호·제15호·제23호(갑)(을)·제20호(1)·제16호의2·제50호(을), 부가세 별지 제22호·공통사용재화·일괄양도 계산 근거, 종합소득세 배당·이자·근로소득 명세서), 금액 칸은 서식 산식 그대로의 수식, 서식 사이 연결(별지23·20·16의2 → 별지15 → 별지3), 도구 값 대조 칸(인쇄 영역 밖), A4 한 쪽 인쇄, 자료 없는 서식은 목록에 표시. `layout: steps`는 요약·계산 N 시트(입력 셀을 참조하는 살아 있는 수식). `company`·`period`·`biz_no` 인자
+- 새 계산 도구 13개: `corporate_deemed_rent_income`(임대보증금 간주익금), `estimated_business_income`(추계 사업소득), `vat_exempt_use_deemed_supply`(면세전용 간주공급), `liquidation_income`(청산소득), `income_adjustment_total`(차가감소득금액·세무조정 집계), `personal_deduction`(인적공제), `pension_income`(연금소득금액), `income_loss_offset`(결손금 공제), `disaster_loss_credit`(재해손실세액공제), `vat_input_tax_deduction`(매입세액 공제 판정), `vat_deemed_supply_items`(간주공급 판정), `pension_account_withdrawal`(연금계좌 인출), `inheritance_gift_valuation`(상속·증여재산 평가)
+- 기존 도구 확장: `entertainment_adjustment` 전통시장 등 추가한도(조특법 제136조⑥, 부칙대로 2023·2024 사업연도 10%·2025 20%+지역사랑상품권·2026 온누리상품권 추가), `other_income_aggregate` 승마투표권 환급금·슬롯머신 당첨금, `financial_income_aggregate` 손해배상 법정이자·공익신탁 이익, `capital_gains_income` 부담부증여 양도분, `deemed_dividend_bonus_shares` 자본전입 재원 3개
+- 주요 계산 도구 8개(기업업무추진비·차가감소득금액·감가상각·수입배당금·공통매입세액·일괄공급 안분·총급여·금융소득)가 계산식 단계(입력·식·값)를 돌려줌 → 엑셀 수식의 바탕
+- Solar Pro 4 작성, CodeSolar·Claude 검수
+
 ## 0.11.0 (2026-10-22)
 
 - 항목형 입력: `capital_gains_income`에 취득세·취득 중개수수료·보유 중 납부 재산세·거주 시작일/종료일 칸(취득가액 합산과 거주기간 계산을 도구가 함, 환산취득가액 경로의 취득가액 구성 표시), `vat_deemed_input_credit`에 품목별 `items`(수입품 관세의 과세가격·운임 포함액·용도 비율, 용도 표기 3가지 형태 허용·같은 품목 행 병합·한국어 오류 안내), `special_tax_credit` 교육비에 회사 학자금·비과세 장학금 칸(차감 규칙을 결과에 항상 표기)
