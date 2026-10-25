@@ -18,6 +18,7 @@ from .engine import calc as K, calc_cit as C, calc_income as I, calc_vat as V, c
 from .engine import calc_inhgift as IG
 from .engine import calc_gold_gaps6 as GG
 from . import vocab
+from .forms_workbook import render_form_sheet, _load_form_templates
 
 # ── 세무조사 판정 도구 (audit 패키지) ──
 from .audit.agents import related as _R
@@ -2330,13 +2331,6 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
         {"이름": "수입구간3_한도", "값": t3_cap, "설명": f"수입금액 구간3 한도(원) — {t2_cap:,}원 초과"},
         {"이름": "수입구간3_비율", "값": t3_r, "설명": f"수입금액 구간3 비율 — {t2_cap:,}원 초과"},
     ]
-    # 전통시장등 지출 (slot 참조용 정의된 이름 생성) — 연도 무관하게 항상 계산식_입력에 추가(0이면 0)
-    계산식_입력.append({"이름": "전통시장_지출", "값": (전통시장_총액 if year >= 2023 else 0),
-                         "설명": "전통시장 기업업무추진비 지출 합계 — 2023 사업연도부터 대상(조특법 제136조⑥)"})
-    계산식_입력.append({"이름": "지역사랑상품권_지출", "값": (지역사랑상품권_총액 if year >= 2025 else 0),
-                         "설명": "지역사랑상품권 기업업무추진비 지출 합계 — 2025 사업연도부터 대상(조특법 제136조⑥)"})
-    계산식_입력.append({"이름": "온누리상품권_지출", "값": (온누리상품권_총액 if year >= 2026 else 0),
-                         "설명": "온누리상품권 기업업무추진비 지출 합계 — 2026 사업연도 지출분부터 대상(조특법 제136조⑥)"})
     for idx, item in enumerate(items_for_limit, 1):
         설명 = f"기업업무추진비 시부인 대상 항목 {idx} (적격증빙)"
         # 원장 항목 원래 이름과 판단 요지 포함
@@ -2354,10 +2348,12 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
     # 2023·2024: 전통시장만, 비율 10% (법률 19936 부칙§35)
     # 2025: 전통시장+지역사랑상품권, 비율 20% (법률 21223 부칙§31)
     # 2026~2028: 전통시장+지역사랑+온누리, 비율 20% (법률 21612 부칙§4)
-    # slot 참조용 정의된 이름 생성 — 연도 무관하게 항상 생성 (0이면 0)
-    비율 = C.YEAR[year].get("전통시장등_비율", 0) if 2023 <= year <= 2028 else 0
-    계산식_입력.append({"이름": "전통시장등비율", "값": 비율,
-                         "설명": f"전통시장등 추가한도 비율 — 조특법 제136조⑥, {'법률 19936 부칙§35(2023·2024)' if year in (2023, 2024) else '법률 21223 부칙§31(2025)' if year == 2025 else '법률 21612 부칙§4(2026~2028)' if 2026 <= year <= 2028 else '2023 사업연도부터 대상'}"})
+    if 2023 <= year <= 2028 and 전통시장등_총액 > 0:
+        비율 = C.YEAR[year].get("전통시장등_비율", 0)
+        계산식_입력.append({"이름": "전통시장등비율", "값": 비율,
+                             "설명": f"전통시장등 추가한도 비율 — 조특법 제136조⑥, {'법률 19936 부칙§35(2023·2024)' if year in (2023, 2024) else '법률 21223 부칙§31(2025)' if year == 2025 else '법률 21612 부칙§4(2026~2028)'}"})
+        계산식_입력.append({"이름": "전통시장등금액", "값": 전통시장등_총액,
+                             "설명": f"전통시장등(적격 기업업무추진비 중 해당 연도 대상 성격) 지출 합계 — 조특법 제136조⑥"})
 
     실제기본한도 = 기본한도_중소 if sme else 기본한도_일반
     계산식: list[dict] = [
@@ -2372,9 +2368,12 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
          "값": int(ent_일반한도 - 실제기본한도 * months / 12), "설명": "일반 한도 + (특수관계 − 일반) × 10% (영 제42조①)"},
         {"이름": "문화한도", "식": "MIN(문화금액,(기본한도+수입금액한도)*0.2)",
          "값": ent_문화한도, "설명": "문화접대비 min(문화비, (기본한도+수입금액한도) × 20%) — 조특법 제136조③"},
-        {"이름": "전통시장한도", "식": f"MIN(전통시장등금액,(기본한도+수입금액한도)*{비율 if 2023 <= year <= 2028 else 0})",
-         "값": ent.get("전통시장한도", 0), "설명": f"전통시장등 추가한도 min(전통시장등금액, (기본한도+수입금액한도) × {비율 if 2023 <= year <= 2028 else 0}) — 조특법 제136조⑥"},
     ]
+    if 2023 <= year <= 2028 and 전통시장등_총액 > 0:
+        비율 = C.YEAR[year].get("전통시장등_비율", 0)
+        계산식.append({"이름": "전통시장한도", "식": f"MIN(전통시장등금액,(기본한도+수입금액한도)*{비율})",
+                        "값": ent["전통시장한도"],
+                        "설명": f"전통시장등 추가한도 min(전통시장등금액, (기본한도+수입금액한도) × {비율}) — 조특법 제136조⑥"})
     한도_식 = "기본한도+수입금액한도+문화한도" + ("+전통시장한도" if 2023 <= year <= 2028 and 전통시장등_총액 > 0 else "")
     한도_설명 = "기본한도 + 수입금액한도 + 문화한도" + (" + 전통시장한도" if 2023 <= year <= 2028 and 전통시장등_총액 > 0 else "")
     계산식.extend([
@@ -2409,11 +2408,13 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
                           "이유": "전통시장등 추가한도는 2024.1.1 이후 신고분부터 적용(2023 사업연도~) — 해당 연도 이전 또는 2029 이후는 일반 기업업무추진비로 시부인"})
 
     result = {"한도": limit, "한도초과": over_limit, "직부인_대표자상여": no_receipt_total + private_use_total, "직부인_기타사외유출": no_qual_total, "시부인_대상": si_bu_shin}
+    전통시장등비율 = C.YEAR[year].get("전통시장등_비율", 0) if 2023 <= year <= 2028 and 전통시장등_총액 > 0 else 0
     calc_dict = {"기본한도": ent["일반한도"], "문화한도": ent["문화한도"], "전통시장한도": ent["전통시장한도"],
                "시부인 대상": si_bu_shin, "직부인(증빙없음·심사비)": no_receipt_total + no_qual_total,
-               "전통시장_지출": 전통시장_총액,
+               "전통시장_지출": (전통시장_총액 if 2023 <= year <= 2028 else 0),
                "지역사랑상품권_지출": (지역사랑상품권_총액 if 2025 <= year <= 2028 else 0),
-               "온누리상품권_지출": (온누리상품권_총액 if 2026 <= year <= 2028 else 0)}
+               "온누리상품권_지출": (온누리상품권_총액 if 2026 <= year <= 2028 else 0),
+               "전통시장등비율": 전통시장등비율}
     근거_목록 = vocab.basis("기업업무추진비_적격수취", year)
     근거_문자열 = ", ".join(f"{조문[0]} {조문[1]} {조문[2]} {조문[3]}" if 조문[3] else f"{조문[0]} {조문[1]} {조문[2]}" for 조문 in 근거_목록)
     unified = _build_tax_adjustment_result(settlements, result, calc_dict)
@@ -6463,25 +6464,6 @@ def _이름_치환(식: str, 이름_맵: dict[str, str]) -> str:
     return "".join(tok)
 
 
-def _load_form_templates():
-    """form_templates JSON 디렉터리에서 도구별 템플릿 목록을 로드한다 (모듈 수준 캐시)."""
-    import json as _json
-    tpl_dir = os.path.join(os.path.dirname(__file__), "data", "form_templates")
-    result: dict[str, list[dict]] = {}
-    if not os.path.isdir(tpl_dir):
-        return result
-    for fname in sorted(os.listdir(tpl_dir)):
-        if not fname.endswith(".json"):
-            continue
-        path = os.path.join(tpl_dir, fname)
-        with open(path, encoding="utf-8") as f:
-            tpl = _json.load(f)
-        tool = tpl.get("tool", "")
-        if tool:
-            result.setdefault(tool, []).append(tpl)
-    return result
-
-
 @mcp.tool(annotations=CALC)
 def export_workbook(
     title: Annotated[str, Field(description="문서 제목 — 파일명 기본값")],
@@ -6578,283 +6560,6 @@ def export_workbook(
 
     # ── 폼 템플릿 로드 ──
     _FORM_TEMPLATES = _load_form_templates()
-
-    def _render_form_sheet(ws, tpl, res, input_map, sheet_name_map,
-        slot_map_all=None, slot_map_cross=None, tkey_override=None,
-        call_idx=None):
-        """폼 템플릿 JSON을 엑셀 시트로 렌더링한다."""
-        import sys as _sys
-        tkey = tpl["key"] if tkey_override is None else tkey_override
-        # 현재 템플릿의 로컬 slot_map 구축 (로컬 {id} 참조용)
-        local_slot_map = {s["id"]: s["cell"] for s in tpl.get("slots", [])}
-
-        ws.title = tpl["sheet"]
-
-        # 열 너비
-        for col, w in tpl.get("widths", {}).items():
-            ws.column_dimensions[col].width = w
-        # 행 높이
-        for row_s, h in tpl.get("row_heights", {}).items():
-            ws.row_dimensions[int(row_s)].height = h
-        if tpl.get("default_row_height"):
-            ws.row_dimensions[1].height = tpl["default_row_height"]
-
-        # 셀 채우기
-        AL_MAP = {"l": "left", "c": "center", "r": "right"}
-        merged_set: set[str] = set()
-        for mc in tpl.get("cells", []):
-            rng_s = mc["r"]
-            if ":" in rng_s:
-                c1, c2 = rng_s.split(":")
-                merged_set.add(rng_s)
-                ws.merge_cells(rng_s)
-                ws[c1].value = _replace_placeholder(mc["t"], company, period, biz_no, input_map)
-                ws[c1].alignment = Alignment(horizontal=AL_MAP.get(mc.get("al", "l"), mc.get("al", "l")),
-                                             vertical="center", wrap_text=True)
-                if mc.get("size"):
-                    ws[c1].font = Font(name="맑은 고딕", size=mc["size"], bold=mc.get("bold", False))
-                elif mc.get("bold"):
-                    ws[c1].font = Font(name="맑은 고딕", size=10, bold=True)
-                else:
-                    ws[c1].font = Font(name="맑은 고딕", size=10)
-                continue
-            # 단일 셀
-            ws[rng_s].value = _replace_placeholder(mc["t"], company, period, biz_no, input_map)
-            ws[rng_s].alignment = Alignment(horizontal=AL_MAP.get(mc.get("al", "l"), mc.get("al", "l")),
-                                            vertical="center", wrap_text=True)
-            if mc.get("size"):
-                ws[rng_s].font = Font(name="맑은 고딕", size=mc["size"], bold=mc.get("bold", False))
-            elif mc.get("bold"):
-                ws[rng_s].font = Font(name="맑은 고딕", size=10, bold=True)
-            else:
-                ws[rng_s].font = Font(name="맑은 고딕", size=10)
-
-        # 괘선(box) — 모든 칸 얇은 선
-        thin = Side(style="thin")
-        medium = Side(style="medium")
-        for rng_s in tpl.get("box", []):
-            cs, ce, rs, re_ = _parse_range(rng_s)
-            for ci in range(cs, ce + 1):
-                for ri in range(rs, re_ + 1):
-                    cell = ws.cell(ri, ci)
-                    cell.border = Border(left=thin, right=thin, top=thin, bottom=thin)
-
-        # 바깥 테두리(outer) — 굵은 선
-        for rng_s in tpl.get("outer", []):
-            cs, ce, rs, re_ = _parse_range(rng_s)
-            for ci in range(cs, ce + 1):
-                for ri in range(rs, re_ + 1):
-                    cell = ws.cell(ri, ci)
-                    left_b = medium if ci == cs else cell.border.left
-                    right_b = medium if ci == ce else cell.border.right
-                    top_b = medium if ri == rs else cell.border.top
-                    bottom_b = medium if ri == re_ else cell.border.bottom
-                    cell.border = Border(left=left_b, right=right_b, top=top_b, bottom=bottom_b)
-
-        # 금액 열 서식
-        for col_l in tpl.get("amount_cols", []):
-            ci = ord(col_l) - 64
-            pa = tpl.get("print_area", "")
-            if pa:
-                pa_cs, pa_ce, pa_rs, pa_re = _parse_range(pa)
-                for ri in range(pa_rs, pa_re + 1):
-                    c = ws.cell(ri, ci)
-                    if c.value is not None:
-                        c.number_format = money_fmt
-                        c.alignment = Alignment(horizontal="right", vertical="center")
-
-        # 슬롯(수식) 처리
-        for s in tpl.get("slots", []):
-            cell_addr = s["cell"]
-            f = s.get("f", "")
-            if not f:
-                continue
-            #             # 템플릿의 모든 [입력.이름] 토큰을 미리 추출해서, 입력 맵에 없는 것도
-            # 0(또는 템플릿 기본값)으로 정의된 이름 생성
-            if call_idx is not None:
-                호출접두사 = f"호출{call_idx + 1}_"
-                all_input_names: set[tuple[str, str | None]] = set()
-                for mc in tpl.get("cells", []):
-                    txt = mc.get("t", "") or ""
-                    for m in _re.finditer(r"\{\{입력\.([^}]+)\}\}", txt):
-                        full = m.group(1)
-                        if "|" in full:
-                            name, default = full.split("|", 1)
-                            all_input_names.add((name, default))
-                        else:
-                            all_input_names.add((full, None))
-                for s2 in tpl.get("slots", []):
-                    f2 = s2.get("f", "") or ""
-                    for m in _re.finditer(r"\{\{입력\.([^}]+)\}\}", f2):
-                        full = m.group(1)
-                        if "|" in full:
-                            name, default = full.split("|", 1)
-                            all_input_names.add((name, default))
-                        else:
-                            all_input_names.add((full, None))
-                    for m in _re.finditer(r"\[입력\.([^]|]+)(?:\|([^]]+))?\]", f2):
-                        full = m.group(1)
-                        if "|" in full:
-                            name, default = full.split("|", 1)
-                            all_input_names.add((name, default))
-                        else:
-                            all_input_names.add((full, None))
-            if call_idx is not None:
-                호출접두사 = f"호출{call_idx + 1}_"
-                f = _re.sub(r"\[입력\.([^]|]+)(?:\|([^]]+))?\]", 호출접두사 + r"\1", f)
-                # [계산.이름|기본값] → 호출N_이름 (접두사 '계산.' 제거)
-                f = _re.sub(r"\[계산\.([^]|]+)(?:\|([^]]+))?\]", 호출접두사 + r"\1", f)
-                f = _re.sub(r"\[결과\.([^]|]+)(?:\|([^]]+))?\]", 호출접두사 + r"결과_\1", f)
-            # {id} 또는 {틀key!id} → 셀 주소
-            def _slot_repl(m):
-                rest = m.group(1)
-                if "!" in rest:
-                    ref_key, ref_id = rest.split("!", 1)
-                    if ref_key not in sheet_name_map:
-                        raise KeyError(f"알 수 없는 틀 key '{ref_key}' — 시트 없음")
-                    target_sheet = sheet_name_map[ref_key]
-                    # (틀key, slot_id) 교차 참조 우선, 없으면 단일 id 조회
-                    cross_key = (ref_key, ref_id)
-                    if slot_map_cross and cross_key in slot_map_cross:
-                        return f"'{target_sheet}'!{slot_map_cross[cross_key]}"
-                    if slot_map_all and ref_id in slot_map_all:
-                        return f"'{target_sheet}'!{slot_map_all[ref_id]}"
-                    raise KeyError(f"알 수 없는 slot id '{ref_id}' (틀 {ref_key})")
-                else:
-                    # {id} 참조: 현재 템플릿의 로컬 슬롯 우선
-                    if rest in local_slot_map:
-                        return local_slot_map[rest]
-                    # 중복되지 않은 슬롯 (모든 템플릿에서 동일)
-                    if slot_map_all and rest in slot_map_all:
-                        return slot_map_all[rest]
-                    raise KeyError(f"알 수 없는 slot id '{rest}' (틀 {tkey})")
-            f_rendered = _re.sub(r"\{([^}]+)\}", _slot_repl, f)
-            ws[cell_addr].value = f_rendered
-            ws[cell_addr].font = Font(name="맑은 고딕", size=10)
-
-        # 검증 칸(check_col)
-        check_col = tpl.get("check_col", "")
-        if check_col and tpl.get("slots"):
-            cci = ord(check_col) - 64
-            check_rows = sorted([s for s in tpl["slots"] if s.get("check")],
-                               key=lambda x: _parse_cell(x["cell"])[0])
-            if check_rows:
-                first_r = _parse_cell(check_rows[0]["cell"])[0]
-                ws.cell(first_r - 1, cci, "도구 값").font = Font(name="맑은 고딕", size=9, bold=True)
-                ws.cell(first_r - 1, cci).alignment = Alignment(horizontal="center", vertical="center")
-                ws.cell(first_r - 1, cci + 1, "확인").font = Font(name="맑은 고딕", size=9, bold=True)
-                ws.cell(first_r - 1, cci + 1).alignment = Alignment(horizontal="center", vertical="center")
-            for s in check_rows:
-                cell_addr = s["cell"]
-                r = _parse_cell(cell_addr)[0]
-                check_path = s["check"]
-                tool_val = _resolve_tool_value(res, check_path)
-                tv_cell = ws.cell(r, cci)
-                tv_cell.font = Font(name="맑은 고딕", size=9, color="808080")
-                tv_cell.alignment = Alignment(horizontal="right", vertical="center")
-                if tool_val is None:
-                    tv_cell.value = "—"
-                elif isinstance(tool_val, float) and tool_val == float("inf"):
-                    tv_cell.value = "상한 없음"
-                else:
-                    tv_cell.value = tool_val
-                    tv_cell.number_format = money_fmt
-                amt_col_letter = _col_letter(_parse_cell(cell_addr)[1])
-                ws.cell(r, cci + 1,
-                        f'=IF(ROUND({amt_col_letter}{r},0)=ROUND(IF(ISNUMBER({check_col}{r}),{check_col}{r},0),0),"일치","확인 필요")')
-                ws.cell(r, cci + 1).font = Font(name="맑은 고딕", size=9)
-                ws.cell(r, cci + 1).alignment = Alignment(horizontal="center", vertical="center")
-
-        # 인쇄 영역, 눈금선, 페이지 설정
-        if tpl.get("print_area"):
-            ws.print_area = tpl["print_area"]
-        ws.sheet_view.showGridLines = False
-        ws.page_setup.orientation = "portrait"
-        ws.page_setup.fitToPage = True
-        ws.page_setup.fitToWidth = 1
-        ws.page_setup.fitToHeight = 1
-        ws.page_setup.paperSize = 9  # A4
-
-    def _parse_cell(addr):
-        """'D13' → (13, 4)."""
-        m = _re.match(r"([A-Z]+)(\d+)", addr)
-        if not m:
-            raise ValueError(f"잘못된 셀 주소: {addr}")
-        col = 0
-        for ch in m.group(1):
-            col = col * 26 + (ord(ch) - 64)
-        return (int(m.group(2)), col)
-
-    def _col_letter(ci):
-        """1-based 열 번호 → 'A' 형태."""
-        s = ""
-        while ci > 0:
-            ci, rem = divmod(ci - 1, 26)
-            s = chr(65 + rem) + s
-        return s
-
-    def _parse_range(rng_s):
-        """'A2:D3' → (1, 4, 2, 3). 'Sheet!A2:D3'이면 rng 부분만 사용."""
-        rng_s = rng_s.split("!")[-1]
-        if ":" not in rng_s:
-            r, c = _parse_cell(rng_s)
-            return (c, c, r, r)
-        c1_s, c2_s = rng_s.split(":")
-        r1, c1 = _parse_cell(c1_s)
-        r2, c2 = _parse_cell(c2_s)
-        return (min(c1, c2), max(c1, c2), min(r1, r2), max(r1, r2))
-
-    def _resolve_tool_value(res, path):
-        """결과 dict에서 경로(예: '결과.시부인_대상', '계산.전통시장_지출')로 값 조회.
-        '결과.' prefix는 res가 전체 data dict일 때 res['결과'][키]로 해석한다."""
-        if not path or not isinstance(res, dict):
-            return None
-        parts = path.split(".")
-        # '결과.키' → res['결과'][키] 참조 (res가 data dict이고 '결과' 키가 있을 때)
-        if parts[0] == "결과" and "결과" in res:
-            parts = parts[1:]
-            cur = res.get("결과")
-            if not isinstance(cur, dict):
-                return None
-        else:
-            cur = res
-        for p in parts:
-            if isinstance(cur, dict):
-                cur = cur.get(p)
-            else:
-                return None
-            if cur is None:
-                return None
-        return cur
-
-    def _replace_placeholder(t, company, period, biz_no, input_map):
-        """문구 placeholder 치환: {{법인명}}·{{사업자등록번호}}·{{기간_시작}}·{{기간_끝}}·{{입력.이름}}·{{계정과목}}."""
-        if not t:
-            return t
-        d1, d2 = "", ""
-        if period:
-            parts = period.split(" ~ ")
-            if len(parts) == 2:
-                d1, d2 = parts[0].strip(), parts[1].strip()
-        t = t.replace("{{법인명}}", company)
-        t = t.replace("{{사업자등록번호}}", biz_no)
-        t = t.replace("{{기간_시작}}", d1)
-        t = t.replace("{{기간_끝}}", d2)
-        t = t.replace("{{계정과목}}", "기업업무추진비")
-        # {{입력.이름}} → 입력 맵 값
-        for m in _re.finditer(r"\{\{입력\.([^}]+)\}\}", t):
-            name = m.group(1)
-            v = input_map.get(name)
-            if isinstance(v, bool):
-                repl = str(v)
-            elif isinstance(v, int):
-                repl = str(v)
-            elif isinstance(v, float):
-                repl = str(int(v)) if v == int(v) else str(v)
-            else:
-                repl = str(v) if v is not None else ""
-            t = t[:m.start()] + repl + t[m.end():]
-        return t
 
     시트이름들: list[str] = []
 
@@ -7268,7 +6973,6 @@ def export_workbook(
         # ── 3. 틀 시트 렌더링 ──
         sheet_name_map: dict[str, str] = {}
         slot_map_all: dict[str, str] = {}
-        slot_map_cross: dict[tuple[str, str], str] = {}
         _tpl_by_key: dict[str, dict] = {}
         for tinfo in 템플릿_목록:
             sheet_name_map[tinfo["key"]] = tinfo["sheet"]
@@ -7283,10 +6987,36 @@ def export_workbook(
             for s in tpl.get("slots", []):
                 sid = s["id"]
                 cell = s["cell"]
-                if sid in slot_map_all:
-                    slot_map_cross[(tinfo["key"], sid)] = cell
-                else:
-                    slot_map_all[sid] = cell
+                slot_map_all[sid] = cell
+
+        # slot_map_cross: {(ref_key, ref_id): (sheet, cell)} — cross 참조 lookup용
+        # 1단계: 모든 템플릿의 slots 수집 (tkey → {sid: (sheet, cell)})
+        all_slots: dict[str, dict[str, tuple[str, str]]] = {}
+        for tinfo in 템플릿_목록:
+            tpl = _tpl_by_key[tinfo["key"]]
+            all_slots[tinfo["key"]] = {}
+            for s in tpl.get("slots", []):
+                all_slots[tinfo["key"]][s["id"]] = (tinfo["sheet"], s["cell"])
+
+        # 2단계: {틀key!id} cross 참조 파싱
+        cross_refs: set[tuple[str, str]] = set()
+        for tinfo in 템플릿_목록:
+            tpl = _tpl_by_key[tinfo["key"]]
+            for s in tpl.get("slots", []):
+                f = s.get("f", "") or ""
+                for m in _re.finditer(r"\{([^}]+)\}", f):
+                    rest = m.group(1)
+                    if "!" in rest:
+                        ref_key, ref_id = rest.split("!", 1)
+                        cross_refs.add((ref_key, ref_id))
+
+        # 3단계: slot_map_cross 구성
+        slot_map_cross: dict[tuple[str, str], tuple[str, str]] = {}
+        for ref_key, ref_id in cross_refs:
+            if ref_key in all_slots and ref_id in all_slots[ref_key]:
+                slot_map_cross[(ref_key, ref_id)] = all_slots[ref_key][ref_id]
+            else:
+                raise KeyError(f"cross 참조 오류: '{ref_key}' 틀에 슬롯 id '{ref_id}' 정의 없음")
 
         for tinfo in 템플릿_목록:
             cd = 결과들[tinfo["call_idx"]]
@@ -7301,9 +7031,9 @@ def export_workbook(
                 input_map[inp["이름"]] = inp["값"]
             for s in (cd.get("data") or {}).get("계산식", []) or []:
                 input_map[s["이름"]] = s["값"]
-            _render_form_sheet(ws, tpl, cd.get("data", cd.get("result", {})), input_map,
+            render_form_sheet(ws, tpl, cd.get("data", cd.get("result", {})), input_map,
                                sheet_name_map, slot_map_all, slot_map_cross, tkey,
-                               call_idx=tinfo["call_idx"])
+                               call_idx=tinfo["call_idx"], company=company, period=period, biz_no=biz_no)
             시트이름들.append(tinfo["sheet"])
 
         # ── 3b. 계산 N 시트들 (틀 없는 도구들, call 순서대로) ──
