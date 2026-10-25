@@ -72,46 +72,60 @@ def tool_value(res: dict | None, path: str) -> Any:
     return cur
 
 
-# cross 참조 대상이 없을 때 반환되는 Sentinel (렌더러에서 fallback 값으로 치환)
-CROSS_FALLBACK = object()
+def load_templates() -> dict[str, dict]:
+    """data/form_templates의 모든 틀 JSON을 로드하여 {key: 틀}로 반환한다."""
+    import json as _json
+    import os as _os
+    tpl_dir = _os.path.join(_os.path.dirname(__file__), "data", "form_templates")
+    result: dict[str, dict] = {}
+    if not _os.path.isdir(tpl_dir):
+        return result
+    for fname in sorted(_os.listdir(tpl_dir)):
+        if not fname.endswith(".json"):
+            continue
+        path = _os.path.join(tpl_dir, fname)
+        with open(path, encoding="utf-8") as f:
+            tpl = _json.load(f)
+        key = tpl.get("key", "")
+        if key:
+            result[key] = tpl
+    return result
 
 
-def _fmt_val(v: Any) -> str:
-    """도구 값을 엑셀 수식용 숫자 문자열로 변환."""
-    if isinstance(v, bool):
-        return "TRUE" if v else "FALSE"
-    if isinstance(v, int):
-        return str(v)
-    if isinstance(v, float):
-        if v == int(v):
-            return str(int(v))
-        return str(v)
-    return str(v)
+def cross_fallback_value(ref_key: str, ref_id: str, *, templates: dict[str, dict],
+                         results: dict[str, Any]) -> Any:
+    """교차 참조 대상이 이번 내보내기에 없을 때, 대상 틀 slot의 check 경로로 도구 결과에서 값을 조회한다.
 
-
-def _cross_fallback_value(ref_key: str, ref_id: str, tkey: str,
-                          source_data: dict[str, list[dict]] | None,
-                          all_slots: dict[str, dict[str, tuple[str, str]]] | None,
-                          sheet_name_map: dict[str, str] | None) -> Any:
-    """교차 참조 대상이 이번 내보내기에 없을 때 fallback 값 조회.
-
-    source_data{조정_가산|조정_차감}에서 ref_id가 금액 키면 해당 값, 아니면 None.
+    대상 틀(ref_key)의 슬롯 중 id==ref_id인 slot의 check 경로를 대상 틀 tool의 도구 결과
+    (results[tool])에서 tool_value로 읽는다. check가 없거나 결과·값이 없으면 KeyError.
     """
-    # source_data의 adjustment 소스에서 ref_id가 금액이면 해당 값 반환
-    for src_name in ("조정_가산", "조정_차감"):
-        rows = (source_data or {}).get(src_name, [])
-        for row in rows:
-            # ref_id가 source 행의 키 중 하나이고 값이 숫자면 반환
-            if ref_id in row and isinstance(row[ref_id], (int, float)):
-                return row[ref_id]
-    # 별지3 102·103 등은 별지15가 항상 같이 렌더되므로 해당 없음
-    return None
+    tpl = templates.get(ref_key)
+    if tpl is None:
+        raise KeyError(f"교차 참조 대상 틀 '{ref_key}' 없음")
+    slot = next((s for s in tpl.get("slots", []) if s.get("id") == ref_id), None)
+    if slot is None:
+        raise KeyError(f"틀 '{ref_key}'에 슬롯 id '{ref_id}' 정의 없음")
+    check_path = slot.get("check")
+    if not check_path:
+        raise KeyError(f"슬롯 '{ref_id}'에 check 경로 없음")
+    tool = tpl.get("tool", "")
+    if not tool:
+        raise KeyError(f"틀 '{ref_key}'에 tool 없음")
+    res = results.get(tool)
+    if not isinstance(res, dict):
+        raise KeyError(f"도구 '{tool}' 결과 없음")
+    val = tool_value(res, check_path)
+    if val is None:
+        raise KeyError(f"도구 '{tool}' 결과 경로 '{check_path}' 값 없음")
+    return val
 
 
 def resolve_formula(f: str, *, res: dict | None, call_idx: int,
                     local: dict[str, str], cross: dict[tuple[str, str], tuple[str, str]],
                     sheet_name_map: dict[str, str] | None = None,
-                    all_slots: dict[str, dict[str, tuple[str, str]]] | None = None) -> str:
+                    all_slots: dict[str, dict[str, tuple[str, str]]] | None = None,
+                    templates: dict[str, dict] | None = None,
+                    results: dict[str, Any] | None = None) -> str:
     """서식 틀 수식 토큰의 토큰을 해석한 엑셀 수식 문자열을 반환한다.
 
     SPEC_form_resolver 3절:
@@ -120,7 +134,7 @@ def resolve_formula(f: str, *, res: dict | None, call_idx: int,
     - [계산.경로]·[결과.경로] → tool_value 값을 숫자 문자열로(정수는 정수, bool은 TRUE/FALSE).
       |d 기본값 규칙 같음. 없으면 KeyError.
     - {id} → local[id], {틀key!id} → '시트이름'!셀 (cross[(틀key,id)] = (시트이름, 셀)).
-      없으면 KeyError.
+      없으면 KeyError. 대상 틀 없으면 cross_fallback_value 호출.
     - 그 밖 문자는 그대로.
     """
     if not isinstance(res, dict):
@@ -188,13 +202,14 @@ def resolve_formula(f: str, *, res: dict | None, call_idx: int,
             if key in cross:
                 sheet_name, cell = cross[key]
                 return f"'{sheet_name}'!{cell}"
-            # cross에 없지만 all_slots에 있으면 직접 조회 (source_data 등 두 번째 패스 참조용)
+            # cross에 없지만 all_slots에 있으면 직접 조회
             if all_slots is not None and ref_key in all_slots and ref_id in all_slots[ref_key]:
                 sheet_name, cell = all_slots[ref_key][ref_id]
                 return f"'{sheet_name}'!{cell}"
-            # 대상 틀이 이번 내보기에 없음 → fallback sentinel
+            # 대상 틀이 이번 내보기에 없음 → cross_fallback_value로 도구 결과 조회
             if all_slots is not None and ref_key not in all_slots:
-                return "CROSS_FALLBACK"
+                return str(cross_fallback_value(ref_key, ref_id,
+                                                templates=templates or {}, results=results or {}))
             # ref_key가 all_slots에 있지만 ref_id가 해당 틀에 정의되지 않음 → 오류
             if all_slots is not None and ref_id not in all_slots.get(ref_key, {}):
                 raise KeyError(f"교차 참조 '{rest}': '{ref_key}' 틀에 슬롯 id '{ref_id}' 정의 없음")
@@ -285,7 +300,9 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
                       source_data: dict[str, list[dict]] | None = None,
                       all_slots: dict[str, dict[str, tuple[str, str]]] | None = None,
                       label: str = "",
-                      과세기간: str = "") -> None:
+                      과세기간: str = "",
+                      templates: dict[str, dict] | None = None,
+                      results: dict[str, Any] | None = None) -> None:
     """폼 템플릿 JSON을 엑셀 시트로 렌더링한다. (SPEC_form_templates 3절)
 
     렌더러의 slot 수식·table 열 수식·문구·검증 값은 모두 tool_value·resolve_formula·fill_text
@@ -327,7 +344,7 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
     for row_s, h in tpl.get("row_heights", {}).items():
         ws.row_dimensions[int(row_s)].height = h
 
-    # ── 셀 채우기 (문구) — fill_text 사용 ──
+    # ── 셀 채우기 (문구) — fill_text 사용, 셀 단위 fill 적용 ──
     for mc in tpl.get("cells", []):
         rng_s = mc["r"]
         txt = fill_text(mc.get("t"), res=res, meta=meta)
@@ -335,16 +352,26 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
         font = Font(name="맑은 고딕",
                     size=mc.get("size") if mc.get("size") else 10,
                     bold=mc.get("bold", False))
+        cell_fill = mc.get("fill")
+        if cell_fill is not None:
+            fill = cell_fill if isinstance(cell_fill, PatternFill) else PatternFill("solid", fgColor=cell_fill)
         if ":" in rng_s:
             c1, c2 = rng_s.split(":")
             ws.merge_cells(rng_s)
             ws[c1].value = txt
             ws[c1].alignment = Alignment(horizontal=al, vertical="center", wrap_text=True)
             ws[c1].font = font
+            if cell_fill is not None:
+                cs, ce, rs, re_ = _parse_range(rng_s)
+                for ci in range(cs, ce + 1):
+                    for ri in range(rs, re_ + 1):
+                        ws.cell(ri, ci).fill = fill
         else:
             ws[rng_s].value = txt
             ws[rng_s].alignment = Alignment(horizontal=al, vertical="center", wrap_text=True)
             ws[rng_s].font = font
+            if cell_fill is not None:
+                ws[rng_s].fill = fill
 
     # ── 괘선(box) — 모든 칸 얇은 선 ──
     thin = Side(style="thin")
@@ -387,13 +414,8 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
         if call_idx is not None:
             f_rendered = resolve_formula(f, res=res, call_idx=call_idx,
                                          local=local_slot_map, cross=cross_map,
-                                         sheet_name_map=sheet_name_map, all_slots=all_slots)
-            # cross 참조 대상이 없을 때 fallback 값 치환
-            if f_rendered == "CROSS_FALLBACK":
-                ref_key, ref_id = f.strip("{}").split("!", 1)
-                # source_data에서 해당 slot의 도구 값 또는 source 숫자 조회
-                fallback_val = _cross_fallback_value(ref_key, ref_id, tkey, source_data, all_slots, sheet_name_map)
-                f_rendered = _fmt_val(fallback_val)
+                                         sheet_name_map=sheet_name_map, all_slots=all_slots,
+                                         templates=templates, results=results)
         else:
             # call_idx 없으면 {id}만 치환 (local_slot_map 사용)
             def _local_only(m: _re.Match) -> str:
@@ -429,18 +451,8 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
                     local_tbl.update(local_slot_map)
                     f_resolved = resolve_formula(formula_tpl, res=res, call_idx=call_idx if call_idx is not None else 0,
                                                  local=local_tbl, cross=cross_map,
-                                                 sheet_name_map=sheet_name_map, all_slots=all_slots)
-                    if f_resolved == "CROSS_FALLBACK":
-                        # cross fallback: {틀key!id} 부분을 source_data 수치로 치환
-                        def _fallback_cross(m2: _re.Match) -> str:
-                            rk, rid = m2.group(1).split("!", 1)
-                            if all_slots is not None and rk not in all_slots:
-                                sv = _cross_fallback_value(rk, rid, tkey, source_data, all_slots, sheet_name_map)
-                                return str(sv) if sv is not None else "0"
-                            raise KeyError(f"교차 참조 '{m2.group(1)}' 해석 불가")
-                        f_resolved = _re.sub(r"\{([^}]+)\}", _fallback_cross, formula_tpl)
-                        # {r}, {i} 치환
-                        f_resolved = f_resolved.replace("{r}", str(row_num)).replace("{i}", str(ri + 1))
+                                                 sheet_name_map=sheet_name_map, all_slots=all_slots,
+                                                 templates=templates, results=results)
                     ws[cell_addr].value = f_resolved
                 else:
                     # 값 열: source 행의 키 값
@@ -454,16 +466,8 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
                         local_tbl2.update(local_slot_map)
                         f_resolved = resolve_formula(val, res=res, call_idx=call_idx if call_idx is not None else 0,
                                                      local=local_tbl2, cross=cross_map,
-                                                     sheet_name_map=sheet_name_map, all_slots=all_slots)
-                        if f_resolved == "CROSS_FALLBACK":
-                            def _fb2(m2: _re.Match) -> str:
-                                rk, rid = m2.group(1).split("!", 1)
-                                if all_slots is not None and rk not in all_slots:
-                                    sv = _cross_fallback_value(rk, rid, tkey, source_data, all_slots, sheet_name_map)
-                                    return str(sv) if sv is not None else "0"
-                                raise KeyError(f"교차 참조 '{m2.group(1)}' 해석 불가")
-                            f_resolved = _re.sub(r"\{([^}]+)\}", _fb2, val)
-                            f_resolved = f_resolved.replace("{r}", str(row_num)).replace("{i}", str(ri + 1))
+                                                     sheet_name_map=sheet_name_map, all_slots=all_slots,
+                                                     templates=templates, results=results)
                         ws[cell_addr].value = f_resolved
                     else:
                         ws[cell_addr].value = val if val is not None else ""
