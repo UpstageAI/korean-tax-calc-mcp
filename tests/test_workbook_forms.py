@@ -6,7 +6,7 @@ import pytest
 from korean_tax_calc_mcp.server import mcp
 
 CALLS = json.loads((pathlib.Path(__file__).parent / "data" / "workbook_forms_calls.json").read_text(encoding="utf-8"))
-ORDER = ["목록", "별지3", "별지15", "별지23(갑)", "별지20(1)", "별지16의2", "별지50(을)", "부가 별지22", "부가 계산근거", "종소 금융·근로소득"]
+ORDER = ["목록", "별지3", "별지15", "별지23(갑)", "별지23(을)", "별지20(1)", "별지16의2", "별지50(을)", "부가 별지22", "부가 계산근거", "종소 금융·근로소득"]
 
 
 def c(tool, a):
@@ -140,3 +140,21 @@ def test_unmapped_tool_keeps_calc_sheet(tmp_path):
                                          "args": {"assets_realized": 900000000, "liabilities_paid": 300000000, "capital": 200000000, "surplus": 100000000}}]})
     wb = openpyxl.load_workbook(r["결과"]["파일"])
     assert any(re.fullmatch(r"계산 \d+", n) for n in wb.sheetnames), wb.sheetnames
+
+
+@need_soffice
+def test_entertainment_eul_feeds_gap(books):
+    raw, calc = books
+    ws = sheet(calc, "별지23(을)")
+    flat = [x.value for r in ws.iter_rows() for x in r]
+    assert 12000000000 in flat and 3000000000 in flat and 15000000000 in flat   # ①일반 ②특수관계 ③합계
+    assert 87000000 in flat                                                       # ⑦ 해당 금액 합계
+    gap1 = amount(sheet(raw, "별지23(갑)"), "①")
+    assert isinstance(gap1, str) and "별지23(을)" in gap1                         # 갑 ①은 을 ⑦ 합계 참조
+
+
+def test_list_marks_missing_forms(books):
+    raw, _ = books
+    txt = " ".join(str(x.value) for r in raw["목록"].iter_rows() for x in r if x.value)
+    assert "별지50(갑)" in txt and "자료 없음" in txt
+    assert "별지50(병)" in txt and "해당 없음" in txt
