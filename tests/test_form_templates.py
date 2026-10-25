@@ -108,3 +108,18 @@ def test_market_spend_in_calc():
 def test_steps_layout_unchanged(tmp_path):
     path = build(tmp_path, CALLS[:1], layout="steps")
     assert "요약" in openpyxl.load_workbook(path).sheetnames
+
+
+def test_render_style(demo):
+    raw, _ = demo
+    ws = raw[GAP]
+    for addr in ("D6", "D19", "D27"):
+        assert ws[addr].number_format == "#,##0", (addr, ws[addr].number_format)
+        assert ws[addr].alignment.horizontal == "right"
+    assert ws.row_dimensions[9].height == 30 and ws.row_dimensions[25].height == 40   # row_heights
+    assert ws.row_dimensions[6].height == 24                                            # default_row_height
+    assert ws["A9"].alignment.vertical == "center" and ws["A9"].alignment.wrap_text
+    assert ws["B9"].alignment.vertical == "center"
+    assert "A1:C1" in {str(m) for m in ws.merged_cells.ranges}
+    lst = " ".join(str(x.value) for r in raw["목록"].iter_rows() for x in r if x.value)
+    assert "entertainment_adjustment" not in lst                                        # 목록에 도구 영문 이름 없음
