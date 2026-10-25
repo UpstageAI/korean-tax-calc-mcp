@@ -81,14 +81,12 @@ def test_reversal_and_two_investees(tmp_path):
     assert s16["F28"].value == 8100000
 
 
-@soffice
-def test_fallback_calc_sheets_keep_live_formulas(tmp_path):
-    calls = [x for x in CALLS if x["tool"] == "entertainment_adjustment"] + [
-        {"label": "청산소득", "tool": "liquidation_income", "args": {"assets_realized": 900000000, "liabilities_paid": 300000000, "capital": 200000000, "surplus": 100000000}}]
-    path = build(tmp_path, calls)
-    raw, calc = openpyxl.load_workbook(path), recalc(path, tmp_path)
-    assert "계산 1" in raw.sheetnames                                       # 틀 없는 도구는 steps 모양 계산 시트
-    assert any(isinstance(x.value, str) and x.value.startswith("=") for r in raw["계산 1"].iter_rows() for x in r)
+def test_fallback_calc_sheet_same_as_steps(tmp_path):
+    liq = {"label": "청산소득", "tool": "liquidation_income", "args": {"assets_realized": 900000000, "liabilities_paid": 300000000, "capital": 200000000, "surplus": 100000000}}
+    forms = openpyxl.load_workbook(build(tmp_path / "f", [liq]) if (tmp_path / "f").mkdir() is None else None)
+    steps = openpyxl.load_workbook(build(tmp_path / "s", [liq], layout="steps") if (tmp_path / "s").mkdir() is None else None)
+    cells = lambda ws: [x.value for r in ws.iter_rows() for x in r]
+    assert cells(forms["계산 1"]) == cells(steps["계산 1"])                 # 틀 없는 도구는 steps와 같은 계산 시트
 
 
 @soffice
