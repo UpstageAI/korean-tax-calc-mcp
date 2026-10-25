@@ -6482,7 +6482,7 @@ def _이름_치환(식: str, 이름_맵: dict[str, str]) -> str:
 @mcp.tool(annotations=CALC)
 def export_workbook(
     title: Annotated[str, Field(description="문서 제목 — 파일명 기본값")],
-    calls: Annotated[list, Field(description="[{label, tool, args}] 1~30개")],
+    calls: Annotated[list | str, Field(description="[{label, tool, args}] 1~30개 — JSON 문자열로 줘도 됨")],
     output_dir: Annotated[str, Field(description="내보낼 폴더 경로(기본: 현재 작업 폴더)")] = ".",
     filename: Annotated[str | None, Field(description="파일명 기본값(제목), 확장자 .xlsx 자동)")] = None,
     layout: Annotated[Literal["forms", "steps"], Field(description="'forms'(법정서식 틀 + 계산·입력가정·판단근거, 기본) 또는 'steps'(요약 + 계산 N)")] = "forms",
@@ -6508,6 +6508,16 @@ def export_workbook(
   결과.call_수 — calls 길이.
   결과.오류_call — 오류 발생한 call의 label 목록.
   근거 — '계산 도구 결과 정리(세무 자문 아님)'."""
+    # ── calls가 문자열이면 JSON으로 풀기 ──
+    if isinstance(calls, str):
+        try:
+            parsed = _json.loads(calls)
+        except Exception:
+            return {"error": "입력 확인 필요 — calls는 [{label, tool, args}] 목록(JSON 배열)", "안내": "calls가 올바른 JSON 배열이 아님"}
+        if not isinstance(parsed, list):
+            return {"error": "입력 확인 필요 — calls는 [{label, tool, args}] 목록(JSON 배열)", "안내": "calls가 JSON 객체 등으로 넘어옴 — 배열이어야 함"}
+        calls = parsed
+
     # ── 입력 검증 ──
     if not calls:
         return {"error": "입력 확인 필요 — calls가 비어 있음", "안내": "1~30개 call을 주세요"}
@@ -6526,6 +6536,23 @@ def export_workbook(
         label = call.get("label", "")
         tool = call.get("tool", "")
         args = call.get("args", {})
+        if isinstance(args, str):
+            try:
+                parsed_args = _json.loads(args)
+            except Exception:
+                오류_call.append(label)
+                결과들.append({"label": label, "tool": tool,
+                               "error": "입력 확인 필요 — call args가 올바른 JSON이 아님",
+                               "basis": "", "result": None})
+                continue
+            if not isinstance(parsed_args, dict):
+                오류_call.append(label)
+                결과들.append({"label": label, "tool": tool,
+                               "error": "입력 확인 필요 — call args가 JSON 객체(dict)가 아님",
+                               "basis": "", "result": None})
+                continue
+            args = parsed_args
+            call["args"] = args  # 뒷부분의 calls[i].get("args", …)도 dict를 받게 갱신
 
         if not tool or tool == "export_workbook":
             return {"error": "입력 확인 필요 — 도구 이름 없음 또는 export_workbook 재귀 호출 금지",
