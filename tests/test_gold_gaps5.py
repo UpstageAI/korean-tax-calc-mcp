@@ -1,6 +1,7 @@
 """기존 도구 확장 — 2025 전통시장 추가한도, 기타·금융소득 항목 추가, 부담부증여, 의제배당 재원 추가의 정답 테스트. 작성 Claude 2026-10-24.
 값은 문항을 손으로 푼 결과(docs/SPEC_gold_gaps5.md)."""
 import asyncio, json
+import pytest
 from korean_tax_calc_mcp.server import mcp
 
 
@@ -21,15 +22,36 @@ REV = {"매출액": 18000000000, "특수관계매출": 2000000000}
 
 
 def test_entertainment_traditional_market_extra_limit_2025():
+    # 2025 사업연도(2026.1.1 이후 신고): 법률 제21223호 부칙 제31조 → 한도액의 20%, 전통시장·지역사랑상품권 (Claude 10-25 수정)
     r = c("entertainment_adjustment", {"year": 2025, "sme": True, "ledger": ENT, "revenue": REV})
+    assert r["계산"]["전통시장한도"] == 9000000          # min(9,000,000, 78,400,000 × 20%)
+    assert r["결과"]["한도초과"] == 16600000            # 110,000,000 − (36,000,000 + 42,400,000 + 6,000,000 + 9,000,000)
+
+
+@pytest.mark.parametrize("year", [2023, 2024])
+def test_entertainment_traditional_market_10pct_2023_2024(year):
+    # 법률 제19936호 부칙 제35조: 2024.1.1 이후 신고분부터 → 2023·2024 사업연도 10%
+    r = c("entertainment_adjustment", {"year": year, "sme": True, "ledger": ENT, "revenue": REV})
     assert r["계산"]["전통시장한도"] == 7840000
     assert r["결과"]["한도초과"] == 17760000
 
 
-def test_entertainment_traditional_market_not_before_2025():
-    r = c("entertainment_adjustment", {"year": 2024, "sme": True, "ledger": ENT, "revenue": REV})
+def test_entertainment_traditional_market_not_before_2023():
+    r = c("entertainment_adjustment", {"year": 2022, "sme": True, "ledger": ENT, "revenue": REV})
     assert r["계산"].get("전통시장한도", 0) == 0
-    assert any("전통시장" in p["항목"] and "2025" in p["결론"] for p in r["판단"])
+    assert any("전통시장" in p["항목"] and "2024.1.1" in p["결론"] for p in r["판단"])
+
+
+VOUCHER = [{"항목": "일반 기업업무추진비", "금액": 95000000, "증빙": "적격"},
+           {"항목": "지역사랑상품권 선물", "금액": 4000000, "증빙": "적격", "성격": "지역사랑상품권"},
+           {"항목": "온누리상품권 선물", "금액": 3000000, "증빙": "적격", "성격": "온누리상품권"}]
+
+
+@pytest.mark.parametrize("year, 대상", [(2024, 0), (2025, 4000000), (2026, 7000000)])
+def test_entertainment_vouchers_by_year(year, 대상):
+    # 지역사랑상품권: 2025 사업연도부터(제21223호), 온누리상품권: 2026 사업연도 지출분부터(제21612호 부칙 제4조)
+    r = c("entertainment_adjustment", {"year": year, "sme": True, "ledger": VOUCHER, "revenue": REV})
+    assert r["계산"].get("전통시장한도", 0) == 대상
 
 
 def test_other_income_horse_betting_refund_and_slot_machine():
