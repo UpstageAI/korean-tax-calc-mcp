@@ -2669,6 +2669,7 @@ def financial_income_aggregate(year: YEAR,
     배당_규칙 = vocab.rule("상장법인현금배당", year)
     rate = 배당_규칙.get("Gross-up가산율", 0.1)
     판단, inc, div_n, div_g, exc = [], 0, 0, 0, 0
+    항목별: list[dict] = []  # 계산.항목별용: [{항목, 금액, 구분}]
 
     def add(항목, 구분, 금액, 근거, 이유, gu=None):
         nonlocal inc, div_n, div_g, exc
@@ -2678,6 +2679,19 @@ def financial_income_aggregate(year: YEAR,
         else: exc += 금액
         결론 = {"이자": "이자소득", "배당": "배당소득(Gross-up 대상)" if gu else "배당소득(Gross-up 비대상)"}.get(구분, "금융소득 제외")
         판단.append({"항목": 항목, "결론": 결론, "금액": 금액, "근거": 근거, "이유": 이유})
+        # 계산.항목별용 세부 구분 결정
+        if 구분 == "이자":
+            세부구분 = "이자"
+        elif 구분 == "배당":
+            if 항목 == "출자공동사업자배당":
+                세부구분 = "출자공동"
+            elif gu:
+                세부구분 = "GU대상"
+            else:
+                세부구분 = "GU비대상"
+        else:
+            세부구분 = "제외"
+        항목별.append({"항목": 항목, "금액": 금액, "구분": 세부구분})
 
     for it in items:
         k, amt = it.get("kind", ""), int(it.get("amount", 0))
@@ -2813,7 +2827,8 @@ def financial_income_aggregate(year: YEAR,
                "소득세법 제14조·제16조·제17조·제56조",
                계산={"이자": inc, "배당(Gross-up 비대상)": div_n, "배당(Gross-up 대상)": div_g,
                      "금융소득 합계(조건부)": cond_total, "출자공동사업자배당(always 포함)": partner_div,
-                     "제외 합계": exc, "Gross-up 기준액": gu_base, "가산율": rate},
+                     "제외 합계": exc, "Gross-up 기준액": gu_base, "가산율": rate,
+                     "항목별": 항목별},
                판단=판단,
                산식="판정합계(이자+배당비대상+배당대상−출자공동사업자배당) ≤ 2천만 원이면 분리과세(배당소득금액=출자공동사업자배당, 합산액=출자공동사업자배당). 초과 시 이자 → 배당비대상(출자공동 제외) → 배당대상 순으로 2천만 원을 채우고, 2천만 원을 넘는 배당대상 × 가산율 = Gross-up. 출자공동사업자배당은 항상 합산액에 포함되고 2천만원 판정 합계에서는 제외.",
                계산식_입력=계산식_입력,
@@ -6827,6 +6842,7 @@ def export_workbook(
         템플릿_목록: list[dict] = []
         _tpl_seen: dict[str, int] = {}
         _cd_by_tool: dict[str, list[int]] = {}  # tool → call 인덱스 목록
+        _skipped_tpl: set[str] = set()  # when 조건으로 skipped된 템플릿 키
         for i, cd in enumerate(결과들):
             if cd["error"] or not cd["result"]:
                 continue
@@ -6837,17 +6853,25 @@ def export_workbook(
             _cd_by_tool.setdefault(tool, []).append(i)
             for tpl in tpl_list:
                 tkey = tpl["key"]
-                # when 조건이 있으면 계산식_입력 값으로 평가하여 거짓이면 렌더하지 않음
+                # when 조건이 있으면 계산식_입력/결과 값으로 평가하여 거짓이면 렌더하지 않음
                 when = tpl.get("when")
                 if when:
                     계산식_입력 = (cd.get("data") or {}).get("계산식_입력", [])
                     입력_값 = {inp["이름"]: inp["값"] for inp in 계산식_입력}
-                    # [입력.이름] 구문을 입력_값["이름"]으로, FALSE/TRUE는 Python bool로 변환
+                    결과_값 = cd.get("result", {}) or {}
+                    # [입력.이름] 구문을 입력_값["이름"]으로, [결과.키] 구문을 결과_값["키"]로 치환
+                    # FALSE/TRUE는 Python bool로 변환
                     def _when_repl(m):
-                        return f"입력_값[{m.group(1)!r}]"
-                    when_py = _re.sub(r"\[입력\.([^]]+)\]", _when_repl, when)
+                        prefix = m.group(1)  # "입력.이름" 또는 "결과.키"
+                        if prefix.startswith("입력."):
+                            return f"입력_값[{prefix[3:]!r}]"
+                        elif prefix.startswith("결과."):
+                            return f"결과_값[{prefix[3:]!r}]"
+                        return f"{prefix}"
+                    when_py = _re.sub(r"\[([^]]+)\]", _when_repl, when)
                     when_py = when_py.replace("FALSE", "False").replace("TRUE", "True")
-                    if not eval(when_py, {"__builtins__": {}}, {"입력_값": 입력_값}):
+                    if not eval(when_py, {"__builtins__": {}}, {"입력_값": 입력_값, "결과_값": 결과_값}):
+                        _skipped_tpl.add(tkey)
                         continue
                 sheet_name = tpl["sheet"]
                 _tpl_seen[tkey] = _tpl_seen.get(tkey, 0) + 1
@@ -6855,9 +6879,11 @@ def export_workbook(
                     sheet_name = f"{tpl['sheet']} ({_tpl_seen[tkey]})"
                 템플릿_목록.append({"key": tkey, "sheet": sheet_name, "form": tpl["form"], "tool": tool, "call_idx": i})
 
-        # 템플릿_목록을 spec 순서(별지3, 별지15, 별지23갑, 별지23을, 별지20정률, 별지16의2, 별지50을)로 정렬
+        # 템플릿_목록을 spec 순서(별지3, 별지15, 별지23갑, 별지23을, 별지20정률, 별지16의2, 별지50을,
+        # 부가22, 부가근거63, 부가근거64, 종소배당, 종소근로)로 정렬
         _tpl_render_order = {"별지3": 1, "별지15": 2, "별지23갑": 3, "별지23을": 4,
-                             "별지20정률": 5, "별지16의2": 6, "별지50을": 7}
+                             "별지20정률": 5, "별지16의2": 6, "별지50을": 7,
+                             "부가22": 8, "부가근거63": 9, "부가근거64": 10, "종소배당": 11, "종소근로": 12}
         템플릿_목록.sort(key=lambda t: _tpl_render_order.get(t["key"], 99))
 
         # ── 1. 목록 시트 ──
@@ -6889,6 +6915,12 @@ def export_workbook(
             행 += 1
             ws_list.cell(행, 1, "별지 제50호서식(병)")
             ws_list.cell(행, 2, "해당 없음(해외현지기업 출자)")
+            행 += 1
+
+        # 종소배당이 when 조건으로 skipped된 경우 목록 줄에 해당 없음 추가
+        if "종소배당" in _skipped_tpl:
+            ws_list.cell(행, 1, "종소 배당·이자소득명세서")
+            ws_list.cell(행, 2, "❻ 배당소득명세서·❺ 이자소득명세서 — 해당 없음(금융소득 2천만원 이하 분리과세)")
             행 += 1
 
         ws_list.cell(행, 1,
@@ -7031,6 +7063,8 @@ def export_workbook(
             all_slots["별지50을"] = {}
             for s in 별지50_tpl.get("slots", []):
                 all_slots["별지50을"][s["id"]] = (sheet_name, s["cell"])
+            # 별지50을 추가 후 다시 정렬하여 올바른 순서 유지
+            템플릿_목록.sort(key=lambda t: _tpl_render_order.get(t["key"], 99))
 
         # adj_slots 구축: adjustment → [(시트명, 셀, check_path, call_idx)]
         adj_slots: dict[str, list[tuple[str, str, str, int]]] = {}
@@ -7130,6 +7164,75 @@ def export_workbook(
                     "비고": "",
                 })
         source_data["유보"] = _유보_rows
+        # 공통사용재화 소스: common_input_tax args common_asset_sales → {순번: 1..}
+        for i, cd in enumerate(결과들):
+            if cd.get("tool") == "common_input_tax" and not cd.get("error"):
+                args = calls[i].get("args", {})
+                common_asset_sales = args.get("common_asset_sales", [])
+                _재화_rows = []
+                for idx, sale in enumerate(common_asset_sales, 1):
+                    _재화_rows.append({
+                        "순번": idx,
+                        "공급가액": int(sale.get("sale_price", 0)),
+                    })
+                source_data["공통사용재화"] = _재화_rows
+                break
+
+        # 배당명세·이자명세 소스: financial_income_aggregate 계산.항목별 → {코드, 일련번호, 항목, 금액}
+        for i, cd in enumerate(결과들):
+            if cd.get("tool") == "financial_income_aggregate" and not cd.get("error"):
+                calc_dict = (cd.get("data") or {}).get("계산", {})
+                항목별 = calc_dict.get("항목별", [])
+                판단목록 = (cd.get("data") or {}).get("판단", [])
+                # 판단목록에서 입력 순서 복구 (계산.항목별은 dict라 순서 없음)
+                순서맵 = {h["항목"]: idx for idx, h in enumerate(판단목록)}
+                _배당_rows: list[dict] = []
+                _이자_rows: list[dict] = []
+                # 코드 매핑: 배당 GU대상=21, GU비대상=22, 출자공동=28, 이자=13, 제외는 제외
+                코드맵 = {"GU대상": "21", "GU비대상": "22", "출자공동": "28", "이자": "13", "제외": None}
+                for item in 항목별:
+                    구분 = item.get("구분", "")
+                    코드 = 코드맵.get(구분)
+                    if 코드 is None:
+                        continue  # 제외는 넣지 않음
+                    항목명 = item.get("항목", "").replace("_", " ")
+                    금액 = item.get("금액", 0)
+                    if 구분 in ("GU대상", "GU비대상", "출자공동"):
+                        _배당_rows.append({"코드": 코드, "일련번호": 0, "항목": 항목명, "금액": 금액,
+                                           "_순서": 순서맵.get(item.get("항목", ""), 999)})
+                    elif 구분 == "이자":
+                        _이자_rows.append({"코드": 코드, "일련번호": 0, "항목": 항목명, "금액": 금액,
+                                            "_순서": 순서맵.get(item.get("항목", ""), 999)})
+                # 코드 오름차순, 같은 코드 안에서는 입력 순서(_순서)로 정렬
+                _배당_rows.sort(key=lambda r: (r["코드"], r["_순서"]))
+                _이자_rows.sort(key=lambda r: (r["코드"], r["_순서"]))
+                # 일련번호는 코드별 1부터
+                last_code = None
+                seq = 0
+                for r in _배당_rows:
+                    if r["코드"] != last_code:
+                        last_code = r["코드"]
+                        seq = 1
+                    else:
+                        seq += 1
+                    r["일련번호"] = seq
+                last_code = None
+                seq = 0
+                for r in _이자_rows:
+                    if r["코드"] != last_code:
+                        last_code = r["코드"]
+                        seq = 1
+                    else:
+                        seq += 1
+                    r["일련번호"] = seq
+                # _순서 필드 제거
+                for r in _배당_rows:
+                    del r["_순서"]
+                for r in _이자_rows:
+                    del r["_순서"]
+                source_data["배당명세"] = _배당_rows
+                source_data["이자명세"] = _이자_rows
+                break
 
         # connection: adjustment 소스 행의 금액을 렌더된 서식 slot 참조로 치환
         for src_name in ("조정_가산", "조정_차감"):
@@ -7160,10 +7263,26 @@ def export_workbook(
                 input_map[inp["이름"]] = inp["값"]
             for s in (cd.get("data") or {}).get("계산식", []) or []:
                 input_map[s["이름"]] = s["값"]
+
+            # {{과세기간}} 구성 (부가22 템플릿용): year·period args로 "{year}년 제N기 ( ... )"
+            과세기간 = ""
+            if tkey == "부가22":
+                for i, c in enumerate(calls):
+                    if c.get("tool") == "common_input_tax" and not 결과들[i].get("error"):
+                        args = c.get("args", {})
+                        year = args.get("year", "")
+                        period = args.get("period", "")
+                        if period == "1기":
+                            과세기간 = f"{year}년 제1기 ( 1월 1일 ~ 6월 30일 )"
+                        elif period == "2기":
+                            과세기간 = f"{year}년 제2기 ( 7월 1일 ~ 12월 31일 )"
+                        break
+
             render_form_sheet(ws, tpl, cd.get("data", cd.get("result", {})), input_map,
                                sheet_name_map, slot_map_all, slot_map_cross, tkey,
                                call_idx=tinfo["call_idx"], company=company, period=period, biz_no=biz_no,
-                               source_data=source_data, all_slots=all_slots)
+                               source_data=source_data, all_slots=all_slots,
+                               label=cd.get("label", ""), 과세기간=과세기간)
             시트이름들.append(tinfo["sheet"])
 
         # ── 3b. 계산 N 시트들 (틀 없는 도구들, call 순서대로) ──

@@ -245,8 +245,8 @@ def fill_text(t: str | None, *, res: dict | None, meta: dict[str, Any]) -> str:
 
     out = t
 
-    # {{법인명}}·{{사업자등록번호}}·{{기간_시작}}·{{기간_끝}} → meta 값
-    for key in ("법인명", "사업자등록번호", "기간_시작", "기간_끝"):
+    # {{법인명}}·{{사업자등록번호}}·{{기간_시작}}·{{기간_끝}}·{{과세기간}}·{{label}} → meta 값
+    for key in ("법인명", "사업자등록번호", "기간_시작", "기간_끝", "과세기간", "label"):
         out = out.replace(f"{{{{{key}}}}}", str(meta.get(key, "")))
 
     # {{계정과목}} → meta 또는 기본 '기업업무추진비'
@@ -283,7 +283,9 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
                       period: str = "",
                       biz_no: str = "",
                       source_data: dict[str, list[dict]] | None = None,
-                      all_slots: dict[str, dict[str, tuple[str, str]]] | None = None) -> None:
+                      all_slots: dict[str, dict[str, tuple[str, str]]] | None = None,
+                      label: str = "",
+                      과세기간: str = "") -> None:
     """폼 템플릿 JSON을 엑셀 시트로 렌더링한다. (SPEC_form_templates 3절)
 
     렌더러의 slot 수식·table 열 수식·문구·검증 값은 모두 tool_value·resolve_formula·fill_text
@@ -307,6 +309,8 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
         "기간_시작": d1,
         "기간_끝": d2,
         "계정과목": "기업업무추진비",
+        "label": label,
+        "과세기간": 과세기간,
     }
 
     # ── 열 너비 ──
@@ -419,8 +423,10 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
                 cell_addr = f"{_col_letter(ci)}{row_num}"
                 if isinstance(col_spec, str) and col_spec.startswith("="):
                     # 수식 열: {r}→row_num(문자열), {i}→ri+1(문자열), resolve_formula
+                    # local_slot_map의 slot id도 참조 가능 (예: {비율} → C7)
                     formula_tpl = col_spec
                     local_tbl = {"r": str(row_num), "i": str(ri + 1)}
+                    local_tbl.update(local_slot_map)
                     f_resolved = resolve_formula(formula_tpl, res=res, call_idx=call_idx if call_idx is not None else 0,
                                                  local=local_tbl, cross=cross_map,
                                                  sheet_name_map=sheet_name_map, all_slots=all_slots)
@@ -445,6 +451,7 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
                     elif isinstance(val, str) and val.startswith("="):
                         # source 값이 수식 문자열: resolve_formula
                         local_tbl2 = {"r": str(row_num), "i": str(ri + 1)}
+                        local_tbl2.update(local_slot_map)
                         f_resolved = resolve_formula(val, res=res, call_idx=call_idx if call_idx is not None else 0,
                                                      local=local_tbl2, cross=cross_map,
                                                      sheet_name_map=sheet_name_map, all_slots=all_slots)
