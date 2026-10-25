@@ -6851,15 +6851,13 @@ def export_workbook(
 
         ws_list.cell(행, 1, "서식 시트").font = bold
         ws_list.cell(행, 2, "서식 표기").font = bold
-        ws_list.cell(행, 3, "도구").font = bold
-        for cc in range(1, 4):
+        for cc in range(1, 3):
             ws_list.cell(행, cc).fill = header_fill
         행 += 1
 
         for tinfo in 템플릿_목록:
             ws_list.cell(행, 1, tinfo["sheet"])
             ws_list.cell(행, 2, tinfo["form"])
-            ws_list.cell(행, 3, tinfo["tool"])
             행 += 1
 
         # 자료 원칙에 따른 줄: 법인세 도구 call이 하나라도 있으면
@@ -6871,11 +6869,9 @@ def export_workbook(
         if has_corp_tool:
             ws_list.cell(행, 1, "별지 제50호서식(갑)")
             ws_list.cell(행, 2, "자본금과 적립금조정명세서 — 자료 없음(재무상태표 자본 자료 필요)")
-            ws_list.cell(행, 3, "")
             행 += 1
             ws_list.cell(행, 1, "별지 제50호서식(병)")
             ws_list.cell(행, 2, "해당 없음(해외현지기업 출자)")
-            ws_list.cell(행, 3, "")
             행 += 1
 
         ws_list.cell(행, 1,
@@ -6885,7 +6881,6 @@ def export_workbook(
 
         ws_list.column_dimensions["A"].width = 30
         ws_list.column_dimensions["B"].width = 55
-        ws_list.column_dimensions["C"].width = 22
         ws_list.freeze_panes = "A2"
 
         # ── 2. 입력·가정 시트 생성 (템플릿 렌더링 전에 정의된 이름 생성) ──

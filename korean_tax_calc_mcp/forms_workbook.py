@@ -7,7 +7,7 @@ from __future__ import annotations
 import re as _re
 from typing import Any
 
-from openpyxl.styles import Alignment, Border, Font, Side
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 # ── 공통 서식 ──
 MONEY_FMT = "#,##0"
@@ -258,13 +258,19 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
         "계정과목": "기업업무추진비",
     }
 
-    # ── 열 너비 · 행 높이 ──
+    # ── 열 너비 ──
     for col, w in tpl.get("widths", {}).items():
         ws.column_dimensions[col].width = w
+
+    # ── 행 높이: default_row_height → print_area 모든 행 → row_heights 덮어쓰기 ──
+    if tpl.get("default_row_height"):
+        pa = tpl.get("print_area", "")
+        if pa:
+            _, _, pa_rs, pa_re = _parse_range(pa)
+            for ri in range(pa_rs, pa_re + 1):
+                ws.row_dimensions[ri].height = tpl["default_row_height"]
     for row_s, h in tpl.get("row_heights", {}).items():
         ws.row_dimensions[int(row_s)].height = h
-    if tpl.get("default_row_height"):
-        ws.row_dimensions[1].height = tpl["default_row_height"]
 
     # ── 셀 채우기 (문구) — fill_text 사용 ──
     for mc in tpl.get("cells", []):
@@ -307,17 +313,13 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
                 bottom_b = medium if ri == re_ else cell.border.bottom
                 cell.border = Border(left=left_b, right=right_b, top=top_b, bottom=bottom_b)
 
-    # ── 금액 열 서식 ──
-    for col_l in tpl.get("amount_cols", []):
-        ci = ord(col_l) - 64
-        pa = tpl.get("print_area", "")
-        if pa:
-            pa_cs, pa_ce, pa_rs, pa_re = _parse_range(pa)
-            for ri in range(pa_rs, pa_re + 1):
-                c = ws.cell(ri, ci)
-                if c.value is not None:
-                    c.number_format = MONEY_FMT
-                    c.alignment = Alignment(horizontal="right", vertical="center")
+    # ── 틀 fill(회색 칸) 적용 ──
+    for rng_s, color in tpl.get("fill", {}).items():
+        cs, ce, rs, re_ = _parse_range(rng_s)
+        fill = color if isinstance(color, PatternFill) else PatternFill("solid", fgColor=color)
+        for ci in range(cs, ce + 1):
+            for ri in range(rs, re_ + 1):
+                ws.cell(ri, ci).fill = fill
 
     # ── 슬롯(수식) 처리 — resolve_formula 사용 ──
     # cross_map: slot_map_cross는 이미 (시트이름, 셀) 튜플 형식
@@ -341,6 +343,23 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
             f_rendered = _re.sub(r"\{([^}]+)\}", _local_only, f)
         ws[cell_addr].value = f_rendered
         ws[cell_addr].font = Font(name="맑은 고딕", size=10)
+
+    # ── 금액 열 서식 — slots 작성 후 적용, formats{셀:서식} 우선 ──
+    formats = tpl.get("formats", {})
+    for col_l in tpl.get("amount_cols", []):
+        ci = ord(col_l) - 64
+        pa = tpl.get("print_area", "")
+        if pa:
+            _, _, pa_rs, pa_re = _parse_range(pa)
+            for ri in range(pa_rs, pa_re + 1):
+                c = ws.cell(ri, ci)
+                if c.value is not None:
+                    cell_addr = f"{_col_letter(ci)}{ri}"
+                    if cell_addr in formats:
+                        c.number_format = formats[cell_addr]
+                    else:
+                        c.number_format = MONEY_FMT
+                    c.alignment = Alignment(horizontal="right", vertical="center")
 
     # ── 검증 칸(check_col) — tool_value 사용 ──
     check_col = tpl.get("check_col", "")
