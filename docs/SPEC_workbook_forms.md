@@ -1,3 +1,5 @@
+> **2026-10-25 대체**: 모양은 SPEC_form_templates(서식 틀 데이터 + 렌더러)로 구현. 이 문서는 서식별 행·연결 규칙 참고용으로 유지.
+
 # SPEC_workbook_forms — 엑셀을 법정서식 순서·모양으로 · 작성 Claude 2026-10-25
 새 브랜치 `feat/workbook-forms`(main 기준). 정답 테스트 `tests/test_workbook_forms.py` + 기존 전부 통과(기존 export_workbook 테스트 중 이 명세와 충돌하는 것은 Claude가 정리함 — 아래 "기존 테스트"). 커밋 1~3개. push 금지, 테스트 수정 금지.
 
