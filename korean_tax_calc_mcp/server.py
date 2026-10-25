@@ -7185,8 +7185,60 @@ def export_workbook(
             calc_dict = (cd.get("data") or {}).get("계산") if isinstance(cd.get("data"), dict) else None
             formula = (cd.get("data") or {}).get("계산식") if isinstance(cd.get("data"), dict) else None
 
-            # Simple calculation sheet content
-            행 = 1
+            # 계산 N 시트 내용 — steps 모드와 동일한 레이아웃:
+            #   계산식_입력 표 → 계산식 단계 수식·도구 값·확인 열 → 결과·계산 키-값 →
+            #   세무조정 표 → 확인 수식 → 산식
+            next_table_row = 1
+            if formula:
+                호출접두사 = f"호출{calc_idx}_"
+                dname_map: dict[str, str] = {}
+                for inp in (cd.get("data") or {}).get("계산식_입력", []) or []:
+                    dname_map[inp["이름"]] = f"{호출접두사}{inp['이름']}"
+                for s in formula:
+                    dname_map[s["이름"]] = f"{호출접두사}{s['이름']}"
+
+                행 = 1
+                for cc, h in enumerate(["이름", "값", "설명"], 1):
+                    c = ws.cell(행, cc, h); c.font = bold; c.fill = header_fill
+                행 += 1
+                for inp in (cd.get("data") or {}).get("계산식_입력", []) or []:
+                    ws.cell(행, 1, inp["이름"])
+                    vc = ws.cell(행, 2)
+                    v = inp["값"]
+                    if isinstance(v, bool):
+                        vc.value = v
+                    elif isinstance(v, (int, float)):
+                        _set_money(vc, v)
+                    else:
+                        vc.value = v
+                    wb.defined_names[f"{호출접두사}{inp['이름']}"] = DefinedName(
+                        name=f"{호출접두사}{inp['이름']}", attr_text=f"'{sh_name}'!$B${행}")
+                    ws.cell(행, 3, inp.get("설명", ""))
+                    행 += 1
+
+                for cc, h in enumerate(["단계", "수식", "도구 값", "확인", "설명"], 1):
+                    c = ws.cell(행, cc, h); c.font = bold; c.fill = header_fill
+                행 += 1
+                for s in formula:
+                    단계명 = s["이름"]
+                    dname = f"{호출접두사}{단계명}"
+                    ws.cell(행, 1, 단계명)
+                    수식셀 = ws.cell(행, 2, f"={_이름_치환(s['식'], dname_map)}")
+                    수식셀.number_format = money_fmt
+                    wb.defined_names[dname] = DefinedName(
+                        name=dname, attr_text=f"'{sh_name}'!$B${행}")
+                    도구값 = s["값"]
+                    vc = ws.cell(행, 3)
+                    if isinstance(도구값, (int, float)):
+                        _set_money(vc, 도구값)
+                    else:
+                        vc.value = 도구값
+                    ws.cell(행, 4, f'=IF(B{행}=C{행},"일치","확인 필요")')
+                    ws.cell(행, 5, s.get("설명", ""))
+                    행 += 1
+                next_table_row = 행
+
+            행 = next_table_row
             ws.cell(행, 1, "항목").font = bold
             ws.cell(행, 2, "금액").font = bold
             ws.cell(행, 1).fill = header_fill
@@ -7210,8 +7262,122 @@ def export_workbook(
                     ws.cell(행, 2, _cell_value(v))
                 행 += 1
 
+            정착_start = 행 + 1
+            settlements = res.get("세무조정", [])
+            합계_수식행 = None
+            if settlements:
+                행 = 정착_start
+                ws.cell(행, 1, "구분").font = bold
+                ws.cell(행, 2, "조정").font = bold
+                ws.cell(행, 3, "금액").font = bold
+                ws.cell(행, 4, "소득처분").font = bold
+                for cc in range(1, 5):
+                    ws.cell(행, cc).fill = header_fill
+                행 += 1
+                처분별: dict[str, int] = {}
+                가산first_row = 행
+                for s in settlements:
+                    raw = s.get("금액", 0)
+                    if isinstance(raw, (int, float)):
+                        amt = raw; numeric = True
+                    else:
+                        amt = raw; numeric = False
+                    raw_조정 = s.get("조정", "")
+                    if raw_조정 in ("익금산입", "손금불산입"):
+                        조정 = "가산"
+                    elif raw_조정 in ("손금산입", "익금불산입"):
+                        조정 = "차감"
+                    elif raw_조정 == "":
+                        처분_tmp = s.get("소득처분", "")
+                        조정 = "차감" if 처분_tmp.startswith("△") else "가산"
+                    else:
+                        조정 = raw_조정
+                    처분 = s.get("소득처분", "")
+                    ws.cell(행, 1, s.get("구분", ""))
+                    ws.cell(행, 2, 조정)
+                    if numeric:
+                        _set_money(ws.cell(행, 3), amt)
+                    else:
+                        ws.cell(행, 3, amt)
+                    ws.cell(행, 4, 처분)
+                    if numeric:
+                        처분별[처분] = 처분별.get(처분, 0) + amt
+                    행 += 1
+                처분last_row = 행 - 1
+
+                가산_sumif_cond = f"B{가산first_row}:B{처분last_row}"
+                차감_sumif_cond = f"B{가산first_row}:B{처분last_row}"
+                금액_sumif_addr = f"C{가산first_row}:C{처분last_row}"
+
+                ws.cell(행, 1, "가산 합계").font = bold
+                ws.cell(행, 3, f'=SUMIF({가산_sumif_cond},"가산",{금액_sumif_addr})')
+                ws.cell(행, 3).number_format = money_fmt
+                ws.cell(행, 3).font = bold
+                가산_수식행 = 행; 행 += 1
+
+                ws.cell(행, 1, "차감 합계").font = bold
+                ws.cell(행, 3, f'=SUMIF({차감_sumif_cond},"차감",{금액_sumif_addr})')
+                ws.cell(행, 3).number_format = money_fmt
+                ws.cell(행, 3).font = bold
+                차감_수식행 = 행; 행 += 1
+
+                ws.cell(행, 1, "순액").font = bold
+                ws.cell(행, 3, f"=C{가산_수식행}-C{차감_수식행}")
+                ws.cell(행, 3).number_format = money_fmt
+                ws.cell(행, 3).font = bold
+                행 += 1
+
+                ws.cell(행, 1, "금액 합계(방향 무관)").font = bold
+                ws.cell(행, 3, f"=SUM({금액_sumif_addr})")
+                ws.cell(행, 3).number_format = money_fmt
+                ws.cell(행, 3).font = bold
+                합계_수식행 = 행; 행 += 1
+
+                ws.cell(행, 1, "소득처분별 합계").font = bold
+                ws.cell(행, 2, "소득처분").font = bold
+                ws.cell(행, 3, "금액").font = bold
+                for cc in range(1, 4):
+                    ws.cell(행, cc).fill = header_fill
+                행 += 1
+                for 처분, tot in 처분별.items():
+                    ws.cell(행, 1, "")
+                    ws.cell(행, 2, 처분)
+                    sumif_cond = f"D{가산first_row}:D{처분last_row}"
+                    ws.cell(행, 3, f'=SUMIF({sumif_cond},"{처분}",{금액_sumif_addr})')
+                    ws.cell(행, 3).number_format = money_fmt
+                    행 += 1
+
+            if 합계_수식행 is not None:
+                v_익금 = res.get("익금산입_손금불산입")
+                v_손금 = res.get("손금산입_익금불산입")
+                if isinstance(v_익금, (int, float)) and isinstance(v_손금, (int, float)):
+                    ws.cell(행, 1, "확인 (익금산입_손금불산입)").font = bold
+                    ws.cell(행, 3, f'=IF(C{가산_수식행}={v_익금},"일치","확인 필요")')
+                    행 += 1
+                    ws.cell(행, 1, "확인 (손금산입_익금불산입)").font = bold
+                    ws.cell(행, 3, f'=IF(C{차감_수식행}={v_손금},"일치","확인 필요")')
+                    행 += 1
+                else:
+                    도구합계 = None; 도구합계키 = None
+                    for key in ("손금불산입_합계", "한도초과", "소득처분별_합계"):
+                        v = res.get(key)
+                        if isinstance(v, (int, float)):
+                            도구합계 = v; 도구합계키 = key; break
+                    if 도구합계 is not None:
+                        ws.cell(행, 1, f"확인 ({도구합계키})").font = bold
+                        ws.cell(행, 3, f'=IF(C{합계_수식행}={도구합계},"일치","확인 필요")')
+                        행 += 1
+
+            산식 = (cd.get("data") or {}).get("산식") or ""
+            if 산식:
+                행 += 1
+                ws.cell(행, 1, "산식").font = bold
+                ac = ws.cell(행, 2, _cell_value(산식))
+                ac.alignment = Alignment(wrap_text=True)
+
             ws.column_dimensions["A"].width = 32
             ws.column_dimensions["B"].width = 20
+            ws.column_dimensions["C"].width = 16
             ws.freeze_panes = "A2"
 
         # ── 4. 시트 순서 조정 (forms 모드: 입력·가정 시트를 틀+계산N 시트들 뒤로) ──

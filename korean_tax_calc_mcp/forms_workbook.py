@@ -485,21 +485,34 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
                     c.alignment = Alignment(horizontal="right", vertical="center")
 
     # ── 검증 칸(check_col) — tool_value 사용 ──
-    check_col = tpl.get("check_col", "")
-    if check_col and tpl.get("slots"):
-        cci = ord(check_col) - 64
-        check_rows = sorted([s for s in tpl["slots"] if s.get("check")],
-                           key=lambda x: _parse_cell(x["cell"])[0])
-        if check_rows:
-            first_r = _parse_cell(check_rows[0]["cell"])[0]
+    # slot별 check_col: slot에 check_col이 있으면 그 열, 없으면 틀의 check_col.
+    # 각 check_col 위치마다 "도구 값"/"확인" 헤더와 검증 수식을 작성.
+    tpl_check_col = tpl.get("check_col", "")
+    check_rows = [s for s in tpl["slots"] if s.get("check")]
+    if check_rows and (tpl_check_col or any(s.get("check_col") for s in check_rows)):
+        # slot별 check_col 수집 (중복 제거, 정렬)
+        check_col_positions: list[str] = []
+        for s in check_rows:
+            cc = s.get("check_col") or tpl_check_col
+            if cc and cc not in check_col_positions:
+                check_col_positions.append(cc)
+        check_col_positions.sort(key=lambda c: ord(c) - 64)
+        # 각 check_col 위치마다 헤더 작성
+        for cc in check_col_positions:
+            cci = ord(cc) - 64
+            first_r = min(_parse_cell(s["cell"])[0] for s in check_rows
+                         if (s.get("check_col") or tpl_check_col) == cc)
             ws.cell(first_r - 1, cci, "도구 값").font = Font(name="맑은 고딕", size=9, bold=True)
             ws.cell(first_r - 1, cci).alignment = Alignment(horizontal="center", vertical="center")
             ws.cell(first_r - 1, cci + 1, "확인").font = Font(name="맑은 고딕", size=9, bold=True)
             ws.cell(first_r - 1, cci + 1).alignment = Alignment(horizontal="center", vertical="center")
+        # 각 슬롯마다 해당 check_col 위치에 도구 값·확인 수식 작성
         for s in check_rows:
             cell_addr = s["cell"]
             r = _parse_cell(cell_addr)[0]
             check_path = s["check"]
+            cc = s.get("check_col") or tpl_check_col
+            cci = ord(cc) - 64
             tool_val = tool_value(res, check_path)
             tv_cell = ws.cell(r, cci)
             tv_cell.font = Font(name="맑은 고딕", size=9, color="808080")
@@ -513,7 +526,7 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
                 tv_cell.number_format = MONEY_FMT
             amt_col_letter = _col_letter(_parse_cell(cell_addr)[1])
             ws.cell(r, cci + 1,
-                    f'=IF(ROUND({amt_col_letter}{r},0)=ROUND(IF(ISNUMBER({check_col}{r}),{check_col}{r},0),0),"일치","확인 필요")')
+                    f'=IF(ROUND({amt_col_letter}{r},0)=ROUND(IF(ISNUMBER({cc}{r}),{cc}{r},0),0),"일치","확인 필요")')
             ws.cell(r, cci + 1).font = Font(name="맑은 고딕", size=9)
             ws.cell(r, cci + 1).alignment = Alignment(horizontal="center", vertical="center")
 
