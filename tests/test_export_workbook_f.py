@@ -106,7 +106,7 @@ def test_dividend_formula_per_investee():
 def test_demo_workbook_all_checks_match(tmp_path):
     calls = [{"label": "기업업무추진비", "tool": "entertainment_adjustment", "args": ENT}] + [
         {"label": t, "tool": t, "args": a} for t, a in DEMO.items()] + [{"label": "차가감", "tool": "income_adjustment_total", "args": ADJ}]
-    path = c("export_workbook", {"title": "수식 전체", "calls": calls, "output_dir": str(tmp_path)})["결과"]["파일"]
+    path = c("export_workbook", {"layout": "steps", "title": "수식 전체", "calls": calls, "output_dir": str(tmp_path)})["결과"]["파일"]
     out = tmp_path / "recalc"
     subprocess.run(["soffice", "--headless", "--calc", "--convert-to", "xlsx", "--outdir", str(out), path], check=True, capture_output=True, timeout=180)
     wb = openpyxl.load_workbook(next(out.glob("*.xlsx")), data_only=True)

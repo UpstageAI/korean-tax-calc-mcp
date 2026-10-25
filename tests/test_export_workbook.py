@@ -17,7 +17,7 @@ ADJ = {"net_income": 100000000, "items": [{"항목": "법인세", "종류": "법
 
 
 def build(tmp_path, calls, **kw):
-    return c("export_workbook", {"title": "제25기 세무조정 검토", "calls": calls, "output_dir": str(tmp_path), **kw})
+    return c("export_workbook", {"layout": "steps", "title": "제25기 세무조정 검토", "calls": calls, "output_dir": str(tmp_path), **kw})
 
 
 def test_workbook_tabs_values_and_live_formulas(tmp_path):
