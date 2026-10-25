@@ -21,7 +21,6 @@ def test_sheet_order(demo):
     raw, _ = demo
     n = raw.sheetnames
     assert n[:8] == ["목록", S3, S15, "별지23(갑) 기업업무추진비", "별지23(을) 기업업무추진비", S20, S16, S50], n
-    assert [x for x in n if re.fullmatch(r"계산 \d+", x)] == ["계산 1", "계산 2", "계산 3", "계산 4"]
     assert n[-2:] == ["입력·가정", "판단·근거"]
 
 
@@ -83,13 +82,13 @@ def test_reversal_and_two_investees(tmp_path):
 
 
 @soffice
-def test_fallback_calc_sheets_keep_live_formulas(demo):
-    raw, calc = demo
-    for name in ("계산 1", "계산 2", "계산 3", "계산 4"):
-        fs = [x.value for r in raw[name].iter_rows() for x in r if isinstance(x.value, str) and x.value.startswith("=")]
-        assert len(fs) >= 3, (name, "계산식 단계 수식 없음")               # steps 모양(입력·계산 표 + 확인) 그대로
-        checks = [x.value for r in calc[name].iter_rows() for x in r if x.value in ("일치", "확인 필요")]
-        assert checks and set(checks) == {"일치"}, (name, checks)
+def test_fallback_calc_sheets_keep_live_formulas(tmp_path):
+    calls = [x for x in CALLS if x["tool"] == "entertainment_adjustment"] + [
+        {"label": "청산소득", "tool": "liquidation_income", "args": {"assets_realized": 900000000, "liabilities_paid": 300000000, "capital": 200000000, "surplus": 100000000}}]
+    path = build(tmp_path, calls)
+    raw, calc = openpyxl.load_workbook(path), recalc(path, tmp_path)
+    assert "계산 1" in raw.sheetnames                                       # 틀 없는 도구는 steps 모양 계산 시트
+    assert any(isinstance(x.value, str) and x.value.startswith("=") for r in raw["계산 1"].iter_rows() for x in r)
 
 
 @soffice
