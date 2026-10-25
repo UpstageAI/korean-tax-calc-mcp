@@ -2330,6 +2330,13 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
         {"이름": "수입구간3_한도", "값": t3_cap, "설명": f"수입금액 구간3 한도(원) — {t2_cap:,}원 초과"},
         {"이름": "수입구간3_비율", "값": t3_r, "설명": f"수입금액 구간3 비율 — {t2_cap:,}원 초과"},
     ]
+    # 전통시장등 지출 (slot 참조용 정의된 이름 생성) — 연도 무관하게 항상 계산식_입력에 추가(0이면 0)
+    계산식_입력.append({"이름": "전통시장_지출", "값": (전통시장_총액 if year >= 2023 else 0),
+                         "설명": "전통시장 기업업무추진비 지출 합계 — 2023 사업연도부터 대상(조특법 제136조⑥)"})
+    계산식_입력.append({"이름": "지역사랑상품권_지출", "값": (지역사랑상품권_총액 if year >= 2025 else 0),
+                         "설명": "지역사랑상품권 기업업무추진비 지출 합계 — 2025 사업연도부터 대상(조특법 제136조⑥)"})
+    계산식_입력.append({"이름": "온누리상품권_지출", "값": (온누리상품권_총액 if year >= 2026 else 0),
+                         "설명": "온누리상품권 기업업무추진비 지출 합계 — 2026 사업연도 지출분부터 대상(조특법 제136조⑥)"})
     for idx, item in enumerate(items_for_limit, 1):
         설명 = f"기업업무추진비 시부인 대상 항목 {idx} (적격증빙)"
         # 원장 항목 원래 이름과 판단 요지 포함
@@ -2347,12 +2354,10 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
     # 2023·2024: 전통시장만, 비율 10% (법률 19936 부칙§35)
     # 2025: 전통시장+지역사랑상품권, 비율 20% (법률 21223 부칙§31)
     # 2026~2028: 전통시장+지역사랑+온누리, 비율 20% (법률 21612 부칙§4)
-    if 2023 <= year <= 2028 and 전통시장등_총액 > 0:
-        비율 = C.YEAR[year].get("전통시장등_비율", 0)
-        계산식_입력.append({"이름": "전통시장등비율", "값": 비율,
-                             "설명": f"전통시장등 추가한도 비율 — 조특법 제136조⑥, {'법률 19936 부칙§35(2023·2024)' if year in (2023, 2024) else '법률 21223 부칙§31(2025)' if year == 2025 else '법률 21612 부칙§4(2026~2028)'}"})
-        계산식_입력.append({"이름": "전통시장등금액", "값": 전통시장등_총액,
-                             "설명": f"전통시장등(적격 기업업무추진비 중 해당 연도 대상 성격) 지출 합계 — 조특법 제136조⑥"})
+    # slot 참조용 정의된 이름 생성 — 연도 무관하게 항상 생성 (0이면 0)
+    비율 = C.YEAR[year].get("전통시장등_비율", 0) if 2023 <= year <= 2028 else 0
+    계산식_입력.append({"이름": "전통시장등비율", "값": 비율,
+                         "설명": f"전통시장등 추가한도 비율 — 조특법 제136조⑥, {'법률 19936 부칙§35(2023·2024)' if year in (2023, 2024) else '법률 21223 부칙§31(2025)' if year == 2025 else '법률 21612 부칙§4(2026~2028)' if 2026 <= year <= 2028 else '2023 사업연도부터 대상'}"})
 
     실제기본한도 = 기본한도_중소 if sme else 기본한도_일반
     계산식: list[dict] = [
@@ -2367,12 +2372,9 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
          "값": int(ent_일반한도 - 실제기본한도 * months / 12), "설명": "일반 한도 + (특수관계 − 일반) × 10% (영 제42조①)"},
         {"이름": "문화한도", "식": "MIN(문화금액,(기본한도+수입금액한도)*0.2)",
          "값": ent_문화한도, "설명": "문화접대비 min(문화비, (기본한도+수입금액한도) × 20%) — 조특법 제136조③"},
+        {"이름": "전통시장한도", "식": f"MIN(전통시장등금액,(기본한도+수입금액한도)*{비율 if 2023 <= year <= 2028 else 0})",
+         "값": ent.get("전통시장한도", 0), "설명": f"전통시장등 추가한도 min(전통시장등금액, (기본한도+수입금액한도) × {비율 if 2023 <= year <= 2028 else 0}) — 조특법 제136조⑥"},
     ]
-    if 2023 <= year <= 2028 and 전통시장등_총액 > 0:
-        비율 = C.YEAR[year].get("전통시장등_비율", 0)
-        계산식.append({"이름": "전통시장한도", "식": f"MIN(전통시장등금액,(기본한도+수입금액한도)*{비율})",
-                        "값": ent["전통시장한도"],
-                        "설명": f"전통시장등 추가한도 min(전통시장등금액, (기본한도+수입금액한도) × {비율}) — 조특법 제136조⑥"})
     한도_식 = "기본한도+수입금액한도+문화한도" + ("+전통시장한도" if 2023 <= year <= 2028 and 전통시장등_총액 > 0 else "")
     한도_설명 = "기본한도 + 수입금액한도 + 문화한도" + (" + 전통시장한도" if 2023 <= year <= 2028 and 전통시장등_총액 > 0 else "")
     계산식.extend([
@@ -2408,7 +2410,10 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
 
     result = {"한도": limit, "한도초과": over_limit, "직부인_대표자상여": no_receipt_total + private_use_total, "직부인_기타사외유출": no_qual_total, "시부인_대상": si_bu_shin}
     calc_dict = {"기본한도": ent["일반한도"], "문화한도": ent["문화한도"], "전통시장한도": ent["전통시장한도"],
-               "시부인 대상": si_bu_shin, "직부인(증빙없음·심사비)": no_receipt_total + no_qual_total}
+               "시부인 대상": si_bu_shin, "직부인(증빙없음·심사비)": no_receipt_total + no_qual_total,
+               "전통시장_지출": 전통시장_총액,
+               "지역사랑상품권_지출": (지역사랑상품권_총액 if 2025 <= year <= 2028 else 0),
+               "온누리상품권_지출": (온누리상품권_총액 if 2026 <= year <= 2028 else 0)}
     근거_목록 = vocab.basis("기업업무추진비_적격수취", year)
     근거_문자열 = ", ".join(f"{조문[0]} {조문[1]} {조문[2]} {조문[3]}" if 조문[3] else f"{조문[0]} {조문[1]} {조문[2]}" for 조문 in 근거_목록)
     unified = _build_tax_adjustment_result(settlements, result, calc_dict)
@@ -6458,12 +6463,35 @@ def _이름_치환(식: str, 이름_맵: dict[str, str]) -> str:
     return "".join(tok)
 
 
+def _load_form_templates():
+    """form_templates JSON 디렉터리에서 도구별 템플릿 목록을 로드한다 (모듈 수준 캐시)."""
+    import json as _json
+    tpl_dir = os.path.join(os.path.dirname(__file__), "data", "form_templates")
+    result: dict[str, list[dict]] = {}
+    if not os.path.isdir(tpl_dir):
+        return result
+    for fname in sorted(os.listdir(tpl_dir)):
+        if not fname.endswith(".json"):
+            continue
+        path = os.path.join(tpl_dir, fname)
+        with open(path, encoding="utf-8") as f:
+            tpl = _json.load(f)
+        tool = tpl.get("tool", "")
+        if tool:
+            result.setdefault(tool, []).append(tpl)
+    return result
+
+
 @mcp.tool(annotations=CALC)
 def export_workbook(
     title: Annotated[str, Field(description="문서 제목 — 파일명 기본값")],
     calls: Annotated[list, Field(description="[{label, tool, args}] 1~30개")],
     output_dir: Annotated[str, Field(description="내보낼 폴더 경로(기본: 현재 작업 폴더)")] = ".",
     filename: Annotated[str | None, Field(description="파일명 기본값(제목), 확장자 .xlsx 자동)")] = None,
+    layout: Annotated[Literal["forms", "steps"], Field(description="'forms'(법정서식 틀 + 계산·입력가정·판단근거, 기본) 또는 'steps'(요약 + 계산 N)")] = "forms",
+    company: Annotated[str, Field(description="법인명(서식 머리에 표시, 기본 빈 문자열)")] = "",
+    period: Annotated[str, Field(description="사업연도 표기(예 '2025.01.01 ~ 2025.12.31', 기본 빈 문자열)")] = "",
+    biz_no: Annotated[str, Field(description="사업자등록번호(서식 머리에 표시, 기본 빈 문자열)")] = "",
 ) -> dict:
     """계산 도구 결과를 엑셀(.xlsx)로 정리한다. 각 call은 서버가 직접 다시 실행하며, 결과·계산·세무조정·판단·산식을 탭으로 펼친다.
 언제: 계산 결과(세무조정·소득처분·판단·산식)를 실무자가 검토할 수 있는 엑셀 파일로 남길 때.
@@ -6472,6 +6500,10 @@ def export_workbook(
   calls — [{label, tool, args}] 목록(1~30개). tool 이름이 없거나 'export_workbook'이면 오류(재귀 금지).
   output_dir — 저장할 폴더(기본: '.'). 없으면 오류.
   filename — 파일명(기본: title, .xlsx 자동). '/ \\ : * ? " < > |'는 '_'로 대체.
+  layout — 'forms'(기본: 서식 틀 시트 + 계산 N + 입력·가정 + 판단·근거) 또는 'steps'(요약 + 계산 N + 입력·가정 + 판단·근거).
+  company — 법인명(서식 머리에 표시, 기본 '').
+  period — 사업연도 표기(예 '2025.01.01 ~ 2025.12.31', 기본 '').
+  biz_no — 사업자등록번호(서식 머리에 표시, 기본 '').
 
 결과:
   결과.파일 — 절대경로.
@@ -6530,12 +6562,10 @@ def export_workbook(
 
     # ── 워크북 생성 ──
     import openpyxl
-    from openpyxl.styles import Font, Alignment, PatternFill, numbers
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side, numbers
     from openpyxl.utils import get_column_letter
 
     wb = openpyxl.Workbook()
-    ws_sum = wb.active
-    ws_sum.title = "요약"
 
     # 번호 서식
     money_fmt = "#,##0"
@@ -6546,89 +6576,647 @@ def export_workbook(
         cell.value = val
         cell.number_format = money_fmt
 
-    # ── 1. 요약 시트 ──
-    오늘 = date.today().isoformat()
-    ws_sum["A1"] = "제목"; ws_sum["B1"] = title
-    ws_sum["A2"] = "작성일"; ws_sum["B2"] = 오늘
-    ws_sum["A3"] = "call 수"; ws_sum["B3"] = len(calls)
-    for c in ("A1", "A2", "A3"):
-        ws_sum[c].font = bold
+    # ── 폼 템플릿 로드 ──
+    _FORM_TEMPLATES = _load_form_templates()
 
-    # 헤더 행 (4행)
-    hdr_row = 4
-    ws_sum.cell(hdr_row, 1, "label").font = bold
-    ws_sum.cell(hdr_row, 2, "도구").font = bold
-    첫데이터행 = hdr_row + 1
+    def _render_form_sheet(ws, tpl, res, input_map, sheet_name_map,
+        slot_map_all=None, slot_map_cross=None, tkey_override=None,
+        call_idx=None):
+        """폼 템플릿 JSON을 엑셀 시트로 렌더링한다."""
+        import sys as _sys
+        tkey = tpl["key"] if tkey_override is None else tkey_override
+        # 현재 템플릿의 로컬 slot_map 구축 (로컬 {id} 참조용)
+        local_slot_map = {s["id"]: s["cell"] for s in tpl.get("slots", [])}
 
-    for i, cd in enumerate(결과들):
-        r = 첫데이터행 + i
-        ws_sum.cell(r, 1, cd["label"])
-        ws_sum.cell(r, 2, cd["tool"])
-        c = 3
-        if cd["error"]:
-            ws_sum.cell(r, c, cd["error"]); c += 1
+        ws.title = tpl["sheet"]
+
+        # 열 너비
+        for col, w in tpl.get("widths", {}).items():
+            ws.column_dimensions[col].width = w
+        # 행 높이
+        for row_s, h in tpl.get("row_heights", {}).items():
+            ws.row_dimensions[int(row_s)].height = h
+        if tpl.get("default_row_height"):
+            ws.row_dimensions[1].height = tpl["default_row_height"]
+
+        # 셀 채우기
+        AL_MAP = {"l": "left", "c": "center", "r": "right"}
+        merged_set: set[str] = set()
+        for mc in tpl.get("cells", []):
+            rng_s = mc["r"]
+            if ":" in rng_s:
+                c1, c2 = rng_s.split(":")
+                merged_set.add(rng_s)
+                ws.merge_cells(rng_s)
+                ws[c1].value = _replace_placeholder(mc["t"], company, period, biz_no, input_map)
+                ws[c1].alignment = Alignment(horizontal=AL_MAP.get(mc.get("al", "l"), mc.get("al", "l")),
+                                             vertical="center", wrap_text=True)
+                if mc.get("size"):
+                    ws[c1].font = Font(name="맑은 고딕", size=mc["size"], bold=mc.get("bold", False))
+                elif mc.get("bold"):
+                    ws[c1].font = Font(name="맑은 고딕", size=10, bold=True)
+                else:
+                    ws[c1].font = Font(name="맑은 고딕", size=10)
+                continue
+            # 단일 셀
+            ws[rng_s].value = _replace_placeholder(mc["t"], company, period, biz_no, input_map)
+            ws[rng_s].alignment = Alignment(horizontal=AL_MAP.get(mc.get("al", "l"), mc.get("al", "l")),
+                                            vertical="center", wrap_text=True)
+            if mc.get("size"):
+                ws[rng_s].font = Font(name="맑은 고딕", size=mc["size"], bold=mc.get("bold", False))
+            elif mc.get("bold"):
+                ws[rng_s].font = Font(name="맑은 고딕", size=10, bold=True)
+            else:
+                ws[rng_s].font = Font(name="맑은 고딕", size=10)
+
+        # 괘선(box) — 모든 칸 얇은 선
+        thin = Side(style="thin")
+        medium = Side(style="medium")
+        for rng_s in tpl.get("box", []):
+            cs, ce, rs, re_ = _parse_range(rng_s)
+            for ci in range(cs, ce + 1):
+                for ri in range(rs, re_ + 1):
+                    cell = ws.cell(ri, ci)
+                    cell.border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+        # 바깥 테두리(outer) — 굵은 선
+        for rng_s in tpl.get("outer", []):
+            cs, ce, rs, re_ = _parse_range(rng_s)
+            for ci in range(cs, ce + 1):
+                for ri in range(rs, re_ + 1):
+                    cell = ws.cell(ri, ci)
+                    left_b = medium if ci == cs else cell.border.left
+                    right_b = medium if ci == ce else cell.border.right
+                    top_b = medium if ri == rs else cell.border.top
+                    bottom_b = medium if ri == re_ else cell.border.bottom
+                    cell.border = Border(left=left_b, right=right_b, top=top_b, bottom=bottom_b)
+
+        # 금액 열 서식
+        for col_l in tpl.get("amount_cols", []):
+            ci = ord(col_l) - 64
+            pa = tpl.get("print_area", "")
+            if pa:
+                pa_cs, pa_ce, pa_rs, pa_re = _parse_range(pa)
+                for ri in range(pa_rs, pa_re + 1):
+                    c = ws.cell(ri, ci)
+                    if c.value is not None:
+                        c.number_format = money_fmt
+                        c.alignment = Alignment(horizontal="right", vertical="center")
+
+        # 슬롯(수식) 처리
+        for s in tpl.get("slots", []):
+            cell_addr = s["cell"]
+            f = s.get("f", "")
+            if not f:
+                continue
+            #             # 템플릿의 모든 [입력.이름] 토큰을 미리 추출해서, 입력 맵에 없는 것도
+            # 0(또는 템플릿 기본값)으로 정의된 이름 생성
+            if call_idx is not None:
+                호출접두사 = f"호출{call_idx + 1}_"
+                all_input_names: set[tuple[str, str | None]] = set()
+                for mc in tpl.get("cells", []):
+                    txt = mc.get("t", "") or ""
+                    for m in _re.finditer(r"\{\{입력\.([^}]+)\}\}", txt):
+                        full = m.group(1)
+                        if "|" in full:
+                            name, default = full.split("|", 1)
+                            all_input_names.add((name, default))
+                        else:
+                            all_input_names.add((full, None))
+                for s2 in tpl.get("slots", []):
+                    f2 = s2.get("f", "") or ""
+                    for m in _re.finditer(r"\{\{입력\.([^}]+)\}\}", f2):
+                        full = m.group(1)
+                        if "|" in full:
+                            name, default = full.split("|", 1)
+                            all_input_names.add((name, default))
+                        else:
+                            all_input_names.add((full, None))
+                    for m in _re.finditer(r"\[입력\.([^]|]+)(?:\|([^]]+))?\]", f2):
+                        full = m.group(1)
+                        if "|" in full:
+                            name, default = full.split("|", 1)
+                            all_input_names.add((name, default))
+                        else:
+                            all_input_names.add((full, None))
+            if call_idx is not None:
+                호출접두사 = f"호출{call_idx + 1}_"
+                f = _re.sub(r"\[입력\.([^]|]+)(?:\|([^]]+))?\]", 호출접두사 + r"\1", f)
+                # [계산.이름|기본값] → 호출N_이름 (접두사 '계산.' 제거)
+                f = _re.sub(r"\[계산\.([^]|]+)(?:\|([^]]+))?\]", 호출접두사 + r"\1", f)
+                f = _re.sub(r"\[결과\.([^]|]+)(?:\|([^]]+))?\]", 호출접두사 + r"결과_\1", f)
+            # {id} 또는 {틀key!id} → 셀 주소
+            def _slot_repl(m):
+                rest = m.group(1)
+                if "!" in rest:
+                    ref_key, ref_id = rest.split("!", 1)
+                    if ref_key not in sheet_name_map:
+                        raise KeyError(f"알 수 없는 틀 key '{ref_key}' — 시트 없음")
+                    target_sheet = sheet_name_map[ref_key]
+                    # (틀key, slot_id) 교차 참조 우선, 없으면 단일 id 조회
+                    cross_key = (ref_key, ref_id)
+                    if slot_map_cross and cross_key in slot_map_cross:
+                        return f"'{target_sheet}'!{slot_map_cross[cross_key]}"
+                    if slot_map_all and ref_id in slot_map_all:
+                        return f"'{target_sheet}'!{slot_map_all[ref_id]}"
+                    raise KeyError(f"알 수 없는 slot id '{ref_id}' (틀 {ref_key})")
+                else:
+                    # {id} 참조: 현재 템플릿의 로컬 슬롯 우선
+                    if rest in local_slot_map:
+                        return local_slot_map[rest]
+                    # 중복되지 않은 슬롯 (모든 템플릿에서 동일)
+                    if slot_map_all and rest in slot_map_all:
+                        return slot_map_all[rest]
+                    raise KeyError(f"알 수 없는 slot id '{rest}' (틀 {tkey})")
+            f_rendered = _re.sub(r"\{([^}]+)\}", _slot_repl, f)
+            ws[cell_addr].value = f_rendered
+            ws[cell_addr].font = Font(name="맑은 고딕", size=10)
+
+        # 검증 칸(check_col)
+        check_col = tpl.get("check_col", "")
+        if check_col and tpl.get("slots"):
+            cci = ord(check_col) - 64
+            check_rows = sorted([s for s in tpl["slots"] if s.get("check")],
+                               key=lambda x: _parse_cell(x["cell"])[0])
+            if check_rows:
+                first_r = _parse_cell(check_rows[0]["cell"])[0]
+                ws.cell(first_r - 1, cci, "도구 값").font = Font(name="맑은 고딕", size=9, bold=True)
+                ws.cell(first_r - 1, cci).alignment = Alignment(horizontal="center", vertical="center")
+                ws.cell(first_r - 1, cci + 1, "확인").font = Font(name="맑은 고딕", size=9, bold=True)
+                ws.cell(first_r - 1, cci + 1).alignment = Alignment(horizontal="center", vertical="center")
+            for s in check_rows:
+                cell_addr = s["cell"]
+                r = _parse_cell(cell_addr)[0]
+                check_path = s["check"]
+                tool_val = _resolve_tool_value(res, check_path)
+                tv_cell = ws.cell(r, cci)
+                tv_cell.font = Font(name="맑은 고딕", size=9, color="808080")
+                tv_cell.alignment = Alignment(horizontal="right", vertical="center")
+                if tool_val is None:
+                    tv_cell.value = "—"
+                elif isinstance(tool_val, float) and tool_val == float("inf"):
+                    tv_cell.value = "상한 없음"
+                else:
+                    tv_cell.value = tool_val
+                    tv_cell.number_format = money_fmt
+                amt_col_letter = _col_letter(_parse_cell(cell_addr)[1])
+                ws.cell(r, cci + 1,
+                        f'=IF(ROUND({amt_col_letter}{r},0)=ROUND(IF(ISNUMBER({check_col}{r}),{check_col}{r},0),0),"일치","확인 필요")')
+                ws.cell(r, cci + 1).font = Font(name="맑은 고딕", size=9)
+                ws.cell(r, cci + 1).alignment = Alignment(horizontal="center", vertical="center")
+
+        # 인쇄 영역, 눈금선, 페이지 설정
+        if tpl.get("print_area"):
+            ws.print_area = tpl["print_area"]
+        ws.sheet_view.showGridLines = False
+        ws.page_setup.orientation = "portrait"
+        ws.page_setup.fitToPage = True
+        ws.page_setup.fitToWidth = 1
+        ws.page_setup.fitToHeight = 1
+        ws.page_setup.paperSize = 9  # A4
+
+    def _parse_cell(addr):
+        """'D13' → (13, 4)."""
+        m = _re.match(r"([A-Z]+)(\d+)", addr)
+        if not m:
+            raise ValueError(f"잘못된 셀 주소: {addr}")
+        col = 0
+        for ch in m.group(1):
+            col = col * 26 + (ord(ch) - 64)
+        return (int(m.group(2)), col)
+
+    def _col_letter(ci):
+        """1-based 열 번호 → 'A' 형태."""
+        s = ""
+        while ci > 0:
+            ci, rem = divmod(ci - 1, 26)
+            s = chr(65 + rem) + s
+        return s
+
+    def _parse_range(rng_s):
+        """'A2:D3' → (1, 4, 2, 3). 'Sheet!A2:D3'이면 rng 부분만 사용."""
+        rng_s = rng_s.split("!")[-1]
+        if ":" not in rng_s:
+            r, c = _parse_cell(rng_s)
+            return (c, c, r, r)
+        c1_s, c2_s = rng_s.split(":")
+        r1, c1 = _parse_cell(c1_s)
+        r2, c2 = _parse_cell(c2_s)
+        return (min(c1, c2), max(c1, c2), min(r1, r2), max(r1, r2))
+
+    def _resolve_tool_value(res, path):
+        """결과 dict에서 경로(예: '결과.시부인_대상', '계산.전통시장_지출')로 값 조회.
+        '결과.' prefix는 res가 전체 data dict일 때 res['결과'][키]로 해석한다."""
+        if not path or not isinstance(res, dict):
+            return None
+        parts = path.split(".")
+        # '결과.키' → res['결과'][키] 참조 (res가 data dict이고 '결과' 키가 있을 때)
+        if parts[0] == "결과" and "결과" in res:
+            parts = parts[1:]
+            cur = res.get("결과")
+            if not isinstance(cur, dict):
+                return None
         else:
-            for k, v in _numeric_items(cd["result"] or {}):
-                kc = ws_sum.cell(r, c, k); kc.font = bold
-                vc = ws_sum.cell(r, c + 1)
-                if isinstance(v, (int, float)):
-                    _set_money(vc, v)
-                else:
-                    vc.value = _cell_value(v)
-                c += 2
-            if cd["basis"]:
-                if isinstance(cd["basis"], list) and (_is_basis_list(cd["basis"]) or _is_wrapped_basis_list(cd["basis"])):
-                    bc = ws_sum.cell(r, c, _format_basis_short(cd["basis"]))
-                else:
-                    bc = ws_sum.cell(r, c, _cell_value(cd["basis"]))
-                c += 1
+            cur = res
+        for p in parts:
+            if isinstance(cur, dict):
+                cur = cur.get(p)
+            else:
+                return None
+            if cur is None:
+                return None
+        return cur
 
-    # 고지 행
-    고지행 = 첫데이터행 + len(결과들) + 1
-    ws_sum.cell(고지행, 1,
-                "이 파일은 계산 도구의 결과를 정리한 참고 자료이며 세무 자문이 아닙니다. 판단과 신고는 세무 전문가와 확인하세요.")
-    ws_sum.cell(고지행, 1).font = Font(italic=True, color="C00000")
-    ws_sum.merge_cells(start_row=고지행, start_column=1, end_row=고지행, end_column=8)
+    def _replace_placeholder(t, company, period, biz_no, input_map):
+        """문구 placeholder 치환: {{법인명}}·{{사업자등록번호}}·{{기간_시작}}·{{기간_끝}}·{{입력.이름}}·{{계정과목}}."""
+        if not t:
+            return t
+        d1, d2 = "", ""
+        if period:
+            parts = period.split(" ~ ")
+            if len(parts) == 2:
+                d1, d2 = parts[0].strip(), parts[1].strip()
+        t = t.replace("{{법인명}}", company)
+        t = t.replace("{{사업자등록번호}}", biz_no)
+        t = t.replace("{{기간_시작}}", d1)
+        t = t.replace("{{기간_끝}}", d2)
+        t = t.replace("{{계정과목}}", "기업업무추진비")
+        # {{입력.이름}} → 입력 맵 값
+        for m in _re.finditer(r"\{\{입력\.([^}]+)\}\}", t):
+            name = m.group(1)
+            v = input_map.get(name)
+            if isinstance(v, bool):
+                repl = str(v)
+            elif isinstance(v, int):
+                repl = str(v)
+            elif isinstance(v, float):
+                repl = str(int(v)) if v == int(v) else str(v)
+            else:
+                repl = str(v) if v is not None else ""
+            t = t[:m.start()] + repl + t[m.end():]
+        return t
 
-    ws_sum.column_dimensions["A"].width = 20
-    ws_sum.column_dimensions["B"].width = 28
-    for c in range(3, 20):
-        ws_sum.column_dimensions[get_column_letter(c)].width = 16
-    ws_sum.freeze_panes = "A5"
+    시트이름들: list[str] = []
 
-    # ── 2. 계산 시트들 ──
-    시트이름들: list[str] = ["요약"]
-    calc_idx = 0
+    if layout == "steps":
+        # ── 1. 요약 시트 (steps 모드, 기존 동작) ──
+        ws_sum = wb.active
+        ws_sum.title = "요약"
 
-    for cd in 결과들:
-        if cd["error"] or not cd["result"]:
-            continue
-        calc_idx += 1
-        sh_name = f"계산 {calc_idx}"
-        ws = wb.create_sheet(sh_name)
-        시트이름들.append(sh_name)
-        res = cd["result"] or {}
-        calc_dict = (cd.get("data") or {}).get("계산") if isinstance(cd.get("data"), dict) else None
+        오늘 = date.today().isoformat()
+        ws_sum["A1"] = "제목"; ws_sum["B1"] = title
+        ws_sum["A2"] = "작성일"; ws_sum["B2"] = 오늘
+        ws_sum["A3"] = "call 수"; ws_sum["B3"] = len(calls)
+        for c in ("A1", "A2", "A3"):
+            ws_sum[c].font = bold
 
-        # ── 계산식 시트 (SPEC_export_workbook_c) ────────────────────────────
-        formula = (cd.get("data") or {}).get("계산식") if isinstance(cd.get("data"), dict) else None
-        if formula:
-            호출접두사 = f"호출{calc_idx}_"
-            # 이름 → 정의 이름 맵 (입력 + 계산 단계)
-            dname_map: dict[str, str] = {}
-            for inp in (cd.get("data") or {}).get("계산식_입력", []) or []:
-                dname_map[inp["이름"]] = f"{호출접두사}{inp['이름']}"
-            for s in formula:
-                dname_map[s["이름"]] = f"{호출접두사}{s['이름']}"
+        hdr_row = 4
+        ws_sum.cell(hdr_row, 1, "label").font = bold
+        ws_sum.cell(hdr_row, 2, "도구").font = bold
+        첫데이터행 = hdr_row + 1
 
-            # ── 위쪽 표: 입력 ──
-            행 = 1
-            for cc, h in enumerate(["이름", "값", "설명"], 1):
-                c = ws.cell(행, cc, h); c.font = bold; c.fill = header_fill
+        for i, cd in enumerate(결과들):
+            r = 첫데이터행 + i
+            ws_sum.cell(r, 1, cd["label"])
+            ws_sum.cell(r, 2, cd["tool"])
+            c = 3
+            if cd["error"]:
+                ws_sum.cell(r, c, cd["error"]); c += 1
+            else:
+                for k, v in _numeric_items(cd["result"] or {}):
+                    kc = ws_sum.cell(r, c, k); kc.font = bold
+                    vc = ws_sum.cell(r, c + 1)
+                    if isinstance(v, (int, float)):
+                        _set_money(vc, v)
+                    else:
+                        vc.value = _cell_value(v)
+                    c += 2
+                if cd["basis"]:
+                    if isinstance(cd["basis"], list) and (_is_basis_list(cd["basis"]) or _is_wrapped_basis_list(cd["basis"])):
+                        bc = ws_sum.cell(r, c, _format_basis_short(cd["basis"]))
+                    else:
+                        bc = ws_sum.cell(r, c, _cell_value(cd["basis"]))
+                    c += 1
+
+        고지행 = 첫데이터행 + len(결과들) + 1
+        ws_sum.cell(고지행, 1,
+                    "이 파일은 계산 도구의 결과를 정리한 참고 자료이며 세무 자문이 아닙니다. 판단과 신고는 세무 전문가와 확인하세요.")
+        ws_sum.cell(고지행, 1).font = Font(italic=True, color="C00000")
+        ws_sum.merge_cells(start_row=고지행, start_column=1, end_row=고지행, end_column=8)
+
+        ws_sum.column_dimensions["A"].width = 20
+        ws_sum.column_dimensions["B"].width = 28
+        for c in range(3, 20):
+            ws_sum.column_dimensions[get_column_letter(c)].width = 16
+        ws_sum.freeze_panes = "A5"
+
+        시트이름들.append("요약")
+
+        # ── 2. 계산 시트들 (steps 모드, 기존 동작) ──
+        calc_idx = 0
+        for cd in 결과들:
+            if cd["error"] or not cd["result"]:
+                continue
+            calc_idx += 1
+            sh_name = f"계산 {calc_idx}"
+            ws = wb.create_sheet(sh_name)
+            시트이름들.append(sh_name)
+            res = cd["result"] or {}
+            calc_dict = (cd.get("data") or {}).get("계산") if isinstance(cd.get("data"), dict) else None
+            formula = (cd.get("data") or {}).get("계산식") if isinstance(cd.get("data"), dict) else None
+
+            if formula:
+                호출접두사 = f"호출{calc_idx}_"
+                dname_map: dict[str, str] = {}
+                for inp in (cd.get("data") or {}).get("계산식_입력", []) or []:
+                    dname_map[inp["이름"]] = f"{호출접두사}{inp['이름']}"
+                for s in formula:
+                    dname_map[s["이름"]] = f"{호출접두사}{s['이름']}"
+
+                행 = 1
+                for cc, h in enumerate(["이름", "값", "설명"], 1):
+                    c = ws.cell(행, cc, h); c.font = bold; c.fill = header_fill
+                행 += 1
+                for inp in (cd.get("data") or {}).get("계산식_입력", []) or []:
+                    ws.cell(행, 1, inp["이름"])
+                    vc = ws.cell(행, 2)
+                    v = inp["값"]
+                    if isinstance(v, bool):
+                        vc.value = v
+                    elif isinstance(v, (int, float)):
+                        _set_money(vc, v)
+                    else:
+                        vc.value = v
+                    wb.defined_names[f"{호출접두사}{inp['이름']}"] = DefinedName(
+                        name=f"{호출접두사}{inp['이름']}", attr_text=f"'{sh_name}'!$B${행}")
+                    ws.cell(행, 3, inp.get("설명", ""))
+                    행 += 1
+
+                calc_hdr_row = 행
+                for cc, h in enumerate(["단계", "수식", "도구 값", "확인", "설명"], 1):
+                    c = ws.cell(행, cc, h); c.font = bold; c.fill = header_fill
+                행 += 1
+                for s in formula:
+                    단계명 = s["이름"]
+                    dname = f"{호출접두사}{단계명}"
+                    ws.cell(행, 1, 단계명)
+                    수식셀 = ws.cell(행, 2, f"={_이름_치환(s['식'], dname_map)}")
+                    수식셀.number_format = money_fmt
+                    wb.defined_names[dname] = DefinedName(
+                        name=dname, attr_text=f"'{sh_name}'!$B${행}")
+                    도구값 = s["값"]
+                    vc = ws.cell(행, 3)
+                    if isinstance(도구값, (int, float)):
+                        _set_money(vc, 도구값)
+                    else:
+                        vc.value = 도구값
+                    ws.cell(행, 4, f'=IF(B{행}=C{행},"일치","확인 필요")')
+                    ws.cell(행, 5, s.get("설명", ""))
+                    행 += 1
+                next_table_row = 행
+
+            행 = next_table_row if formula else 1
+            ws.cell(행, 1, "항목").font = bold
+            ws.cell(행, 2, "금액").font = bold
+            ws.cell(행, 1).fill = header_fill
+            ws.cell(행, 2).fill = header_fill
             행 += 1
+
+            all_items: list[tuple[str, Any]] = []
+            all_items.extend(_numeric_items(res))
+            if isinstance(calc_dict, dict):
+                all_items.extend(_numeric_items(calc_dict))
+
+            항목맵: dict[str, Any] = {}
+            for k, v in all_items:
+                항목맵[k] = v
+
+            for k, v in 항목맵.items():
+                ws.cell(행, 1, k)
+                if isinstance(v, (int, float)):
+                    _set_money(ws.cell(행, 2), v)
+                else:
+                    ws.cell(행, 2, _cell_value(v))
+                행 += 1
+
+            정착_start = 행 + 1
+            settlements = res.get("세무조정", [])
+            합계_수식행 = None
+            if settlements:
+                행 = 정착_start
+                ws.cell(행, 1, "구분").font = bold
+                ws.cell(행, 2, "조정").font = bold
+                ws.cell(행, 3, "금액").font = bold
+                ws.cell(행, 4, "소득처분").font = bold
+                for cc in range(1, 5):
+                    ws.cell(행, cc).fill = header_fill
+                행 += 1
+                처분별: dict[str, int] = {}
+                가산first_row = 행
+                for s in settlements:
+                    raw = s.get("금액", 0)
+                    if isinstance(raw, (int, float)):
+                        amt = raw; numeric = True
+                    else:
+                        amt = raw; numeric = False
+                    raw_조정 = s.get("조정", "")
+                    if raw_조정 in ("익금산입", "손금불산입"):
+                        조정 = "가산"
+                    elif raw_조정 in ("손금산입", "익금불산입"):
+                        조정 = "차감"
+                    elif raw_조정 == "":
+                        처분_tmp = s.get("소득처분", "")
+                        조정 = "차감" if 처분_tmp.startswith("△") else "가산"
+                    else:
+                        조정 = raw_조정
+                    처분 = s.get("소득처분", "")
+                    ws.cell(행, 1, s.get("구분", ""))
+                    ws.cell(행, 2, 조정)
+                    if numeric:
+                        _set_money(ws.cell(행, 3), amt)
+                    else:
+                        ws.cell(행, 3, amt)
+                    ws.cell(행, 4, 처분)
+                    if numeric:
+                        처분별[처분] = 처분별.get(처분, 0) + amt
+                    행 += 1
+                처분last_row = 행 - 1
+
+                가산_sumif_cond = f"B{가산first_row}:B{처분last_row}"
+                차감_sumif_cond = f"B{가산first_row}:B{처분last_row}"
+                금액_sumif_addr = f"C{가산first_row}:C{처분last_row}"
+
+                ws.cell(행, 1, "가산 합계").font = bold
+                ws.cell(행, 3, f'=SUMIF({가산_sumif_cond},"가산",{금액_sumif_addr})')
+                ws.cell(행, 3).number_format = money_fmt
+                ws.cell(행, 3).font = bold
+                가산_수식행 = 행; 행 += 1
+
+                ws.cell(행, 1, "차감 합계").font = bold
+                ws.cell(행, 3, f'=SUMIF({차감_sumif_cond},"차감",{금액_sumif_addr})')
+                ws.cell(행, 3).number_format = money_fmt
+                ws.cell(행, 3).font = bold
+                차감_수식행 = 행; 행 += 1
+
+                ws.cell(행, 1, "순액").font = bold
+                ws.cell(행, 3, f"=C{가산_수식행}-C{차감_수식행}")
+                ws.cell(행, 3).number_format = money_fmt
+                ws.cell(행, 3).font = bold
+                행 += 1
+
+                ws.cell(행, 1, "금액 합계(방향 무관)").font = bold
+                ws.cell(행, 3, f"=SUM({금액_sumif_addr})")
+                ws.cell(행, 3).number_format = money_fmt
+                ws.cell(행, 3).font = bold
+                합계_수식행 = 행; 행 += 1
+
+                ws.cell(행, 1, "소득처분별 합계").font = bold
+                ws.cell(행, 2, "소득처분").font = bold
+                ws.cell(행, 3, "금액").font = bold
+                for cc in range(1, 4):
+                    ws.cell(행, cc).fill = header_fill
+                행 += 1
+                for 처분, tot in 처분별.items():
+                    ws.cell(행, 1, "")
+                    ws.cell(행, 2, 처분)
+                    sumif_cond = f"D{가산first_row}:D{처분last_row}"
+                    ws.cell(행, 3, f'=SUMIF({sumif_cond},"{처분}",{금액_sumif_addr})')
+                    ws.cell(행, 3).number_format = money_fmt
+                    행 += 1
+
+            if 합계_수식행 is not None:
+                v_익금 = res.get("익금산입_손금불산입")
+                v_손금 = res.get("손금산입_익금불산입")
+                if isinstance(v_익금, (int, float)) and isinstance(v_손금, (int, float)):
+                    ws.cell(행, 1, "확인 (익금산입_손금불산입)").font = bold
+                    ws.cell(행, 3, f'=IF(C{가산_수식행}={v_익금},"일치","확인 필요")')
+                    행 += 1
+                    ws.cell(행, 1, "확인 (손금산입_익금불산입)").font = bold
+                    ws.cell(행, 3, f'=IF(C{차감_수식행}={v_손금},"일치","확인 필요")')
+                    행 += 1
+                else:
+                    도구합계 = None; 도구합계키 = None
+                    for key in ("손금불산입_합계", "한도초과", "소득처분별_합계"):
+                        v = res.get(key)
+                        if isinstance(v, (int, float)):
+                            도구합계 = v; 도구합계키 = key; break
+                    if 도구합계 is not None:
+                        ws.cell(행, 1, f"확인 ({도구합계키})").font = bold
+                        ws.cell(행, 3, f'=IF(C{합계_수식행}={도구합계},"일치","확인 필요")')
+                        행 += 1
+
+            산식 = (cd.get("data") or {}).get("산식") or ""
+            if 산식:
+                행 += 1
+                ws.cell(행, 1, "산식").font = bold
+                ac = ws.cell(행, 2, _cell_value(산식))
+                ac.alignment = Alignment(wrap_text=True)
+
+            ws.column_dimensions["A"].width = 32
+            ws.column_dimensions["B"].width = 20
+            ws.column_dimensions["C"].width = 16
+            ws.freeze_panes = "A2"
+
+    else:  # layout == "forms"
+        # ── 1. 틀 템플릿 목록 구축 (call 순서대로, 한 call의 모든 템플릿 포함) ──
+        템플릿_목록: list[dict] = []
+        _tpl_seen: dict[str, int] = {}
+        _cd_by_tool: dict[str, list[int]] = {}  # tool → call 인덱스 목록
+        for i, cd in enumerate(결과들):
+            if cd["error"] or not cd["result"]:
+                continue
+            tool = cd.get("tool", "")
+            tpl_list = _FORM_TEMPLATES.get(tool, [])
+            if not tpl_list:
+                continue
+            _cd_by_tool.setdefault(tool, []).append(i)
+            for tpl in tpl_list:
+                tkey = tpl["key"]
+                sheet_name = tpl["sheet"]
+                _tpl_seen[tkey] = _tpl_seen.get(tkey, 0) + 1
+                if _tpl_seen[tkey] > 1:
+                    sheet_name = f"{tpl['sheet']} ({_tpl_seen[tkey]})"
+                템플릿_목록.append({"key": tkey, "sheet": sheet_name, "form": tpl["form"], "tool": tool, "call_idx": i})
+
+        # ── 1. 목록 시트 ──
+        ws_list = wb.active
+        ws_list.title = "목록"
+        시트이름들.append("목록")
+        행 = 1
+
+        ws_list.cell(행, 1, "서식 시트").font = bold
+        ws_list.cell(행, 2, "서식 표기").font = bold
+        ws_list.cell(행, 3, "도구").font = bold
+        for cc in range(1, 4):
+            ws_list.cell(행, cc).fill = header_fill
+        행 += 1
+
+        for tinfo in 템플릿_목록:
+            ws_list.cell(행, 1, tinfo["sheet"])
+            ws_list.cell(행, 2, tinfo["form"])
+            ws_list.cell(행, 3, tinfo["tool"])
+            행 += 1
+
+        # 자료 원칙에 따른 줄: 법인세 도구 call이 하나라도 있으면
+        has_corp_tool = any(
+            cd.get("tool") in ("entertainment_adjustment", "income_adjustment_total",
+                                "depreciation_adjustment", "dividend_received_deduction")
+            for cd in 결과들 if not cd.get("error")
+        )
+        if has_corp_tool:
+            ws_list.cell(행, 1, "별지 제50호서식(갑)")
+            ws_list.cell(행, 2, "자본금과 적립금조정명세서 — 자료 없음(재무상태표 자본 자료 필요)")
+            ws_list.cell(행, 3, "")
+            행 += 1
+            ws_list.cell(행, 1, "별지 제50호서식(병)")
+            ws_list.cell(행, 2, "해당 없음(해외현지기업 출자)")
+            ws_list.cell(행, 3, "")
+            행 += 1
+
+        ws_list.cell(행, 1,
+                    "이 파일은 계산 도구의 결과를 정리한 참고 자료이며 세무 자문이 아닙니다. 판단과 신고는 세무 전문가와 확인하세요.")
+        ws_list.cell(행, 1).font = Font(italic=True, color="C00000")
+        ws_list.merge_cells(start_row=행, start_column=1, end_row=행, end_column=8)
+
+        ws_list.column_dimensions["A"].width = 30
+        ws_list.column_dimensions["B"].width = 55
+        ws_list.column_dimensions["C"].width = 22
+        ws_list.freeze_panes = "A2"
+
+        # ── 2. 입력·가정 시트 생성 (템플릿 렌더링 전에 정의된 이름 생성) ──
+        ws_inp = wb.create_sheet("입력·가정")
+        시트이름들.append("입력·가정")
+        행 = 1
+        ws_inp.cell(행, 1, "call").font = bold
+        ws_inp.cell(행, 2, "경로").font = bold
+        ws_inp.cell(행, 3, "값").font = bold
+        for cc in range(1, 4):
+            ws_inp.cell(행, cc).fill = header_fill
+        행 += 1
+        for i, cd in enumerate(결과들):
+            if cd["error"]:
+                continue
+            label = cd["label"]
+            args = (calls[i] or {}).get("args", {})
+            for 경로, 값 in _flatten_args(args):
+                ws_inp.cell(행, 1, label)
+                ws_inp.cell(행, 2, 경로)
+                vc = ws_inp.cell(행, 3)
+                if isinstance(값, (int, float)):
+                    _set_money(vc, 값)
+                else:
+                    vc.value = _cell_value(값)
+                행 += 1
+        # forms 모드: 계산식_입력·계산식 단계별 정의된 이름 생성 (입력·가정 시트 아래)
+        행 += 1
+        for i, cd in enumerate(결과들):
+            if cd["error"]:
+                continue
+            call_idx = i
+            호출접두사 = f"호출{call_idx + 1}_"
             for inp in (cd.get("data") or {}).get("계산식_입력", []) or []:
-                ws.cell(행, 1, inp["이름"])
-                vc = ws.cell(행, 2)
+                ws_inp.cell(행, 1, 호출접두사 + inp["이름"])
+                vc = ws_inp.cell(행, 2)
                 v = inp["값"]
                 if isinstance(v, bool):
                     vc.value = v
@@ -6637,202 +7225,154 @@ def export_workbook(
                 else:
                     vc.value = v
                 wb.defined_names[f"{호출접두사}{inp['이름']}"] = DefinedName(
-                    name=f"{호출접두사}{inp['이름']}", attr_text=f"'{sh_name}'!$B${행}")
-                ws.cell(행, 3, inp.get("설명", ""))
+                    name=f"{호출접두사}{inp['이름']}", attr_text=f"'입력·가정'!$B${행}")
+                ws_inp.cell(행, 3, inp.get("설명", ""))
                 행 += 1
-
-            # ── 아래 표: 계산 ──
-            calc_hdr_row = 행
-            for cc, h in enumerate(["단계", "수식", "도구 값", "확인", "설명"], 1):
-                c = ws.cell(행, cc, h); c.font = bold; c.fill = header_fill
-            행 += 1
-            for s in formula:
-                단계명 = s["이름"]
-                dname = f"{호출접두사}{단계명}"
-                ws.cell(행, 1, 단계명)
-                수식셀 = ws.cell(행, 2, f"={_이름_치환(s['식'], dname_map)}")
-                수식셀.number_format = money_fmt
-                wb.defined_names[dname] = DefinedName(
-                    name=dname, attr_text=f"'{sh_name}'!$B${행}")
-                도구값 = s["값"]
-                vc = ws.cell(행, 3)
-                if isinstance(도구값, (int, float)):
-                    _set_money(vc, 도구값)
+            for s in (cd.get("data") or {}).get("계산식", []) or []:
+                ws_inp.cell(행, 1, 호출접두사 + s["이름"])
+                vc = ws_inp.cell(행, 2)
+                v = s["값"]
+                if isinstance(v, bool):
+                    vc.value = v
+                elif isinstance(v, (int, float)):
+                    _set_money(vc, v)
                 else:
-                    vc.value = 도구값
-                ws.cell(행, 4, f'=IF(B{행}=C{행},"일치","확인 필요")')
-                ws.cell(행, 5, s.get("설명", ""))
+                    vc.value = v
+                wb.defined_names[f"{호출접두사}{s['이름']}"] = DefinedName(
+                    name=f"{호출접두사}{s['이름']}", attr_text=f"'입력·가정'!$B${행}")
+                ws_inp.cell(행, 3, s.get("설명", ""))
                 행 += 1
-            next_table_row = 행  # 수식 섹션 종료 후 항목·금액 섹션 시작 행
-
-        # ① 결과·계산 dict → 항목 | 금액 표
-        행 = next_table_row if formula else 1
-        ws.cell(행, 1, "항목").font = bold
-        ws.cell(행, 2, "금액").font = bold
-        ws.cell(행, 1).fill = header_fill
-        ws.cell(행, 2).fill = header_fill
-        행 += 1
-
-        calc_start = 행
-        all_items: list[tuple[str, Any]] = []
-        all_items.extend(_numeric_items(res))
-        if isinstance(calc_dict, dict):
-            all_items.extend(_numeric_items(calc_dict))
-
-        # 중복 키 방지: 뒤에 나온 값으로 덮기 위해 dict로
-        항목맵: dict[str, Any] = {}
-        for k, v in all_items:
-            항목맵[k] = v
-
-        for k, v in 항목맵.items():
-            ws.cell(행, 1, k)
-            if isinstance(v, (int, float)):
-                _set_money(ws.cell(행, 2), v)
-            else:
-                ws.cell(행, 2, _cell_value(v))
-            행 += 1
-
-        calc_end = 행 - 1
-        합계_셀_행 = 행  # 합계 행을 둘 행 번호(단위: 행 번호만 저장, 실제 합계는 세무조등기임원이 계산할 때 사용)
-
-        # ② 세무조정 목록
-        정착_start = 행 + 1
-        settlements = res.get("세무조정", [])
-        합계_수식행 = None
-        if settlements:
-            행 = 정착_start
-            ws.cell(행, 1, "구분").font = bold
-            ws.cell(행, 2, "조정").font = bold
-            ws.cell(행, 3, "금액").font = bold
-            ws.cell(행, 4, "소득처분").font = bold
-            for cc in range(1, 5):
-                ws.cell(행, cc).fill = header_fill
-            행 += 1
-            처분별: dict[str, int] = {}
-            가산first_row = 행
-            for s in settlements:
-                raw = s.get("금액", 0)
-                if isinstance(raw, (int, float)):
-                    amt = raw
-                    numeric = True
-                else:
-                    amt = raw
-                    numeric = False
-                raw_조정 = s.get("조정", "")
-                if raw_조정 in ("익금산입", "손금불산입"):
-                    조정 = "가산"
-                elif raw_조정 in ("손금산입", "익금불산입"):
-                    조정 = "차감"
-                elif raw_조정 == "":
-                    처분_tmp = s.get("소득처분", "")
-                    조정 = "차감" if 처분_tmp.startswith("△") else "가산"
-                else:
-                    조정 = raw_조정
-                처분 = s.get("소득처분", "")
-                ws.cell(행, 1, s.get("구분", ""))
-                ws.cell(행, 2, 조정)
-                if numeric:
-                    _set_money(ws.cell(행, 3), amt)
-                else:
-                    ws.cell(행, 3, amt)
-                ws.cell(행, 4, 처분)
-                if numeric:
-                    처분별[처분] = 처분별.get(처분, 0) + amt
-                행 += 1
-            처분last_row = 행 - 1
-
-            # 방향별 합계 행: 가산 합계 / 차감 합계 / 순액
-            가산_sumif_cond = f"B{가산first_row}:B{처분last_row}"   # B열 = 조정 열
-            차감_sumif_cond = f"B{가산first_row}:B{처분last_row}"
-            금액_sumif_addr = f"C{가산first_row}:C{처분last_row}"    # C열 = 금액 열
-
-            ws.cell(행, 1, "가산 합계").font = bold
-            ws.cell(행, 3, f'=SUMIF({가산_sumif_cond},"가산",{금액_sumif_addr})')
-            ws.cell(행, 3).number_format = money_fmt
-            ws.cell(행, 3).font = bold
-            가산_수식행 = 행
-            행 += 1
-
-            ws.cell(행, 1, "차감 합계").font = bold
-            ws.cell(행, 3, f'=SUMIF({차감_sumif_cond},"차감",{금액_sumif_addr})')
-            ws.cell(행, 3).number_format = money_fmt
-            ws.cell(행, 3).font = bold
-            차감_수식행 = 행
-            행 += 1
-
-            ws.cell(행, 1, "순액").font = bold
-            ws.cell(행, 3, f"=C{가산_수식행}-C{차감_수식행}")
-            ws.cell(행, 3).number_format = money_fmt
-            ws.cell(행, 3).font = bold
-            행 += 1
-
-            # 금액 합계(방향 무관) — SUM은 문자열 셀을 무시하므로 비숫자 금액도 범위에 포함 가능
-            ws.cell(행, 1, "금액 합계(방향 무관)").font = bold
-            ws.cell(행, 3, f"=SUM({금액_sumif_addr})")
-            ws.cell(행, 3).number_format = money_fmt
-            ws.cell(행, 3).font = bold
-            합계_수식행 = 행
-            행 += 1
-
-            # 소득처분별 합계 (=SUMIF)
-            ws.cell(행, 1, "소득처분별 합계").font = bold
-            ws.cell(행, 2, "소득처분").font = bold
-            ws.cell(행, 3, "금액").font = bold
-            for cc in range(1, 4):
-                ws.cell(행, cc).fill = header_fill
-            행 += 1
-            for 처분, tot in 처분별.items():
-                ws.cell(행, 1, "")
-                ws.cell(행, 2, 처분)
-                sumif_cond = f"D{가산first_row}:D{처분last_row}"
-                ws.cell(행, 3, f'=SUMIF({sumif_cond},"{처분}",{금액_sumif_addr})')
-                ws.cell(행, 3).number_format = money_fmt
-                행 += 1
-
-        # ③ 확인 셀: 도구 결과의 합계 값과 수식 합계 비교
-        if 합계_수식행 is not None:
-            v_익금 = res.get("익금산입_손금불산입")
-            v_손금 = res.get("손금산입_익금불산입")
-            if isinstance(v_익금, (int, float)) and isinstance(v_손금, (int, float)):
-                # 가산 합계 vs 익금산입_손금불산입
-                ws.cell(행, 1, "확인 (익금산입_손금불산입)").font = bold
-                ws.cell(행, 3, f'=IF(C{가산_수식행}={v_익금},"일치","확인 필요")')
-                행 += 1
-                # 차감 합계 vs 손금산입_익금불산입
-                ws.cell(행, 1, "확인 (손금산입_익금불산입)").font = bold
-                ws.cell(행, 3, f'=IF(C{차감_수식행}={v_손금},"일치","확인 필요")')
-                행 += 1
-            else:
-                # 기존 동작: 임의적립금 키 중 첫 번째 숫자 값을 합계와 비교
-                도구합계 = None
-                도구합계키 = None
-                for key in ("손금불산입_합계", "한도초과", "소득처분별_합계"):
-                    v = res.get(key)
-                    if isinstance(v, (int, float)):
-                        도구합계 = v
-                        도구합계키 = key
-                        break
-                if 도구합계 is not None:
-                    ws.cell(행, 1, f"확인 ({도구합계키})").font = bold
-                    ws.cell(행, 3, f'=IF(C{합계_수식행}={도구합계},"일치","확인 필요")')
+            # 결과 dict 항목도 정의된 이름으로 등록 (템플릿 [결과.경로] 참조용)
+            res = cd.get("result", {}) or {}
+            for k, v in res.items():
+                if isinstance(v, (int, float)):
+                    ws_inp.cell(행, 1, 호출접두사 + "결과_" + k)
+                    vc = ws_inp.cell(행, 2)
+                    _set_money(vc, v)
+                    wb.defined_names[f"{호출접두사}결과_{k}"] = DefinedName(
+                        name=f"{호출접두사}결과_{k}", attr_text=f"'입력·가정'!$B${행}")
                     행 += 1
+            # calc_dict(=계산 단계 값) 항목도 정의된 이름으로 등록 (템플릿 [계산.경로] 참조용)
+            calc_dict = (cd.get("data") or {}).get("계산") if isinstance((cd.get("data") or {}), dict) else None
+            if isinstance(calc_dict, dict):
+                for k, v in calc_dict.items():
+                    if isinstance(v, (int, float)) and not (isinstance(v, float) and v == float("inf")):
+                        ws_inp.cell(행, 1, 호출접두사 + k)
+                        vc = ws_inp.cell(행, 2)
+                        _set_money(vc, v)
+                        wb.defined_names[f"{호출접두사}{k}"] = DefinedName(
+                            name=f"{호출접두사}{k}", attr_text=f"'입력·가정'!$B${행}")
+                        ws_inp.cell(행, 3, "")
+                        행 += 1
 
-        # ④ 산식
-        산식 = (cd.get("data") or {}).get("산식") or ""
-        if 산식:
+        # ── 3. 틀 시트 렌더링 ──
+        sheet_name_map: dict[str, str] = {}
+        slot_map_all: dict[str, str] = {}
+        slot_map_cross: dict[tuple[str, str], str] = {}
+        _tpl_by_key: dict[str, dict] = {}
+        for tinfo in 템플릿_목록:
+            sheet_name_map[tinfo["key"]] = tinfo["sheet"]
+            if tinfo["key"] not in _tpl_by_key:
+                for _tpl in _FORM_TEMPLATES.get(tinfo["tool"], []):
+                    if _tpl["key"] == tinfo["key"]:
+                        _tpl_by_key[tinfo["key"]] = _tpl
+                        break
+            tpl = _tpl_by_key.get(tinfo["key"])
+            if tpl is None:
+                continue
+            for s in tpl.get("slots", []):
+                sid = s["id"]
+                cell = s["cell"]
+                if sid in slot_map_all:
+                    slot_map_cross[(tinfo["key"], sid)] = cell
+                else:
+                    slot_map_all[sid] = cell
+
+        for tinfo in 템플릿_목록:
+            cd = 결과들[tinfo["call_idx"]]
+            tkey = tinfo["key"]
+            tpl = _tpl_by_key.get(tkey)
+            if tpl is None:
+                continue
+
+            ws = wb.create_sheet(tinfo["sheet"])
+            input_map: dict[str, Any] = {}
+            for inp in (cd.get("data") or {}).get("계산식_입력", []) or []:
+                input_map[inp["이름"]] = inp["값"]
+            for s in (cd.get("data") or {}).get("계산식", []) or []:
+                input_map[s["이름"]] = s["값"]
+            _render_form_sheet(ws, tpl, cd.get("data", cd.get("result", {})), input_map,
+                               sheet_name_map, slot_map_all, slot_map_cross, tkey,
+                               call_idx=tinfo["call_idx"])
+            시트이름들.append(tinfo["sheet"])
+
+        # ── 3b. 계산 N 시트들 (틀 없는 도구들, call 순서대로) ──
+        calc_idx = 0
+        for cd in 결과들:
+            if cd["error"] or not cd["result"]:
+                continue
+            tool = cd.get("tool", "")
+            if tool in _FORM_TEMPLATES:
+                continue  # 틀 있는 도구는 이미 처리됨
+            tpl_list = _FORM_TEMPLATES.get(tool, [])
+            if tpl_list:
+                continue  # 틀 있는 도구
+            calc_idx += 1
+            sh_name = f"계산 {calc_idx}"
+            ws = wb.create_sheet(sh_name)
+            시트이름들.append(sh_name)
+            res = cd.get("result", {}) or {}
+            calc_dict = (cd.get("data") or {}).get("계산") if isinstance(cd.get("data"), dict) else None
+            formula = (cd.get("data") or {}).get("계산식") if isinstance(cd.get("data"), dict) else None
+
+            # Simple calculation sheet content
+            행 = 1
+            ws.cell(행, 1, "항목").font = bold
+            ws.cell(행, 2, "금액").font = bold
+            ws.cell(행, 1).fill = header_fill
+            ws.cell(행, 2).fill = header_fill
             행 += 1
-            ws.cell(행, 1, "산식").font = bold
-            ac = ws.cell(행, 2, _cell_value(산식))
-            ac.alignment = Alignment(wrap_text=True)
 
-        ws.column_dimensions["A"].width = 32
-        ws.column_dimensions["B"].width = 20
-        ws.column_dimensions["C"].width = 16
-        ws.freeze_panes = "A2"
+            all_items: list[tuple[str, Any]] = []
+            all_items.extend(_numeric_items(res))
+            if isinstance(calc_dict, dict):
+                all_items.extend(_numeric_items(calc_dict))
 
-    # ── 3. 입력·가정 시트 ──
-    ws_inp = wb.create_sheet("입력·가정")
-    시트이름들.append("입력·가정")
+            항목맵: dict[str, Any] = {}
+            for k, v in all_items:
+                항목맵[k] = v
+
+            for k, v in 항목맵.items():
+                ws.cell(행, 1, k)
+                if isinstance(v, (int, float)):
+                    _set_money(ws.cell(행, 2), v)
+                else:
+                    ws.cell(행, 2, _cell_value(v))
+                행 += 1
+
+            ws.column_dimensions["A"].width = 32
+            ws.column_dimensions["B"].width = 20
+            ws.freeze_panes = "A2"
+
+        # ── 4. 시트 순서 조정 (forms 모드: 입력·가정 시트를 틀+계산N 시트들 뒤로) ──
+        if layout == "forms":
+            sheets = wb._sheets
+            inp_idx = None
+            for i, s in enumerate(sheets):
+                if s.title == "입력·가정":
+                    inp_idx = i
+                    break
+            if inp_idx is not None:
+                # 목록(1) + 틀 시트들 + 계산 N 시트들
+                틀시트들_끝 = 1 + len(템플릿_목록) + calc_idx
+                if inp_idx != 틀시트들_끝:
+                    sheet = sheets.pop(inp_idx)
+                    sheets.insert(틀시트들_끝, sheet)
+
+    # ── 5. 입력·가정 시트 (steps 모드에서만 생성, forms 모드는 앞에서 생성) ──
+    if layout != "forms":
+        ws_inp = wb.create_sheet("입력·가정")
+        시트이름들.append("입력·가정")
     행 = 1
     ws_inp.cell(행, 1, "call").font = bold
     ws_inp.cell(행, 2, "경로").font = bold
@@ -6854,12 +7394,58 @@ def export_workbook(
             else:
                 vc.value = _cell_value(값)
             행 += 1
+    # forms 모드: 계산식_입력·계산식 단계별 정의된 이름 생성 (입력·가정 시트 아래)
+    if layout == "forms":
+        행 += 1
+        for i, cd in enumerate(결과들):
+            if cd["error"]:
+                continue
+            call_idx = i
+            호출접두사 = f"호출{call_idx + 1}_"
+            for inp in (cd.get("data") or {}).get("계산식_입력", []) or []:
+                ws_inp.cell(행, 1, 호출접두사 + inp["이름"])
+                vc = ws_inp.cell(행, 2)
+                v = inp["값"]
+                if isinstance(v, bool):
+                    vc.value = v
+                elif isinstance(v, (int, float)):
+                    _set_money(vc, v)
+                else:
+                    vc.value = v
+                wb.defined_names[f"{호출접두사}{inp['이름']}"] = DefinedName(
+                    name=f"{호출접두사}{inp['이름']}", attr_text=f"'입력·가정'!$B${행}")
+                ws_inp.cell(행, 3, inp.get("설명", ""))
+                행 += 1
+            for s in (cd.get("data") or {}).get("계산식", []) or []:
+                ws_inp.cell(행, 1, 호출접두사 + s["이름"])
+                vc = ws_inp.cell(행, 2)
+                v = s["값"]
+                if isinstance(v, bool):
+                    vc.value = v
+                elif isinstance(v, (int, float)):
+                    _set_money(vc, v)
+                else:
+                    vc.value = v
+                wb.defined_names[f"{호출접두사}{s['이름']}"] = DefinedName(
+                    name=f"{호출접두사}{s['이름']}", attr_text=f"'입력·가정'!$B${행}")
+                ws_inp.cell(행, 3, s.get("설명", ""))
+                행 += 1
+            # 결과 dict 항목도 정의된 이름으로 등록 (템플릿 [결과.경로] 참조용)
+            res = cd.get("result", {}) or {}
+            for k, v in res.items():
+                if isinstance(v, (int, float)):
+                    ws_inp.cell(행, 1, 호출접두사 + "결과_" + k)
+                    vc = ws_inp.cell(행, 2)
+                    _set_money(vc, v)
+                    wb.defined_names[f"{호출접두사}결과_{k}"] = DefinedName(
+                        name=f"{호출접두사}결과_{k}", attr_text=f"'입력·가정'!$B${행}")
+                    행 += 1
     ws_inp.column_dimensions["A"].width = 20
     ws_inp.column_dimensions["B"].width = 36
     ws_inp.column_dimensions["C"].width = 18
     ws_inp.freeze_panes = "A2"
 
-    # ── 4. 판단·근거 시트 ──
+    # ── 6. 판단·근거 시트 (두 모드 공통) ──
     ws_jud = wb.create_sheet("판단·근거")
     시트이름들.append("판단·근거")
     행 = 1
@@ -6898,7 +7484,6 @@ def export_workbook(
     ws_jud.column_dimensions["E"].width = 30
     ws_jud.column_dimensions["F"].width = 36
     ws_jud.freeze_panes = "A2"
-
     # ── 저장 ──
     base = filename if filename else title
     fpath = _unique_path(output_dir, base)
