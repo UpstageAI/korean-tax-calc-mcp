@@ -43,7 +43,7 @@ def test_income_values(demo):
     assert [w.cell(18, col).value for col in range(5, 9)] == [31000000, 5000000, 500000, 31500000]
     assert [calc[IWAGE].cell(8, col).value for col in range(5, 8)] == [138400000, 15518000, 122882000]
     checks = [x.value for s in (V22, V63, V64, IDIV, IWAGE) for r in calc[s].iter_rows() for x in r if x.value in ("일치", "확인 필요")]
-    assert len(checks) >= 8 and set(checks) == {"일치"}
+    assert len(checks) == 10 and set(checks) == {"일치"}           # 같은 행 검증 2개도 각각(부가근거63 J·종소배당 M)
 
 
 def test_items_breakdown_in_calc():
