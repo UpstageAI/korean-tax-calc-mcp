@@ -683,6 +683,52 @@ def vat_deemed_rent(deposit: WON, days: Annotated[int, Field(description="과세
     return _ok({"간주임대료": 결과, "적용_이자율": 적용이자율}, "부가가치세법 시행령 제65조")
 
 
+@mcp.tool(annotations=CALC)
+@_guard
+def vat_input_tax_deduction(period: Annotated[str, Field(description="과세기간('YYYY-1' 또는 'YYYY-2')")],
+                            filing: Annotated[Literal["예정", "확정"], Field(description="예정신고 또는 확정신고")],
+                            items: Annotated[list, Field(description="[{항목, 증빙, 공급가액?|공급대가?, 성격, 공급자?, 공급시기?, 발급일?, 실제공급가액?}]")]) -> dict:
+    """매입세액 공제 판정(부가가치세법 제38조·제39조·제46조, 시행령 제75조). 언제: 부가가치세 신고에서 매입세액 중 공제·불공제 금액을 항목별로 판정할 때.
+    입력: period=과세기간('YYYY-1'|'YYYY-2'), filing='예정'|'확정', items=[{항목, 증빙, 공급가액?|공급대가?, 성격, 공급자?, 공급시기?, 발급일?, 실제공급가액?}].
+      증빙: '세금계산서'|'신용카드'|'현금영수증'|'영수증'.
+      성격: '일반'|'접대'|'비영업용승용차'|'토지관련'|'면세사업'|'사업무관'.
+      공급자: '일반과세자'(기본)|'간이과세자_세금계산서'|'간이과세자_영수증'.
+      공급가액·공급대가 중 하나 이상 필요. 공급가액만 있으면 ×10%, 공급대가만 있으면 ×10/110.
+      실제공급가액이 있으면 필요적 기재사항 착오로 실제분 공제(영 제75조2호).
+    결과: {결과: {공제매입세액, 불공제매입세액}, 계산: {항목별: [{항목, 세액, 공제세액, 불공제사유?}], 판단: [{항목, 결론, 근거}]}}.
+    판단 순서: ①성격별 불공제(접대·비영업용승용차·토지관련·면세사업·사업무관) → ②증빙 '영수증' → ③신용카드·현금영수증 + 간이과세자_영수증 → ④세금계산서 발급시기(지연수취 가산세) → ⑤실제공급가액(착오 기재)."""
+    r = V.vat_input_tax_deduction(period, filing, items)
+    if "error" in r:
+        return r
+    calc = r.pop("계산", None)
+    판단 = r.pop("판단", None)
+    if calc and "판단" in calc:
+        calc = {k: v for k, v in calc.items() if k != "판단"}
+    return _ok(r, "부가가치세법 제38조·제39조·제46조, 시행령 제75조", 계산=calc, 판단=판단)
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def vat_deemed_supply_items(period: Annotated[str, Field(description="과세기간('YYYY-1' 또는 'YYYY-2')")],
+                            items: Annotated[list, Field(description="[{항목, 거래, 매입세액공제(bool), 금액?|시가?|감가상각?, 1인당_연간금액?, 견본_광고선전물?}]")]) -> dict:
+    """간주공급·판매 과세표준 판정(부가가치세법 제10조, 시행령 제19조의2·제20조·제66조). 언제: 재화의 판매·간주공급에 대한 부가가치세 과세표준을 항목별로 판정할 때.
+    입력: period=과세기간('YYYY-1'|'YYYY-2'), items=[{항목, 거래, 매입세액공제(bool), 금액?|시가?|감가상각?, 1인당_연간금액?, 견본_광고선전물?}].
+      거래: '판매'|'면세전용'|'비영업용승용차전용'|'타사업장반출'|'개인적공급'|'사업상증여'|'폐업시잔존'.
+      감가상각: {구분:'건물'|'구축물'|'기타', 취득가액, 취득일, 공급일} → 간주시가 = 취득가액 × (1 − 체감률 × 경과과세기간수), 체감률 건물·구축물 5%·기타 25%.
+      개인적공급: 1인당 연간 10만원 이하분은 공급 아님(영 제19조의2), 초과액만 과세.
+      사업상증여: 견본_광고선전물이 True면 0(법 제10조⑤ 단서).
+    결과: {결과: {과세표준}, 계산: {항목별: [{항목, 거래, 과세표준, 제외사유?}], 판단: [{항목, 결론, 근거}]}}.
+    규칙: '판매'·'타사업장반출'은 금액 그대로 과세(매입세액 공제 여부와 무관). 나머지 간주공급은 매입세액 공제 여부가 False면 0, True면 시가(또는 감가상각 간주시가) 과세."""
+    r = V.vat_deemed_supply_items(period, items)
+    if "error" in r:
+        return r
+    calc = r.pop("계산", None)
+    판단 = r.pop("판단", None)
+    if calc and "판단" in calc:
+        calc = {k: v for k, v in calc.items() if k != "판단"}
+    return _ok(r, "부가가치세법 제10조, 시행령 제19조의2·제20조·제66조", 계산=calc, 판단=판단)
+
+
 # ───────── 0.2 추가: 법인세 세무조정 ─────────
 @mcp.tool(annotations=CALC)
 @_guard
