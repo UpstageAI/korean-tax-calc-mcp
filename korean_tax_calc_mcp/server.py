@@ -5,10 +5,8 @@
 """
 import asyncio
 import functools
-import io
 import math
 import os
-import zipfile
 from datetime import date
 from typing import Annotated, Any, Literal
 
@@ -7658,29 +7656,6 @@ def export_workbook(
     base = filename if filename else title
     fpath = _unique_path(output_dir, base)
     wb.save(fpath)
-    # openpyxl은 수식·문자열 XML의 비ASCII 문자를 &#NNN; 엔티티로 기록한다.
-    # &#NNN;만 UTF-8로 복원하고 &lt;·&gt;·&amp;·&quot; 등 XML 구조 엔티티는 그대로 둔다
-    # (복원하면 < > & " 가 셀 텍스트에 그대로 나타나 XML이 무효가 됨).
-    _NUM_ENTITY = _re.compile(r"&#(\d+);")
-
-    def _unescape_num(s: str) -> str:
-        def _repl(m: _re.Match) -> str:
-            return chr(int(m.group(1)))
-
-        return _NUM_ENTITY.sub(_repl, s)
-
-    with zipfile.ZipFile(fpath) as zin:
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zout:
-            for item in zin.infolist():
-                data = zin.read(item.filename)
-                if item.filename.startswith("xl/worksheets/sheet") and item.filename.endswith(".xml"):
-                    data = _unescape_num(data.decode("utf-8")).encode("utf-8")
-                zout.writestr(item, data)
-        buf.seek(0)
-        with open(fpath, "wb") as fp:
-            fp.write(buf.read())
-
     return {
         "결과": {
             "파일": os.path.abspath(fpath),
