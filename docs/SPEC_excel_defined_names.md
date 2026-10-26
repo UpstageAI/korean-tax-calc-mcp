@@ -21,3 +21,6 @@ Microsoft Excel은 이런 이름을 읽지 못해 파일을 열 때 "내용에 �
 
 ## 통과 기준
 - tests/test_excel_defined_names.py + 기존 테스트 전부 통과.
+
+## 추가(2차 리뷰)
+- 저장한 xlsx를 다시 열어 XML을 고쳐 쓰는 후처리(&#NNN; 복원 ZIP 재작성)는 넣지 않는다. 엔티티는 유효한 XML이고, 테스트는 html.unescape로 읽도록 고쳤다. export_workbook에서 그 후처리 블록과 쓰지 않게 된 import(io, zipfile)를 지운다.

@@ -1,5 +1,5 @@
 """엑셀 정의 이름 규칙 — 정답 테스트. 작성 Claude 2026-10-26 (docs/SPEC_excel_defined_names.md)."""
-import re, zipfile
+import html, re, zipfile
 import pytest
 from test_export_workbook_c import c, ENT, ADJ
 from test_export_workbook_f import DEMO
@@ -23,7 +23,7 @@ def _build(tmp_path, layout):
 
 def _names(path):
     with zipfile.ZipFile(path) as z:
-        wbxml = z.read("xl/workbook.xml").decode("utf-8")
+        wbxml = html.unescape(z.read("xl/workbook.xml").decode("utf-8"))
         sheets = {n: z.read(n).decode("utf-8") for n in z.namelist() if n.startswith("xl/worksheets/sheet")}
     names = re.findall(r'<definedName\b([^>]*)>([^<]*)</definedName>', wbxml)
     out = []
@@ -31,7 +31,7 @@ def _names(path):
         nm = re.search(r'name="([^"]+)"', attrs).group(1)
         scope = re.search(r'localSheetId="(\d+)"', attrs)
         out.append((nm, scope.group(1) if scope else None, ref))
-    formulas = [f for xml in sheets.values() for f in re.findall(r"<f>([^<]*)</f>", xml)]
+    formulas = [html.unescape(f) for xml in sheets.values() for f in re.findall(r"<f>([^<]*)</f>", xml)]
     return out, formulas
 
 
@@ -67,6 +67,14 @@ def test_formula_names_all_defined(tmp_path, layout):
     assert used, "수식이 정의 이름을 하나도 안 씀"
     missing = sorted(t for t in used if t.lower() not in defined)
     assert not missing, missing[:10]
+
+
+def test_no_post_processing_of_saved_file():
+    """저장 후 ZIP을 다시 쓰는 후처리 금지 — openpyxl이 쓴 &#NNN; 엔티티는 유효한 XML이므로 그대로 둔다."""
+    import inspect
+    from korean_tax_calc_mcp import server
+    src = inspect.getsource(server.export_workbook)
+    assert "zipfile.ZipFile" not in src and "_unescape_num" not in src
 
 
 def test_checks_still_match_tool_values(tmp_path):
