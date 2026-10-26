@@ -6426,6 +6426,42 @@ _NAME_RE = _re.compile(r"[가-힣A-Za-z][가-힣A-Za-z0-9_]*")
 
 _FUNCTIONS = frozenset({"MIN", "MAX", "IF", "ROUNDDOWN", "TRUE", "FALSE"})
 
+_CELL_A1_RE = _re.compile(r"^[A-Za-z]{1,3}[0-9]+$")
+_CELL_R1C1_RE = _re.compile(r"^[RrCc]$|^[Rr][0-9]*[Cc][0-9]*$")
+_VALID_START_RE = _re.compile(r"^[가-힣A-Za-z_]$")
+_SANITIZE_CHAIN = _re.compile(r"[^가-힣A-Za-z0-9_.]+")
+
+
+def _sanitize_dname(raw: str, *, wb) -> str:
+    """Excel 정의 이름 규칙에 맞게 이름 문자열을 정제한다.
+
+    - 허용 문자(한글·영문·숫자·밑줄·마침표)만 남기고 나머지는 '_'로 치환.
+    - 연속 '_'를 하나로 압축, 끝 '_' 제거.
+    - 첫 글자가 한글·영문·밑줄이 아니면 앞에 '_'.
+    - 셀 주소(A1, AB12, R, C, R1C1 등)로 읽히면 앞에 '_'.
+    - 255자 초과 시 자름.
+    - 이미 등록된 이름과 대소문자 무시로 겹치면 '_2', '_3'… 접미사.
+    """
+    s = _SANITIZE_CHAIN.sub("_", raw)
+    s = _re.sub(r"_+", "_", s)
+    s = s.rstrip("_")
+    if not s:
+        s = "_"
+    if not _VALID_START_RE.match(s[0]):
+        s = "_" + s
+    if _CELL_A1_RE.match(s) or _CELL_R1C1_RE.match(s):
+        s = "_" + s
+    s = s[:255]
+    key = s.lower()
+    if key in wb.defined_names:
+        base, ext = s, ""
+        i = 2
+        while f"{base}{ext}".lower() in wb.defined_names:
+            ext = f"_{i}"
+            i += 1
+        s = f"{base}{ext}"
+    return s
+
 
 def _이름_치환(식: str, 이름_맵: dict[str, str]) -> str:
     """엑셀 수식 문법의 식에서 각 이름(식별자)을 정의 이름(호출N_이름)으로 치환한다.
@@ -6676,9 +6712,9 @@ def export_workbook(
                 호출접두사 = f"호출{calc_idx}_"
                 dname_map: dict[str, str] = {}
                 for inp in (cd.get("data") or {}).get("계산식_입력", []) or []:
-                    dname_map[inp["이름"]] = f"{호출접두사}{inp['이름']}"
+                    dname_map[inp["이름"]] = _sanitize_dname(f"{호출접두사}{inp['이름']}", wb=wb)
                 for s in formula:
-                    dname_map[s["이름"]] = f"{호출접두사}{s['이름']}"
+                    dname_map[s["이름"]] = _sanitize_dname(f"{호출접두사}{s['이름']}", wb=wb)
 
                 행 = 1
                 for cc, h in enumerate(["이름", "값", "설명"], 1):
@@ -6694,8 +6730,9 @@ def export_workbook(
                         _set_money(vc, v)
                     else:
                         vc.value = v
-                    wb.defined_names[f"{호출접두사}{inp['이름']}"] = DefinedName(
-                        name=f"{호출접두사}{inp['이름']}", attr_text=f"'{sh_name}'!$B${행}")
+                    _nm = dname_map[inp["이름"]]
+                    wb.defined_names[_nm] = DefinedName(
+                        name=_nm, attr_text=f"'{sh_name}'!$B${행}")
                     ws.cell(행, 3, inp.get("설명", ""))
                     행 += 1
 
@@ -6705,7 +6742,7 @@ def export_workbook(
                 행 += 1
                 for s in formula:
                     단계명 = s["이름"]
-                    dname = f"{호출접두사}{단계명}"
+                    dname = dname_map[단계명]
                     ws.cell(행, 1, 단계명)
                     수식셀 = ws.cell(행, 2, f"={_이름_치환(s['식'], dname_map)}")
                     수식셀.number_format = money_fmt
@@ -7000,8 +7037,9 @@ def export_workbook(
                     _set_money(vc, v)
                 else:
                     vc.value = v
-                wb.defined_names[f"{호출접두사}{inp['이름']}"] = DefinedName(
-                    name=f"{호출접두사}{inp['이름']}", attr_text=f"'입력·가정'!$B${행}")
+                _nm = _sanitize_dname(f"{호출접두사}{inp['이름']}", wb=wb)
+                wb.defined_names[_nm] = DefinedName(
+                    name=_nm, attr_text=f"'입력·가정'!$B${행}")
                 ws_inp.cell(행, 3, inp.get("설명", ""))
                 행 += 1
             for s in (cd.get("data") or {}).get("계산식", []) or []:
@@ -7014,8 +7052,9 @@ def export_workbook(
                     _set_money(vc, v)
                 else:
                     vc.value = v
-                wb.defined_names[f"{호출접두사}{s['이름']}"] = DefinedName(
-                    name=f"{호출접두사}{s['이름']}", attr_text=f"'입력·가정'!$B${행}")
+                _nm = _sanitize_dname(f"{호출접두사}{s['이름']}", wb=wb)
+                wb.defined_names[_nm] = DefinedName(
+                    name=_nm, attr_text=f"'입력·가정'!$B${행}")
                 ws_inp.cell(행, 3, s.get("설명", ""))
                 행 += 1
             # 결과 dict 항목도 정의된 이름으로 등록 (템플릿 [결과.경로] 참조용)
@@ -7025,8 +7064,9 @@ def export_workbook(
                     ws_inp.cell(행, 1, 호출접두사 + "결과_" + k)
                     vc = ws_inp.cell(행, 2)
                     _set_money(vc, v)
-                    wb.defined_names[f"{호출접두사}결과_{k}"] = DefinedName(
-                        name=f"{호출접두사}결과_{k}", attr_text=f"'입력·가정'!$B${행}")
+                    _nm = _sanitize_dname(f"{호출접두사}결과_{k}", wb=wb)
+                    wb.defined_names[_nm] = DefinedName(
+                        name=_nm, attr_text=f"'입력·가정'!$B${행}")
                     행 += 1
             # calc_dict(=계산 단계 값) 항목도 정의된 이름으로 등록 (템플릿 [계산.경로] 참조용)
             calc_dict = (cd.get("data") or {}).get("계산") if isinstance((cd.get("data") or {}), dict) else None
@@ -7036,8 +7076,9 @@ def export_workbook(
                         ws_inp.cell(행, 1, 호출접두사 + k)
                         vc = ws_inp.cell(행, 2)
                         _set_money(vc, v)
-                        wb.defined_names[f"{호출접두사}{k}"] = DefinedName(
-                            name=f"{호출접두사}{k}", attr_text=f"'입력·가정'!$B${행}")
+                        _nm = _sanitize_dname(f"{호출접두사}{k}", wb=wb)
+                        wb.defined_names[_nm] = DefinedName(
+                            name=_nm, attr_text=f"'입력·가정'!$B${행}")
                         ws_inp.cell(행, 3, "")
                         행 += 1
 
@@ -7339,9 +7380,9 @@ def export_workbook(
                 호출접두사 = f"호출{calc_idx}_"
                 dname_map: dict[str, str] = {}
                 for inp in (cd.get("data") or {}).get("계산식_입력", []) or []:
-                    dname_map[inp["이름"]] = f"{호출접두사}{inp['이름']}"
+                    dname_map[inp["이름"]] = _sanitize_dname(f"{호출접두사}{inp['이름']}", wb=wb)
                 for s in formula:
-                    dname_map[s["이름"]] = f"{호출접두사}{s['이름']}"
+                    dname_map[s["이름"]] = _sanitize_dname(f"{호출접두사}{s['이름']}", wb=wb)
 
                 행 = 1
                 for cc, h in enumerate(["이름", "값", "설명"], 1):
@@ -7357,8 +7398,9 @@ def export_workbook(
                         _set_money(vc, v)
                     else:
                         vc.value = v
-                    wb.defined_names[f"{호출접두사}{inp['이름']}"] = DefinedName(
-                        name=f"{호출접두사}{inp['이름']}", attr_text=f"'{sh_name}'!$B${행}")
+                    _nm = dname_map[inp["이름"]]
+                    wb.defined_names[_nm] = DefinedName(
+                        name=_nm, attr_text=f"'{sh_name}'!$B${행}")
                     ws.cell(행, 3, inp.get("설명", ""))
                     행 += 1
 
@@ -7367,7 +7409,7 @@ def export_workbook(
                 행 += 1
                 for s in formula:
                     단계명 = s["이름"]
-                    dname = f"{호출접두사}{단계명}"
+                    dname = dname_map[단계명]
                     ws.cell(행, 1, 단계명)
                     수식셀 = ws.cell(행, 2, f"={_이름_치환(s['식'], dname_map)}")
                     수식셀.number_format = money_fmt
@@ -7566,52 +7608,6 @@ def export_workbook(
             else:
                 vc.value = _cell_value(값)
             행 += 1
-    # forms 모드: 계산식_입력·계산식 단계별 정의된 이름 생성 (입력·가정 시트 아래)
-    if layout == "forms":
-        행 += 1
-        for i, cd in enumerate(결과들):
-            if cd["error"]:
-                continue
-            call_idx = i
-            호출접두사 = f"호출{call_idx + 1}_"
-            for inp in (cd.get("data") or {}).get("계산식_입력", []) or []:
-                ws_inp.cell(행, 1, 호출접두사 + inp["이름"])
-                vc = ws_inp.cell(행, 2)
-                v = inp["값"]
-                if isinstance(v, bool):
-                    vc.value = v
-                elif isinstance(v, (int, float)):
-                    _set_money(vc, v)
-                else:
-                    vc.value = v
-                wb.defined_names[f"{호출접두사}{inp['이름']}"] = DefinedName(
-                    name=f"{호출접두사}{inp['이름']}", attr_text=f"'입력·가정'!$B${행}")
-                ws_inp.cell(행, 3, inp.get("설명", ""))
-                행 += 1
-            for s in (cd.get("data") or {}).get("계산식", []) or []:
-                ws_inp.cell(행, 1, 호출접두사 + s["이름"])
-                vc = ws_inp.cell(행, 2)
-                v = s["값"]
-                if isinstance(v, bool):
-                    vc.value = v
-                elif isinstance(v, (int, float)):
-                    _set_money(vc, v)
-                else:
-                    vc.value = v
-                wb.defined_names[f"{호출접두사}{s['이름']}"] = DefinedName(
-                    name=f"{호출접두사}{s['이름']}", attr_text=f"'입력·가정'!$B${행}")
-                ws_inp.cell(행, 3, s.get("설명", ""))
-                행 += 1
-            # 결과 dict 항목도 정의된 이름으로 등록 (템플릿 [결과.경로] 참조용)
-            res = cd.get("result", {}) or {}
-            for k, v in res.items():
-                if isinstance(v, (int, float)):
-                    ws_inp.cell(행, 1, 호출접두사 + "결과_" + k)
-                    vc = ws_inp.cell(행, 2)
-                    _set_money(vc, v)
-                    wb.defined_names[f"{호출접두사}결과_{k}"] = DefinedName(
-                        name=f"{호출접두사}결과_{k}", attr_text=f"'입력·가정'!$B${행}")
-                    행 += 1
     ws_inp.column_dimensions["A"].width = 20
     ws_inp.column_dimensions["B"].width = 36
     ws_inp.column_dimensions["C"].width = 18
@@ -7660,7 +7656,6 @@ def export_workbook(
     base = filename if filename else title
     fpath = _unique_path(output_dir, base)
     wb.save(fpath)
-
     return {
         "결과": {
             "파일": os.path.abspath(fpath),
