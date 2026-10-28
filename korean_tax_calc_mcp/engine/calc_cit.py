@@ -317,11 +317,21 @@ def _nb_related(i, a, company, case, fe):
         raise ValueError(f"{label}: 상대방이 법인 자신({company})")
     on = str(a.get("기준일") or fe.isoformat())[:10]
     _nb_d(on, f"{label}.기준일")
-    case["_notes"] = []
+    case["_notes"], case["_livelihood"] = [], []
     hits = _rel.judge_pair(case, company, other, "법인", on)
     name, jo, _ = _rel._cite_fixed("법인", on)
     for h in hits:  # 기준일 시행 조문 위치로 표기(호 번호 유지)
         h["근거"] = re.sub(r"법인세법 시행령 제2조⑧|법인세 특수관계인", f"{name} {jo}", h["근거"])
+    shared = [{k: v for k, v in r.items() if k != "세법"} for r in case.get("_livelihood", [])]
+    for r in shared:
+        if r.get("근거"): r["근거"] = re.sub(r"법인세법 시행령 제2조⑧", f"{name} {jo}", r["근거"])
+    if not hits:  # 생계를 함께하는 친족(⑧3호) 사실관계가 모자라면 비특수관계인으로 넘기지 않는다
+        todo = [r for r in shared if r["결론"] == "입력 확인 필요"]
+        if todo:
+            r = todo[0]
+            raise ValueError(f"{label}: {other}↔{r['상대방']} 생계를 함께하는 친족({name} {jo}3호) 판정 입력 확인 필요 — "
+                             f"{'; '.join(r['사유'])} / 확인할 항목: {', '.join(r.get('확인할_항목', []))} / "
+                             f"필요 자료: {' · '.join(r.get('필요_자료', []))}")
     notes = list(case.get("_notes", []))
     corp_other = case["people"][other].get("구분") == "법인"
     roles = []
@@ -342,7 +352,7 @@ def _nb_related(i, a, company, case, fe):
         derived = roles[0]
     info = {"상대방": other, "법인": company, "기준일": on, "특수관계": bool(hits),
             "판정_대상": derived, "역할": roles, "호": [h["근거"] for h in hits], "내용": [h["내용"] for h in hits],
-            **({"참고": notes} if notes else {})}
+            **({"참고": notes} if notes else {}), **({"생계를_함께하는_친족": shared} if shared else {})}
     ho = _NB_REASONS.get(a.get("사유", "업무무관대여"))
     given = a.get("대상")
     if given is None:

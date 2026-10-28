@@ -247,6 +247,7 @@ def _qualified_indirect(people, family, stakes, group, first_corp):
 # ── 특수관계인 판독기: A와 B가 어느 세법 기준으로, 몇 호로 특수관계인지 ──
 # case = {"people": {이름: {"구분": "개인"|"법인", "영리": True}}, "family": [...], "stakes": [...],
 #         "officers": {법인: [임원]}, "employees": {법인: [직원]}, "livelihood": [(부양자, 피부양자)],
+#         "livelihood_shared": [{"친족", "상대방", 생계 사실관계...}] — livelihood.py,
 #         "influence": [(영향력자, 법인)], "group": {기업집단명: [계열회사]},
 #         "group_exempt": {법인: "계열편입 유예통지 2022.11.~7년"}}
 def _is_corp(case, x): return case["people"].get(x, {}).get("구분") == "법인"
@@ -279,11 +280,81 @@ def _kin_set(case, x, law, on):
 
 def _econ(case, a, b):
     """경제적 연관관계: 임원·사용인, 생계유지자(국기령 제1조의2②)."""
-    for corp, xs in {**case.get("officers", {}), **{k: v for k, v in case.get("employees", {}).items()}}.items():
-        if (a == corp and b in xs) or (b == corp and a in xs): return f"{corp}의 임원·사용인"
+    for key in ("officers", "employees"):  # 같은 법인이 두 표에 다 있어도 둘 다 본다(dict 병합 시 임원 표가 덮여 사라지던 문제)
+        for corp, xs in (case.get(key) or {}).items():
+            if (a == corp and b in xs) or (b == corp and a in xs): return f"{corp}의 임원·사용인"
     for giver, taker in case.get("livelihood", []):
         if {a, b} == {giver, taker}: return f"{taker}이(가) {giver}의 재산으로 생계 유지"
     return ""
+
+
+_SHARED_REF = {"국기": "국세기본법 시행령 제1조의2②3호", "법인": "법인세법 시행령 제2조⑧3호"}
+
+
+def _shared_kin(case, a, b, law, on):
+    """livelihood_shared 중 친족이 a·b 한쪽인 건 → [판정]. 전제(②3호): ① 상대방이 다른 당사자의 임원·사용인(1호) 또는
+    그 재산으로 생계를 유지하는 자(2호), ② 친족이 상대방과 기준일 친족 범위(①1~4호) 안. 사실 판정은 livelihood.judge_facts."""
+    from . import livelihood as L
+    out = []
+    blood, inlaw = kin_limits(on)
+    for ent in case.get("livelihood_shared") or []:
+        kin, cp = ent.get("친족"), ent.get("상대방")
+        if kin not in (a, b) or a == b: continue
+        if not cp or cp == kin:
+            raise ValueError(f"livelihood_shared: 친족 {kin}의 상대방(②1·2호 해당자)이 없거나 친족 자신")
+        other = b if kin == a else a
+        r = {"친족": kin, "상대방": cp, "당사자": other, "기준일": on[:10], "근거": _SHARED_REF.get(law, "")}
+        if law == "상증":
+            out.append({**r, "결론": "해당 없음", "사유": ["상증령 제2조의2①에는 '사용인 등과 생계를 함께하는 친족' 항목이 없음"
+                                                       "(①1호가 끌어오는 국기령 ①5호 혼외자 생부·생모 한정은 미지원)"]}); continue
+        if cp == other:
+            out.append({**r, "결론": "해당 없음", "사유": [f"상대방이 당사자 {other} 자신 — ②3호가 아니라 친족관계(①)로 판정"]}); continue
+        e = _econ(case, other, cp)
+        if not e:
+            why = [f"상대방 {cp}이(가) {other}의 임원·사용인(②1호) 또는 {other}의 재산으로 생계를 유지하는 자(②2호)로 "
+                   f"관계 자료(officers·employees·livelihood)에 없음 — ②3호 전제 미충족"]
+            staff = lambda x: {c for key in ("officers", "employees") for c, xs in (case.get(key) or {}).items() if x in xs}
+            common = staff(other) & staff(cp)
+            if common:
+                why.append(f"{other}와 {cp}는 같은 법인({', '.join(sorted(common))})의 임원·직원일 뿐 — 사용인은 당사자 본인과 고용관계여야 함"
+                           f"({', '.join(L.RULINGS['고용관계'])})")
+            out.append({**r, "결론": "해당 없음", "사유": why}); continue
+        r["상대방_관계"] = e
+        # 친족 범위(기준일): family 표 사슬 우선, 없으면 입력한 친족관계·촌수
+        k = kinship(case["family"], kin, cp, max_blood=10)
+        decl = ent.get("친족관계")
+        if decl:
+            dk = ("배우자", 0) if decl == "배우자" else (decl, int(ent.get("촌수") or 0))
+            if decl not in ("배우자", "혈족", "인척") or (decl != "배우자" and dk[1] <= 0):
+                raise ValueError(f"livelihood_shared: 친족관계는 배우자|혈족|인척, 혈족·인척은 촌수(1 이상) 필요(입력: {decl} {ent.get('촌수')})")
+            if k and k != dk:
+                raise ValueError(f"livelihood_shared: {kin}↔{cp} 친족관계 입력({dk[0]} {dk[1]}촌)이 family 표({k[0]} {k[1]}촌)와 다름")
+            k = k or dk
+        if not k:
+            out.append({**r, "결론": "해당 없음", "사유": [f"{kin}↔{cp} 친족관계가 family 표에도 입력(친족관계·촌수)에도 없음 — ②3호는 친족만 대상"],
+                        "필요_자료": L.evidence_for(["친족"])}); continue
+        desc = "배우자" if k[0] == "배우자" else f"{k[0]} {k[1]}촌"
+        r["친족관계"] = desc
+        in_range = k[0] == "배우자" or (k[0] == "혈족" and k[1] <= blood) or (k[0] == "인척" and k[1] <= inlaw)
+        if not in_range:
+            out.append({**r, "결론": "해당 없음", "사유": [f"{desc}은 기준일 {on[:10]} 친족 범위 밖(혈족 {blood}촌·인척 {inlaw}촌, "
+                                                         f"2023.3.1.부터 4촌 혈족·3촌 인척)"]}); continue
+        concl, why, refs, need = L.judge_facts(L.facts_of(ent), spouse=k[0] == "배우자")
+        r.update({"결론": concl, "사유": why, "결정·해석": list(dict.fromkeys(refs + L.RULINGS["사용인_친족"]))})
+        if concl in ("생계 공동", "생계 별도"):
+            r["판단"] = ("②3호 1차 기준(동거 불요, 생활비 공동 부담 — 2차 납세의무 결정)으로 본 결론, 1세대 결정은 증빙 기준으로만 차용 — "
+                       "최종 판단은 사실판단 사항")
+        if concl == "생계 공동 추정":
+            r["판단"] = L.rebuttal_note()
+            r["인정되는_별거_증빙"] = L.ACCEPTED_PROOF
+            r["배척된_증빙"] = L.REJECTED_PROOF
+            r["반증_자료"] = L.evidence_for(need + ["별도_임대차"])
+        elif concl == "입력 확인 필요":
+            r["확인할_항목"] = list(dict.fromkeys(need))
+            r["필요_자료"] = L.evidence_for(need)
+
+        out.append(r)
+    return out
 
 
 def judge_pair(case, a, b, law="국기", on="2099-12-31"):
@@ -308,6 +379,17 @@ def judge_pair(case, a, b, law="국기", on="2099-12-31"):
     e = _econ(case, a, b)
     if e:
         hit({"국기": "국세기본법 시행령 제1조의2②", "법인": "법인세법 시행령 제2조⑧3호", "상증": "상속세 및 증여세법 시행령 제2조의2①2호"}[law], e)
+
+    # 2-2) 생계를 함께하는 친족 (국기령 제1조의2②3호, 법인령 제2조⑧3호) — livelihood_shared 사실관계로 판정
+    for r in _shared_kin(case, a, b, law, on):
+        case.setdefault("_livelihood", []).append({"세법": law, **r})
+        if r["결론"] in ("생계 공동", "생계 공동 추정"):
+            hit(r["근거"], f"{r['친족']}은(는) {r['상대방_관계']}인 {r['상대방']}와 생계를 함께하는 친족({r['친족관계']}) — "
+                           f"{r['결론']}: {'; '.join(r['사유'])}")
+            if r["결론"] == "생계 공동 추정":
+                case.setdefault("_notes", []).append(f"{r['친족']}↔{r['상대방']}: {r['판단']}")
+        elif r["결론"] == "입력 확인 필요":
+            case.setdefault("_notes", []).append(f"{r['친족']}↔{r['상대방']} 생계를 함께하는 친족: 입력 확인 필요 — {'; '.join(r['사유'])}")
 
     # 3) 지배관계 (개인/법인 → 법인)
     for x, y in ((a, b), (b, a)):
@@ -368,10 +450,18 @@ def judge_pair(case, a, b, law="국기", on="2099-12-31"):
 
 def judge_all(case, a, b, on="2099-12-31"):
     """세 세법 기준을 한 번에: 세법마다 범위가 달라 결과가 갈릴 수 있음."""
-    case["_notes"] = []
+    case["_notes"], case["_livelihood"] = [], []
     res = {law: judge_pair(case, a, b, law, on) for law in ("국기", "법인", "상증")}
-    return {"대상": f"{a} ↔ {b}", "기준일": on, "판정": {k: ("특수관계 해당" if v else "해당 없음(주어진 자료 기준)") for k, v in res.items()},
-            "근거": res, "참고": sorted(set(case["_notes"])), "순환출자": has_cycle(case["stakes"])}
+    shared = case["_livelihood"]
+    def verdict(law, v):
+        if v: return "특수관계 해당"
+        if any(r["세법"] == law and r["결론"] == "입력 확인 필요" for r in shared):
+            return "입력 확인 필요(생계를 함께하는 친족 사실관계 — 생계를_함께하는_친족.확인할_항목·필요_자료)"
+        return "해당 없음(주어진 자료 기준)"
+    out = {"대상": f"{a} ↔ {b}", "기준일": on, "판정": {k: verdict(k, v) for k, v in res.items()},
+           "근거": res, "참고": sorted(set(case["_notes"])), "순환출자": has_cycle(case["stakes"])}
+    if shared: out["생계를_함께하는_친족"] = shared
+    return out
 
 
 # ── 사실관계 시점의 법: 기준일에 시행 중이던 특수관계인 조문 위치 ──
@@ -452,6 +542,10 @@ def judge_all_at(case, a, b, on):
                 h["근거"] = re.sub(r"법인세법 시행령 제2조⑧|법인세 특수관계인", f"{name} {jo}", h["근거"])
             if law == "상증":
                 h["근거"] = h["근거"].replace("상속세 및 증여세법 시행령 제2조의2①", f"{name} {jo}")
+    for r in j.get("생계를_함께하는_친족", []):
+        if r["세법"] == "법인" and r.get("근거"):
+            name, jo, _ = j["적용조문"]["법인"]
+            r["근거"] = re.sub(r"법인세법 시행령 제2조⑧", f"{name} {jo}", r["근거"])
     return j
 
 

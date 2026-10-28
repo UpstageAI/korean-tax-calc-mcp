@@ -36,6 +36,12 @@ def normalize(j):
     for k in ("influence", "livelihood"):
         j[k] = [[n(a), n(b)] for a, b in j.get(k) or []]
     j["group"] = {g: [n(x) for x in xs] for g, xs in (j.get("group") or {}).items()}
+    ls = j.get("livelihood_shared") or []
+    if not isinstance(ls, list) or not all(isinstance(e, dict) for e in ls):
+        raise ValueError("livelihood_shared는 [{친족, 상대방, 생계 사실관계...}] 목록")
+    j["livelihood_shared"] = [{**e, "친족": n(e.get("친족", "")), "상대방": n(e.get("상대방", ""))} for e in ls]
+    for e in j["livelihood_shared"]:
+        if e["친족"]: j["people"].setdefault(e["친족"], {"구분": "개인"})
     for h, c, _ in j["stakes"]:
         for x in (h, c):
             j["people"].setdefault(x, {"구분": "법인" if x.startswith("㈜") or re.search(r"법인|회사", x) else "개인"})
@@ -48,7 +54,8 @@ def to_case(j):
     """추출 결과 → related.judge_* 입력."""
     return {"people": j["people"], "family": [tuple(x) for x in j["family"]], "stakes": [(h, c, float(r)) for h, c, r in j["stakes"]],
             "officers": j.get("officers", {}), "employees": j.get("employees", {}), "livelihood": [tuple(x) for x in j.get("livelihood", [])],
-            "influence": [tuple(x) for x in j.get("influence", [])], "group": j.get("group", {})}
+            "influence": [tuple(x) for x in j.get("influence", [])], "group": j.get("group", {}),
+            "livelihood_shared": list(j.get("livelihood_shared") or [])}
 
 
 def _pct_ok(doc, r):
