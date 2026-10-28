@@ -3581,6 +3581,186 @@ def other_income_aggregate(year: YEAR,
     }, 근거_목록, 항목별=항목별, 산식=산식_목록)
 
 
+# ── 종교인소득(기타소득 제21조①26호) ──────────────────
+# 2018.1.1. 시행 — 부칙 <제13558호,2015.12.15> 제1조 단서: "제12조, 제14조, 제21조, 제73조, 제80조, 제145조의3,
+# 제155조의6, 제164조 및 제170조의 개정규정은 2018년 1월 1일부터 시행한다." → 2016·2017 과세기간은 과세 전.
+# 연도표: (부터, 까지, 값, 근거). 까지=None이면 2026까지.
+_종교인_식사대_월한도 = [
+    (2018, 2022, 100_000, "시행령 제19조②2호 월 10만원 이하 식사대"),
+    # 부칙 <대통령령 제33267호,2023.2.28> 제2조: 이 영 시행일이 속하는 과세기간에 발생하는 소득부터 적용
+    (2023, None, 200_000, "시행령 제19조②2호 월 20만원 이하 식사대(개정 2023.2.28, 부칙 제2조 — 2023 과세기간 발생분부터)"),
+]
+_종교인_보육_월한도 = [
+    (2018, 2023, 100_000, False, "소득세법 제12조5호아목4) 출산·6세 이하 자녀 보육 월 10만원 이내"),
+    # 부칙 <제19933호,2023.12.31> 제1조 2024.1.1. 시행, 제2조③ 시행 전 지급분은 종전 한도
+    (2024, 2025, 200_000, False, "소득세법 제12조5호아목4) 월 20만원 이내(개정 2023.12.31, 2024.1.1. 이후 지급분 — 부칙 제2조③)"),
+    # 부칙 <제21221호,2025.12.23> 제1조 2026.1.1. 시행, 제3조 시행 이후 지급받는 소득분부터
+    (2026, None, 200_000, True, "소득세법 제12조5호아목4) 해당 자녀 1명당 월 20만원 이내(개정 2025.12.23, 부칙 제3조 — 2026.1.1. 이후 지급분)"),
+]
+_종교인_자가운전_임차포함 = [
+    (2018, 2024, False, "시행령 제19조③2호 본인 소유 차량 — 월 20만원 이내"),
+    # 부칙 <대통령령 제35349호,2025.2.28> 제4조: 이 영 시행일이 속하는 과세기간에 지급받는 소득분부터 적용
+    (2025, None, True, "시행령 제19조③2호 소유하거나 본인 명의로 임차한 차량 — 월 20만원 이내(개정 2025.2.28, 부칙 제4조 — 2025 과세기간 지급분부터)"),
+]
+# 시행령 제87조3호 표(2018~2026 같은 표 — 기준일별 law_article로 대조): (구간 상한, 기본액, 초과분 비율, 구간 하한)
+_종교인_필요경비표 = [(20_000_000, 0, 0.8, 0), (40_000_000, 16_000_000, 0.5, 20_000_000),
+                     (60_000_000, 26_000_000, 0.3, 40_000_000), (None, 32_000_000, 0.2, 60_000_000)]
+
+
+def _연도값(표, year):
+    for row in 표:
+        if row[0] <= year and (row[1] is None or year <= row[1]):
+            return row[2:]
+    raise C.NoYearTable(f"{year}년 종교인소득 연도표 없음")
+
+
+def _종교인_필요경비_표(받은금액: int) -> tuple[int, str]:
+    for 상한, 기본, 율, 하한 in _종교인_필요경비표:
+        if 상한 is None or 받은금액 <= 상한:
+            금액 = int(기본 + (받은금액 - 하한) * 율)
+            if 기본 == 0:
+                return 금액, f"{받은금액:,} × {율 * 100:.0f}% = {금액:,}"
+            return 금액, f"{기본:,} + ({받은금액:,} − {하한:,}) × {율 * 100:.0f}% = {금액:,}"
+    raise ValueError("필요경비 표 구간 없음")
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def religious_income(year: YEAR,
+                     amount: Annotated[int, Field(strict=True, description="해당 과세기간에 종교단체로부터 받은 금액 총액(원, 아래 비과세 지급액 포함)", ge=0)],
+                     scholarship: Annotated[int, Field(strict=True, description="학자금(원) — 종교 활동 관련 교육·훈련을 위한 학교·평생교육시설 입학금·수업료 등(시행령 제19조①), 전액 비과세", ge=0)] = 0,
+                     meals_in_kind: Annotated[int, Field(strict=True, description="종교단체가 현물로 제공한 식사·음식물(원), 전액 비과세(시행령 제19조②1호)", ge=0)] = 0,
+                     meal_allowance: Annotated[int, Field(strict=True, description="식사대(원)", ge=0)] = 0,
+                     meal_months: Annotated[int | None, Field(description="식사대를 받은 개월 수(1~12)", ge=1, le=12)] = None,
+                     meal_provided: Annotated[bool | None, Field(description="식사(현물)를 제공받았는지 — true면 식사대는 과세(시행령 제19조②2호)")] = None,
+                     vehicle_allowance: Annotated[int, Field(strict=True, description="자가운전보조금(원) — 실제 여비 대신 종교단체 지급기준에 따라 받은 금액", ge=0)] = 0,
+                     vehicle_months: Annotated[int | None, Field(description="자가운전보조금을 받은 개월 수(1~12)", ge=1, le=12)] = None,
+                     vehicle: Annotated[Literal["본인소유", "본인명의임차", "기타"] | None, Field(description="차량: 본인소유|본인명의임차(2025~ 비과세)|기타")] = None,
+                     expense_reimbursement: Annotated[int, Field(strict=True, description="일직·숙직료, 실비 정도의 여비, 재해로 받은 지급액(원), 전액 비과세(시행령 제19조③1·2·4호)", ge=0)] = 0,
+                     religious_activity_fund: Annotated[int, Field(strict=True, description="종교활동비(원) — 규약·의결기구 결정 지급기준에 따라 종교 활동에 쓰도록 받은 금액·물품, 전액 비과세(시행령 제19조③3호·제12조18호)", ge=0)] = 0,
+                     childcare_allowance: Annotated[int, Field(strict=True, description="출산·보육 관련 지급액(원, 본인·배우자 출산 또는 6세 이하 자녀 보육)", ge=0)] = 0,
+                     childcare_months: Annotated[int | None, Field(description="출산·보육 지급액을 받은 개월 수(1~12)", ge=1, le=12)] = None,
+                     childcare_children: Annotated[int | None, Field(description="출산 자녀 또는 과세기간 개시일 기준 6세 이하 자녀 수(0이면 전액 과세)", ge=0)] = None,
+                     housing_benefit: Annotated[int, Field(strict=True, description="사택 제공 이익(원, 시행규칙 사택 요건 충족분), 전액 비과세", ge=0)] = 0,
+                     actual_expense: Annotated[int, Field(strict=True, description="실제 소요된 필요경비(원) — 표 금액보다 크면 이 금액(시행령 제87조3호 단서)", ge=0)] = 0,
+                     withheld: Annotated[bool | None, Field(description="종교단체가 원천징수(간이세액표·연말정산)를 했는지 — 선택적 분리과세·신고의무 판단용, 모르면 생략")] = None,
+                     route: Annotated[Literal["기타소득", "근로소득"], Field(description="기타소득(기본) | 근로소득(근로소득으로 원천징수·신고를 선택한 경우 — 이 도구는 계산하지 않고 안내)")] = "기타소득") -> dict:
+    """종교인소득(소득세법 제21조①26호, 2018.1.1. 시행) 기타소득 계산 — 비과세(제12조5호아목) → 필요경비 표(시행령 제87조3호) → 기타소득금액 → 선택적 분리과세 가능 여부·원천징수·신고 안내.
+    언제: 목사·신부·승려 등 종교관련종사자가 종교단체로부터 받은 사례비 등의 종교인소득금액을 기타소득으로 계산할 때(2018~2026 귀속).
+    입력: 귀속연도(2018~2026, 2016·2017은 과세 전이라 오류) → year, 받은 금액 총액 → amount,
+      비과세 항목 → scholarship(학자금)·meals_in_kind(현물 식사)·meal_allowance+meal_months+meal_provided(식사대 월 10만원, 2023~ 20만원)·
+      vehicle_allowance+vehicle_months+vehicle(자가운전보조금 월 20만원, 본인명의임차는 2025~)·expense_reimbursement(일직·숙직료·실비 여비·재해 지급액)·
+      religious_activity_fund(종교활동비)·childcare_allowance+childcare_months+childcare_children(출산·보육 월 10만원, 2024~ 20만원, 2026~ 자녀 1명당 20만원)·housing_benefit(사택),
+      실제 필요경비 → actual_expense, 원천징수 여부 → withheld, 계산 경로 → route(기타소득|근로소득).
+    결과: 비과세 항목별·과세대상 받은 금액·필요경비(표 금액 vs 실제)·기타소득금액·선택적 분리과세 가능 여부(제14조③8호가목 — 26호 열거, 300만원 이하·원천징수된 소득)·원천징수·신고 안내·근거·연도표.
+    지원하지 않음: 근로소득 선택 경로 계산(earned_income_gross_pay + wage_income_tax로 계산), 간이세액표 월별 원천징수세액·연말정산 세액, 비과세 요건(학자금 대상 학교, 사택 요건) 자체의 판정, 퇴직소득 해당 여부(시행령 제42조의2④4호), 다른 기타소득과의 300만원 합산 판정."""
+    # 금액 칸은 strict int — bool(True=1원)·문자열은 검증 단계에서 거부
+    문제: list[str] = []
+    if year < 2018:
+        문제.append(f"{year}년은 종교인소득 과세 전 — 소득세법 제21조①26호는 2018.1.1. 시행(부칙 <제13558호,2015.12.15> 제1조 단서)")
+    근로_안내 = ("종교인소득을 근로소득으로 원천징수하거나 확정신고하면 근로소득으로 본다(소득세법 제21조"
+               + ("③" if year <= 2020 else "④") + " — 2018~2020 ③, 2021~ ④). 그 경우 비과세는 제12조3호(근로소득 비과세)로 보고 "
+               "earned_income_gross_pay(총급여) → wage_income_tax(근로소득공제·산출세액)로 계산한다.")
+    if route == "근로소득":
+        문제.append("route='근로소득' — 이 도구는 기타소득 경로만 계산. " + 근로_안내)
+    if meal_allowance > 0 and (meal_months is None or meal_provided is None):
+        문제.append("식사대가 있으면 meal_months(개월 수)와 meal_provided(현물 식사 제공 여부)가 필요")
+    if vehicle_allowance > 0 and (vehicle_months is None or vehicle is None):
+        문제.append("자가운전보조금이 있으면 vehicle_months(개월 수)와 vehicle(본인소유|본인명의임차|기타)이 필요")
+    if childcare_allowance > 0 and (childcare_months is None or childcare_children is None):
+        문제.append("출산·보육 지급액이 있으면 childcare_months(개월 수)와 childcare_children(출산 자녀 또는 개시일 기준 6세 이하 자녀 수)이 필요")
+    비과세_입력합 = (scholarship + meals_in_kind + meal_allowance + vehicle_allowance + expense_reimbursement
+                + religious_activity_fund + childcare_allowance + housing_benefit)
+    if not 문제 and 비과세_입력합 > amount:
+        문제.append(f"비과세 항목 입력 합계 {비과세_입력합:,}원이 받은 금액 총액 {amount:,}원보다 큼 — amount는 비과세 지급액을 포함한 총액")
+    if 문제:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제}
+
+    식사월한도, 식사근거 = _연도값(_종교인_식사대_월한도, year)
+    보육월한도, 보육자녀별, 보육근거 = _연도값(_종교인_보육_월한도, year)
+    임차포함, 차량근거 = _연도값(_종교인_자가운전_임차포함, year)
+
+    비과세: list[dict] = []
+    산식: list[str] = []
+
+    def _add(항목, 받은, 비과세액, 근거, 사유=""):
+        if 받은 > 0:
+            비과세.append({"항목": 항목, "받은금액": 받은, "비과세": 비과세액, "과세": 받은 - 비과세액, "근거": 근거, **({"사유": 사유} if 사유 else {})})
+
+    _add("학자금", scholarship, scholarship, "소득세법 제12조5호아목1), 시행령 제19조①")
+    _add("현물 식사", meals_in_kind, meals_in_kind, "소득세법 제12조5호아목2), 시행령 제19조②1호")
+    if meal_allowance:
+        if meal_provided:
+            _add("식사대", meal_allowance, 0, 식사근거, "현물 식사를 제공받아 식사대는 과세(시행령 제19조②2호)")
+        else:
+            nt = min(meal_allowance, 식사월한도 * meal_months)
+            _add("식사대", meal_allowance, nt, 식사근거, f"min({meal_allowance:,}, 월 {식사월한도:,} × {meal_months}개월)")
+    if vehicle_allowance:
+        if vehicle == "본인소유" or (vehicle == "본인명의임차" and 임차포함):
+            nt = min(vehicle_allowance, 200_000 * vehicle_months)
+            _add("자가운전보조금", vehicle_allowance, nt, 차량근거, f"min({vehicle_allowance:,}, 월 200,000 × {vehicle_months}개월)")
+        else:
+            사유 = ("본인 명의 임차 차량은 2025 과세기간부터 비과세(시행령 제19조③2호 개정 2025.2.28, 부칙 제4조) — 전액 과세"
+                  if vehicle == "본인명의임차" else "본인 소유(2025~ 본인 명의 임차 포함) 차량이 아님 — 전액 과세")
+            _add("자가운전보조금", vehicle_allowance, 0, 차량근거, 사유)
+    _add("일직·숙직료·실비 여비·재해 지급액", expense_reimbursement, expense_reimbursement, "소득세법 제12조5호아목3), 시행령 제19조③1·2·4호")
+    _add("종교활동비", religious_activity_fund, religious_activity_fund, "소득세법 제12조5호아목3), 시행령 제19조③3호·제12조18호")
+    if childcare_allowance:
+        if childcare_children == 0:
+            _add("출산·보육", childcare_allowance, 0, 보육근거, "출산 자녀·개시일 기준 6세 이하 자녀 없음 — 전액 과세")
+        else:
+            배수 = childcare_children if 보육자녀별 else 1
+            nt = min(childcare_allowance, 보육월한도 * 배수 * childcare_months)
+            사유 = (f"min({childcare_allowance:,}, 월 {보육월한도:,} × 자녀 {배수}명 × {childcare_months}개월)" if 보육자녀별
+                  else f"min({childcare_allowance:,}, 월 {보육월한도:,} × {childcare_months}개월) — {year}년은 자녀 수와 관계없이 1인당 월 한도")
+            _add("출산·보육", childcare_allowance, nt, 보육근거, 사유)
+    _add("사택 제공 이익", housing_benefit, housing_benefit, "소득세법 제12조5호아목5)")
+
+    비과세_합계 = sum(b["비과세"] for b in 비과세)
+    과세대상 = amount - 비과세_합계
+    표금액, 표산식 = _종교인_필요경비_표(과세대상)
+    필요경비 = max(표금액, actual_expense)
+    소득금액 = 과세대상 - 필요경비 if 과세대상 > 필요경비 else 0
+    산식.append(f"과세대상 받은 금액 = {amount:,} − 비과세 {비과세_합계:,} = {과세대상:,}원")
+    산식.append(f"필요경비 표(시행령 제87조3호): {표산식}원")
+    산식.append(f"필요경비 = max(표 {표금액:,}, 실제 {actual_expense:,}) = {필요경비:,}원")
+    산식.append(f"기타소득금액 = {과세대상:,} − {필요경비:,} = {소득금액:,}원")
+
+    if 소득금액 == 0:
+        선택 = False; 선택판단 = "기타소득금액 0 — 분리과세 판단 불필요"
+    elif 소득금액 > 3_000_000:
+        선택 = False; 선택판단 = f"기타소득금액 {소득금액:,}원 > 300만원 — 종합과세(제14조③8호가목)"
+    elif withheld is False:
+        선택 = False; 선택판단 = "원천징수되지 않은 종교인소득 — 선택적 분리과세 대상 아님, 종합소득 확정신고 필요(제14조③8호가목·제155조의6 후단)"
+    elif withheld is None:
+        선택 = None; 선택판단 = "기타소득금액 300만원 이하 — 원천징수됐다면 선택적 분리과세 가능(withheld로 확정). 다른 기타소득이 있으면 합계로 판단"
+    else:
+        선택 = True; 선택판단 = "기타소득금액 300만원 이하·원천징수된 소득 — 종합과세와 분리과세(원천징수로 종결) 중 선택 가능. 다른 기타소득이 있으면 합계로 판단"
+
+    return _ok({
+        "비과세_합계": 비과세_합계,
+        "과세대상_받은금액": 과세대상,
+        "필요경비_표금액": 표금액,
+        "필요경비": 필요경비,
+        "기타소득금액": 소득금액,
+        "선택적_분리과세_가능": 선택,
+    }, ["소득세법 제21조①26호(종교인소득)", "소득세법 제12조5호아목·시행령 제19조(비과세)",
+        "소득세법 제37조②2호·시행령 제87조3호(필요경비)", "소득세법 제14조③8호가목(26호 열거 — 300만원 이하 선택적 분리과세)",
+        "부칙 <제13558호,2015.12.15> 제1조(2018.1.1. 시행)"],
+        비과세=비과세, 산식=산식,
+        판단={"과세구분": "기타소득(종합과세, 조건부 선택적 분리과세)", "선택적_분리과세": 선택판단,
+              "근로소득_선택": 근로_안내},
+        원천징수_신고={
+            "원천징수": "종교단체는 매월 종교인소득 간이세액표(시행령 제202조④·별표 3의4)로 원천징수하고, 다음 연도 2월분 지급 시(또는 소속관계 종료 시) 연말정산한다(소득세법 제145조의3, 시행령 제202조의4).",
+            "원천징수_예외": "종교단체는 원천징수를 하지 않을 수 있고, 그 경우 받은 사람이 종합소득 확정신고를 해야 한다(소득세법 제155조의6).",
+            "확정신고_예외": "원천징수(연말정산)된 종교인소득만 있으면 확정신고를 하지 않을 수 있다(소득세법 제73조①4호의2).",
+            "이 도구": "간이세액표 월 세액·연말정산 세액은 계산하지 않음 — 종합소득 합산은 income_tax에 기타소득금액을 더해 계산",
+        },
+        연도표={"식사대_월한도": 식사월한도, "출산·보육_월한도": 보육월한도, "출산·보육_자녀1명당": 보육자녀별,
+               "자가운전보조금_본인명의임차_포함": 임차포함, "근거": [식사근거, 보육근거, 차량근거,
+               "시행령 제87조3호 필요경비 표 2018~2026 동일(2천만 이하 80%, 4천만 이하 1,600만+50%, 6천만 이하 2,600만+30%, 초과 3,200만+20%)"]})
+
+
 # ── 끝에서 끝까지: 간이과세자 부가가치세 확정신고 ──────────────────
 # 어휘 항목 5개(간이과세자_납부세액·세금계산서등수취세액공제·신용카드매출전표등발급세액공제·
 # 간이과세자_납부의무면제·간이과세자_세금계산서미수취가산세)는 Claude가 검증해 넣었음 — 수정 금지.
@@ -8743,7 +8923,7 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "인적공제": ["personal_deduction"], "자녀세액공제": ["child_tax_credit"], "자녀공제": ["child_tax_credit", "personal_deduction", "inheritance_tax"],
     "출산공제": ["child_tax_credit"], "출생": ["child_tax_credit"], "입양": ["child_tax_credit"], "손자녀": ["child_tax_credit"],
     "다자녀": ["child_tax_credit"], "자녀 세액": ["child_tax_credit"], "의료비": ["special_tax_credit"], "교육비": ["special_tax_credit"], "보험료": ["special_tax_credit"],
-    "기타소득": ["other_income_aggregate"], "복권": ["other_income_aggregate"], "강연료": ["other_income_aggregate"],
+    "기타소득": ["other_income_aggregate"], "종교인소득": ["religious_income"], "종교인": ["religious_income"], "목사": ["religious_income"], "사례비": ["religious_income"], "승려": ["religious_income"], "복권": ["other_income_aggregate"], "강연료": ["other_income_aggregate"],
     "연금소득": ["pension_income"], "제척기간": ["assessment_limitation"], "과소자본": ["thin_capitalization"],
     "수입배당금": ["dividend_received_deduction"], "엑셀": ["export_workbook"], "서식": ["export_workbook"], "신고서 검토": ["return_precheck", "precheck_schema"],
 }
