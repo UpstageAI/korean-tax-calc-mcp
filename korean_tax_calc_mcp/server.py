@@ -314,7 +314,7 @@ _도구별_필수필드 = {
     "other_income_aggregate": {
         "산업재산권대여": {"필요": ["amount"], "허용": ["actual_cost", "actual_expense"]},
         "공익사업지상권대여": {"필요": ["amount"], "허용": ["actual_cost", "actual_expense"]},
-        "서화골동품양도": {"필요": ["amount"], "허용": ["actual_cost", "held_years", "museum", "living_domestic_artist", "transfer_date", "business_setup"]},
+        "서화골동품양도": {"필요": ["amount"], "허용": ["actual_cost", "held_years", "museum", "living_domestic_artist", "business_setup"]},
         "일시적인적용역": {"필요": ["amount"], "허용": ["actual_cost", "actual_expense"]},
         "뇌물": {"필요": ["amount"], "허용": ["forfeited"]},
         "위약금·배상금": {"필요": ["amount"], "허용": ["deposit_substituted"]},
@@ -2888,7 +2888,7 @@ def other_income_aggregate(year: YEAR,
       kind 허용값(어휘 기반, 별칭 포함):
         · 산업재산권대여 — 광업권·어업권·산업재산권·산업정보 등을 양도·대여하고 받는 금품
         · 공익사업지상권대여 — 공익사업 관련 지역권·지상권 설정·대여 대가(필요경비율은 산업재산권대여와 같음, 공익사업과 무관한 지상권 대여는 사업소득)
-        · 서화골동품양도 — 개당·점당 6천만원 이상 서화·골동품 양도(필요경비: 2020.2.11. 이후 양도 1억 이하 90%·초과분 80%, 그 전 80%, held_years≥10이면 90% — 2020년은 transfer_date 필수, business_setup=true(2021~ 사업장 갖춤)면 사업소득이라 제외, museum=true 박물관·미술관 양도 비과세, living_domestic_artist=true 생존 국내 작가 작품 과세 제외, 무조건 분리과세 20%)
+        · 서화골동품양도 — 개당·점당 6천만원 이상 서화·골동품 양도(필요경비: 2020 과세기간부터 1억 이하 90%·초과분 80%, 2019년까지 80%, held_years≥10이면 90% — 2020.2.11. 개정 부칙 제36조, business_setup=true(2021~ 사업장 갖춤)면 사업소득이라 제외, museum=true 박물관·미술관 양도 비과세, living_domestic_artist=true 생존 국내 작가 작품 과세 제외, 무조건 분리과세 20%)
         · 일시적인적용역 — 고용관계 없이 일시적으로 제공한 강연·방송 해설·자문 등 인적용역의 대가
         · 뇌물 — 뇌물로 받은 금품(몰수·추징 확정액은 forfeited로 입력, 기본 0)
         · 위약금·배상금 — 계약의 위약·해약으로 받는 위약금·배상금(계약금 대체분은 deposit_substituted로 입력, 기본 0, 주택입주 지체상금 제외)
@@ -3064,11 +3064,8 @@ def other_income_aggregate(year: YEAR,
         elif k == "서화골동품양도":
             held = int(it.get("held_years", 0) or 0)
             actual = int(it.get("actual_cost", 0) or 0)
-            양도일 = str(it.get("transfer_date") or "")
-            if year == 2020 and not 양도일:
-                return {"error": "입력 확인 필요 — 계산하지 않음",
-                        "문제": ["서화골동품양도(2020년): 필요경비율이 2020.2.11. 양도분부터 바뀌어(시행령 제87조2호) transfer_date(YYYY-MM-DD)가 필요"]}
-            구간제 = (양도일 >= "2020-02-11") if 양도일 else year >= 2021
+            # 2020.2.11. 개정 시행령 부칙 제36조: 시행일이 속하는 과세기간 전 발생분만 종전 규정 → 2020 과세기간 전체가 구간제
+            구간제 = year >= 2020
             if it.get("business_setup") and year >= 2021:
                 과세구분표시, 소득, 원천징수세액, 필요경비, 비과세 = "제외", 0, 0, 0, 0
                 산식_목록.append(f"{k}: 사업장을 갖추는 등 사업 형태 거래 → 기타소득이 아니라 사업소득(소득세법 제21조②, 2021.1.1. 이후)")
@@ -3080,12 +3077,12 @@ def other_income_aggregate(year: YEAR,
                 사유 = "양도일 현재 생존한 국내 원작자 작품" if it.get("living_domestic_artist") else "개당·점당 6천만원 미만"
                 산식_목록.append(f"{k}: {amount:,}원 — {사유} → 과세 대상 아님(소득세법 시행령 제41조⑭)")
             else:
-                if 구간제:   # 2020.2.11. 이후 양도: 1억 이하 90%, 초과분 80%(보유 10년 이상 90%)
+                if 구간제:   # 2020 과세기간부터: 1억 이하 90%, 초과분 80%(보유 10년 이상 90%)
                     율경비 = int(amount * 0.9) if (held >= 10 or amount <= 100000000) else int(100000000 * 0.9 + (amount - 100000000) * 0.8)
                     율설명 = '보유 10년 이상 90%' if held >= 10 else ('1억 이하 90%' if amount <= 100000000 else '1억까지 90%·초과분 80%')
-                else:        # 2020.2.10. 이전 양도: 받은 금액의 80%(보유 10년 이상 90%)
+                else:        # 2019 과세기간까지: 받은 금액의 80%(보유 10년 이상 90%)
                     율경비 = int(amount * (0.9 if held >= 10 else 0.8))
-                    율설명 = '2020.2.10. 이전 양도 — ' + ('보유 10년 이상 90%' if held >= 10 else '80%')
+                    율설명 = '2019년까지 — ' + ('보유 10년 이상 90%' if held >= 10 else '80%')
                 필요경비 = max(율경비, actual)
                 소득 = amount - 필요경비
                 원천징수세액 = int(소득 * rule.get("원천징수세율", 0.2))
