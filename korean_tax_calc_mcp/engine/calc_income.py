@@ -517,6 +517,7 @@ _KNOWN_KINDS = {
     "교육비_대학", "대입전형료", "교육비_대학원",
     "직업훈련", "학자금상환", "직계비속학자금대출지급",
     "특수교육비", "발달재활서비스",
+    "예체능학원_초등저학년",
 }
 
 
@@ -622,6 +623,7 @@ def special_tax_credit(
         난임 20%(2017~2021)·30%(2022~). 안경·콘택트렌즈 1명당 연 50만원, 산후조리원 출산 1회 200만원(2019~).
       교육비 — 1명당 연 한도(같은 person 지출 합산): 취학전·초중고 300만원(교복 50만원·체험학습
         30만원(2017~) 포함), 대학생 900만원. 대입전형료 2023~. 부양가족 소득요건 2025년까지.
+        초등 저학년(종료일 9세 미만·2학년 이하) 예체능학원·체육시설 수강료 2026~(1호마목, 300만원 한도에 합산).
     """
     problems = []
 
@@ -682,6 +684,18 @@ def special_tax_credit(
                     f"지출 {i+1}: person='{p.get('name')}' age=7(과세기간 종료일 현재) — 의료비 6세 이하 특정지출"
                     f"(제59조의4②2호나목, 2024~)은 과세기간 개시일 현재 나이로 판정. "
                     f"age_at_year_start(1월 1일 현재 만 나이) 또는 birth_date(YYYY-MM-DD)를 넣을 것")
+
+    # 초등 저학년 예체능학원(2026~, 제59조의4③1호마목): 종료일 현재 9세 미만 또는 2학년 이하
+    if not problems and vocab.rule("특별세액공제_교육비", year).get("초등저학년_예체능"):
+        _pd = {p.get("name"): p for p in persons}
+        for i, e in enumerate(expenses):
+            if e.get("kind") != "예체능학원_초등저학년":
+                continue
+            p = _pd.get(e.get("person"), {})
+            if p.get("age", 0) >= 9 and p.get("school_grade") is None:
+                problems.append(
+                    f"지출 {i+1}: person='{p.get('name')}' age={p.get('age')} — 예체능학원 교육비(제59조의4③1호마목)는 "
+                    f"과세기간 종료일 현재 9세 미만 또는 2학년 이하 초등학생만 해당. school_grade(학년)를 넣을 것")
 
     if problems:
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": problems}
@@ -828,6 +842,7 @@ def special_tax_credit(
     체험할아이면 = voc_e.get("체험학습", False)
     학자금상환이면 = voc_e.get("학자금상환", False)
     대입전형료이면 = voc_e.get("대입전형료", False)
+    초등저학년예체능이면 = voc_e.get("초등저학년_예체능", False)  # 2026~ 1호마목
     부양가족소득요건 = voc_e.get("부양가족_소득요건", True)  # 2026~ false
 
     취학전초중고한도 = voc_e["취학전초중고_한도"]
@@ -892,6 +907,10 @@ def special_tax_credit(
                         체험합 += amount
                 elif kind in ("교육비_취학전", "교육비_초중고"):
                     취학전초중고합 += amount
+                elif kind == "예체능학원_초등저학년":
+                    if 초등저학년예체능이면 and (age < 9 or (p.get("school_grade") is not None
+                                                            and int(p["school_grade"]) <= 2)):
+                        취학전초중고합 += amount
                 elif kind in ("교육비_대학", "대입전형료"):
                     if kind == "대입전형료" and not 대입전형료이면:
                         continue
@@ -978,6 +997,21 @@ def special_tax_credit(
             if not 대입전형료이면:
                 판단.append({"항목": k, "결론": f"{year}년 대입전형료 공제 대상 아님",
                              "근거": "소득세법 제59조의4③1호가목, 시행령 제118조의6①7호"})
+        elif k == "예체능학원_초등저학년":
+            if not 초등저학년예체능이면:
+                판단.append({"항목": k, "결론": f"{year}년 초등학생 예체능학원·체육시설 수강료 공제 대상 아님(2026~)",
+                             "근거": "소득세법 제59조의4③1호마목"})
+            elif rel not in ("배우자", "직계비속", "입양자", "위탁아동", "형제자매"):
+                판단.append({"항목": k, "결론": "직계비속등(1호) 대상 항목 — 공제 제외",
+                             "근거": "소득세법 제59조의4③1호마목"})
+            elif not (age < 9 or (p.get("school_grade") is not None and int(p["school_grade"]) <= 2)):
+                판단.append({"항목": k, "결론": f"'{pn}' 종료일 현재 9세 이상·3학년 이상 — 공제 제외",
+                             "근거": "소득세법 제59조의4③1호마목"})
+            else:
+                판단.append({"항목": k, "결론": (
+                    "예능학원(학원법 시행령 별표 2 예능분야)·체육시설의 월 단위·주 1회 이상 교습과정 수강료만 해당. "
+                    "취학전·초중고 1명당 연 300만원 한도에 합산"),
+                    "근거": "소득세법 제59조의4③1호마목, 시행령 제118조의6⑩"})
         elif k == "직계비속학자금대출지급":
             판단.append({"항목": k, "결론": "직계비속등이 학자금 대출로 낸 교육비 — 공제 제외(2017~)",
                          "근거": "소득세법 제59조의4③1호 단서"})
