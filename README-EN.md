@@ -46,7 +46,7 @@ claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp
 { "mcpServers": { "korean-tax-calc": { "command": "uvx", "args": ["korean-tax-calc-mcp"] } } }
 ```
 
-To pick up a new release right away: `uvx --refresh korean-tax-calc-mcp` (uvx caches the downloaded version). Pin with `uvx korean-tax-calc-mcp@0.14.0`.
+To pick up a new release right away: `uvx --refresh korean-tax-calc-mcp` (uvx caches the downloaded version). Pin with `uvx korean-tax-calc-mcp@0.15.0`.
 
 No key needed. Optional: `LAW_OC` (law.go.kr lookups in two audit tools), `UPSTAGE_API_KEY` (PDF table extraction).
 Pair with [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp) to go from "find the authority" to "compute the number".
