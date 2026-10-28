@@ -2,7 +2,11 @@
 
 기댓값은 조문으로 손계산. 총급여 5,000만원 → 의료비 문턱 150만원(3%).
 """
+import asyncio
+import json
+
 from korean_tax_calc_mcp.engine import calc_income as I
+from korean_tax_calc_mcp.server import mcp
 
 본인 = {"name": "본인", "relation": "본인", "age": 40}
 
@@ -186,3 +190,57 @@ def test_예체능_300만_한도에_합산():
              [{"kind": "교육비_초중고", "amount": 2_500_000, "person": "자녀"},
               {"kind": "예체능학원_초등저학년", "amount": 1_000_000, "person": "자녀"}])
     assert r["결과"]["교육비_세액공제"] == 450_000
+
+
+# ── 출산·보육수당 보육분: 2026~ 자녀 1명당 월 20만원 (제12조3호머목2, 2025.12.23 개정) ──
+def _egp(year, items):
+    return json.loads(asyncio.run(mcp.call_tool("earned_income_gross_pay", {"year": year, "items": items})).content[0].text)
+
+
+def _보육(amount, **facts):
+    return {"kind": "출산·보육수당", "amount": amount, "facts": dict(purpose="보육", months=12, **facts)}
+
+
+def _항(r):
+    return [x for x in r["항목별"] if x["kind"] == "출산·보육수당"]
+
+
+def test_보육수당_2026_자녀2명_한도2배():
+    # 20만 × 2명 × 12개월 = 480만 비과세, 600만 - 480만 = 120만 과세
+    h = _항(_egp(2026, [_보육(6_000_000, child_ages=[3, 5])]))[0]
+    assert h["비과세액"] == 4_800_000 and h["과세액"] == 1_200_000
+
+
+def test_보육수당_2026_7세자녀는_제외():
+    # 개시일 기준 7세 자녀는 빠짐 → 20만 × 1명 × 12 = 240만
+    h = _항(_egp(2026, [_보육(6_000_000, child_ages=[3, 7])]))[0]
+    assert h["비과세액"] == 2_400_000
+
+
+def test_보육수당_2026_child_count():
+    h = _항(_egp(2026, [_보육(6_000_000, child_count=2)]))[0]
+    assert h["비과세액"] == 4_800_000
+
+
+def test_보육수당_2025_자녀2명이어도_1인당_한도():
+    # 2025년은 근로자 1인당 월 20만원 → 240만
+    h = _항(_egp(2025, [_보육(6_000_000, child_ages=[3, 5])]))[0]
+    assert h["비과세액"] == 2_400_000
+    assert "2026년부터" in h["사유"]
+
+
+def test_보육수당_2026_자녀별_항목():
+    r = _egp(2026, [_보육(3_000_000, child="첫째", child_age=3),
+                    _보육(3_000_000, child="둘째", child_age=5)])
+    assert [h["비과세액"] for h in _항(r)] == [2_400_000, 2_400_000]
+
+
+def test_보육수당_2026_자녀이름_없는_중복은_입력확인():
+    r = _egp(2026, [_보육(3_000_000, child_age=3), _보육(3_000_000, child_age=5)])
+    assert r["error"].startswith("입력 확인 필요")
+
+
+def test_보육수당_2025_중복은_입력확인():
+    r = _egp(2025, [_보육(3_000_000, child="첫째", child_age=3),
+                    _보육(3_000_000, child="둘째", child_age=5)])
+    assert r["error"].startswith("입력 확인 필요")
