@@ -139,6 +139,286 @@ def nonbusiness_interest(loans, unknown_creditor=None):
     return f
 
 
+# ── 업무무관 가지급금 등 지급이자 판정(Claude 2026-10-28) ─────────────────────────
+# 연도표 — 법제처 efYd=각 연도 1231 원문 대조(법인세법 제28조, 시행령 제51조·제53조·제55조·제106조, 시행규칙 제28조·제44조).
+#  · 규칙 제44조 각 호(영 제53조① 단서 → 규칙 제28조① → 제44조): 2016~2026 1·2·3·4·5·6·7·8호 내용 같음
+#    (2019.3.20. '사용인'→'직원' 용어 정비, 2021 '소득할 주민세'→'개인지방소득세', 2026 '제132조'→'제131조' 인용 정비).
+#  · 7의2호(중소기업 직원 주택구입·전세자금 대여액) 신설 — 규칙 제774호(2020.3.13.) 부칙 제2조
+#    "이 규칙은 2020년 1월 1일 이후 개시하는 사업연도분부터 적용한다." → 개시일 2020-01-01 이후 사업연도만.
+#  · 동시 적용 순위(영 제55조 1·2·4·6호, 2016~2026 같음). 법률 조항은 2018 사업연도까지 법 제28조⑤,
+#    2019.1.1. 이후 개시 사업연도부터 법 제28조③(법률 제16008호 2018.12.24. 부칙 제2조 일반적 적용례).
+#  · 영 제53조②산식(지급이자 × 자산가액 합계(총차입금 한도) ÷ 총차입금), ③적수·동일인 가수금 상계, ④차입금 제외
+#    (1호 금융회사 등 차입금, 2호 기업구매자금대출) — 2016~2026 문언 같음. 규칙 제28조②(약정 있어 상계 불가) 같음.
+#  · 적수의 초일·말일: 영 제53조③은 "적수로 계산"만 정함 — 대여일 산입·회수일 불산입·사업연도 말일 산입(실무 관행)으로 계산하고 판단에 표시.
+_NB_RULE_7_2_FROM = date(2020, 1, 1)
+
+_NB_LOAN_KIND = {  # 입력 표기 → (구분, 영 제55조 순위)
+    None: ("일반", 6), "일반": ("일반", 6), "차입금": ("일반", 6),
+    "채권자불분명": ("채권자불분명", 1), "채권자불분명사채": ("채권자불분명", 1),
+    "비실명": ("비실명", 2), "비실명채권": ("비실명", 2), "지급받은자불분명": ("비실명", 2),
+    "건설자금": ("건설자금", 4), "건설자금이자": ("건설자금", 4),
+    "기업구매자금": ("기업구매자금", 0), "기업구매자금대출": ("기업구매자금", 0),
+    "금융회사제외차입금": ("금융회사제외차입금", 0),
+}
+
+_NB_TARGETS = {"대표이사": "임원", "대표자": "임원", "임원": "임원", "직원": "직원", "주주": "주주",
+               "특수관계법인": "법인", "기타특수관계인": "기타", "비특수관계인": "비특수관계인"}
+
+_NB_REASONS = {  # 사유 → 규칙 제44조 호(None이면 가지급금 등에 포함)
+    "업무무관대여": None, "가지급금": None, "기타": None,
+    "미지급소득세대납": "1호", "국외투자법인비용대납": "2호", "우리사주취득자금": "3호", "퇴직금전환금": "4호",
+    "대표자상여소득세대납": "5호", "급료가불": "6호", "경조사비대여": "7호", "학자금대여": "7호",
+    "주택자금대여": "7의2호", "자산관리공사출자법인대여": "8호",
+}
+
+
+def _nb_d(s, what):
+    try:
+        return date.fromisoformat(str(s))
+    except ValueError:
+        raise ValueError(f"{what} 날짜 형식 확인 필요(YYYY-MM-DD): {s}")
+
+
+def _nb_jeoksu(moves, fs, fe):
+    """[(date, 증감)] → 사업연도(fs~fe) 잔액 적수. 대여일 산입·회수일 불산입·말일 산입. 개시 전 증감은 개시일 잔액."""
+    mv = sorted(moves)
+    bal = sum(a for d, a in mv if d < fs)
+    pts = [(d, a) for d, a in mv if fs <= d <= fe]
+    total, cur = 0, fs
+    for d, a in pts:
+        if bal < 0:
+            raise ValueError("잔액이 음수 — 증감 입력 확인 필요")
+        total += bal * (d - cur).days
+        bal += a; cur = d
+    if bal < 0:
+        raise ValueError("잔액이 음수 — 증감 입력 확인 필요")
+    return total + bal * ((fe - cur).days + 1)
+
+
+def _nb_moves(item, amount, fs, fe, label):
+    """금액·지급일·회수일 또는 movements → [(date, 증감)]."""
+    mvs = item.get("movements")
+    if mvs:
+        out = []
+        for m in mvs:
+            d = m.get("일자", m.get("date")); a = m.get("증감", m.get("amount"))
+            if d is None or a is None:
+                raise ValueError(f"{label}: movements 항목은 {{일자, 증감}}")
+            out.append((_nb_d(d, label), int(a)))
+        return out
+    if amount is None or not item.get("지급일", item.get("일자")):
+        raise ValueError(f"{label}: 금액과 지급일(또는 movements [{{일자, 증감}}]) 필요")
+    out = [(_nb_d(item.get("지급일", item.get("일자")), label), int(amount))]
+    back = item.get("회수일", item.get("반환일"))
+    if back:
+        bd = _nb_d(back, label)
+        if bd < out[0][0]:
+            raise ValueError(f"{label}: 회수일이 지급일보다 앞섬")
+        out.append((bd, -int(amount)))
+    return out
+
+
+def _nb_advance(i, a, fs):
+    """규칙 제44조 각 호 판정 → (포함액 또는 None(=movements 그대로), 제외액, 판단, 근거)."""
+    label = f"가지급금[{i}]"
+    t = a.get("대상"); why = a.get("사유", "업무무관대여")
+    if t not in _NB_TARGETS:
+        raise ValueError(f"{label}: 대상은 {', '.join(_NB_TARGETS)} 중 하나")
+    if why not in _NB_REASONS:
+        raise ValueError(f"{label}: 사유는 {', '.join(_NB_REASONS)} 중 하나")
+    amt = a.get("금액")
+    amt = None if amt is None else int(amt)
+    ho = _NB_REASONS[why]
+    whole_out = lambda msg, basis: (0, amt, msg, basis)
+    whole_in = lambda msg, basis: (amt, 0, msg, basis)
+    if _NB_TARGETS[t] == "비특수관계인":
+        return whole_out("특수관계인이 아닌 자에 대한 대여 — 법 제28조①4호나목 가지급금 등 아님", "법인세법 제28조①4호나목")
+    if ho is None:
+        return whole_in("특수관계인에게 업무와 관련 없이 지급한 가지급금 등 — 적수 포함", "법인세법 제28조①4호나목, 시행령 제53조①")
+    rule = f"시행규칙 제44조 {ho}(영 제53조① 단서, 규칙 제28조①)"
+    need_amt = ho in ("1호", "6호")
+    if need_amt and (amt is None or a.get("movements")):
+        raise ValueError(f"{label}: {why}는 한도 비교가 필요해 금액·지급일·회수일로 입력(movements 불가)")
+    if ho in ("6호", "7호", "7의2호") and _NB_TARGETS[t] != "직원":
+        return whole_in(f"{why}: {ho}는 직원(2019.3.20. 전 문언 '사용인') 대상 — {t}이면 제외 안 됨", rule)
+    if ho == "1호":
+        try:
+            tax, unpaid, inc = int(a["총결정세액"]), int(a["미지급소득"]), int(a["종합소득금액"])
+        except KeyError:
+            raise ValueError(f"{label}: 미지급소득세대납은 총결정세액·미지급소득·종합소득금액 필요(규칙 제44조1호 산식)")
+        if inc <= 0:
+            raise ValueError(f"{label}: 종합소득금액은 0보다 커야 함")
+        lim = tax * unpaid // inc
+        out = min(amt, lim)
+        return (amt - out, out, f"미지급소득 소득세 대납 — 한도 {tax:,} × {unpaid:,} ÷ {inc:,} = {lim:,}원까지 제외, "
+                f"초과 {amt - out:,}원은 가지급금 등(해당 소득을 실제 지급할 때까지의 기간에 한정 — 회수일에 실제 지급일 입력)", rule)
+    if ho == "3호":
+        if "해당법인주식" not in a:
+            raise ValueError(f"{label}: 우리사주취득자금은 해당법인주식(우리사주조합이 설립된 회사 주식 여부, true/false) 필요")
+        if a["해당법인주식"]:
+            return whole_out("우리사주조합(원)에게 해당 회사 주식 취득자금 대여 — 제외(상환할 때까지)", rule)
+        return whole_in("우리사주조합이 설립된 회사가 아닌 회사(자회사 등) 주식 취득자금 — 3호 아님, 가지급금 등 포함", rule)
+    if ho == "6호":
+        if "월정급여" not in a:
+            raise ValueError(f"{label}: 급료가불은 월정급여 필요(규칙 제44조6호 '월정급여액의 범위')")
+        m = int(a["월정급여"]); out = min(amt, m)
+        return (amt - out, out, f"직원 급료 가불 — 월정급여 {m:,}원 범위 제외, 초과 {amt - out:,}원은 가지급금 등", rule)
+    if ho == "7의2호":
+        if fs < _NB_RULE_7_2_FROM:
+            return whole_in("중소기업 직원 주택자금 대여 제외(7의2호)는 2020.1.1. 이후 개시 사업연도부터(규칙 제774호 부칙 제2조) — 이 사업연도는 포함",
+                            "시행규칙 제44조(2020.3.13. 개정 전)")
+        if "중소기업" not in a or "지배주주등" not in a:
+            raise ValueError(f"{label}: 주택자금대여는 중소기업(조특령 제2조)·지배주주등 여부(true/false) 필요")
+        if a["중소기업"] and not a["지배주주등"]:
+            return whole_out("중소기업 직원(지배주주등 아님) 주택구입·전세자금 대여 — 제외", rule)
+        return whole_in("중소기업이 아니거나 지배주주등인 직원 — 7의2호 아님, 가지급금 등 포함", rule)
+    return whole_out(f"{why} — 규칙 제44조 {ho} 해당, 제외(각 호의 기간 한정 — 회수일로 기간 입력)", rule)
+
+
+def nonbusiness_interest_judge(loans, advances=None, deposits=None, nonbusiness_jeoksu=0, year=None,
+                               fiscal_start=None, fiscal_end=None):
+    """법 제28조① 각 호 지급이자 손금불산입 판정 — 영 제55조 순위, 영 제53조 가지급금 적수·가수금 상계·차입금 제외."""
+    advances, deposits = advances or [], deposits or []
+    if (advances or deposits) and year is None and fiscal_start is None:
+        raise ValueError("가지급금·가수금을 넣으면 year(사업연도, 개시일이 속하는 연도) 또는 fiscal_start 필요")
+    if fiscal_start:
+        fs = _nb_d(fiscal_start, "fiscal_start")
+    else:
+        fs = date(year or 2026, 1, 1)
+    if fiscal_end:
+        fe = _nb_d(fiscal_end, "fiscal_end")
+    else:
+        try:
+            fe = date.fromordinal(fs.replace(year=fs.year + 1).toordinal() - 1)
+        except ValueError:
+            fe = date(fs.year + 1, 2, 28)
+    if not (fs <= fe and (fe - fs).days < 366):
+        raise ValueError("사업연도 기간 확인 필요(1년 이내)")
+    if year is not None and fs.year != year:
+        raise ValueError(f"year({year})와 fiscal_start({fs})의 연도가 다름 — year는 사업연도 개시일이 속하는 연도")
+    if not (2016 <= fs.year <= 2026):
+        raise NoYearTable(f"{fs.year} 사업연도 — 2016~2026만 지원(추정 계산 안 함)")
+    ydays = (fe - fs).days + 1
+    judge = []
+
+    # 1) 차입금 구분·적수
+    rows, by = [], {1: 0, 2: 0, 4: 0}
+    unclear = []
+    interest, borrow = 0, 0
+    for i, l in enumerate(loans):
+        kind = l.get("kind")
+        if kind not in _NB_LOAN_KIND:
+            raise ValueError(f"loans[{i}].kind는 {', '.join(k for k in _NB_LOAN_KIND if k)} 중 하나")
+        name, order = _NB_LOAN_KIND[kind]
+        it = int(l["interest"])
+        if order in (1, 2, 4):
+            by[order] += it
+            if order in (1, 2):
+                unclear.append((order, it, l.get("withholding")))
+            rows.append({"차입금": i, "구분": name, "지급이자": it, "처리": f"영 제55조 {order}호 순위로 먼저 손금불산입, 업무무관 산식의 지급이자·차입금에서 뺌"})
+            continue
+        if order == 0:
+            rows.append({"차입금": i, "구분": name, "지급이자": it,
+                         "처리": "총차입금에서 제외(영 제53조④" + ("2호 기업구매자금대출)" if name == "기업구매자금" else "1호 금융회사 등 차입금)") + " — 이자도 산식에서 뺌"})
+            continue
+        if l.get("jeoksu") is not None:
+            j = int(l["jeoksu"]); how = "입력 적수"
+        elif l.get("principal") is not None and l.get("days") is not None:
+            j = int(l["principal"]) * int(l["days"]); how = f"원금 {int(l['principal']):,} × {int(l['days'])}일"
+        elif l.get("rate"):
+            j = round(it * ydays / float(l["rate"])); how = f"이자 {it:,} ÷ 이자율 {float(l['rate'])} × {ydays}일"
+        else:
+            raise ValueError(f"loans[{i}]: 차입금 적수(jeoksu) 또는 원금·일수(principal·days) 또는 이자율(rate) 필요")
+        interest += it; borrow += j
+        rows.append({"차입금": i, "구분": "일반", "지급이자": it, "적수": j, "적수_계산": how})
+
+    # 2) 가지급금 등 적수(동일인별)
+    adv_rows, persons, di_moves = [], {}, {}
+    for i, a in enumerate(advances):
+        incl, excl, msg, basis = _nb_advance(i, a, fs)
+        who = a.get("이름") or a.get("대상")
+        if incl is None:  # movements 그대로 포함
+            mv = _nb_moves(a, None, fs, fe, f"가지급금[{i}]")
+        elif incl == 0:
+            mv = []
+        else:
+            mv = [(d, incl if x > 0 else -incl) for d, x in _nb_moves(a, incl, fs, fe, f"가지급금[{i}]")]
+        j = _nb_jeoksu(mv, fs, fe) if mv else 0
+        persons.setdefault(who, {"가지급금적수": 0, "가수금적수": 0, "상계불가_가수금적수": 0})["가지급금적수"] += j
+        di_moves.setdefault(who, []).extend({"date": d.isoformat(), "amount": x} for d, x in mv)
+        adv_rows.append({"가지급금": i, "대상": a.get("대상"), "이름": who, "사유": a.get("사유", "업무무관대여"),
+                         **({"금액": a["금액"]} if "금액" in a else {}), "제외액": "전액" if excl is None else excl,
+                         "포함액": "movements 전액" if incl is None else incl,
+                         "적수": j, "판단": msg, "근거": basis})
+    for i, dpo in enumerate(deposits):
+        who = dpo.get("이름") or dpo.get("대상")
+        if not who:
+            raise ValueError(f"가수금[{i}]: 이름 또는 대상 필요(동일인 상계)")
+        j = _nb_jeoksu(_nb_moves(dpo, dpo.get("금액"), fs, fe, f"가수금[{i}]"), fs, fe)
+        p = persons.setdefault(who, {"가지급금적수": 0, "가수금적수": 0, "상계불가_가수금적수": 0})
+        p["상계불가_가수금적수" if dpo.get("상계불가") else "가수금적수"] += j
+    per = []
+    adv_total = 0
+    for who, p in persons.items():
+        net = max(0, p["가지급금적수"] - p["가수금적수"])
+        adv_total += net
+        per.append({"이름": who, **p, "상계후_적수": net})
+    if deposits:
+        judge.append("동일인 가지급금 등과 가수금은 적수로 상계(영 제53조③ 후단), 가수금이 더 크면 0. "
+                     "발생 시 상환기간·이자율 약정이 있어 상계할 수 없는 가수금은 상계하지 않음(규칙 제28조②).")
+    if advances:
+        judge.append("적수: 영 제53조③은 '적수로 계산'만 정함 — 대여일 산입·회수일 불산입·사업연도 말일 산입으로 계산(실무 관행).")
+
+    # 3) 영 제55조 순위
+    asset = int(nonbusiness_jeoksu) + adv_total
+    if interest and not borrow:
+        raise ValueError("업무무관 산식 대상 지급이자가 있는데 차입금 적수가 0 — 입력 확인 필요")
+    used = min(asset, borrow)
+    nb = interest * used // borrow if borrow else 0   # 원 미만 절사
+    if asset > borrow:
+        judge.append(f"업무무관자산·가지급금 적수 {asset:,}가 총차입금 적수 {borrow:,}보다 커서 총차입금을 한도로 함(영 제53조② 산식 괄호, 법 제28조①4호 괄호) — 지급이자 전액 {interest:,}원")
+    law_order = "법인세법 제28조⑤" if fs.year <= 2018 else "법인세법 제28조③"
+    steps = []
+    for order, name, basis in ((1, "채권자불분명 사채이자", "법 제28조①1호, 영 제51조①"),
+                               (2, "지급받은 자 불분명 채권·증권 이자(비실명)", "법 제28조①2호, 영 제51조②")):
+        amt = by[order]
+        if not amt:
+            continue
+        whs = [w for o, _, w in unclear if o == order]
+        if all(w is not None for w in whs):
+            wh = sum(int(w) for w in whs)
+            steps.append({"순위": order, "구분": name, "손금불산입": amt, "근거": basis,
+                          "소득처분": [{"금액": amt - wh, "처분": "대표자 상여(귀속 불분명, 영 제106조①1호 단서)"},
+                                    {"금액": wh, "처분": "기타사외유출(원천징수세액 상당액, 영 제106조①3호라목)"}]})
+        else:
+            steps.append({"순위": order, "구분": name, "손금불산입": amt, "근거": basis,
+                          "소득처분": [{"금액": amt, "처분": "대표자 상여 — 단, 원천징수세액 상당액은 기타사외유출(영 제106조①1호 단서·3호라목); "
+                                                        "loans[].withholding을 넣으면 나눠 줌"}]})
+    if by[4]:
+        steps.append({"순위": 4, "구분": "건설자금이자(특정차입금)", "손금불산입": by[4], "근거": "법 제28조①3호, 영 제52조",
+                      "소득처분": [{"금액": by[4], "처분": "유보(해당 자산 원가)"}]})
+    steps.append({"순위": 6, "구분": "업무무관자산·가지급금 등 지급이자", "손금불산입": nb, "근거": "법 제28조①4호, 영 제53조②",
+                  "산식": f"{interest:,} × min({asset:,}, {borrow:,}) ÷ {borrow:,}" if borrow else "지급이자 0",
+                  "소득처분": [{"금액": nb, "처분": "기타사외유출(영 제106조①3호마목)"}]})
+    total = by[1] + by[2] + by[4] + nb
+    r = {"손금불산입_합계": total,
+         "채권자불분명 사채이자": by[1], "비실명 채권·증권이자": by[2], "건설자금이자(유보)": by[4],
+         "지급이자": interest, "차입금적수": borrow, "업무무관적수": asset,
+         "업무무관자산적수(입력)": int(nonbusiness_jeoksu), "가지급금적수(상계후)": adv_total,
+         "손금불산입(기타사외유출)": nb}
+    calc_ = {"사업연도": f"{fs.isoformat()}~{fe.isoformat()}", "적용순서": steps, "차입금": rows,
+             "가지급금": adv_rows, "동일인별": per,
+             "순위_근거": f"{law_order}, 시행령 제55조(채권자불분명 → 비실명 → 건설자금 → 업무무관)"}
+    pointer = None
+    if any(v for v in di_moves.values()):
+        pointer = {"도구": "deemed_interest",
+                   "안내": "같은 가지급금 등(규칙 제44조 제외분은 영 제89조⑤ 단서로 인정이자에서도 제외)에 인정이자를 계산하려면 "
+                         "사람별 movements를 deemed_interest에 넣는다. 이자율은 가중평균차입이자율 원칙, 예외 시 당좌대출이자율(영 제89조③).",
+                   "movements_사람별": {k: v for k, v in di_moves.items() if v},
+                   "year_end": fe.isoformat(), "fiscal_start": fs.isoformat()}
+    return r, calc_, judge, pointer
+
+
 def depreciation(assets):
     """개별 자산별 시부인(법인세법 제23조). assets={자산: (상각범위액, 회사계상액)} — 자산 간 상계 안 함."""
     rows = {k: c - r for k, (r, c) in assets.items()}
