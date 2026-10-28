@@ -4984,6 +4984,7 @@ def capital_gains_income(
         capital_expenditure: Annotated[int, Field(description="자본적지출액(원, 증명서류로 확인되는 것, 없으면 0)", ge=0)] = 0,
         transfer_expenses: Annotated[int, Field(description="양도비(원, 양도 시 중개수수료 등, 없으면 0)", ge=0)] = 0,
         registered: Annotated[bool, Field(description="등기 여부(False = 미등기양도자산: 비과세·장기보유특별공제·기본공제 배제)")] = True,
+        non_business_land: Annotated[bool, Field(description="토지만: 비사업용 토지 여부(True면 세율 기본세율+10%p, 제104조①8호). apply_basic_deduction=True일 때 산출세액에 반영")] = False,
         acquisition_standard_price: Annotated[int | None, Field(description="환산취득가액 계산용 취득 당시 기준시가(원). acquisition_price=0일 때 transfer_standard_price와 함께 입력")] = None,
         transfer_standard_price: Annotated[int | None, Field(description="환산취득가액 계산용 양도 당시 기준시가(원). acquisition_price=0일 때 acquisition_standard_price와 함께 입력")] = None,
         one_house: Annotated[bool | None, Field(description="주택만: 양도일 현재 1세대 1주택(일시적 2주택 등 1주택으로 보는 경우 포함) 여부")] = None,
@@ -5004,10 +5005,10 @@ def capital_gains_income(
       (부담부증여) burdened_gift={증여가액, 채무액, 평가:'시가'|'기준시가', 취득_기준시가?, 취득가액_실지?} — 비율=채무액÷증여가액, 양도가액=증여가액×비율(=채무액), 취득가액: 평가='기준시가'면 취득_기준시가×비율+개산공제(토지·건물 3%, 미등기 0.3%), '시가'면 취득가액_실지×비율. transfer_price·acquisition_price와 함께 입력 불가.
       (주택) 1세대1주택 여부 → one_house, 비과세 요건 충족 → exempt_met, 거주기간(년) → residence_years,
       (주택, 1주택 아님) 다주택 중과 대상 → heavy_multi_home,
-      기본공제·과세표준까지 → apply_basic_deduction.
+      기본공제·과세표준·산출세액까지 → apply_basic_deduction(True면 제104조 세율로 산출세액·지방소득세도 계산: 보유 1년 미만·2년 미만 단기세율, 미등기 70%, 비사업용 토지 → non_business_land).
       지원하지 않음(error): 분양권·조합원입주권·주식, 다주택·조정대상지역 중과, 비과세 보유기간 예외, 주거용 전환, 고가주택 일부 양도.
       토지는 one_house=False, exempt_met=False 입력해도 오류 아님(주택 요건 무관).
-    결과: 판단(비과세·고가주택·적용 표, 환산취득가액 사용 시 필요경비 선택 근거)·결과(양도차익·과세대상 양도차익·보유·거주기간·공제율·장기보유특별공제액·양도소득금액, 선택 시 기본공제·과세표준)·산식·근거."""
+    결과: 판단(비과세·고가주택·적용 표, 환산취득가액 사용 시 필요경비 선택 근거)·결과(양도차익·과세대상 양도차익·보유·거주기간·공제율·장기보유특별공제액·양도소득금액, 선택 시 기본공제·과세표준·산출세액·지방소득세·적용 세율)·산식·근거."""
     양도일_dt = date.fromisoformat(transfer_date)
     양도일_int = 양도일_dt.year * 10_000 + 양도일_dt.month * 100 + 양도일_dt.day
 
@@ -5200,6 +5201,23 @@ def capital_gains_income(
     # 토지는 주택 요건 무관 안내 (one_house=False, exempt_met=False가 무시된 경우)
     if not is_주택:
         r["판단"] = r.get("판단", []) + [{"항목": "자산 종류", "결론": "토지는 주택 요건(1세대1주택·비과세 요건)과 무관", "근거": "소득세법 제89조①·제95조"}]
+
+    if apply_basic_deduction:
+        # 환산취득가액 경로는 양도소득금액을 덮어쓰므로 과세표준도 다시 맞춘다
+        r["결과"]["양도소득_과세표준"] = max(0, r["결과"]["양도소득금액"] - r["결과"].get("양도소득_기본공제", 0))
+        세 = CG.capital_gains_tax_amount(r["결과"]["양도소득_과세표준"], asset_type, acquisition_date, transfer_date,
+                                      registered, non_business_land, I.income_tax)
+        r["결과"]["산출세액"] = 세["산출세액"]
+        r["결과"]["지방소득세"] = 세["지방소득세"]
+        r["결과"]["적용_세율"] = 세["적용_세율"]
+        후보문 = ", ".join("{} {:,}".format(c["세율"], c["세액"]) for c in 세["세율_후보"])
+        결론문 = "{} → 산출세액 {:,}원, 지방소득세 {:,}원".format(세["적용_세율"], 세["산출세액"], 세["지방소득세"])
+        if len(세["세율_후보"]) > 1:
+            결론문 += " (후보: " + 후보문 + ")"
+        r["판단"] = r.get("판단", []) + [{"항목": "양도소득 세율", "결론": 결론문, "근거": 세["근거"]}]
+        r["근거"] = r["근거"] + [["소득세법", "제104조", "①", 세["적용_세율"]]]
+    elif non_business_land:
+        r["판단"] = r.get("판단", []) + [{"항목": "양도소득 세율", "결론": "non_business_land는 apply_basic_deduction=True일 때 산출세액에 반영", "근거": "소득세법 제104조①8호"}]
 
     return _ok(r["결과"], r["근거"], 판단=r.get("판단", []), 산식=r.get("산식", []))
 
@@ -5580,6 +5598,26 @@ def pension_income(
     return I.pension_income(year=year, public_pension=public_pension, private_pension=private_pension,
                             retirement_source_pension=retirement_source_pension, medical_withdrawal=medical_withdrawal,
                             private_choice=private_choice, public_pension_detail=public_pension_detail)
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def capital_gains_tax(base: Annotated[int, Field(description="양도소득 과세표준(원)", ge=0)],
+                      asset_type: Annotated[Literal["토지", "건물", "주택"], Field(description="양도자산 종류")],
+                      acquisition_date: Annotated[str, Field(description="취득일 YYYY-MM-DD(세율 보유기간 계산용)")],
+                      transfer_date: Annotated[str, Field(description="양도일 YYYY-MM-DD(2016-01-01 ~ 2026-12-31)")],
+                      registered: Annotated[bool, Field(description="등기 여부(False = 미등기 70%)")] = True,
+                      non_business_land: Annotated[bool, Field(description="토지만: 비사업용 토지(기본세율+10%p)")] = False) -> dict:
+    """양도소득 과세표준 → 산출세액·지방소득세(소득세법 제104조①). 언제: 양도소득 과세표준이 이미 주어졌거나 따로 계산했을 때 세율을 적용한다(가액부터 계산하면 capital_gains_income에 apply_basic_deduction=True).
+    입력: 과세표준 → base, 자산 종류 → asset_type, 취득일·양도일 → acquisition_date·transfer_date, 등기 → registered, 비사업용 토지 → non_business_land.
+    세율: 2년 이상 기본세율(제55조) / 1년 이상 2년 미만 40%(주택 60%, 2021.6.1. 전 양도 주택은 기본세율) / 1년 미만 50%(주택 70%, 2021.6.1. 전 40%) / 미등기 70% / 비사업용 토지 기본세율+10%p — 둘 이상이면 큰 세액.
+    지원하지 않음: 다주택 중과(제104조⑦), 분양권·조합원입주권·주식.
+    결과: 산출세액·지방소득세(10%)·적용 세율·세율 후보·근거."""
+    if not (2016 <= int(transfer_date[:4]) <= 2026):
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"transfer_date={transfer_date} — 2016~2026 양도분만 지원"]}
+    r = CG.capital_gains_tax_amount(base, asset_type, acquisition_date, transfer_date, registered, non_business_land, I.income_tax)
+    근거 = r.pop("근거")
+    return _ok(r, 근거)
 
 
 # ── 결손금·이월결손금 공제(소득세법 제45조) ──────────────────────────────────────
@@ -7702,7 +7740,8 @@ def export_workbook(
 # 도구가 70개를 넘어 목록만 보고는 맞는 도구를 놓치기 쉽다(10/28 점검: 있는 도구를 "없다"고 판단한 사례 3건).
 # 사용자가 쓰는 말 → 도구. 별칭은 설명문에 없는 일상 표현·옛 용어·시험 용어를 잇는다.
 _TOOL_ALIASES: dict[str, list[str]] = {
-    "양도세": ["capital_gains_income", "income_tax"], "양도소득세": ["capital_gains_income", "income_tax"],
+    "양도세": ["capital_gains_income", "capital_gains_tax"], "양도소득세": ["capital_gains_income", "capital_gains_tax"],
+    "단기 양도": ["capital_gains_tax"], "미등기": ["capital_gains_tax"], "비사업용 토지": ["capital_gains_tax", "capital_gains_income"],
     "집 팔": ["capital_gains_income"], "아파트 매도": ["capital_gains_income"], "1세대1주택": ["capital_gains_income"],
     "고가주택": ["capital_gains_income"], "장기보유특별공제": ["capital_gains_income"], "부담부증여": ["capital_gains_income", "gift_tax"],
     "청산": ["liquidation_income"], "해산": ["liquidation_income"], "잔여재산": ["liquidation_income", "deemed_dividend_capital_reduction"],

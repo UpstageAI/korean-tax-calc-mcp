@@ -437,3 +437,54 @@ def calc_cg(args: dict[str, Any], vocab_on) -> dict:
         "판단": 판단,
         "산식": 산식목록,
     }
+
+
+# ── 양도소득 산출세액(소득세법 제104조①) ─────────────────────────────────────
+# 2021.6.1. 이후 양도분부터 주택(조합원입주권 포함) 단기 세율 인상(법률 제17477호 부칙).
+_주택단기_인상일 = date(2021, 6, 1)
+
+
+def capital_gains_tax_amount(base: int, asset_type: str, acquisition_date: str, transfer_date: str,
+                             registered: bool, non_business_land: bool, basic_tax) -> dict:
+    """양도소득 과세표준 → 산출세액. basic_tax(base, year) = 제55조 기본세율 세액.
+
+    후보 세율이 둘 이상이면 큰 세액(제104① 각 호 외 단서). 다주택 중과·분양권은 지원하지 않음(호출 쪽에서 거부)."""
+    acq, tr = _parse_date(acquisition_date), _parse_date(transfer_date)
+    if tr < acq:
+        raise ValueError("transfer_date가 acquisition_date보다 앞섬")
+    yr = tr.year
+    held = full_years(acq, tr)
+    주택 = asset_type == "주택"
+    후보: list[tuple[str, int, str]] = []
+    기본 = basic_tax(base, yr)
+    if not registered:
+        후보.append(("미등기 70%", int(base * 0.70), "소득세법 제104조①10호"))
+    else:
+        if held < 1:
+            if 주택:
+                r = 0.70 if tr >= _주택단기_인상일 else 0.40
+                후보.append((f"주택 1년 미만 {int(r*100)}%", int(base * r), "소득세법 제104조①3호"))
+            else:
+                후보.append(("1년 미만 50%", int(base * 0.50), "소득세법 제104조①3호"))
+        elif held < 2:
+            if 주택:
+                if tr >= _주택단기_인상일:
+                    후보.append(("주택 1년 이상 2년 미만 60%", int(base * 0.60), "소득세법 제104조①2호"))
+                else:
+                    후보.append(("주택 1년 이상 2년 미만 — 기본세율(2021.6.1. 전 양도)", 기본, "소득세법 제104조①1호"))
+            else:
+                후보.append(("1년 이상 2년 미만 40%", int(base * 0.40), "소득세법 제104조①2호"))
+        else:
+            후보.append(("2년 이상 보유 — 기본세율", 기본, "소득세법 제104조①1호, 제55조①"))
+        if non_business_land and asset_type == "토지":
+            후보.append(("비사업용 토지 — 기본세율 + 10%p", 기본 + int(base * 0.10), "소득세법 제104조①8호"))
+    best = max(후보, key=lambda x: x[1])
+    세액 = best[1]
+    return {
+        "보유기간_년(세율)": held,
+        "적용_세율": best[0],
+        "산출세액": 세액,
+        "지방소득세": int(세액 * 0.1),
+        "세율_후보": [{"세율": a, "세액": b, "근거": c} for a, b, c in 후보],
+        "근거": best[2] + (", 제104조① 단서(둘 이상이면 큰 세액)" if len(후보) > 1 else ""),
+    }
