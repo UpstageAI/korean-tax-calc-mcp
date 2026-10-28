@@ -3,7 +3,7 @@
 플레이북: knowledge/07_법인세_신고안내_조사포인트.md
 """
 import math
-from datetime import date
+from datetime import date, timedelta
 
 from .calc import won
 
@@ -195,6 +195,30 @@ def _nb_jeoksu(moves, fs, fe):
     return total + bal * ((fe - cur).days + 1)
 
 
+def _nb_ledger(who, moves, fs, fe, deposit=False):
+    """별지 제26호서식(을) ①연월일~⑦적수 행 — 같은 날 증감은 한 행, 개시 전 증감은 개시일 전기이월 행.
+    가지급금은 증가=③차변·감소=④대변, 가수금은 증가=④대변·감소=③차변. Σ⑦ = _nb_jeoksu(moves)."""
+    days = {}
+    for d, a in moves:
+        if d > fe:
+            continue
+        days.setdefault(max(d, fs), []).append((d < fs, a))
+    rows, bal = [], 0
+    keys = sorted(days)
+    for k, d in enumerate(keys):
+        up = sum(a for _, a in days[d] if a > 0)
+        down = -sum(a for _, a in days[d] if a < 0)
+        bal += up - down
+        nxt = keys[k + 1] if k + 1 < len(keys) else fe + timedelta(days=1)
+        n = (nxt - d).days
+        carry = all(pre for pre, _ in days[d])
+        what = "전기이월" if carry else ("증가" if up and not down else "감소" if down and not up else "증감")
+        dr, cr = (down, up) if deposit else (up, down)
+        rows.append({"이름": who, "일자": d.isoformat(), "적요": f"{who} {('가수금 ' if deposit else '')}{what}",
+                     "차변": dr, "대변": cr, "잔액": bal, "일수": n, "적수": bal * n})
+    return rows
+
+
 def _nb_moves(item, amount, fs, fe, label):
     """금액·지급일·회수일 또는 movements → [(date, 증감)]."""
     mvs = item.get("movements")
@@ -315,7 +339,16 @@ def nonbusiness_interest_judge(loans, advances=None, deposits=None, nonbusiness_
             by[order] += it
             if order in (1, 2):
                 unclear.append((order, it, l.get("withholding")))
-            rows.append({"차입금": i, "구분": name, "지급이자": it, "처리": f"영 제55조 {order}호 순위로 먼저 손금불산입, 업무무관 산식의 지급이자·차입금에서 뺌"})
+            row = {"차입금": i, "구분": name, "지급이자": it, "처리": f"영 제55조 {order}호 순위로 먼저 손금불산입, 업무무관 산식의 지급이자·차입금에서 뺌"}
+            if l.get("jeoksu") is not None:   # 서식 26(갑) ⑪·⑭(<17>)용 — 산식에는 쓰지 않음
+                row["적수"] = int(l["jeoksu"])
+            elif l.get("principal") is not None and l.get("days") is not None:
+                row["적수"] = int(l["principal"]) * int(l["days"])
+            elif l.get("rate"):
+                row["적수"] = round(it * ydays / float(l["rate"]))
+            if l.get("rate"):
+                row["이자율"] = float(l["rate"])
+            rows.append(row)
             continue
         if order == 0:
             rows.append({"차입금": i, "구분": name, "지급이자": it,
@@ -330,7 +363,8 @@ def nonbusiness_interest_judge(loans, advances=None, deposits=None, nonbusiness_
         else:
             raise ValueError(f"loans[{i}]: 차입금 적수(jeoksu) 또는 원금·일수(principal·days) 또는 이자율(rate) 필요")
         interest += it; borrow += j
-        rows.append({"차입금": i, "구분": "일반", "지급이자": it, "적수": j, "적수_계산": how})
+        rows.append({"차입금": i, "구분": "일반", "지급이자": it, "적수": j, "적수_계산": how,
+                     **({"이자율": float(l["rate"])} if l.get("rate") else {})})
 
     # 2) 가지급금 등 적수(동일인별)
     adv_rows, persons, di_moves = [], {}, {}
@@ -351,13 +385,17 @@ def nonbusiness_interest_judge(loans, advances=None, deposits=None, nonbusiness_
                          **({"금액": a["금액"]} if "금액" in a else {}), "제외액": "전액" if excl is None else excl,
                          "포함액": "movements 전액" if incl is None else incl,
                          "적수": j, "판단": msg, "근거": basis})
+    dep_moves = {}
     for i, dpo in enumerate(deposits):
         who = dpo.get("이름") or dpo.get("대상")
         if not who:
             raise ValueError(f"가수금[{i}]: 이름 또는 대상 필요(동일인 상계)")
-        j = _nb_jeoksu(_nb_moves(dpo, dpo.get("금액"), fs, fe, f"가수금[{i}]"), fs, fe)
+        dmv = _nb_moves(dpo, dpo.get("금액"), fs, fe, f"가수금[{i}]")
+        j = _nb_jeoksu(dmv, fs, fe)
         p = persons.setdefault(who, {"가지급금적수": 0, "가수금적수": 0, "상계불가_가수금적수": 0})
         p["상계불가_가수금적수" if dpo.get("상계불가") else "가수금적수"] += j
+        if not dpo.get("상계불가"):
+            dep_moves.setdefault(who, []).extend(dmv)
     per = []
     adv_total = 0
     for who, p in persons.items():
@@ -407,8 +445,21 @@ def nonbusiness_interest_judge(loans, advances=None, deposits=None, nonbusiness_
          "지급이자": interest, "차입금적수": borrow, "업무무관적수": asset,
          "업무무관자산적수(입력)": int(nonbusiness_jeoksu), "가지급금적수(상계후)": adv_total,
          "손금불산입(기타사외유출)": nb}
+    # 별지 제26호서식(을) 3. ⑧가지급금 등·⑨가수금 등 적수 행(사람별, 일자순) — 서식 (갑) ④ = ⑧계 − ⑨계 + 가수금_상계초과적수
+    ledger_adv, ledger_dep = [], []
+    for who, mvs in di_moves.items():
+        if mvs:
+            ledger_adv += _nb_ledger(who, [(date.fromisoformat(m["date"]), m["amount"]) for m in mvs], fs, fe)
+    for who, mvs in dep_moves.items():
+        ledger_dep += _nb_ledger(who, mvs, fs, fe, deposit=True)
     calc_ = {"사업연도": f"{fs.isoformat()}~{fe.isoformat()}", "적용순서": steps, "차입금": rows,
              "가지급금": adv_rows, "동일인별": per,
+             "업무무관자산적수": int(nonbusiness_jeoksu),
+             "가지급금적수_합계": sum(p["가지급금적수"] for p in persons.values()),
+             "가수금적수_합계": sum(p["가수금적수"] for p in persons.values()),
+             "가수금_상계초과적수": sum(max(0, p["가수금적수"] - p["가지급금적수"]) for p in persons.values()),
+             "불분명이자_합계": by[1] + by[2],
+             "적수표": {"가지급금": ledger_adv, "가수금": ledger_dep},
              "순위_근거": f"{law_order}, 시행령 제55조(채권자불분명 → 비실명 → 건설자금 → 업무무관)"}
     pointer = None
     if any(v for v in di_moves.values()):
