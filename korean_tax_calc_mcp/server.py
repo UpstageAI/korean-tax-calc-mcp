@@ -5660,7 +5660,10 @@ def special_tax_credit(
         "severe_illness: 중증질환자·희귀난치성질환자·결핵환자 여부(bool) — 2018년부터 의료비 특정지출, 2016~2017은 일반(700만원 한도). "
         "예시: [{'name':'본인','relation':'본인','age':50,'income_ok':true}, {'name':'딸','relation':'직계비속','age':16,'income_ok':true}]"
     ))],
-    expenses: Annotated[list, Field(description="[{kind, amount, person, reimbursed?}]")],
+    expenses: Annotated[list, Field(description=(
+        "[{kind, amount, person, reimbursed?}] — person은 persons의 name. "
+        "1명당 연 한도는 같은 person의 지출을 합산해 적용: 안경 50만원, 교복 50만원, 체험학습 30만원(2017~), "
+        "취학전·초중고 300만원(교복·체험학습 포함), 대학 900만원. 같은 사람의 지출은 같은 name으로 넣을 것"))],
     wage_computed_tax: Annotated[int | None, Field(description="근로소득 종합소득산출세액")] = None,
     monthly_rent_credit: WON = 0,
     donation_credit: WON = 0,
@@ -5668,7 +5671,8 @@ def special_tax_credit(
 ) -> dict:
     """근로소득자 특별세액공제(보험료·의료비·교육비)와 표준세액공제 비교. 언제: 연말정산·종합소득세 신고에서 특별세액공제와 표준세액공제 중 선택할 때.
 입력: 귀속연도 → year, 총급여액 → total_salary, 공제대상자 → persons, 지출 목록 → expenses, 근로소득 산출세액 → wage_computed_tax(선택).
-결과: 보험료·의료비·교육비 공제액·특별세액공제 합계·표준세액공제 선택·적용 공제·근거. 특별세액공제 vs 표준세액공제 비교."""
+결과: 보험료·의료비·교육비 공제액·특별세액공제 합계·표준세액공제 선택·적용 공제·근거. 특별세액공제 vs 표준세액공제 비교.
+연도별: 의료비 특정(2호) 중증질환자 등 2018~, 과세기간 개시일 현재 6세 이하 2024~, 미숙아·선천성이상아 20% 2022~. 교육비 체험학습 2017~, 대입전형료 2023~."""
     return I.special_tax_credit(
         year=year, earner_type=earner_type, total_salary=total_salary,
         persons=persons, expenses=expenses, wage_computed_tax=wage_computed_tax,

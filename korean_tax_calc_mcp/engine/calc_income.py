@@ -614,7 +614,15 @@ def special_tax_credit(
     donation_credit: int = 0,
     special_income_deduction: int = 0,
 ):
-    """근로소득자 특별세액공제(보험료·의료비·교육비)와 표준세액공제 비교."""
+    """근로소득자 특별세액공제(보험료·의료비·교육비)와 표준세액공제 비교.
+
+    연도별 한도·대상(소득세법 제59조의4, 시행령 제118조의5·제118조의6):
+      의료비 — 일반(1호) 연 700만원. 특정(2호): 본인·종료일 65세 이상·장애인(전 연도),
+        중증질환자 등(2018~), 개시일 현재 6세 이하(2024~). 미숙아·선천성이상아 20%(2022~),
+        난임 20%(2017~2021)·30%(2022~). 안경·콘택트렌즈 1명당 연 50만원, 산후조리원 출산 1회 200만원(2019~).
+      교육비 — 1명당 연 한도(같은 person 지출 합산): 취학전·초중고 300만원(교복 50만원·체험학습
+        30만원(2017~) 포함), 대학생 900만원. 대입전형료 2023~. 부양가족 소득요건 2025년까지.
+    """
     problems = []
 
     # ── 입력 검사 ──────────────────────────────────────────────────────────
@@ -665,7 +673,7 @@ def special_tax_credit(
     if not problems and vocab.rule("특별세액공제_의료비", year).get("6세이하_특정"):
         _pd = {p.get("name"): p for p in persons}
         for i, e in enumerate(expenses):
-            if e.get("kind") not in ("의료비", "미숙아·선천성이상아"):
+            if e.get("kind") not in ("의료비", "안경", "미숙아·선천성이상아"):
                 continue
             p = _pd.get(e.get("person"), {})
             if (p.get("relation") != "본인" and p.get("age") == 7
@@ -732,6 +740,18 @@ def special_tax_credit(
     일반한도_m = voc_m["일반_한도"]
     안경한도 = voc_m["안경_한도"]
 
+    def _의료비_특정대상(p):
+        """제59조의4②2호 대상자 여부.
+        본인 / 과세기간 종료일 현재 65세 이상 / 장애인 / 중증질환자·희귀난치성질환자·결핵환자(2018~,
+        2017.12.19 개정) / 과세기간 개시일 현재 6세 이하(2024~). 2016~2017 중증질환자는 1호 일반."""
+        if p.get("relation") == "본인":
+            return True
+        if voc_m.get("6세이하_특정") and _age_at_year_start(p, year) <= 6:
+            return True
+        severe = p.get("severe_illness", False) and voc_m.get("중증_특정", False)
+        return p.get("age", 0) >= 65 or p.get("disabled", False) or severe
+
+    안경_사람별 = {}
     for e in expenses:
         k = e["kind"]
         pn = e["person"]
@@ -742,26 +762,14 @@ def special_tax_credit(
             k = "의료비"
 
         if k == "의료비":
-            p = persons_dict.get(pn, {})
-            age = p.get("age", 0)
-            disabled = p.get("disabled", False)
-            # 2호 중증질환자 등은 2018년부터(2017.12.19 개정). 2016~2017은 1호 일반(700만원 한도).
-            severe = p.get("severe_illness", False) and voc_m.get("중증_특정", False)
-            is_self = p.get("relation") == "본인"
-
-            # 2호(특정): 본인 / 종료일 현재 65세 이상 / 장애인 / 중증질환자 등(2018~) / 개시일 현재 6세 이하(2024~)
-            if is_self:
-                의료비특정 += amount
-            elif voc_m.get("6세이하_특정") and _age_at_year_start(p, year) <= 6:
-                의료비특정 += amount
-            elif age >= 65 or disabled or severe:
+            if _의료비_특정대상(persons_dict.get(pn, {})):
                 의료비특정 += amount
             else:
                 의료비일반 += amount
 
         elif k == "안경":
-            # 제59조의4② 괄호: persons 목록의 모든 사람이 의료비 공제대상
-            의료비일반 += min(amount, 안경한도)
+            # 1명당 연 50만원(영 제118조의5①4호) — 사람별로 모은 뒤 아래에서 한도 적용·분류
+            안경_사람별[pn] = 안경_사람별.get(pn, 0) + amount
 
         elif k == "산후조리원":
             if not voc_m.get("산후조리", False):
@@ -781,6 +789,19 @@ def special_tax_credit(
 
         elif k == "미용성형·건강증진":
             pass  # 공제 제외
+
+    # 안경·콘택트렌즈: 기본공제대상자(나이·소득 무관) 1명당 연 50만원 한도 후, 사람에 따라 1호·2호 분류
+    의료비_한도판단 = []
+    for pn, 합 in 안경_사람별.items():
+        인정 = min(합, 안경한도)
+        if 합 > 안경한도:
+            의료비_한도판단.append({"항목": "안경", "결론": (
+                f"'{pn}' 안경·콘택트렌즈 합계 {합:,}원 → 1명당 연 {안경한도:,}원 한도로 {인정:,}원 인정"
+                "(같은 person의 지출을 합산)"), "근거": "소득세법 시행령 제118조의5①4호"})
+        if _의료비_특정대상(persons_dict.get(pn, {})):
+            의료비특정 += 인정
+        else:
+            의료비일반 += 인정
 
     # 미달액 순서로 1호→2호→3호→4호 공제대상 계산
     미달액 = max(0, 문턱 - 의료비일반)
@@ -802,6 +823,7 @@ def special_tax_credit(
     # ── 교육비 (제59조의4③) ──────────────────────────────────────────────
     교육비대상합계 = 0
     사람별 = []
+    교육비_한도판단 = []
     voc_e = vocab.rule("특별세액공제_교육비", year)
     체험할아이면 = voc_e.get("체험학습", False)
     학자금상환이면 = voc_e.get("학자금상환", False)
@@ -819,7 +841,10 @@ def special_tax_credit(
         income_ok = p.get("income_ok", True)
 
         person_total = 0
-        취학전초중고합 = 0  # 취학전+초중고+교복+체험학습 합산(한도 300만원 적용용)
+        취학전초중고합 = 0  # 취학전+초중고 (교복·체험학습은 따로 모아 1명당 한도 적용 후 300만원 한도에 합산)
+        교복합 = 0
+        체험합 = 0
+        대학합 = 0
         for e in expenses:
             if e["person"] != name:
                 continue
@@ -859,24 +884,35 @@ def special_tax_credit(
                 if kind in _교육종류:
                     person_total += amount
             elif rel in ("배우자", "직계비속", "입양자", "위탁아동", "형제자매"):
-                if kind in ("교육비_취학전", "교육비_초중고", "교복", "체험학습"):
-                    if kind == "교복":
-                        amount = min(amount, voc_e["교복_한도"])
-                    elif kind == "체험학습":
-                        if 체험할아이면:
-                            amount = min(amount, voc_e["체험학습_한도"])
-                        else:
-                            amount = 0
+                # 한도는 모두 학생 1명당 연 금액 — 항목별이 아니라 사람별로 합산한 뒤 적용
+                if kind == "교복":
+                    교복합 += amount
+                elif kind == "체험학습":
+                    if 체험할아이면:
+                        체험합 += amount
+                elif kind in ("교육비_취학전", "교육비_초중고"):
                     취학전초중고합 += amount
-                    person_total += amount
                 elif kind in ("교육비_대학", "대입전형료"):
                     if kind == "대입전형료" and not 대입전형료이면:
                         continue
-                    person_total += min(amount, 대학한도)
+                    대학합 += amount
 
-        # 취학전+초중고+교복+체험학습 합산 300만원 한도 (본인 외 대상)
-        if rel != "본인" and 취학전초중고합 > 취학전초중고한도:
-            person_total = person_total - 취학전초중고합 + 취학전초중고한도
+        if rel != "본인":
+            # 교복 1명당 연 50만원(영 제118조의6①4호), 체험학습 1명당 연 30만원(같은 항 6호, 2017~)
+            교복인정 = min(교복합, voc_e["교복_한도"])
+            체험인정 = min(체험합, voc_e["체험학습_한도"])
+            # 취학전·초중고(교복·체험학습 포함) 1명당 연 300만원, 대학생 1명당 연 900만원(법 제59조의4③1호 단서)
+            초중고인정 = min(취학전초중고합 + 교복인정 + 체험인정, 취학전초중고한도)
+            대학인정 = min(대학합, 대학한도)
+            person_total += 초중고인정 + 대학인정
+            for _항목, _합, _인정, _한도 in (("교복", 교복합, 교복인정, voc_e["교복_한도"]),
+                                             ("체험학습", 체험합, 체험인정, voc_e["체험학습_한도"]),
+                                             ("교육비_대학", 대학합, 대학인정, 대학한도)):
+                if _합 > _한도:
+                    교육비_한도판단.append({"항목": _항목, "결론": (
+                        f"'{name}' {_항목} 합계 {_합:,}원 → 1명당 연 {_한도:,}원 한도로 {_인정:,}원 인정"
+                        "(같은 person의 지출을 합산. person이 같으면 같은 사람으로 봄)"),
+                        "근거": "소득세법 제59조의4③1호 단서, 시행령 제118조의6①4·6호"})
 
         사람별.append({"name": name, "대상액": person_total, "한도": None, "공제대상": person_total})
         교육비대상합계 += person_total
@@ -903,7 +939,7 @@ def special_tax_credit(
     적용세액공제 = 항목별합계 if 선택 == "항목별" else 표준세액공제
 
     # ── 판단 목록 ──────────────────────────────────────────────────────────
-    판단 = []
+    판단 = list(교육비_한도판단) + list(의료비_한도판단)
     for e in expenses:
         k = e["kind"]
         pn = e["person"]
