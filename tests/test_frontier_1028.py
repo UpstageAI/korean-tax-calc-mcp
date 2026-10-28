@@ -114,3 +114,25 @@ def test_artwork_rules_follow_amendment_dates():
     assert a["결과"]["분리과세_기타소득금액"] == 40000000 and b["결과"]["분리과세_기타소득금액"] == 30000000
     biz = c("other_income_aggregate", {"year": 2022, "items": [{"kind": "서화골동품양도", "amount": 200000000, "business_setup": True}]})
     assert biz["결과"]["분리과세_기타소득금액"] == 0
+
+
+def test_housing_deemed_rent_three_houses_book():
+    r = c("housing_deemed_rent_income", {"year": 2025, "financial_income": 500000, "houses": [
+        {"기준시가": 500000000, "면적": 84, "보증금": 200000000}, {"기준시가": 400000000, "면적": 84, "보증금": 200000000},
+        {"기준시가": 300000000, "면적": 59, "보증금": 100000000}]})
+    assert r["결과"]["총수입금액_산입액"] == 3220000
+
+
+def test_housing_deemed_rent_two_luxury_houses_from_2026_only():
+    hs = [{"기준시가": 2000000000, "면적": 120, "보증금": 700000000}, {"기준시가": 1400000000, "면적": 100, "보증금": 600000000},
+          {"기준시가": 150000000, "면적": 35, "보증금": 50000000}]
+    r = c("housing_deemed_rent_income", {"year": 2026, "estimated": True, "rate": 0.03, "houses": hs})
+    assert r["결과"]["총수입금액_산입액"] == 18000000
+    r = c("housing_deemed_rent_income", {"year": 2025, "estimated": True, "rate": 0.03, "houses": hs})
+    assert r["결과"]["과세"] is False      # 2025년까지는 3주택 요건만
+
+
+def test_small_house_threshold_by_year():
+    hs = [{"기준시가": 250000000, "면적": 55, "보증금": 200000000}] * 2 + [{"기준시가": 500000000, "면적": 84, "보증금": 200000000}]
+    assert c("housing_deemed_rent_income", {"year": 2018, "houses": hs})["결과"]["과세"] is False   # 60㎡·3억 이하 2채 제외 → 1주택
+    assert c("housing_deemed_rent_income", {"year": 2019, "houses": hs})["결과"]["과세"] is True    # 40㎡·2억 기준 → 제외 안 됨
