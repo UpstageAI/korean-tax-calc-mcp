@@ -9270,7 +9270,9 @@ def export_workbook(
         판단목록 = (cd.get("data") or {}).get("판단", [])
         if not 판단목록:
             continue
-        if isinstance(판단목록, (str, dict)):
+        if isinstance(판단목록, dict):      # religious_income 등 {항목: 결론} 형태
+            판단목록 = [{"항목": k, "결론": v} for k, v in 판단목록.items()]
+        elif isinstance(판단목록, str):
             판단목록 = [판단목록]
         for j in 판단목록:
             if not isinstance(j, dict):  # 판단이 문장 목록인 도구(예: nonbusiness_interest_disallowance)
