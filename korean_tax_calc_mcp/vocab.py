@@ -234,3 +234,21 @@ INCOME_ADJUSTMENT_KINDS = {
     "사업용 재산세":            {"방향": "없음", "소득처분": "—",             "근거": "법 제19조(손금)"},
     "기부금 한도초과":          {"방향": "차가감 이후", "소득처분": "기타사외유출", "근거": "법 제24조"},
 }
+
+
+def basis_on(name: str, yyyymmdd: int) -> list:
+    """특정 기준일(YYYYMMDD 정수)에 맞는 근거 목록. 그날 적용 블록의 근거를 우선하고 없으면 기본 근거."""
+    data = load()
+    name = resolve(name)["이름"]
+    for item in data["항목"]:
+        if item["이름"] == name:
+            for 적용 in item.get("적용", []):
+                from_date, to_date = 적용.get("부터"), 적용.get("까지")
+                if from_date is not None and yyyymmdd < int(from_date):
+                    continue
+                if to_date is not None and yyyymmdd > int(to_date):
+                    continue
+                if 적용.get("근거"):
+                    return 적용["근거"]
+            return item.get("근거", [])
+    return []
