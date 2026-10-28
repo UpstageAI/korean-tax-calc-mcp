@@ -470,6 +470,21 @@ _주택단기_인상일 = date(2021, 6, 1)
 _지정지역_비사업용_가산일 = date(2018, 1, 1)
 
 
+def _세율_계산식(base: int, yr: int, 기본: int, 후보: list, 세액: int) -> tuple[list, list]:
+    """양도소득 세율 후보를 계산식 단계로 — 보유기간·등기·중과 판정은 후보 목록(설명)으로, 세액은 식으로."""
+    from .calc_income import income_tax_expr
+    입력 = [{"이름": "과세표준", "값": base, "설명": "양도소득 과세표준"}]
+    단계 = []
+    if any(f[3].startswith("기본세율세액") for f in 후보):
+        단계.append({"이름": "기본세율세액", "식": income_tax_expr("과세표준", yr), "값": 기본, "설명": f"제55조① 기본세율({yr}년 구간표)"})
+    for k, (라벨, 값, 근거, 식) in enumerate(후보, 1):
+        단계.append({"이름": f"후보{k}", "식": 식, "값": 값, "설명": f"{라벨} ({근거})"})
+    단계.append({"이름": "산출세액", "식": ("MAX(" + ",".join(f"후보{k}" for k in range(1, len(후보) + 1)) + ")") if len(후보) > 1 else "후보1", "값": 세액,
+               "설명": "세율 후보 중 큰 세액(제104조① 각 호 외 단서)"})
+    단계.append({"이름": "지방소득세", "식": "ROUNDDOWN(산출세액*0.1,0)", "값": int(세액 * 0.1), "설명": "산출세액의 10%"})
+    return 입력, 단계
+
+
 def capital_gains_tax_amount(base: int, asset_type: str, acquisition_date: str, transfer_date: str,
                              registered: bool, non_business_land: bool, basic_tax,
                              designated_area: bool = False, heavy_surcharge: float = 0.0,
@@ -488,42 +503,42 @@ def capital_gains_tax_amount(base: int, asset_type: str, acquisition_date: str, 
     주택 = asset_type == "주택"
     비사업용 = bool(non_business_land and asset_type == "토지")
     지정 = bool(비사업용 and designated_area and tr >= _지정지역_비사업용_가산일)
-    # 후보: (세율 표기, 세액, 근거, 세율구분 코드(별지 제84호서식 작성방법), 세율, 누진공제, 가산세율)
-    후보: list[tuple[str, int, str, str, float, int, float]] = []
+    # 후보: (세율 표기, 세액, 근거, 세율구분 코드(별지 제84호서식 작성방법), 세율, 누진공제, 가산세율, 엑셀 수식)
+    후보: list[tuple[str, int, str, str, float, int, float, str]] = []
     기본 = basic_tax(base, yr)
     한계, 누진 = 한계세율(base, yr)
     if not registered:
-        후보.append(("미등기 70%", int(base * 0.70), "소득세법 제104조①10호", "1-30", 0.70, 0, 0.0))
+        후보.append(("미등기 70%", int(base * 0.70), "소득세법 제104조①10호", "1-30", 0.70, 0, 0.0, "ROUNDDOWN(과세표준*0.7,0)"))
     else:
         if held < 1:
             if 주택:
                 r = 0.70 if tr >= _주택단기_인상일 else 0.40
                 후보.append((f"주택 1년 미만 {int(r*100)}%", int(base * r), "소득세법 제104조①3호",
-                           "1-46" if r == 0.70 else "1-40", r, 0, 0.0))
+                           "1-46" if r == 0.70 else "1-40", r, 0, 0.0, f"ROUNDDOWN(과세표준*{r},0)"))
             else:
                 후보.append(("1년 미만 50%", int(base * 0.50), "소득세법 제104조①3호",
-                           "1-38" if 지정 else ("1-36" if 비사업용 else "1-20"), 0.50, 0, 0.0))
+                           "1-38" if 지정 else ("1-36" if 비사업용 else "1-20"), 0.50, 0, 0.0, "ROUNDDOWN(과세표준*0.5,0)"))
         elif held < 2:
             if 주택:
                 if tr >= _주택단기_인상일:
-                    후보.append(("주택 1년 이상 2년 미만 60%", int(base * 0.60), "소득세법 제104조①2호", "1-39", 0.60, 0, 0.0))
+                    후보.append(("주택 1년 이상 2년 미만 60%", int(base * 0.60), "소득세법 제104조①2호", "1-39", 0.60, 0, 0.0, "ROUNDDOWN(과세표준*0.6,0)"))
                 else:
-                    후보.append(("주택 1년 이상 2년 미만 — 기본세율(2021.6.1. 전 양도)", 기본, "소득세법 제104조①1호", "1-10", 한계, 누진, 0.0))
+                    후보.append(("주택 1년 이상 2년 미만 — 기본세율(2021.6.1. 전 양도)", 기본, "소득세법 제104조①1호", "1-10", 한계, 누진, 0.0, "기본세율세액"))
             else:
                 후보.append(("1년 이상 2년 미만 40%", int(base * 0.40), "소득세법 제104조①2호",
-                           "1-37" if 지정 else ("1-35" if 비사업용 else "1-15"), 0.40, 0, 0.0))
+                           "1-37" if 지정 else ("1-35" if 비사업용 else "1-15"), 0.40, 0, 0.0, "ROUNDDOWN(과세표준*0.4,0)"))
         else:
-            후보.append(("2년 이상 보유 — 기본세율", 기본, "소득세법 제104조①1호, 제55조①", "1-10", 한계, 누진, 0.0))
+            후보.append(("2년 이상 보유 — 기본세율", 기본, "소득세법 제104조①1호, 제55조①", "1-10", 한계, 누진, 0.0, "기본세율세액"))
         if 비사업용:
-            후보.append(("비사업용 토지 — 기본세율 + 10%p", 기본 + int(base * 0.10), "소득세법 제104조①8호", "1-11", 한계, 누진, 0.10))
+            후보.append(("비사업용 토지 — 기본세율 + 10%p", 기본 + int(base * 0.10), "소득세법 제104조①8호", "1-11", 한계, 누진, 0.10, "기본세율세액+ROUNDDOWN(과세표준*0.1,0)"))
             if 지정:
                 후보.append(("지정지역 비사업용 토지 — 기본세율 + 20%p(제1항제8호 세율 + 10%p)", 기본 + int(base * 0.20), "소득세법 제104조④3호",
-                           "1-31", 한계, 누진, 0.20))
+                           "1-31", 한계, 누진, 0.20, "기본세율세액+ROUNDDOWN(과세표준*0.2,0)"))
     if heavy_surcharge and 주택:
         p = int(round(heavy_surcharge * 100))
         후보.append((f"조정대상지역 {heavy_label or '다주택'} 중과 — 기본세율 + {p}%p", 기본 + base * p // 100,
                    "소득세법 제104조⑦" + ("3호·4호" if heavy_label == "3주택 이상" else "1호·2호"),
-                   _중과_코드(heavy_label, tr, None), 한계, 누진, p / 100))
+                   _중과_코드(heavy_label, tr, None), 한계, 누진, p / 100, f"기본세율세액+ROUNDDOWN(과세표준*{p}/100,0)"))
     주의: list[str] = []
     if designated_area:
         if not (non_business_land and asset_type == "토지"):
@@ -546,6 +561,7 @@ def capital_gains_tax_amount(base: int, asset_type: str, acquisition_date: str, 
         "산출세액": 세액,
         "지방소득세": int(세액 * 0.1),
         "세율_후보": [{"세율": a, "세액": b, "근거": c} for a, b, c, *_ in 후보],
+        "_계산식": _세율_계산식(base, yr, 기본, [(x[0], x[1], x[2], x[7]) for x in 후보], 세액),
         "근거": best[2] + (", 제104조① 단서(둘 이상이면 큰 세액)" if len(후보) > 1 else ""),
         **({"주의": 주의} if 주의 else {}),
         # 서식(별지 제84호) 칸 계산용 — 호출 쪽에서 계산·계산식_입력으로 옮긴다(결과 키는 그대로)

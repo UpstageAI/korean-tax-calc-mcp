@@ -123,8 +123,16 @@ class _배분기:
     def __init__(self, pool: int):
         self.pool = pool
         self.단계: list[dict] = []
+        self.식기록: list[dict] = []    # 계산식 단계용: 단계 시작 잔액·참여 채권 남은 금액·한도·배분
+
+    def _기록(self, 단계: str, 근거: str, cs: list[_C], cap: int | None) -> dict:
+        rec = {"단계": 단계, "근거": 근거, "가용": self.pool, "한도": cap,
+               "남은": {c.i: c.남은 for c in cs if c.남은 > 0}, "참여": cs}
+        self.식기록.append(rec)
+        return rec
 
     def 안분(self, cs: list[_C], 단계: str, 근거: str, cap: int | None = None) -> int:
+        rec = self._기록(단계, 근거, cs, cap)
         avail = self.pool if cap is None else min(self.pool, cap)
         alloc = _안분(avail, cs)
         used = 0
@@ -133,12 +141,14 @@ class _배분기:
             c.give(a, 단계, 근거)
             used += a
         self.pool -= used
+        rec["배분"] = used
         self.단계.append({"단계": 단계, "참여": [c.이름 for c in cs], "배분": used, "근거": 근거})
         return used
 
     def 조세(self, cs: list[_C], 단계: str, 근거: str, cap: int | None = None) -> int:
         """조세 상호간: 압류한 조세가 교부청구 조세보다 먼저(국세기본법 제36조, 지방세기본법 제73조), 압류일 순.
         압류 없는(교부청구·참가압류) 조세끼리는 동순위 안분."""
+        rec = self._기록(단계, 근거, cs, cap)
         left = self.pool if cap is None else min(self.pool, cap)
         used_total = 0
         압류 = sorted({c.압류일 for c in cs if c.압류일})
@@ -153,6 +163,7 @@ class _배분기:
                 used_total += a
                 left -= a
         self.pool -= used_total
+        rec["배분"] = used_total
         self.단계.append({"단계": 단계, "참여": [c.이름 for c in cs], "배분": used_total, "근거": 근거,
                          "조세": [c.i for c in cs], "받은조세": [c.i for c in cs if any(x["단계"] == 단계 for x in c.내역)]})
         return used_total
@@ -184,6 +195,52 @@ def _직전보유자_한도(직전보유자: dict | None, 설정일: date) -> tu
             포함.append({"금액": int(t["금액"]), "법정기일": d.isoformat()})
     return 합, {"방법": f"시행령 제18조③1호 — 직전 보유자 보유기간 중 가장 빠른 전세권등 설정일({기준.isoformat()})보다 법정기일이 빠른 체납액 합계",
                "포함": 포함, "한도": 합}
+
+
+def _배분_계산식(매각대금: int, 집행비용: int, 배당액: int, cs: list[_C], b: _배분기, 잔여: int) -> tuple[list, list]:
+    """배분 단계별 잔액을 식으로: 단계 배분 = MIN(앞 단계 잔액, 참여 채권 요구액[, 한도]), 잔액 = 앞 잔액 − 배분.
+    순위(어느 단계에 누가 들어가는지)는 판단이라 단계 설명에 두고, 동순위 안분·⑦ 대신 변제로 정해진 채권별 금액은 값(근거 표시)으로 둔다."""
+    입력 = [{"이름": "매각대금", "값": 매각대금, "설명": "경매 매각대금·공매 매각금액"},
+            {"이름": "집행비용", "값": 집행비용, "설명": "강제집행·경매·공매 비용(국세기본법 제35조①2호)"}]
+    for c in cs:
+        입력.append({"이름": f"청구{c.i + 1}", "값": c.청구액, "설명": f"{c.이름}({c.종류}) 배분 요구액"})
+    단계 = [{"이름": "배당할금액", "식": "매각대금-집행비용", "값": 배당액, "설명": "매각대금 − 집행비용"}]
+    앞 = "배당할금액"
+    단일: dict[int, str] = {}
+    for k, rec in enumerate(b.식기록, 1):
+        참여 = [c for c in rec["참여"] if c.i in rec["남은"]]
+        요구 = sum(rec["남은"].values())
+        if 참여 and all(rec["남은"][c.i] == c.청구액 for c in 참여):
+            단계.append({"이름": f"단계{k}_요구액", "식": "+".join(f"청구{c.i + 1}" for c in 참여), "값": 요구,
+                       "설명": f"{rec['단계']} — 참여 채권 요구액 합계"})
+        else:
+            입력.append({"이름": f"단계{k}_요구액", "값": 요구,
+                       "설명": f"{rec['단계']} — 참여 채권의 남은 금액 합계(" + ", ".join(f"{c.이름} {rec['남은'][c.i]:,}" for c in 참여)
+                             + ") — 앞 단계 배분·소액임차 2분의 1 한도 반영 값"})
+        인자 = [앞, f"단계{k}_요구액"]
+        if rec["한도"] is not None:
+            입력.append({"이름": f"단계{k}_한도", "값": rec["한도"], "설명": f"{rec['단계']} 한도(직전 보유자 체납액, 시행령 제18조③)"})
+            인자.append(f"단계{k}_한도")
+        단계.append({"이름": f"단계{k}_배분", "식": f"MIN({','.join(인자)})", "값": rec["배분"],
+                   "설명": f"{rec['단계']} — {rec['근거']}"})
+        단계.append({"이름": f"잔액{k}", "식": f"{앞}-단계{k}_배분", "값": rec["가용"] - rec["배분"], "설명": f"{k}단계 뒤 남은 금액"})
+        앞 = f"잔액{k}"
+        if len(참여) == 1 and len(rec["참여"]) == 1:
+            단일.setdefault(참여[0].i, f"단계{k}_배분")
+        else:
+            for c in 참여:
+                단일[c.i] = ""            # 동순위 안분 또는 두 단계 이상 — 값으로
+    단계.append({"이름": "잔여", "식": 앞, "값": 잔여, "설명": "소유자에게 돌아가는 금액"})
+    for c in cs:
+        src = 단일.get(c.i)
+        단계수 = sum(1 for rec in b.식기록 if c.i in rec["남은"])
+        대신변제 = any(x["금액"] < 0 or "대신 변제" in x["단계"] for x in c.내역)
+        if src and 단계수 == 1 and not 대신변제:
+            단계.append({"이름": f"배분{c.i + 1}", "식": src, "값": c.받은, "설명": f"{c.이름} 배분액(단독 순위)"})
+        else:
+            입력.append({"이름": f"배분{c.i + 1}", "값": c.받은,
+                       "설명": f"{c.이름} 배분액 — " + ("; ".join(f"{x['단계']} {x['금액']:,} ({x['근거']})" for x in c.내역) or "배분 없음")})
+    return 입력, 단계
 
 
 def distribute(매각대금: int, 집행비용: int, 매각일: str, 재산종류: str, claims: list[dict],
@@ -428,6 +485,8 @@ def distribute(매각대금: int, 집행비용: int, 매각일: str, 재산종�
         항 = " + ".join(format(x["금액"], ",") for x in c.내역) or "0"
         산식.append(f"{c.이름}: {항} = {c.받은:,}")
     산식.append(f"잔여(소유자에게) = {잔여:,}")
+    계산식_입력, 계산식 = _배분_계산식(매각대금, 집행비용, 배당액, cs, b, 잔여)
     return {"결과": {"배당할_금액": 배당액, "배분": rows, "잔여": 잔여},
+            "계산식_입력": 계산식_입력, "계산식": 계산식,
             "배분_순서": [{k: v for k, v in s.items() if k not in ("조세", "받은조세")} for s in b.단계],
             "판단": 판단, "산식": 산식, "적용표": _적용표}
