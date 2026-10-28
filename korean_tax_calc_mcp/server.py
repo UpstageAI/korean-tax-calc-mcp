@@ -2765,8 +2765,13 @@ def financial_income_aggregate(year: YEAR,
             add(k, "배당", amt, "소득세법 제17조①4호, 제56조", "법인세법상 배당 소득처분 — Gross-up 대상", gu=True)
         elif k == "의제배당_잉여금자본전입":
             src, shift = it.get("source", ""), int(it.get("self_stock_shift", 0))
-            if src in ("주식발행초과금", "자본준비금", "재평가적립금"):
-                add(f"{k}({src})", "제외", amt - shift, "소득세법 제17조②2호 단서", "과세되지 않는 자본잉여금 전입 — 의제배당 아님")
+            _non, _tax, _gu_false = _bonus_share_sources()
+            if src in _non:
+                add(f"{k}({src})", "제외", amt - shift, "소득세법 제17조②2호 단서, 시행령 제27조④", "과세되지 않는 자본잉여금 전입 — 의제배당 아님")
+                if shift:
+                    add(f"{k}({src}) 자기주식 미배정 지분율 상승분", "배당", shift, "소득세법 제17조②5호", "자기주식 몫 미배정으로 다른 주주 지분 증가 — 의제배당, Gross-up 비대상", gu=False)
+            elif src in _gu_false and src != "재평가적립금_토지1%":
+                add(f"{k}({src})", "배당", amt - shift, "소득세법 제17조②2호, 제17조③", f"{src} 자본전입 — 의제배당, Gross-up 제외(제17조③)", gu=False)
                 if shift:
                     add(f"{k}({src}) 자기주식 미배정 지분율 상승분", "배당", shift, "소득세법 제17조②5호", "자기주식 몫 미배정으로 다른 주주 지분 증가 — 의제배당, Gross-up 비대상", gu=False)
             elif src == "재평가적립금_토지1%":
