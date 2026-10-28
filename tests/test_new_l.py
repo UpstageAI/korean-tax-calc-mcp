@@ -127,3 +127,13 @@ def test_order_basis_by_year():
     assert "제28조①·⑤" in r["근거"]
     r = c(T, {"loans": [{"interest": 1, "jeoksu": 1}], "year": 2019})
     assert "제28조①·③" in r["근거"]
+
+
+def test_movements_with_amount_are_not_overwritten():
+    # 금액과 movements를 함께 줘도 전액 포함이면 movements 증감 그대로: 10,000,000 × 15일(12/1~12/15) + 6,000,000 × 16일(12/16~12/31) = 246,000,000
+    adv = [{"대상": "대표이사", "이름": "대표", "사유": "업무무관대여", "금액": 10_000_000,
+            "movements": [{"일자": "2025-12-01", "증감": 10_000_000}, {"일자": "2025-12-16", "증감": -4_000_000}]}]
+    r = c(T, {"year": 2025, "fiscal_start": "2025-01-01", "fiscal_end": "2025-12-31",
+              "loans": [{"interest": 1_000_000, "jeoksu": 3_650_000_000}], "advances": adv})
+    txt = json.dumps(r, ensure_ascii=False)
+    assert "246000000" in txt.replace(",", "")

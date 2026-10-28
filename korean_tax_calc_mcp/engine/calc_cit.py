@@ -337,7 +337,8 @@ def nonbusiness_interest_judge(loans, advances=None, deposits=None, nonbusiness_
     for i, a in enumerate(advances):
         incl, excl, msg, basis = _nb_advance(i, a, fs)
         who = a.get("이름") or a.get("대상")
-        if incl is None:  # movements 그대로 포함
+        if incl is None or (a.get("movements") and incl and not excl):
+            # movements가 있고 전액 포함(제외액 0)이면 입력한 일자별 증감 그대로 — 금액으로 덮어쓰지 않는다
             mv = _nb_moves(a, None, fs, fe, f"가지급금[{i}]")
         elif incl == 0:
             mv = []
