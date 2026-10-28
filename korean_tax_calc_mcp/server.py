@@ -5649,13 +5649,15 @@ def special_tax_credit(
     earner_type: Annotated[Literal["근로", "일용근로", "근로소득없음"], Field(description="근로소득 종류")],
     total_salary: Annotated[int, Field(description="총급여액(원). 문항에 총급여액이 없으면 0이 아니라 생략 — 0이면 의료비 문턱(total_salary×문턱비율)이 0이 되어 모든 의료비가 특정지출로 분류됨")],
     persons: Annotated[list, Field(description=(
-        "[{name, relation, age, disabled?, income_ok?, severe_illness?}] — "
+        "[{name, relation, age, disabled?, income_ok?, severe_illness?, age_at_year_start?, birth_date?}] — "
         "name: 사람 표시 이름(문자열, 중복 불가). "
         "relation: 공제대상자와의 관계. 허용값: 본인·배우자·직계비속·입양자·형제자매·직계존속·위탁아동·수급자. "
         "문항 표현 그대로 '자녀'·'아들'·'딸'은 '직계비속', '부모'·'모친'·'부친'은 '직계존속'으로 적을 것. "
-        "age: 만 나이(정수). disabled: 장애인 여부(bool). "
+        "age: 과세기간 종료일(12/31) 현재 만 나이(정수). disabled: 장애인 여부(bool). "
+        "age_at_year_start: 과세기간 개시일(1/1) 현재 만 나이 — 의료비 6세 이하 특정지출(2024~)에서 age=7이면 필요, "
+        "birth_date(YYYY-MM-DD)로 대신 가능. "
         "income_ok: 연 소득금액 100만원 이하(근로소득만 있으면 총급여 500만원 이하)면 true — 문항의 '소득 없음'은 true로 입력. "
-        "severe_illness: 중증질환 여부(bool, 2018~ 의료비 특정지출 대상). "
+        "severe_illness: 중증질환자·희귀난치성질환자·결핵환자 여부(bool) — 2018년부터 의료비 특정지출, 2016~2017은 일반(700만원 한도). "
         "예시: [{'name':'본인','relation':'본인','age':50,'income_ok':true}, {'name':'딸','relation':'직계비속','age':16,'income_ok':true}]"
     ))],
     expenses: Annotated[list, Field(description="[{kind, amount, person, reimbursed?}]")],

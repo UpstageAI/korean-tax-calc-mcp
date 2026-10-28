@@ -585,6 +585,24 @@ def _is_basic_dependent(p, 기본공제대상자_map):
     return True
 
 
+def _age_at_year_start(p, year=None):
+    """과세기간 개시일(1월 1일) 현재 만 나이.
+
+    제59조의4②2호나목(2024~)·제12조3호머목2) "과세기간 개시일 현재 6세 이하" 판정용.
+    age_at_year_start가 있으면 그 값, birth_date(YYYY-MM-DD)와 year가 있으면 1월 1일 기준 계산,
+    둘 다 없으면 age(과세기간 종료일 현재 만 나이)를 그대로 쓴다 — 종료일 6세 이하면 개시일에도 6세 이하,
+    8세 이상이면 개시일에도 7세 이상이라 결론이 같다. 종료일 7세는 개시일 6세·7세가 갈리므로
+    special_tax_credit 입력 검사에서 age_at_year_start 또는 birth_date를 묻는다.
+    """
+    if p.get("age_at_year_start") is not None:
+        return int(p["age_at_year_start"])
+    bd = p.get("birth_date")
+    if bd and year:
+        by, bm, bdd = (int(x) for x in str(bd)[:10].split("-"))
+        return year - by - (1 if (bm, bdd) > (1, 1) else 0)
+    return int(p.get("age", 0))
+
+
 def special_tax_credit(
     year: int,
     earner_type: str,
@@ -643,6 +661,20 @@ def special_tax_credit(
         if reb > amt:
             problems.append(f"지출 {i+1}: reimbursed({e.get('reimbursed', 0)}) > amount({e.get('amount', 0)})")
 
+    # 6세 이하 의료비(2024~, 제59조의4②2호나목)는 과세기간 개시일 기준 — 종료일 7세는 개시일 6세·7세가 갈림
+    if not problems and vocab.rule("특별세액공제_의료비", year).get("6세이하_특정"):
+        _pd = {p.get("name"): p for p in persons}
+        for i, e in enumerate(expenses):
+            if e.get("kind") not in ("의료비", "미숙아·선천성이상아"):
+                continue
+            p = _pd.get(e.get("person"), {})
+            if (p.get("relation") != "본인" and p.get("age") == 7
+                    and p.get("age_at_year_start") is None and not p.get("birth_date")):
+                problems.append(
+                    f"지출 {i+1}: person='{p.get('name')}' age=7(과세기간 종료일 현재) — 의료비 6세 이하 특정지출"
+                    f"(제59조의4②2호나목, 2024~)은 과세기간 개시일 현재 나이로 판정. "
+                    f"age_at_year_start(1월 1일 현재 만 나이) 또는 birth_date(YYYY-MM-DD)를 넣을 것")
+
     if problems:
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": problems}
 
@@ -692,7 +724,7 @@ def special_tax_credit(
     # ── 의료비 (제59조의4②) ──────────────────────────────────────────────
     의료비일반 = 0       # 1호 후보 (일반 지출)
     의료비특정 = 0       # 2호 후보 (특정 지출)
-    의료미엄숙아 = 0     # 3호 후보 (2022~)
+    의료비미숙아 = 0     # 3호 후보 (2022~)
     의료비난임 = 0       # 4호 후보 (2022~), 3호 (2017~2021), 2호 (2016)
 
     voc_m = vocab.rule("특별세액공제_의료비", year)
@@ -705,17 +737,22 @@ def special_tax_credit(
         pn = e["person"]
         amount = max(0, e["amount"] - e.get("reimbursed", 0))
 
+        # 미숙아·선천성이상아 의료비는 2022년부터 3호(20%)로 따로 공제. 그 전에는 일반 의료비와 같이 1·2호로 분류.
+        if k == "미숙아·선천성이상아" and not voc_m.get("미숙아_율", 0):
+            k = "의료비"
+
         if k == "의료비":
             p = persons_dict.get(pn, {})
             age = p.get("age", 0)
             disabled = p.get("disabled", False)
-            severe = p.get("severe_illness", False)
+            # 2호 중증질환자 등은 2018년부터(2017.12.19 개정). 2016~2017은 1호 일반(700만원 한도).
+            severe = p.get("severe_illness", False) and voc_m.get("중증_특정", False)
             is_self = p.get("relation") == "본인"
 
-            # 2호(특정): 본인 / age ≥ 65 / 장애인 / severe_illness(2018~) / 6세 이하(2024~)
+            # 2호(특정): 본인 / 종료일 현재 65세 이상 / 장애인 / 중증질환자 등(2018~) / 개시일 현재 6세 이하(2024~)
             if is_self:
                 의료비특정 += amount
-            elif voc_m.get("6세이하_특정") and age <= 7:
+            elif voc_m.get("6세이하_특정") and _age_at_year_start(p, year) <= 6:
                 의료비특정 += amount
             elif age >= 65 or disabled or severe:
                 의료비특정 += amount
@@ -737,8 +774,7 @@ def special_tax_credit(
             의료비일반 += min(amount, voc_m["산후조리_한도"])
 
         elif k == "미숙아·선천성이상아":
-            if voc_m.get("미숙아_율", 0) > 0:
-                의료비미숙아 += amount
+            의료비미숙아 += amount
 
         elif k == "난임시술":
             의료비난임 += amount
@@ -753,8 +789,8 @@ def special_tax_credit(
     h2_target = max(0, 의료비특정 - 미달액)
     미달액 = max(0, 미달액 - 의료비특정)
 
-    h3_target = max(0, 의료미엄숙아 - 미달액)
-    미달액 = max(0, 미달액 - 의료미엄숙아)
+    h3_target = max(0, 의료비미숙아 - 미달액)
+    미달액 = max(0, 미달액 - 의료비미숙아)
 
     h4_target = max(0, 의료비난임 - 미달액)
 
@@ -872,6 +908,9 @@ def special_tax_credit(
         k = e["kind"]
         pn = e["person"]
         p = persons_dict.get(pn, {})
+        rel = p.get("relation")
+        age = p.get("age", 0)
+        disabled = p.get("disabled", False)
 
         if k == "보장성보험":
             if not 기본공제대상자.get(pn, False):
@@ -910,8 +949,19 @@ def special_tax_credit(
             판단.append({"항목": k, "결론": "미용·성형·건강증진 의료비 — 공제 제외",
                          "근거": "소득세법 시행령 제118조의5②"})
         elif k == "의료비":
-            if not 기본공제대상자.get(pn, False) and p.get("relation") not in ("본인",):
-                pass  # 의료비는 소득·나이 무관 공제대상(제59조의4② 괄호)
+            # 의료비는 소득·나이 무관 공제대상(제59조의4② 괄호)
+            if (p.get("severe_illness") and not voc_m.get("중증_특정", False) and p.get("relation") != "본인"
+                    and not (age >= 65 or disabled)):
+                판단.append({"항목": k, "결론": f"{year}년은 중증질환자 등 의료비가 특정의료비(2호)가 아님 — 2018년부터(2017.12.19 개정). 일반 의료비(1호, 연 700만원 한도)로 계산",
+                             "근거": "소득세법 제59조의4②1호(2017.12.19 개정 전)"})
+            if voc_m.get("6세이하_특정") and p.get("relation") != "본인" and _age_at_year_start(p, year) <= 6 \
+                    and not (p.get("age", 0) >= 65 or p.get("disabled") or p.get("severe_illness")):
+                판단.append({"항목": k, "결론": f"'{pn}' 과세기간 개시일 현재 {_age_at_year_start(p, year)}세(6세 이하) — 특정의료비(2호, 한도 없음)",
+                             "근거": "소득세법 제59조의4②2호나목(2024~)"})
+        elif k == "미숙아·선천성이상아":
+            if not voc_m.get("미숙아_율", 0):
+                판단.append({"항목": k, "결론": f"{year}년은 미숙아·선천성이상아 의료비 별도 공제율(20%) 전 — 일반·특정 의료비(15%)로 분류",
+                             "근거": "소득세법 제59조의4②3호(2022~)"})
         elif k == "교육비_대학원":
             if rel != "본인":
                 판단.append({"항목": k, "결론": "본인 외 대학원 교육비 — 공제 제외",
@@ -974,7 +1024,7 @@ def special_tax_credit(
                 "문턱": 문턱,
                 "일반": 의료비일반,
                 "특정": 의료비특정,
-                "미숙아": 의료미엄숙아,
+                "미숙아": 의료비미숙아,
                 "난임": 의료비난임,
                 "1호_공제대상": h1_target,
                 "2호_공제대상": h2_target,
