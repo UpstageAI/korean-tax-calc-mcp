@@ -1302,6 +1302,37 @@ def vat_bad_debt_credit(bad_debt_incl_vat: Annotated[int, Field(description="대
                "부가가치세법 제45조①")
 
 
+# ── 부가가치세 공급시기 판정(법 제15~17조, 영 제28~30조, 규칙 제17~20조) ─────────────
+@mcp.tool(annotations=CALC)
+@_guard
+def vat_supply_timing(
+    transactions: Annotated[list, Field(description=(
+        "거래 목록 [{이름?, 종류, 인도일?(재화 인도·이용가능일, 용역은 완료일), 대가?: [{약정일, 금액, 구분?('계약금'|'중도금'|'잔금')}], "
+        "공급가액?(대가 목록이 없을 때), 선적일?(수출), 확정일?(조건부·기한부 판매), 국고_선금급?(bool), "
+        "세금계산서?: [{발급일, 금액?, 수령일?(대가 받은 날), 청구지급시기_별도기재?(bool), 지급시기?(계약서상 지급일), 공급받는자_조기환급?(bool)}]}]. "
+        "종류: 일반판매·할부·장기할부·중간지급조건부·완성도기준지급·계속적공급(전력 등)·조건부판매·수출, 용역·용역_장기할부·용역_중간지급조건부·용역_완성도기준지급·용역_계속적공급"))],
+    business: Annotated[Literal["일반", "간이"], Field(description="사업자 구분 — '일반'(과세기간 1·2기, 예정신고기간 1.1~3.31·7.1~9.30) 또는 '간이'(과세기간 1년, 예정부과기간 1.1~6.30)")] = "일반",
+    period: Annotated[str | None, Field(description="조회 기간(선택). 일반: 'YYYY-1기 예정'·'YYYY-1기 확정'(4.1~6.30)·'YYYY-2기'(과세기간 전체). 간이: 'YYYY' 또는 'YYYY 예정부과'")] = None,
+) -> dict:
+    """부가가치세 공급시기 판정 — 거래별 공급시기·판정 사유와 예정신고기간·과세기간별 과세표준(공급가액) 합계.
+    언제: 장기할부·중간지급조건부·완성도기준지급·계속적 공급·용역 완료·수출·세금계산서 선발급 거래가 어느 과세기간(예정/확정)에 들어가는지 정할 때. 공급 2016-01-01~2026-12-31 지원.
+    입력: 거래 목록(종류·인도일/완료일·대가 지급 약정·세금계산서 발급일과 대가 수령일) → transactions, 사업자 구분('일반'|'간이') → business, 조회 기간 → period(선택).
+    판정: 장기할부 = 2회 이상 분할 + 인도(완료)일 다음 날부터 최종 지급기일까지 1년 이상(규칙 제17·19조) → 각 약정일.
+      중간지급조건부 = 계약금 약정일 다음 날부터 인도(완료)일까지 6개월 이상 + 기간 안 계약금 외 분할(규칙 제18·20조) → 각 약정일, 인도(완료)일 이후 약정분은 인도(완료)일(영 제28조③·제29조① 단서).
+      기간은 민법 제157조·제160조(초일 불산입, 해당일 전일 만료, 해당일 없으면 말일). 요건 미충족이면 인도(완료)일 일괄.
+      선발급 특례(법 제17조) 공급분 연도별 — 2017까지 ①은 '동시에' 발급, ③은 청구·지급시기 별도기재+30일 모두 / 2018 ③ 별도기재+(30일 또는 과세기간 내 지급 확인) /
+      2019~2021 ③ 30일 약정 또는 과세기간 내 공급시기 도래+지급 확인 / 2022~ 지급 확인 요건 삭제(부칙 제6조). 장기할부·계속적 공급은 ④(영 제30조) 발급일.
+    미지원(입력 확인 필요): 상품권·가공·무인판매기·보세구역·위탁판매·간주공급, 선적일 외 수출(중계무역·외국인도 등), 부동산 임대·선불 연회비(영 제29조②), 외국항행용역, 폐업일 의제, 공급시기 후 발급 가산세.
+    결과: 기간별_과세표준·조회기간_과세표준, 거래별 공급시기·금액·신고기간·사유·근거, 판단(요건 경계 계산)."""
+    from .engine import calc_vat_timing as VT
+    try:
+        r, rows, 판단 = VT.judge(transactions, business, period)
+    except VT.InputError as e:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [str(e)]}
+    return _ok(r, "부가가치세법 제15조·제16조·제17조, 시행령 제28조·제29조·제30조, 시행규칙 제17조~제20조, 제5조①·제48조①·제66조①",
+               거래별=rows, 판단=판단)
+
+
 # ───────── 0.2 추가: 근로·원천 ─────────
 @mcp.tool(annotations=CALC)
 @_guard
@@ -8977,6 +9008,9 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "면세전용": ["vat_exempt_use_deemed_supply"], "간주공급": ["vat_deemed_supply_items", "vat_exempt_use_deemed_supply"],
     "의제매입": ["vat_deemed_input_credit"], "농산물": ["vat_deemed_input_credit"], "간이과세": ["simplified_vat_return", "vat_simplified_taxpayer"],
     "신용카드매출": ["vat_card_sales_credit"], "일괄공급": ["bundled_supply_split"], "토지 건물 안분": ["bundled_supply_split"],
+    "공급시기": ["vat_supply_timing"], "장기할부": ["vat_supply_timing"], "중간지급조건부": ["vat_supply_timing"],
+    "완성도기준": ["vat_supply_timing"], "선발급": ["vat_supply_timing"], "세금계산서 먼저": ["vat_supply_timing"],
+    "예정신고 귀속": ["vat_supply_timing"], "과세기간 귀속": ["vat_supply_timing"],
     "비거주자": ["nonresident_withholding"], "원천징수": ["withholding_tax", "nonresident_withholding", "daily_worker_withholding"],
     "일용": ["daily_worker_withholding"], "추계": ["estimated_business_income"], "경비율": ["estimated_business_income"],
     "인적공제": ["personal_deduction"], "자녀세액공제": ["child_tax_credit"], "자녀공제": ["child_tax_credit", "personal_deduction", "inheritance_tax"],
