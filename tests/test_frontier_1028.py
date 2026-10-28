@@ -103,3 +103,14 @@ def test_artwork_expense_ratio_tiers():
     assert r["결과"]["분리과세_기타소득금액"] == 200000000 - (90000000 + 80000000)
     r = c("other_income_aggregate", {"year": 2025, "items": [{"kind": "서화골동품양도", "amount": 200000000, "held_years": 12}]})
     assert r["결과"]["분리과세_기타소득금액"] == 20000000
+
+
+def test_artwork_rules_follow_amendment_dates():
+    old = c("other_income_aggregate", {"year": 2019, "items": [{"kind": "서화골동품양도", "amount": 200000000}]})
+    assert old["결과"]["분리과세_기타소득금액"] == 40000000            # 2019: 일률 80%
+    assert "입력 확인 필요" in json.dumps(c("other_income_aggregate", {"year": 2020, "items": [{"kind": "서화골동품양도", "amount": 200000000}]}), ensure_ascii=False)
+    a = c("other_income_aggregate", {"year": 2020, "items": [{"kind": "서화골동품양도", "amount": 200000000, "transfer_date": "2020-02-10"}]})
+    b = c("other_income_aggregate", {"year": 2020, "items": [{"kind": "서화골동품양도", "amount": 200000000, "transfer_date": "2020-02-11"}]})
+    assert a["결과"]["분리과세_기타소득금액"] == 40000000 and b["결과"]["분리과세_기타소득금액"] == 30000000
+    biz = c("other_income_aggregate", {"year": 2022, "items": [{"kind": "서화골동품양도", "amount": 200000000, "business_setup": True}]})
+    assert biz["결과"]["분리과세_기타소득금액"] == 0
