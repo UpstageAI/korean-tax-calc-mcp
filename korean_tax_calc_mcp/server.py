@@ -2952,6 +2952,149 @@ def financial_income_aggregate(year: YEAR,
                계산식=계산식)
 
 
+# ── 배당세액공제(소득세법 제56조)와 비교과세(제62조) ─────────────────────────────
+# 연도표(조문·부칙 대조, Claude 10-28):
+#   · 제56조①④(배당세액공제 = Gross-up 금액, 대상은 2천만원 초과 배당), 제15조2호 후단(공제 후 세액이
+#     제62조2호 금액보다 작아지지 않게 — 곧 공제 한도 = 산출세액 − 제62조2호 금액): 2016~2026 문언 같음.
+#   · Gross-up 가산율: 11%(2016~2023), 10%(2024~) — financial_income_aggregate와 같은 어휘 값을 쓴다.
+#   · 제62조2호 가목 단서(원천징수되지 않은 이자소득등의 세율):
+#       2016 — "제127조에 따라 원천징수되지 아니하는 소득에 대해서는 제129조제1항제1호라목의 세율"(14%) 하나.
+#       2017~ — 2)·3)으로 나뉨: 원천징수되지 않은 비영업대금의 이익(제16조①11호)은 제129조①1호나목(25%),
+#               그 밖은 라목(14%). 법률 제14389호(2016.12.20) 부칙 제1조(2017.1.1. 시행)·
+#               제2조①("이 법 시행 이후 발생하는 소득분부터 적용") → 2017 귀속부터.
+#   · 비영업대금 중 온라인투자연계금융업자 경유 이자 14%: 엔진 I.withholding_rate("온투업이자", year) 연도표를 그대로 쓴다.
+#   · 2016~2018 제62조1호 나목 단서·2호 가목 1)(조세특례제한법 제104조의27 배당)은 2018.12.31. 삭제 — 지원하지 않음.
+_DTC_비영업대금 = ("비영업대금이익", "소비대차전환이자")   # 제16조①11호 (소비대차전환이자도 같은 호, 시행령 제26조③)
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def dividend_tax_credit(year: YEAR,
+                        items: Annotated[list | None, Field(description="금융소득 항목 — financial_income_aggregate의 items와 같은 형식 [{kind, amount, withheld?, ...}]. 비영업대금이익·소비대차전환이자는 온라인투자연계금융업자 경유면 p2p=true. items를 주면 아래 숫자 입력(grossup·financial_14·financial_25·partner_dividend)은 비움")] = None,
+                        other_base: Annotated[int | None, Field(description="이자소득등(금융소득, Gross-up 포함)을 뺀 나머지 종합소득 과세표준(원) — 출자공동사업자배당은 여기에 포함. taxable_base와 둘 중 하나만", ge=0)] = None,
+                        taxable_base: Annotated[int | None, Field(description="종합소득 과세표준 전체(원, 금융소득·Gross-up 포함). other_base 대신 줄 때만", ge=0)] = None,
+                        grossup: Annotated[int | None, Field(description="숫자 입력: Gross-up 금액(원, financial_income_aggregate 결과 'Gross-up')", ge=0)] = None,
+                        financial_14: Annotated[int | None, Field(description="숫자 입력: 종합과세되는 이자소득등 중 14% 적용분(원, Gross-up 제외, 출자공동사업자배당 제외)", ge=0)] = None,
+                        financial_25: Annotated[int | None, Field(description="숫자 입력: 종합과세되는 이자소득등 중 25% 적용분(원, 비영업대금의 이익)", ge=0)] = None,
+                        partner_dividend: Annotated[int | None, Field(description="숫자 입력: 출자공동사업자 배당소득금액(원, other_base 안에 들어 있는 금액)", ge=0)] = None) -> dict:
+    """배당세액공제와 금융소득 종합과세 비교산출세액(소득세법 제56조·제62조·제15조2호).
+언제: 금융소득이 2천만원을 넘어 종합과세될 때 일반산출세액(제62조1호)·비교산출세액(제62조2호)·종합소득 산출세액·배당세액공제액(Gross-up과 한도 중 적은 금액)을 구할 때.
+입력: 귀속연도(2016~2026) → year, 금융소득 항목(financial_income_aggregate 형식) → items 또는 그 결과 숫자(grossup, financial_14, financial_25, partner_dividend), 금융소득을 뺀 종합소득 과세표준 → other_base(또는 과세표준 전체 → taxable_base).
+결과: 일반산출세액(1호: (이자소득등 − 2천만 + 다른 과세표준) × 기본세율 + 2천만 × 14%), 비교산출세액(2호: 이자소득등(Gross-up 제외) × 원천징수세율 + 다른 과세표준 × 기본세율, 출자공동사업자배당 비교세액 포함), 종합소득 산출세액(큰 금액), 배당세액공제 한도(산출세액 − 비교산출세액), 배당세액공제액 = min(Gross-up, 한도), 공제 후 세액.
+연도: 2016~2026. Gross-up 가산율 11%(2016~2023)·10%(2024~). 원천징수되지 않은 비영업대금 이익은 2016년 14%, 2017년부터 25%(제62조2호 가목, 법률 제14389호 부칙 제2조①).
+지원하지 않음(입력 확인 필요로 멈춤): 종합소득공제가 금융소득 외 소득보다 커서 다른 과세표준이 음수(또는 출자공동사업자배당보다 작음)인 경우, 조세특례제한법 제104조의27 배당(2016~2018), 2025년 이후 Gross-up 제외 사유 개정분 판정(Gross-up은 financial_income_aggregate 판정 그대로), 외국납부세액공제 등 다른 세액공제·감면(제15조2호 — 이 도구 결과 뒤에 적용), 비거주자."""
+    M = 20_000_000
+    숫자입력 = {"grossup": grossup, "financial_14": financial_14, "financial_25": financial_25, "partner_dividend": partner_dividend}
+    문제 = []
+    if items is not None and any(v is not None for v in 숫자입력.values()):
+        문제.append("items와 숫자 입력(grossup·financial_14·financial_25·partner_dividend)을 함께 줌 — 한쪽만")
+    if items is None and all(v is None for v in 숫자입력.values()):
+        문제.append("금융소득 입력 없음 — items 또는 grossup·financial_14·financial_25·partner_dividend 필요")
+    if (other_base is None) == (taxable_base is None):
+        문제.append("other_base(금융소득 뺀 과세표준)와 taxable_base(과세표준 전체) 중 하나만 입력")
+    if 문제:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제,
+                "예시": {"year": 2024, "items": [{"kind": "예금이자", "amount": 10_000_000}, {"kind": "상장법인현금배당", "amount": 40_000_000}], "other_base": 50_000_000}}
+
+    rate_14 = I.withholding_rate("이자", year)          # 제129조①1호라목·2호나목
+    rate_25 = I.withholding_rate("비영업대금", year)     # 제129조①1호나목
+    판단 = []
+    if items is not None:
+        import copy
+        its = copy.deepcopy(items)
+        p2p_flags = []
+        for i, it in enumerate(its):
+            if not isinstance(it, dict):
+                return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"항목 {i+1}: {{kind, amount, ...}} 형식이어야 함"]}
+            p = it.pop("p2p", None)
+            if p is not None and it.get("kind") not in _DTC_비영업대금:
+                return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"항목 {i+1}({it.get('kind')}): p2p는 비영업대금이익·소비대차전환이자에만"]}
+            p2p_flags.append(bool(p))
+        agg = financial_income_aggregate.__wrapped__(year, copy.deepcopy(its))
+        if "error" in agg:
+            return agg
+        종합과세 = not agg["결과"]["분리과세"]
+        gu = agg["결과"]["Gross-up"]
+        partner = agg["계산"]["출자공동사업자배당(always 포함)"]
+        f14 = f25 = 0
+        for i, it in enumerate(its):
+            k = it.get("kind")
+            if k == "출자공동사업자배당":
+                continue
+            withheld = it.get("withheld", True) is not False
+            if not 종합과세 and withheld:
+                continue          # 2천만원 이하 분리과세 — 원천징수된 것은 과세표준에 없음
+            one = financial_income_aggregate.__wrapped__(year, [copy.deepcopy(it)])["계산"]
+            amt = one["이자"] + one["배당(Gross-up 비대상)"] + one["배당(Gross-up 대상)"]
+            if not amt:
+                continue
+            if k in _DTC_비영업대금:
+                if p2p_flags[i]:
+                    r, why = I.withholding_rate("온투업이자", year), "온라인투자연계금융업자 경유 이자 — 제129조①1호나목 단서"
+                elif not withheld and year <= 2016:
+                    r, why = rate_14, "원천징수되지 않은 소득 — 2016년 제62조2호 가목 단서: 제129조①1호라목 14%"
+                else:
+                    r, why = rate_25, "비영업대금의 이익 — 제129조①1호나목" + (" (원천징수되지 않음: 제62조2호 가목 2), 2017년부터)" if not withheld else "")
+            else:
+                r, why = rate_14, "제129조①1호라목·2호나목" + (" (원천징수되지 않음: 제62조2호 가목 단서)" if not withheld else "")
+            if r == rate_25:
+                f25 += amt
+            else:
+                f14 += amt
+            판단.append({"항목": k, "금액": amt, "세율": r, "이유": why})
+        F = agg["결과"]["이자소득금액"] + agg["결과"]["배당소득금액"] - partner   # 과세표준에 들어간 이자소득등(Gross-up 포함)
+        출처 = "items → financial_income_aggregate"
+    else:
+        gu, f14, f25, partner = grossup or 0, financial_14 or 0, financial_25 or 0, partner_dividend or 0
+        종합과세 = f14 + f25 > M
+        if gu and not 종합과세:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"이자소득등(Gross-up 제외) {f14 + f25:,}원이 2천만원 이하인데 Gross-up {gu:,}원 — Gross-up은 2천만원 초과 배당에만 생김(제56조④, 제17조③)"]}
+        F = f14 + f25 + gu
+        출처 = "숫자 입력"
+
+    if other_base is None:
+        other_base = taxable_base - F
+        if other_base < 0:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"과세표준 {taxable_base:,}원 < 이자소득등(Gross-up 포함) {F:,}원 — 종합소득공제가 금융소득 외 소득보다 큰 경우는 지원하지 않음(다른 과세표준을 음수로 둘지 판단 필요)"]}
+    if partner > other_base:
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"출자공동사업자배당 {partner:,}원이 다른 과세표준 {other_base:,}원보다 큼 — 종합소득공제를 어디서 뺐는지 판단이 필요해 지원하지 않음(제62조2호 나목 단서)"]}
+
+    # 제62조2호: 가목(이자소득등 × 원천징수세율) + 나목(다른 종합소득 산출세액, 출자공동사업자배당 비교세액 하한)
+    가목 = int(f14 * rate_14) + int(f25 * rate_25)
+    나목_본문 = I.income_tax(other_base, year)
+    나목_비교 = int(partner * rate_14) + I.income_tax(other_base - partner, year) if partner else 0   # 제129조①1호라목 14%
+    나목 = max(나목_본문, 나목_비교)
+    비교산출 = 가목 + 나목
+    if 종합과세:
+        # 제62조1호: (이자소득등 − 2천만 + 다른 종합소득) × 기본세율 + 2천만 × 14%
+        일반산출 = I.income_tax(F - M + other_base, year) + int(M * rate_14)
+        산출 = max(일반산출, 비교산출)
+        방식 = "1호(종합과세)" if 일반산출 >= 비교산출 else "2호(비교과세)"
+    else:
+        일반산출 = None
+        산출 = 비교산출
+        방식 = "2호(2천만원 이하 — 제62조 본문 후단)"
+    한도 = max(0, 산출 - 비교산출)
+    공제 = min(gu, 한도)
+    rate_gu = vocab.rule("상장법인현금배당", year).get("Gross-up가산율", 0.1)
+    return _ok({"일반산출세액": 일반산출, "비교산출세액": 비교산출, "종합소득산출세액": 산출, "적용": 방식,
+                "Gross-up": gu, "배당세액공제한도": 한도, "배당세액공제액": 공제, "공제후세액": 산출 - 공제},
+               "소득세법 제56조①④·제62조·제15조2호, 시행령 제116조의2",
+               계산={"입력": 출처, "종합과세": 종합과세, "이자소득등(Gross-up 포함)": F, "다른 종합소득 과세표준": other_base,
+                     "종합소득 과세표준": F + other_base, "Gross-up 가산율": rate_gu,
+                     "2호가목_14%대상": f14, "2호가목_25%대상": f25, "2호가목": 가목,
+                     "2호나목_본문": 나목_본문, "2호나목_출자공동비교세액": 나목_비교, "2호나목": 나목,
+                     "출자공동사업자배당": partner},
+               판단=판단,
+               산식="일반산출세액 = 기본세율(이자소득등 − 2천만 + 다른 과세표준) + 2천만 × 14%(제62조1호). "
+                    "비교산출세액 = 이자소득등(Gross-up 제외) × 원천징수세율 + MAX(기본세율(다른 과세표준), 출자공동배당 × 14% + 기본세율(다른 과세표준 − 출자공동배당))(제62조2호). "
+                    "산출세액 = MAX(일반, 비교)(2천만원 이하면 비교). 배당세액공제 = MIN(Gross-up, 산출세액 − 비교산출세액)(제56조, 제15조2호 후단).",
+               주의="외국납부세액공제 등 다른 세액공제·감면은 공제후세액에서 이어서 적용(제15조2호). 2025년 이후 Gross-up 제외 사유 개정은 이 도구에서 따로 판정하지 않음.")
+
+
 def _기타소득_분리_원천징수(소득: int, rule: dict) -> tuple:
     """복권·승마투표권·슬롯머신 등(제14조③8호라목·마목) 원천징수세액: 소득금액 3억원 이하 20%, 초과분 30%(제129조①6호가목·라목)."""
     기준 = rule.get("고율기준금액")
@@ -8111,6 +8254,7 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "증여세": ["gift_tax", "inheritance_gift_valuation"], "재산평가": ["inheritance_gift_valuation"], "시가": ["inheritance_gift_valuation"],
     "무상주": ["deemed_dividend_bonus_shares"], "감자": ["deemed_dividend_capital_reduction"], "의제배당": ["deemed_dividend_bonus_shares", "deemed_dividend_capital_reduction"],
     "금융소득": ["financial_income_aggregate"], "그로스업": ["financial_income_aggregate"], "gross-up": ["financial_income_aggregate"],
+    "배당세액공제": ["dividend_tax_credit"], "비교산출세액": ["dividend_tax_credit"], "비교과세": ["dividend_tax_credit"], "금융소득 종합과세 산출세액": ["dividend_tax_credit", "financial_income_aggregate"],
     "결손금": ["income_loss_offset", "loss_carryforward_limit"], "이월결손금": ["loss_carryforward_limit", "income_loss_offset"],
     "연금저축": ["pension_account_withdrawal", "pension_income"], "연금수령한도": ["pension_account_withdrawal"], "IRP": ["pension_account_withdrawal"],
     "퇴직금": ["retirement_income_tax", "retirement_allowance_adjustment"], "퇴직소득": ["retirement_income_tax"],
