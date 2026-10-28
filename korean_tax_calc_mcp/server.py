@@ -4,6 +4,7 @@
 결과마다 근거 조문을 붙인다. 근거 원문은 korean-tax-mcp(law_article)로 확인한다.
 """
 import asyncio
+import calendar
 import functools
 import math
 import os
@@ -5662,6 +5663,90 @@ def capital_gains_tax(base: Annotated[int, Field(description="양도소득 과�
     return _ok(r, 근거)
 
 
+# ── 주택 임대 보증금 간주임대료(소득세법 제25조①, 시행령 제53조) ─────────────────
+def _소형주택_제외기준(year: int) -> tuple[int, int] | None:
+    """주택 수에서 빼는 소형주택 기준(면적㎡, 기준시가) — 제25조① 단서 괄호, 연도별."""
+    if year <= 2016:
+        return (85, 300_000_000)
+    if year <= 2018:
+        return (60, 300_000_000)
+    if year <= 2026:
+        return (40, 200_000_000)
+    return None
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def housing_deemed_rent_income(
+    year: YEAR,
+    houses: Annotated[list, Field(description=(
+        "소유 주택 전부 [{이름?, 기준시가(원), 면적(㎡, 주거 전용), 보증금(원, 임대 안 하면 0), 일수?(보증금 받은 일수, 기본 그 해 일수)}] — "
+        "임대하지 않는 주택도 주택 수 판정에 넣는다(부부 합산 등 주택 수 계산은 시행령 제8조의2 — 합산한 목록을 넣을 것)"))],
+    financial_income: Annotated[int, Field(description="임대사업 부분에서 생긴 수입이자·할인료·배당금(장부로 보증금 운용이 확인되는 것, 원). 추계면 무시", ge=0)] = 0,
+    estimated: Annotated[bool, Field(description="추계신고·결정이면 True — 금융수익을 빼지 않음(시행령 제53조④)")] = False,
+    rate: Annotated[float | None, Field(description="정기예금이자율(소수). 생략 시 연도표(소득세법 시행규칙 제23조, 부가·법인 간주임대료와 같은 율)")] = None,
+) -> dict:
+    """주택 임대 보증금 간주임대료 — 개인 사업소득 총수입금액 산입액(소득세법 제25조①, 시행령 제53조③④).
+    언제: 개인이 주택을 전세·보증금으로 임대할 때 종합소득세(사업소득) 간주임대료를 계산한다. 부가가치세 간주임대료는 vat_deemed_rent, 법인은 corporate_deemed_rent_income.
+    입력: 귀속연도 → year, 소유 주택 전부(기준시가·면적·보증금·일수) → houses, 임대 금융수익 → financial_income, 추계 여부 → estimated, 정기예금이자율 → rate(생략 시 연도표).
+    판정(연도별): 3주택 이상 + 보증금 합계 3억 초과(전 기간) / 2026~: 2주택(기준시가 12억 이하 주택은 주택 수 제외) + 보증금 합계 12억 초과.
+      소형주택(면적·기준시가 기준 이하)은 주택 수에서 뺀다 — 2016 85㎡·3억, 2017~2018 60㎡·3억, 2019~2026 40㎡·2억.
+    산식: (보증금 − 3억, 적수가 큰 주택부터 차감)의 적수 × 60% × 1/365(윤년 366) × 정기예금이자율 − 금융수익(추계면 빼지 않음). 0보다 작으면 0.
+    결과: 과세 여부·주택 수(제외 사유)·총수입금액 산입액·주택별 적수·근거."""
+    if not houses or not all(isinstance(h, dict) for h in houses):
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["houses는 [{기준시가, 면적, 보증금, 일수?}] 목록"]}
+    days_in_year = 366 if calendar.isleap(year) else 365
+    r = rate if rate is not None else V.DEEMED_RENT_RATE.get(year)
+    if r is None:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"{year}년 정기예금이자율 연도표 없음 — rate 입력"]}
+    소형 = _소형주택_제외기준(year)
+    판단, 대상 = [], []
+    for i, h in enumerate(houses):
+        nm = h.get("이름") or f"주택{i + 1}"
+        price, area, dep = int(h.get("기준시가", 0)), float(h.get("면적", 0) or 0), int(h.get("보증금", 0) or 0)
+        days = int(h.get("일수", days_in_year) or days_in_year)
+        if 소형 and area and area <= 소형[0] and price <= 소형[1]:
+            판단.append({"항목": nm, "결론": f"소형주택 — 주택 수·보증금 합계에서 제외({소형[0]}㎡ 이하·기준시가 {소형[1]:,}원 이하)",
+                       "근거": "소득세법 제25조① 단서 괄호"})
+            continue
+        대상.append({"이름": nm, "기준시가": price, "보증금": dep, "일수": days})
+    주택수 = len(대상)
+    보증금합계 = sum(h["보증금"] for h in 대상)
+    과세, 사유 = False, ""
+    if 주택수 >= 3 and 보증금합계 > 300_000_000:
+        과세, 사유 = True, f"{주택수}주택, 보증금 합계 {보증금합계:,}원 > 3억 (제25조①1호)"
+    elif year >= 2026:
+        고가 = [h for h in 대상 if h["기준시가"] > 1_200_000_000]
+        고가보증금 = sum(h["보증금"] for h in 고가)
+        if len(고가) >= 2 and 고가보증금 > 1_200_000_000:
+            과세, 사유 = True, f"기준시가 12억 초과 {len(고가)}주택, 보증금 합계 {고가보증금:,}원 > 12억 (제25조①2호, 시행령 제53조①, 2026 과세기간부터)"
+            대상 = 고가
+    if not 과세:
+        why = f"주택 수 {주택수}(소형 제외), 보증금 합계 {보증금합계:,}원 — 3주택 이상·3억 초과" + (" 또는 기준시가 12억 초과 2주택·12억 초과" if year >= 2026 else "") + " 요건 미충족"
+        return _ok({"과세": False, "총수입금액_산입액": 0, "주택_수": 주택수}, "소득세법 제25조①",
+                   판단=판단 + [{"항목": "간주임대료 과세 여부", "결론": why, "근거": "소득세법 제25조①"}])
+    남은공제 = 300_000_000
+    적수합 = 0
+    계산 = []
+    for h in sorted(대상, key=lambda x: -x["보증금"] * x["일수"]):
+        차감 = min(h["보증금"], 남은공제)
+        남은공제 -= 차감
+        적수 = (h["보증금"] - 차감) * h["일수"]
+        적수합 += 적수
+        계산.append({"주택": h["이름"], "보증금": h["보증금"], "3억_차감": 차감, "일수": h["일수"], "적수": 적수})
+    전 = int(적수합 * 0.6 / days_in_year * r)
+    금융 = 0 if estimated else financial_income
+    산입액 = max(0, 전 - 금융)
+    판단.append({"항목": "간주임대료 과세 여부", "결론": "과세 — " + 사유, "근거": "소득세법 제25조①"})
+    판단.append({"항목": "금융수익 차감", "결론": "추계 — 빼지 않음(시행령 제53조④)" if estimated else f"{금융:,}원 차감(시행령 제53조③1호)",
+               "근거": "소득세법 시행령 제53조③④"})
+    return _ok({"과세": True, "총수입금액_산입액": 산입액, "주택_수": len(대상), "정기예금이자율": r},
+               "소득세법 제25조①, 시행령 제53조③1호·④1호",
+               계산={"주택별": 계산, "적수_합계": 적수합, "금융수익_차감_전": 전, "연_일수": days_in_year},
+               판단=판단,
+               산식=f"(보증금 − 3억, 적수 큰 주택부터)의 적수 {적수합:,} × 60% ÷ {days_in_year} × {r} = {전:,}원 − 금융수익 {금융:,}원 = {산입액:,}원")
+
+
 # ── 결손금·이월결손금 공제(소득세법 제45조) ──────────────────────────────────────
 @mcp.tool(annotations=CALC)
 @_guard
@@ -7795,7 +7880,8 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "연말정산": ["wage_income_tax", "special_tax_credit", "personal_deduction", "earned_income_gross_pay"],
     "월정액급여": ["earned_income_gross_pay"], "비과세 근로소득": ["earned_income_gross_pay"], "식대": ["earned_income_gross_pay"],
     "가지급금": ["nonbusiness_interest_disallowance", "deemed_interest"], "업무무관": ["nonbusiness_interest_disallowance"],
-    "인정이자": ["deemed_interest"], "간주임대료": ["vat_deemed_rent", "corporate_deemed_rent_income"],
+    "인정이자": ["deemed_interest"], "간주임대료": ["housing_deemed_rent_income", "vat_deemed_rent", "corporate_deemed_rent_income"],
+    "주택 임대 보증금": ["housing_deemed_rent_income"], "전세 보증금 소득세": ["housing_deemed_rent_income"], "주택임대": ["housing_deemed_rent_income"],
     "임대보증금": ["corporate_deemed_rent_income", "vat_deemed_rent"], "상속세": ["inheritance_tax", "inheritance_gift_valuation"],
     "증여세": ["gift_tax", "inheritance_gift_valuation"], "재산평가": ["inheritance_gift_valuation"], "시가": ["inheritance_gift_valuation"],
     "무상주": ["deemed_dividend_bonus_shares"], "감자": ["deemed_dividend_capital_reduction"], "의제배당": ["deemed_dividend_bonus_shares", "deemed_dividend_capital_reduction"],
