@@ -55,7 +55,7 @@ def test_invention_bonus_exempt_limit_without_employment_use():  # 재직 중 �
 
 
 def test_expense_rate_follows_year():  # 영 제87조 1호의2: 2018 이전 70%, 2019 이후 60%
-    r18 = c("other_income_aggregate", {"year": 2018, "items": [{"kind": "일시적인적용역", "amount": 4_000_000}]})
+    r18 = c("other_income_aggregate", {"year": 2018, "items": [{"kind": "일시적인적용역", "amount": 4_000_000, "receipt_date": "2018-04-01"}]})  # 2018은 받은 날 필요(10-28)
     r19 = c("other_income_aggregate", {"year": 2019, "items": [{"kind": "일시적인적용역", "amount": 4_000_000}]})
     assert by_kind(r18)["일시적인적용역"]["소득금액"] == 1_200_000
     assert by_kind(r19)["일시적인적용역"]["소득금액"] == 1_600_000

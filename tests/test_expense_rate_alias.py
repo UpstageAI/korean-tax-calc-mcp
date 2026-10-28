@@ -11,9 +11,10 @@ def test_other_income_expense_rate_by_year():
     # 소득세법 시행령 제87조: 2018.3.31까지 1호(100분의 80), 2018.4.1부터 1호의2(100분의 70), 2019년부터 100분의 60
     f = _f("other_income_aggregate")
     for year, income in ((2017, 600_000), (2018, 900_000), (2019, 1_200_000)):
-        r = f(year=year, items=[{"kind": "일시적인적용역", "amount": 3_000_000}])
+        it = {"kind": "일시적인적용역", "amount": 3_000_000, **({"receipt_date": "2018-04-01"} if year == 2018 else {})}
+        r = f(year=year, items=[it])
         assert r["항목별"][0]["소득금액"] == income, year
-    r = f(year=2018, items=[{"kind": "일시적인적용역", "amount": 3_000_000}])
+    r = f(year=2018, items=[{"kind": "일시적인적용역", "amount": 3_000_000, "receipt_date": "2018-04-01"}])
     assert any("2018.3.31" in x for x in r["산식"])
 
 

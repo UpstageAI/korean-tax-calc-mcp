@@ -312,10 +312,10 @@ _도구별_필수필드 = {
         "적격": {"필요": ["amount"]},
     },
     "other_income_aggregate": {
-        "산업재산권대여": {"필요": ["amount"], "허용": ["actual_cost", "actual_expense"]},
-        "공익사업지상권대여": {"필요": ["amount"], "허용": ["actual_cost", "actual_expense"]},
+        "산업재산권대여": {"필요": ["amount"], "허용": ["actual_cost", "actual_expense", "receipt_date"]},
+        "공익사업지상권대여": {"필요": ["amount"], "허용": ["actual_cost", "actual_expense", "receipt_date"]},
         "서화골동품양도": {"필요": ["amount"], "허용": ["actual_cost", "held_years", "museum", "living_domestic_artist", "business_setup"]},
-        "일시적인적용역": {"필요": ["amount"], "허용": ["actual_cost", "actual_expense"]},
+        "일시적인적용역": {"필요": ["amount"], "허용": ["actual_cost", "actual_expense", "receipt_date"]},
         "뇌물": {"필요": ["amount"], "허용": ["forfeited"]},
         "위약금·배상금": {"필요": ["amount"], "허용": ["deposit_substituted"]},
         "주택입주지체상금": {"필요": ["amount"]},
@@ -2901,6 +2901,7 @@ def other_income_aggregate(year: YEAR,
         · 공익사업지상권대여 — 공익사업 관련 지역권·지상권 설정·대여 대가(필요경비율은 산업재산권대여와 같음, 공익사업과 무관한 지상권 대여는 사업소득)
         · 서화골동품양도 — 개당·점당 6천만원 이상 서화·골동품 양도(필요경비: 2020 과세기간부터 1억 이하 90%·초과분 80%, 2019년까지 80%, held_years≥10이면 90% — 2020.2.11. 개정 부칙 제36조, business_setup=true(2021~ 사업장 갖춤)면 사업소득이라 제외, museum=true 박물관·미술관 양도 비과세, living_domestic_artist=true 생존 국내 작가 작품 과세 제외, 무조건 분리과세 20%)
         · 일시적인적용역 — 고용관계 없이 일시적으로 제공한 강연·방송 해설·자문 등 인적용역의 대가
+          (산업재산권대여·공익사업지상권대여·일시적인적용역 필요경비율: ~2017 80%, 2018은 receipt_date(받은 날) 필수 — 2018.3.31.까지 80%·2018.4.1.부터 70%, 2019~ 60%, 시행령 제87조)
         · 뇌물 — 뇌물로 받은 금품(몰수·추징 확정액은 forfeited로 입력, 기본 0)
         · 위약금·배상금 — 계약의 위약·해약으로 받는 위약금·배상금(계약금 대체분은 deposit_substituted로 입력, 기본 0, 주택입주 지체상금 제외. 계약금 대체분은 원천징수되지 않아 2019년 이전에는 선택적 분리과세 대상 아님 — 제14조③8호가목 2020.1.1. 개정)
         · 주택입주지체상금 — 주택 입주 지연으로 받는 지체상금
@@ -3136,6 +3137,17 @@ def other_income_aggregate(year: YEAR,
             근거_목록.extend(basis)
 
         elif k in ("산업재산권대여", "공익사업지상권대여", "일시적인적용역", "주택입주지체상금"):
+            수입일 = str(it.get("receipt_date") or "")
+            if 수입일:
+                if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", 수입일) or int(수입일[:4]) != year:
+                    return {"error": "입력 확인 필요 — 계산하지 않음",
+                            "문제": [f"{k}: receipt_date '{수입일}'는 {year}년 안의 YYYY-MM-DD여야 함"]}
+                rule = vocab.rule_on(k, int(수입일.replace("-", "")))
+                basis = vocab.basis_on(k, int(수입일.replace("-", "")))
+            elif "필요경비율" not in rule:
+                # 시행령 제87조: 2018.3.31.까지 발생분 1호나목 100분의 80, 2018.4.1.부터 1호의2 100분의 70(2018.2.13. 개정)
+                return {"error": "입력 확인 필요 — 계산하지 않음",
+                        "문제": [f"{k}({year}년): 필요경비율이 해당 연도 중에 바뀜(2018.3.31.까지 발생분 80%, 2018.4.1.부터 70% — 소득세법 시행령 제87조1호나목·1호의2) — receipt_date(YYYY-MM-DD, 받은 날) 입력 필요"]}
             필요경비율 = rule.get("필요경비율", 0)
             actual_expense = int(it.get("actual_cost", it.get("actual_expense", 0)))
             과세대상금액 = amount
@@ -3156,6 +3168,8 @@ def other_income_aggregate(year: YEAR,
             항목별.append({"kind": k, "총수입금액": amount, "비과세": 0, "필요경비": int(필요경비),
                            "소득금액": int(소득), "과세구분": 과세구분표시, "원천징수세액": 원천징수세액, "근거": basis})
             if rule.get("주의"): 산식_목록.append(f"{k} 주의: {rule['주의']}")
+            if 수입일 and year == 2018:
+                산식_목록.append(f"{k}: 받은 날 {수입일} → 2018.3.31.까지 발생분 80%, 2018.4.1.부터 70%(시행령 제87조1호나목·1호의2) 중 {필요경비율 * 100:.0f}% 적용")
             if 소득 == 0:
                 산식_목록.append(f"{k}: {amount:,}원 − 필요경비 {int(필요경비):,}원 = 소득금액 {int(amount - 필요경비):,}원 → 건별 5만원 이하 과세최저한(제84조)으로 과세 제외, 원천징수 0")
             else:

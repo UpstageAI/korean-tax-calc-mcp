@@ -117,3 +117,20 @@ def test_optional_separation_deposit_penalty_from_2020():
     r = c("other_income_aggregate", {"year": 2020, "items": items})
     assert r["결과"]["선택적_분리과세_가능"] is True
     assert r["결과"]["선택적_분리과세_적용시_종합합산_기타소득금액"] == 0
+
+
+# 시행령 제87조: 2018.2.13. 개정으로 1호의2(7·9·15·19호 100분의 70) 신설, 2018.4.1. 시행 — 그 전 발생분은 1호나목 100분의 80.
+def test_2018_expense_rate_by_receipt_date():
+    item = {"kind": "산업재산권대여", "amount": 1_000_000}
+    assert "receipt_date" in json.dumps(one(2018, item), ensure_ascii=False)
+    r = one(2018, {**item, "receipt_date": "2018-03-31"})       # 100만 × 80% → 소득 20만, 원천징수 4만
+    assert r["항목별"][0]["소득금액"] == 200_000 and r["항목별"][0]["원천징수세액"] == 40_000
+    r = one(2018, {**item, "receipt_date": "2018-04-01"})       # 100만 × 70% → 소득 30만
+    assert r["항목별"][0]["소득금액"] == 300_000
+    assert "1호의2" in json.dumps(r["항목별"][0]["근거"], ensure_ascii=False)
+    r = one(2018, {"kind": "공익사업지상권대여", "amount": 1_000_000, "receipt_date": "2018-02-01"})
+    assert r["항목별"][0]["소득금액"] == 200_000
+    assert "입력 확인 필요" in json.dumps(one(2018, {**item, "receipt_date": "2019-01-01"}), ensure_ascii=False)
+    # 2018 외 연도는 날짜 없이 계산(2017 80%, 2019 60%)
+    assert one(2017, item)["항목별"][0]["소득금액"] == 200_000
+    assert one(2019, item)["항목별"][0]["소득금액"] == 400_000
