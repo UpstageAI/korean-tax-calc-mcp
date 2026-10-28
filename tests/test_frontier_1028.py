@@ -87,3 +87,19 @@ def test_capital_gains_tax_housing_short_term_by_transfer_date():
     assert c("capital_gains_tax", {**a, "transfer_date": "2021-03-01"})["결과"]["산출세액"] == 20100000
     assert c("capital_gains_tax", {**a, "transfer_date": "2021-07-01"})["결과"]["산출세액"] == 60000000
     assert c("capital_gains_tax", {**a, "transfer_date": "2021-07-01", "registered": False})["결과"]["산출세액"] == 70000000
+
+
+def test_other_income_easement_and_artwork_kinds():
+    r = c("other_income_aggregate", {"year": 2017, "items": [
+        {"kind": "위약금·배상금", "amount": 1500000}, {"kind": "산업재산권대여", "amount": 1000000},
+        {"kind": "공익사업지상권대여", "amount": 2000000}, {"kind": "서화골동품양도", "amount": 10000000, "museum": True},
+        {"kind": "일시적인적용역", "amount": 250000}, {"kind": "복권당첨금", "amount": 3000000}, {"kind": "배임수재", "amount": 5000000}]})
+    assert r["결과"]["기납부_원천징수세액"] + r["결과"]["분리과세_원천징수세액"] == 1020000
+    assert r["결과"]["비과세_합계"] == 10000000
+
+
+def test_artwork_expense_ratio_tiers():
+    r = c("other_income_aggregate", {"year": 2025, "items": [{"kind": "서화골동품양도", "amount": 200000000, "held_years": 3}]})
+    assert r["결과"]["분리과세_기타소득금액"] == 200000000 - (90000000 + 80000000)
+    r = c("other_income_aggregate", {"year": 2025, "items": [{"kind": "서화골동품양도", "amount": 200000000, "held_years": 12}]})
+    assert r["결과"]["분리과세_기타소득금액"] == 20000000
