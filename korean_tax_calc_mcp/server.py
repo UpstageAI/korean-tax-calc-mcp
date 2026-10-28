@@ -277,20 +277,25 @@ def _validate_items(items, field, specs, extra=None):
 # 도구별로 필수로 요구할 입력 필드 (vocab의 필요한사실 중 일부만 필수 처리)
 _도구별_필수필드 = {
     "financial_income_aggregate": {
-        "예금이자": {"필요": ["amount"]},
-        "비영업대금이익": {"필요": ["amount"]},
-        "소비대차전환이자": {"필요": ["amount"]},
-        "외상매출금지급기일연장이자": {"필요": ["amount"]},
-        "저축성보험차익": {"필요": ["premium", "payout", "contract_year"], "허용": ["amount", "annuity", "exempt_conditions_met"]},
-        "투자신탁환매이익": {"필요": ["amount", "components"]},
-        "파생결합사채이익": {"필요": ["amount"]},
-        "장내파생상품이익": {"필요": ["amount"]},
-        "상장법인현금배당": {"필요": ["amount"]},
-        "비상장법인현금배당": {"필요": ["amount"]},
-        "의제배당_잉여금자본전입": {"필요": ["amount", "source"], "허용": ["self_stock_shift"]},
-        "인정배당": {"필요": ["amount"]},
-        "손해배상법정이자": {"필요": ["amount"]},
-        "공익신탁이익": {"필요": ["amount"]},
+        "예금이자": {"필요": ["amount"], "허용": ["withheld"]},
+        "비영업대금이익": {"필요": ["amount"], "허용": ["withheld"]},
+        "소비대차전환이자": {"필요": ["amount"], "허용": ["withheld"]},
+        "외상매출금지급기일연장이자": {"필요": ["amount"], "허용": ["withheld"]},
+        "저축성보험차익": {"필요": ["premium", "payout", "contract_year"], "허용": ["withheld", "amount", "annuity", "exempt_conditions_met"]},
+        "투자신탁환매이익": {"필요": ["amount", "components"], "허용": ["withheld"]},
+        "파생결합사채이익": {"필요": ["amount"], "허용": ["withheld"]},
+        "장내파생상품이익": {"필요": ["amount"], "허용": ["withheld"]},
+        "상장법인현금배당": {"필요": ["amount"], "허용": ["withheld"]},
+        "비상장법인현금배당": {"필요": ["amount"], "허용": ["withheld"]},
+        "의제배당_잉여금자본전입": {"필요": ["amount", "source"], "허용": ["withheld", "self_stock_shift"]},
+        "인정배당": {"필요": ["amount"], "허용": ["withheld"]},
+        "손해배상법정이자": {"필요": ["amount"], "허용": ["withheld"]},
+        "공익신탁이익": {"필요": ["amount"], "허용": ["withheld"]},
+        "외국법인배당": {"필요": ["amount"], "허용": ["withheld"]},
+        "환매조건부매매차익": {"필요": ["amount"], "허용": ["withheld"]},
+        "출자공동사업자배당": {"필요": ["amount"]},
+        "법원보증금이자": {"필요": ["amount"]},
+        "직장공제회초과반환금": {"필요": ["amount"]},
     },
     "bad_debt_adjustment": {
         "소멸시효완성": {"필요": ["amount", "arose_in"]},
@@ -2624,7 +2629,7 @@ def deemed_dividend_bonus_shares(
 @mcp.tool(annotations=CALC)
 @_guard
 def financial_income_aggregate(year: YEAR,
-                               items: Annotated[list, Field(description="금융소득 항목 [{kind, amount, ...}] — kind: 예금이자·비영업대금이익·소비대차전환이자·외상매출금지급기일연장이자·저축성보험차익·투자신탁환매이익·파생결합사채이익·장내파생상품이익·상장법인현금배당·비상장법인현금배당·의제배당_잉여금자본전입·인정배당·손해배상법정이자·공익신탁이익")]) -> dict:
+                               items: Annotated[list, Field(description="금융소득 항목 [{kind, amount, withheld?, ...}] — withheld=false: 국내에서 원천징수되지 않은 이자·배당(예: 개인 간 대여 이자, 국외 배당)은 2천만원 이하여도 종합과세(제14조③6호), 기본 true — kind: 예금이자·비영업대금이익·소비대차전환이자·외상매출금지급기일연장이자·저축성보험차익·투자신탁환매이익·파생결합사채이익·장내파생상품이익·상장법인현금배당·비상장법인현금배당·의제배당_잉여금자본전입·인정배당·손해배상법정이자·공익신탁이익")]) -> dict:
     """종합소득 합산 금융소득(이자·배당)과 Gross-up 계산(소득세법 제14조·제16조·제17조·제56조).
     언제: 종합소득세 신고에서 금융소득 종합과세 대상 여부와 배당가산(Gross-up)액을 계산할 때.
     입력: 귀속연도(2016~2026) → year, 금융소득 항목 목록 [{kind, amount, ...}] → items.
@@ -2673,8 +2678,17 @@ def financial_income_aggregate(year: YEAR,
     판단, inc, div_n, div_g, exc = [], 0, 0, 0, 0
     항목별: list[dict] = []  # 계산.항목별용: [{항목, 금액, 구분}]
 
+    미원천 = 0          # 국내에서 원천징수되지 않은 이자·배당 — 2천만원 이하여도 종합과세(제14조③6호)
+    미원천_이자 = 0
+    cur_withheld = True
+
     def add(항목, 구분, 금액, 근거, 이유, gu=None):
-        nonlocal inc, div_n, div_g, exc
+        nonlocal inc, div_n, div_g, exc, 미원천, 미원천_이자
+        if 구분 in ("이자", "배당") and not cur_withheld and 항목 != "출자공동사업자배당":
+            미원천 += 금액
+            if 구분 == "이자":
+                미원천_이자 += 금액
+            이유 = 이유 + " / 원천징수되지 않음 — 2천만원 이하여도 종합과세(소득세법 제14조③6호)"
         if 구분 == "이자": inc += 금액
         elif 구분 == "배당" and gu: div_g += 금액
         elif 구분 == "배당": div_n += 금액
@@ -2697,6 +2711,7 @@ def financial_income_aggregate(year: YEAR,
 
     for it in items:
         k, amt = it.get("kind", ""), int(it.get("amount", 0))
+        cur_withheld = it.get("withheld", True) is not False
         if k == "예금이자":
             add(k, "이자", amt, "소득세법 제16조①1호", "국내 예금 이자")
         elif k in ("비영업대금이익", "소비대차전환이자"):
@@ -2770,7 +2785,7 @@ def financial_income_aggregate(year: YEAR,
     if cond_total <= threshold:
         gu_base = 0
         grossup = 0
-        합산 = partner_div
+        합산 = partner_div + 미원천
         분리과세 = True
     else:
         filled = min(threshold, inc + (div_n - partner_div))   # 이자 → 비대상 배당(비출자공동) 순으로 2천만 원 채움
@@ -2780,7 +2795,7 @@ def financial_income_aggregate(year: YEAR,
         합산 = cond_total + grossup + partner_div
         분리과세 = False
     # ── 계산식 단계 (SPEC_export_workbook_f) ──────────────────────────────
-    결과_배당소득금액 = (div_n + div_g + grossup) if not 분리과세 else partner_div
+    결과_배당소득금액 = (div_n + div_g + grossup) if not 분리과세 else partner_div + (미원천 - 미원천_이자)
     결과_합산액 = 합산
     결과_Grossup = grossup
 
@@ -2823,12 +2838,13 @@ def financial_income_aggregate(year: YEAR,
          "설명": f"Gross-up = MAX(0, MIN(배당대상소득, 배당대상소득 − MAX(0, 종합과세기준금액 − MIN(종합과세기준금액, 이자소득금액 + 배당비대상소득 − 출자공동사업자배당)))) × 가산율 = {grossup:,}원"},
     ]
 
-    return _ok({"이자소득금액": inc if not 분리과세 else 0,
-                "배당소득금액": (div_n + div_g + grossup) if not 분리과세 else partner_div,
+    return _ok({"이자소득금액": inc if not 분리과세 else 미원천_이자,
+                "배당소득금액": (div_n + div_g + grossup) if not 분리과세 else partner_div + (미원천 - 미원천_이자),
                 "합산액": 합산, "분리과세": 분리과세, "Gross-up": grossup},
                "소득세법 제14조·제16조·제17조·제56조",
                계산={"이자": inc, "배당(Gross-up 비대상)": div_n, "배당(Gross-up 대상)": div_g,
                      "금융소득 합계(조건부)": cond_total, "출자공동사업자배당(always 포함)": partner_div,
+                     "원천징수되지 않은 금융소득(2천만원 이하여도 종합과세)": 미원천,
                      "제외 합계": exc, "Gross-up 기준액": gu_base, "가산율": rate,
                      "항목별": 항목별},
                판단=판단,
