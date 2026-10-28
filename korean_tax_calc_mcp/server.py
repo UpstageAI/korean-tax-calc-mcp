@@ -6002,6 +6002,7 @@ def capital_gains_income(
         "비과세_양도차익": 결["양도차익"] - 결["과세대상_양도차익"],
         "자산종류_코드": 자산_코드, "장기보유특별공제_코드": 장기_코드,
         "양도일": transfer_date.replace("-", "."), "취득일": acquisition_date.replace("-", "."),
+        "귀속연도": 양도일_dt.year,
     }
     if is_주택 and one_house:
         보유 = 결["보유기간_년"]
@@ -6505,7 +6506,8 @@ def capital_gains_tax(base: Annotated[int, Field(description="양도소득 과�
                                     heavy_surcharge=중과["가산세율"] if 적용 else 0.0, heavy_label=중과["구분"] if 적용 else None)
     근거 = r.pop("근거")
     서식 = r.pop("_서식")
-    계산 = {"세율구분_코드": 서식["세율구분_코드"], "세율": 서식["세율"], "누진공제": 서식["누진공제"], "가산세율": 서식["가산세율"]}
+    계산 = {"세율구분_코드": 서식["세율구분_코드"], "세율": 서식["세율"], "누진공제": 서식["누진공제"], "가산세율": 서식["가산세율"],
+            "귀속연도": int(transfer_date[:4])}
     계산식_입력 = [
         {"이름": "과세표준", "값": base, "설명": "양도소득 과세표준(입력)"},
         {"이름": "세율", "값": 서식["세율"], "설명": "적용 세율(기본세율이면 제55조① 구간 세율)"},
@@ -8283,7 +8285,8 @@ def export_workbook(
         # 부가22, 부가근거63, 부가근거64, 종소배당, 종소근로)로 정렬
         _tpl_render_order = {"별지3": 1, "별지15": 2, "별지23갑": 3, "별지23을": 4,
                              "별지20정률": 5, "별지16의2": 6, "별지26갑": 6.1, "별지26을": 6.2, "별지50을": 7,
-                             "부가22": 8, "부가근거63": 9, "부가근거64": 10, "종소배당": 11, "종소근로": 12}
+                             "부가22": 8, "부가근거63": 9, "부가근거64": 10, "종소배당": 11, "종소근로": 12,
+                             "별지84": 13, "별지84세액": 14, "별지84부표1": 15}
         템플릿_목록.sort(key=lambda t: _tpl_render_order.get(t["key"], 99))
 
         # ── 1. 목록 시트 ──
@@ -8317,6 +8320,27 @@ def export_workbook(
             ws_list.cell(행, 1, "별지 제50호서식(병)")
             ws_list.cell(행, 2, "해당 없음(해외현지기업 출자)")
             행 += 1
+
+        # 틀의 `목록`([[이름, 설명]]) — 서식 중 이번에 만들지 않은 부분(자료 없음 등)을 렌더된 틀마다 한 번
+        _목록_본: set[str] = set()
+        for tinfo in 템플릿_목록:
+            _t = next((t for t in _FORM_TEMPLATES.get(tinfo["tool"], []) if t["key"] == tinfo["key"]), None)
+            for 이름, 설명 in (_t or {}).get("목록", []):
+                if 이름 in _목록_본:
+                    continue
+                _목록_본.add(이름)
+                ws_list.cell(행, 1, 이름)
+                ws_list.cell(행, 2, 설명)
+                행 += 1
+
+        # when 조건으로 만들지 않은 틀에 `목록_생략` 문구가 있으면 그 줄
+        for _tool_tpls in _FORM_TEMPLATES.values():
+            for _t in _tool_tpls:
+                if _t["key"] in _skipped_tpl and _t.get("목록_생략") and _t["sheet"] not in _목록_본:
+                    _목록_본.add(_t["sheet"])
+                    ws_list.cell(행, 1, _t["sheet"])
+                    ws_list.cell(행, 2, _t["목록_생략"])
+                    행 += 1
 
         # 종소배당이 when 조건으로 skipped된 경우 목록 줄에 해당 없음 추가
         if "종소배당" in _skipped_tpl:
@@ -8689,9 +8713,14 @@ def export_workbook(
             if tinfo["tool"] == "nonbusiness_interest_disallowance":
                 form_res = nonbusiness_form_data(form_res, (calls[tinfo["call_idx"]] or {}).get("args", {}))
                 call_sources = {**source_data, **nonbusiness_form_sources(form_res)}
-
+            # 교차 참조는 같은 call에서 만든 시트를 가리킨다(같은 도구 call이 둘 이상이면 ' (2)' 시트끼리)
+            cross_this = dict(slot_map_cross)
+            for (ref_key, ref_id) in slot_map_cross:
+                same = next((t for t in 템플릿_목록 if t["key"] == ref_key and t["call_idx"] == tinfo["call_idx"]), None)
+                if same is not None:
+                    cross_this[(ref_key, ref_id)] = (same["sheet"], all_slots[ref_key][ref_id][1])
             render_form_sheet(ws, tpl, form_res, input_map,
-                               sheet_name_map, slot_map_all, slot_map_cross, tkey,
+                               sheet_name_map, slot_map_all, cross_this, tkey,
                                call_idx=tinfo["call_idx"], company=company, period=period, biz_no=biz_no,
                                source_data=call_sources, all_slots=all_slots,
                                label=cd.get("label", ""), 과세기간=과세기간)

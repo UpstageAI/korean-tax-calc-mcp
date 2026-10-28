@@ -72,20 +72,47 @@ def tool_value(res: dict | None, path: str) -> Any:
     return cur
 
 
-def load_templates() -> dict[str, dict]:
-    """data/form_templates의 모든 틀 JSON을 로드하여 {key: 틀}로 반환한다."""
+def _read_template_files() -> list[dict]:
+    """data/form_templates의 틀 JSON을 파일 이름 순으로 읽는다.
+
+    `extends`(다른 틀 key)가 있으면 그 틀을 바탕으로 이 파일에 적은 키만 덮어쓴다 —
+    같은 서식 모양을 다른 도구에 묶을 때(예: 별지84를 capital_gains_tax에) 모양을 두 번 적지 않기 위함.
+    `cells_add`는 바탕 틀 cells 뒤에 덧붙인다."""
+    import copy as _copy
     import json as _json
     import os as _os
     tpl_dir = _os.path.join(_os.path.dirname(__file__), "data", "form_templates")
-    result: dict[str, dict] = {}
     if not _os.path.isdir(tpl_dir):
-        return result
+        return []
+    raw: list[dict] = []
     for fname in sorted(_os.listdir(tpl_dir)):
         if not fname.endswith(".json"):
             continue
-        path = _os.path.join(tpl_dir, fname)
-        with open(path, encoding="utf-8") as f:
-            tpl = _json.load(f)
+        with open(_os.path.join(tpl_dir, fname), encoding="utf-8") as f:
+            raw.append(_json.load(f))
+    by_key = {t.get("key"): t for t in raw if t.get("key") and not t.get("extends")}
+    out: list[dict] = []
+    for t in raw:
+        base_key = t.get("extends")
+        if not base_key:
+            out.append(t)
+            continue
+        if base_key not in by_key:
+            raise KeyError(f"틀 '{t.get('key')}': extends 대상 '{base_key}' 없음")
+        merged = _copy.deepcopy(by_key[base_key])
+        for k, v in t.items():
+            if k in ("extends", "cells_add"):
+                continue
+            merged[k] = _copy.deepcopy(v)
+        merged["cells"] = merged.get("cells", []) + _copy.deepcopy(t.get("cells_add", []))
+        out.append(merged)
+    return out
+
+
+def load_templates() -> dict[str, dict]:
+    """data/form_templates의 모든 틀 JSON을 로드하여 {key: 틀}로 반환한다."""
+    result: dict[str, dict] = {}
+    for tpl in _read_template_files():
         key = tpl.get("key", "")
         if key:
             result[key] = tpl
@@ -277,6 +304,15 @@ def fill_text(t: str | None, *, res: dict | None, meta: dict[str, Any]) -> str:
 
     out = _re.sub(r"\{\{입력\.([^}]+)\}\}", _replace_input_text, out)
 
+    # {{결과.경로}}·{{계산.경로}} → 도구 결과 값(정수면 정수, 없으면 빈 문자열)
+    def _replace_tool_text(m: _re.Match) -> str:
+        val = tool_value(res, f"{m.group(1)}.{m.group(2)}")
+        if val is None or isinstance(val, (dict, list)):
+            return ""
+        return _fmt_input_val(val)
+
+    out = _re.sub(r"\{\{(결과|계산)\.([^}]+)\}\}", _replace_tool_text, out)
+
     # 그 외 {{키}} → meta[키] (빈 문자열)
     def _replace_meta(m: _re.Match) -> str:
         key = m.group(1)
@@ -311,7 +347,8 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
     tkey = tpl["key"] if tkey_override is None else tkey_override
     local_slot_map = {s["id"]: s["cell"] for s in tpl.get("slots", [])}
 
-    ws.title = tpl["sheet"]
+    if not ws.title.startswith(tpl["sheet"]):
+        ws.title = tpl["sheet"]  # 같은 틀 둘째 call은 호출 쪽이 붙인 " (2)" 이름 유지
 
     # ── 기간 파싱 (fill_text용 meta 구성) ──
     d1, d2 = "", ""
@@ -493,6 +530,9 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
             _, _, pa_rs, pa_re = _parse_range(pa)
             for ri in range(pa_rs, pa_re + 1):
                 c = ws.cell(ri, ci)
+                if tpl.get("amount_only_numbers") and not (
+                        isinstance(c.value, (int, float)) or (isinstance(c.value, str) and c.value.startswith("="))):
+                    continue  # 틀이 원하면 금액 열의 문구 칸(코드·기간 표기)은 문구 정렬 유지
                 # 금액·수식 칸만(문구 칸 — 머리·'합 계' — 은 틀 정렬 유지)
                 if c.value is not None and not (isinstance(c.value, str) and not c.value.startswith("=")):
                     cell_addr = f"{_col_letter(ci)}{ri}"
@@ -561,18 +601,8 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
 
 def _load_form_templates() -> dict[str, list[dict]]:
     """form_templates JSON 디렉터리에서 도구별 템플릿 목록을 로드한다 (모듈 수준 캐시)."""
-    import json as _json
-    import os as _os
-    tpl_dir = _os.path.join(_os.path.dirname(__file__), "data", "form_templates")
     result: dict[str, list[dict]] = {}
-    if not _os.path.isdir(tpl_dir):
-        return result
-    for fname in sorted(_os.listdir(tpl_dir)):
-        if not fname.endswith(".json"):
-            continue
-        path = _os.path.join(tpl_dir, fname)
-        with open(path, encoding="utf-8") as f:
-            tpl = _json.load(f)
+    for tpl in _read_template_files():
         tool = tpl.get("tool", "")
         if tool:
             result.setdefault(tool, []).append(tpl)
