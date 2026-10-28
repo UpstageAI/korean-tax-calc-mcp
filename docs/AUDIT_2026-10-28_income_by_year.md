@@ -49,3 +49,4 @@
 
 ## 확인 못 한 것(부칙 원문 조회 기능 없음)
 부칙 적용 문구 다수 — law MCP에 부칙 조회 추가 필요.
+- 엔진 사본 korean_tax_calc_mcp/audit/agents/calc_*.py가 engine/과 따로 놀고 있음(일용 별칭·퇴직 구표 미반영) — 하나로 합치기 필요
