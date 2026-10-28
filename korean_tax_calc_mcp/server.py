@@ -83,7 +83,8 @@ _TOOL_CASE_DOC = (
     "family: [[a, b, \"부모자녀\"|\"배우자\"]] — 부모자녀는 [부모, 자녀]\n"
     "stakes: [[보유자, 법인, 지분율(0~1)]] — 직접보유비율\n"
     "officers/employees: {법인: [이름]}, livelihood: [[부양자, 피부양자]], "
-    "influence: [[사실상 영향력자, 법인]], group: {기업집단: [계열회사]}"
+    "influence: [[사실상 영향력자, 법인]], group: {기업집단: [계열회사]}\n"
+    "livelihood_shared: [{친족, 상대방(임원·사용인·생계유지자), 주민등록_동일세대: true|false|모름, 동거_사실: 같은집_공유구조|같은집_독립구조|따로거주|모름, 생활비_공동부담: 공동|각자분담_증빙있음|각자분담_증빙없음|일방지원|모름, 독립생계_소득: 안정소득_있음|소액_일시|없음|모름, 경제적_지원: 정기송금_있음|차입후상환|용돈수준|제3자_지원|없음|모름, 별거_사유: 취학|질병요양|근무|사업|혼인파탄|독립|해당없음, 별도_임대차: bool, 별거_증빙_유형: [공과금·관리비_명의|금융_송금|출입국|전화·인터넷_가입|임대차_중개확인|진술서만|없음], 연말정산_부양가족_등록: bool, 수입_상대방계좌_입금: bool, 혼인_독립가구: bool, 친족관계?·촌수?}] — 생계를 함께하는 친족"
 )
 
 _TOOL_TUNNEL_GUIDE = (
@@ -162,7 +163,8 @@ def _add_ai_mark(result):
 CASE_DOC = """people: {이름: {"구분": "개인"|"법인"}}
 family: [[a, b, "부모자녀"|"배우자"]] — 부모자녀는 [부모, 자녀]
 stakes: [[보유자, 법인, 지분율(0~1)]] — 직접보유비율
-officers/employees: {법인: [이름]}, livelihood: [[부양자, 피부양자]], influence: [[사실상 영향력자, 법인]], group: {기업집단: [계열회사]}, group_exempt: {법인: 공정위 계열편입 유예·제외 통지 내용} — 이 법인은 계열회사로 보지 않음"""
+officers/employees: {법인: [이름]}, livelihood: [[부양자, 피부양자]], influence: [[사실상 영향력자, 법인]], group: {기업집단: [계열회사]}, group_exempt: {법인: 공정위 계열편입 유예·제외 통지 내용} — 이 법인은 계열회사로 보지 않음
+livelihood_shared: [{친족, 상대방(임원·사용인·생계유지자), 주민등록_동일세대: true|false|모름, 동거_사실: 같은집_공유구조|같은집_독립구조|따로거주|모름, 생활비_공동부담: 공동|각자분담_증빙있음|각자분담_증빙없음|일방지원|모름, 독립생계_소득: 안정소득_있음|소액_일시|없음|모름, 경제적_지원: 정기송금_있음|차입후상환|용돈수준|제3자_지원|없음|모름, 별거_사유: 취학|질병요양|근무|사업|혼인파탄|독립|해당없음, 별도_임대차: bool, 별거_증빙_유형: [공과금·관리비_명의|금융_송금|출입국|전화·인터넷_가입|임대차_중개확인|진술서만|없음], 연말정산_부양가족_등록: bool, 수입_상대방계좌_입금: bool, 혼인_독립가구: bool, 친족관계?·촌수?}] — 생계를 함께하는 친족"""
 
 mcp = MCPServer(
     "korean-tax-calc-mcp", title="Korea Tax Calculator (한국 세금 계산)",
@@ -771,12 +773,12 @@ def nonbusiness_interest_disallowance(loans: Annotated[list[Loan], Field(descrip
                                       fiscal_start: Annotated[str | None, Field(description="사업연도 개시일(YYYY-MM-DD). 생략 시 year-01-01")] = None,
                                       fiscal_end: Annotated[str | None, Field(description="사업연도 종료일(YYYY-MM-DD). 생략 시 개시일 1년 뒤 전날")] = None,
                                       company: Annotated[str | None, Field(description="가지급금을 지급한 법인 이름(relations 안의 법인). advances[].상대방으로 특수관계인 판정할 때 필요")] = None,
-                                      relations: Annotated[dict | None, Field(description='특수관계 판정 자료 — related_judge와 같은 형식 {people, family, stakes, officers?, employees?, livelihood?, influence?, group?, group_exempt?}. 예: {"people": {"㈜가람": {"구분": "법인"}, "김대표": {"구분": "개인"}}, "family": [], "stakes": [["김대표", "㈜가람", 0.6]], "officers": {"㈜가람": ["김대표"]}}')] = None) -> dict:
+                                      relations: Annotated[dict | None, Field(description='특수관계 판정 자료 — related_judge와 같은 형식 {people, family, stakes, officers?, employees?, livelihood?, livelihood_shared?, influence?, group?, group_exempt?}. 예: {"people": {"㈜가람": {"구분": "법인"}, "김대표": {"구분": "개인"}}, "family": [], "stakes": [["김대표", "㈜가람", 0.6]], "officers": {"㈜가람": ["김대표"]}}')] = None) -> dict:
     """업무무관자산·가지급금 관련 지급이자 손금불산입 — 가지급금 제외 판정·적수·가수금 상계·지급이자 손금불산입 순위까지. 언제: 업무무관자산이나 특수관계인 가지급금이 있을 때 지급이자 중 얼마를 손금불산입하는지, 어떤 대여금이 가지급금에서 빠지는지(시행규칙 제44조 각 호) 판정한다.
 입력: 차입금별 [{interest, jeoksu | principal·days | rate, kind?, withholding?}] → loans, 업무무관자산 적수(원·일) → nonbusiness_jeoksu, 가지급금 [{대상 | 상대방, 사유, 금액, 지급일, 회수일? | movements, 기준일?, 관련 정보}] → advances, 법인 이름 → company, 관계 자료(related_judge 형식) → relations, 가수금 [{이름, 금액, 일자, 반환일?, 상계불가?}] → deposits, 사업연도(2016~2026) → year, 개시일·종료일 → fiscal_start·fiscal_end.
-판정: ⓪특수관계인 — 가지급금에 상대방을 주면 company↔상대방을 법인세법 특수관계인(법 제2조12호, 영 제2조⑧ — 2019.2.12. 전 영 제87조①, 2019.2.12.~2023.12.31. 영 제2조⑤) 각 호로 판정해(기준일: 기준일 또는 사업연도 종료일) 대상을 정한다 — 해당 없으면 비특수관계인, 법인이면 특수관계법인, 개인이면 officers·employees·stakes로 임원·직원·주주, 그 밖은 기타특수관계인. 대상도 주면 대조만 하고 특수관계 여부(또는 규칙 제44조 6·7·7의2호에서 직원 여부)가 다르면 입력 확인 필요. ①차입금 구분 — 채권자불분명(영 제51조①)·비실명(영 제51조②)·건설자금(영 제52조)은 영 제55조 순위로 먼저 손금불산입하고, 기업구매자금대출·금융회사 등 제외 차입금(영 제53조④)과 함께 업무무관 산식의 지급이자·차입금에서 뺀다. ②가지급금 — 비특수관계인 대여는 제외, 규칙 제44조 각 호(미지급소득 소득세 대납은 총결정세액×미지급소득÷종합소득금액 한도, 직원 급료 가불은 월정급여 범위, 우리사주는 해당 회사 주식만, 중소기업 직원 주택자금 7의2호는 2020.1.1. 이후 개시 사업연도부터) 제외. ③적수 — 대여일 산입·회수일 불산입·말일 산입, 동일인 가수금 적수 상계(영 제53조③, 약정으로 상계 불가면 안 함 — 규칙 제28조②). ④업무무관 = 지급이자 × min(자산 적수, 차입금 적수) ÷ 차입금 적수(원 미만 절사).
+판정: ⓪특수관계인 — 가지급금에 상대방을 주면 company↔상대방을 법인세법 특수관계인(법 제2조12호, 영 제2조⑧ — 2019.2.12. 전 영 제87조①, 2019.2.12.~2023.12.31. 영 제2조⑤) 각 호로 판정해(기준일: 기준일 또는 사업연도 종료일) 대상을 정한다 — 해당 없으면 비특수관계인, 법인이면 특수관계법인, 개인이면 officers·employees·stakes로 임원·직원·주주, 그 밖은 기타특수관계인. 임원·직원의 배우자 등이 지분 없이 상대방이면 relations.livelihood_shared의 생계 사실관계로 ⑧3호(생계를 함께하는 친족)를 판정 — 사실이 모자라 입력 확인 필요가 나오면 비특수관계인으로 넘기지 않고 확인할 항목·필요 자료를 돌려준다. 대상도 주면 대조만 하고 특수관계 여부(또는 규칙 제44조 6·7·7의2호에서 직원 여부)가 다르면 입력 확인 필요. ①차입금 구분 — 채권자불분명(영 제51조①)·비실명(영 제51조②)·건설자금(영 제52조)은 영 제55조 순위로 먼저 손금불산입하고, 기업구매자금대출·금융회사 등 제외 차입금(영 제53조④)과 함께 업무무관 산식의 지급이자·차입금에서 뺀다. ②가지급금 — 비특수관계인 대여는 제외, 규칙 제44조 각 호(미지급소득 소득세 대납은 총결정세액×미지급소득÷종합소득금액 한도, 직원 급료 가불은 월정급여 범위, 우리사주는 해당 회사 주식만, 중소기업 직원 주택자금 7의2호는 2020.1.1. 이후 개시 사업연도부터) 제외. ③적수 — 대여일 산입·회수일 불산입·말일 산입, 동일인 가수금 적수 상계(영 제53조③, 약정으로 상계 불가면 안 함 — 규칙 제28조②). ④업무무관 = 지급이자 × min(자산 적수, 차입금 적수) ÷ 차입금 적수(원 미만 절사).
 결과: 순위별 손금불산입·소득처분(채권자불분명·비실명 대표자 상여·원천세 기타사외유출, 건설자금 유보, 업무무관 기타사외유출), 가지급금별 제외 판단, 동일인별 적수, 인정이자는 deemed_interest로 이어 계산할 movements 안내. 지원 2016~2026 사업연도.
-지원 안 함: 일반차입금 건설자금이자 자본화 선택(법 제28조②), 업무무관자산 취득가액·적수 산정(영 제49조, 직접 적수 입력), 상대방 없이 대상만 준 가지급금의 특수관계 여부(입력 그대로 씀), 생계를 함께하는 친족(영 제2조⑧3호 후단)·대표이사 구분(officers에 대표 표시 없음 — 임원으로 봄), 금융회사 주된 수익사업 판단 — 해당하면 입력 확인 필요 또는 직접 적수 입력. 근거(법인세법 제28조, 시행령 제51조~제53조·제55조·제106조, 시행규칙 제28조·제44조)."""
+지원 안 함: 일반차입금 건설자금이자 자본화 선택(법 제28조②), 업무무관자산 취득가액·적수 산정(영 제49조, 직접 적수 입력), 상대방 없이 대상만 준 가지급금의 특수관계 여부(입력 그대로 씀), 비소액주주등의 직원과 생계를 함께하는 친족(영 제2조⑧3호가목 중 주주의 직원)·대표이사 구분(officers에 대표 표시 없음 — 임원으로 봄), 금융회사 주된 수익사업 판단 — 해당하면 입력 확인 필요 또는 직접 적수 입력. 근거(법인세법 제28조, 시행령 제51조~제53조·제55조·제106조, 시행규칙 제28조·제44조)."""
     simple = not (advances or deposits or year or fiscal_start or fiscal_end) and all(
         l.jeoksu is not None and l.kind is None and l.rate is None and l.principal is None and l.withholding is None for l in loans)
     if simple:
@@ -2114,8 +2116,9 @@ def earned_income_gross_pay(year: YEAR,
 
 # ───────── 세무조사 판정 도구 11개 ─────────
 @mcp.tool(description="""두 당사자의 특수관계 여부·호수를 국세기본법·법인세법·상증법 기준으로 판정한다. 언제: 세무조사·증여의제 검토에서 두 사람·법인 간 특수관계와 적용 호수를 확인할 때.
-입력: 당사자 a(이름) → a, 당사자 b(이름) → b, 사실관계 시점(YYYY-MM-DD, 필수) → on, people={이름: {구분: "개인"|"법인"}} → people, family=[[a, b, "부모자녀"|"배우자"]] → family, stakes=[[보유자, 법인, 지분율(0~1)]] → stakes, officers={법인: [이름]} → officers, employees={법인: [이름]} → employees, livelihood=[[부양자, 피부양자]] → livelihood, influence=[[사실상 영향력자, 법인]] → influence, group={기업집단: [계열회사]} → group, group_exempt={법인: 공정위 통지 내용} → group_exempt, 법령 인용 포함 여부 → with_citation.
-결과: 특수관계 여부·적용 호수와 근거 조문(기준일 시행 법령 위치), 근거. 두 당사자의 특수관계 여부와 적용 호수를 국세기본법·법인세법·상증법 기준으로 판정한다(두 사람·법인 간 특수관계와 적용 호수 확인).""")
+입력: 당사자 a(이름) → a, 당사자 b(이름) → b, 사실관계 시점(YYYY-MM-DD, 필수) → on, people={이름: {구분: "개인"|"법인"}} → people, family=[[a, b, "부모자녀"|"배우자"]] → family, stakes=[[보유자, 법인, 지분율(0~1)]] → stakes, officers={법인: [이름]} → officers, employees={법인: [이름]} → employees, livelihood=[[부양자, 피부양자]] → livelihood, 생계를 함께하는 친족 사실관계 [{친족, 상대방, 주민등록_동일세대, 동거_사실, 생활비_공동부담, 독립생계_소득, 경제적_지원, 별거_사유, 별도_임대차, 별거_증빙_유형, 연말정산_부양가족_등록, 수입_상대방계좌_입금, 혼인_독립가구}] → livelihood_shared, influence=[[사실상 영향력자, 법인]] → influence, group={기업집단: [계열회사]} → group, group_exempt={법인: 공정위 통지 내용} → group_exempt, 법령 인용 포함 여부 → with_citation.
+생계를 함께하는 친족(국기령 제1조의2②3호, 법인령 제2조⑧3호 — 2019.2.12.~2023.12.31. 제2조⑤3호, 그 전 제87조①3호): 전제는 상대방이 다른 당사자 본인의 임원·사용인(같은 법인 동료는 아님) 또는 생계유지자, 친족이 기준일 친족 범위(2023.3.1.부터 4촌 혈족·3촌 인척) 안. 1차 기준은 동거 불요·생활비 공동 부담: 생활비 공동부담, 무소득+정기송금, 수입이 상대방 계좌로 입금이면 생계 공동 / 안정 소득+따로 거주 또는 별도 세대+생활비 각자+지원 없음, 제3자 지원(금융자료), 혼인 독립 가구+주소 다름(소득 없으면 제외)이면 생계 별도 / 주민등록 동일세대는 객관 자료(진술서만은 안 됨)로 반증해야 하고, 동일세대+소득만·동거만·부양가족 공제 이력이면 생계 공동 추정(인정되는 증빙 안내) / 그 밖은 입력 확인 필요(확인할 항목·필요 자료). 상증법에는 이 항목 없음.
+결과: 특수관계 여부·적용 호수와 근거 조문(기준일 시행 법령 위치), 근거, 생계를_함께하는_친족(결론·사유·결정·해석 번호). 두 당사자의 특수관계 여부와 적용 호수를 국세기본법·법인세법·상증법 기준으로 판정한다(두 사람·법인 간 특수관계와 적용 호수 확인).""")
 def related_judge(a: Annotated[str, Field(description='당사자 a(이름)')], b: Annotated[str, Field(description='당사자 b(이름)')],
                   on: Annotated[str, Field(description='사실관계 시점 YYYY-MM-DD(필수, 친족 범위·조문 위치가 시점마다 다름)')],
                   people: Annotated[dict, Field(description='사람·법인 목록 {이름: {"구분": "개인"|"법인"}. 예: {"김갑": {"구분": "개인"}, "㈜대한": {"구분": "법인"}}')],
@@ -2124,16 +2127,20 @@ def related_judge(a: Annotated[str, Field(description='당사자 a(이름)')], b
                   officers: Annotated[dict | None, Field(description='임원 목록 {법인: [이름]}. 예: {"㈜대한": ["김갑"]}')] = None,
                   employees: Annotated[dict | None, Field(description='직원 목록 {법인: [이름]}. 예: {"㈜대한": ["김을"]}')] = None,
                   livelihood: Annotated[list | None, Field(description='부양 관계 [[부양자, 피부양자]]. 예: [["김갑", "김이쁜"]]')] = None,
+                  livelihood_shared: Annotated[list | None, Field(description='생계를 함께하는 친족 사실관계 [{친족, 상대방(임원·사용인·생계유지자), 주민등록_동일세대: true|false|모름, 동거_사실: 같은집_공유구조|같은집_독립구조|따로거주|모름, 생활비_공동부담: 공동|각자분담_증빙있음|각자분담_증빙없음|일방지원|모름, 독립생계_소득: 안정소득_있음|소액_일시|없음|모름, 경제적_지원: 정기송금_있음|차입후상환|용돈수준|제3자_지원|없음|모름, 별거_사유: 취학|질병요양|근무|사업|혼인파탄|독립|해당없음, 별도_임대차: bool, 별거_증빙_유형: [공과금·관리비_명의|금융_송금|출입국|전화·인터넷_가입|임대차_중개확인|진술서만|없음], 연말정산_부양가족_등록: bool, 수입_상대방계좌_입금: bool, 혼인_독립가구: bool, 친족관계?: 배우자|혈족|인척, 촌수?}]. 예: [{"친족": "이배우", "상대방": "김대표", "생활비_공동부담": "공동"}]')] = None,
                   influence: Annotated[list | None, Field(description='사실상 영향력 [[사실상 영향력자, 법인]]. 예: [["김갑", "㈜대한"]]')] = None,
                   group: Annotated[dict | None, Field(description='기업집단 {기업집단: [계열회사]}. 예: {"XX그룹": ["㈜대한", "㈜민국"]}')] = None,
                   group_exempt: Annotated[dict | None, Field(description='공정위 계열편입 유예·제외 통지 {법인: 통지 내용}. 예: {"㈜대한": "유예 통지"}')] = None,
                   with_citation: Annotated[bool, Field(description='법령 인용 포함 여부(기본 True)')] = True) -> dict:
     from .audit.agents.related_intake import normalize, to_case
-    case = to_case(normalize({"people": people, "family": family, "stakes": stakes, "officers": officers, "employees": employees,
-                              "livelihood": livelihood, "influence": influence, "group": group}))
-    case["group_exempt"] = {norm_name(k): v for k, v in (group_exempt or {}).items()}
-    a, b = norm_name(a), norm_name(b)
-    return _R.judge_all_at(case, a, b, on) if with_citation else _R.judge_all(case, a, b, on)
+    try:
+        case = to_case(normalize({"people": people, "family": family, "stakes": stakes, "officers": officers, "employees": employees,
+                                  "livelihood": livelihood, "livelihood_shared": livelihood_shared, "influence": influence, "group": group}))
+        case["group_exempt"] = {norm_name(k): v for k, v in (group_exempt or {}).items()}
+        a, b = norm_name(a), norm_name(b)
+        return _R.judge_all_at(case, a, b, on) if with_citation else _R.judge_all(case, a, b, on)
+    except ValueError as e:
+        return {"error": "입력 확인 필요 — 판정하지 않음", "문제": [str(e)]}
 
 
 @mcp.tool(description="""두 개인의 친족관계(혈족·인척 촌수, 배우자)와 기준일 친족 범위 해당 여부. 언제: 두 사람이 친족인지, 국세기본법·상증법상 친족 범위에 들어가는지 확인할 때.
