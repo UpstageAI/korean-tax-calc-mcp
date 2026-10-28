@@ -58,6 +58,8 @@ def test_shared_expense_spouse_related():
     assert "징세과-253(2011.03.18)" in r["결정·해석"]
     # 상증법에는 '사용인과 생계를 함께하는 친족' 항목 없음
     assert j["판정"]["상증"].startswith("해당 없음")
+    상증 = [x for x in j["생계를_함께하는_친족"] if x["세법"] == "상증"]
+    assert 상증 and all(x["근거"] for x in 상증)
 
 
 def test_independent_adult_child_living_separately_unrelated():
@@ -237,6 +239,9 @@ def test_married_independent_household():
     # 소득이 없으면 분가·혼인만으로는 별도 아님
     r = _shared(judge("김자녀", "2025-12-31", {**f, "독립생계_소득": "없음"}))
     assert r["결론"] == "입력 확인 필요"
+    # 소득을 모르면(미입력·모름) 혼인 독립만으로 생계 별도로 가지 않음
+    for g in ({k: v for k, v in f.items() if k != "독립생계_소득"}, {**f, "독립생계_소득": "모름"}):
+        assert _shared(judge("김자녀", "2025-12-31", g))["결론"] != "생계 별도"
 
 
 def test_coworker_is_not_employee_relation():
