@@ -136,3 +136,10 @@ def test_small_house_threshold_by_year():
     hs = [{"기준시가": 250000000, "면적": 55, "보증금": 200000000}] * 2 + [{"기준시가": 500000000, "면적": 84, "보증금": 200000000}]
     assert c("housing_deemed_rent_income", {"year": 2018, "houses": hs})["결과"]["과세"] is False   # 60㎡·3억 이하 2채 제외 → 1주택
     assert c("housing_deemed_rent_income", {"year": 2019, "houses": hs})["결과"]["과세"] is True    # 40㎡·2억 기준 → 제외 안 됨
+
+
+def test_retirement_tax_uses_year_tables():
+    assert c("retirement_income_tax", {"income": 100000000, "years_of_service": 10, "retire_year": 2025})["결과"]["퇴직소득세"] == 3875000
+    assert c("retirement_income_tax", {"income": 100000000, "years_of_service": 10, "retire_year": 2022})["결과"]["퇴직소득세"] == 4982000
+    assert c("retirement_income_tax", {"income": 300000000, "years_of_service": 25, "retire_year": 2022})["결과"]["퇴직소득세"] == 17999000
+    assert "입력 확인 필요" in json.dumps(c("retirement_income_tax", {"income": 1, "years_of_service": 1, "retire_year": 2018}), ensure_ascii=False)

@@ -679,11 +679,19 @@ def nonresident_withholding(income_kind: Annotated[Literal["이자", "배당", "
 @mcp.tool(annotations=CALC)
 @_guard
 def retirement_income_tax(income: Annotated[int, Field(description="퇴직소득금액(퇴직급여, 비과세 제외, 원)")],
-                          years_of_service: Annotated[int, Field(description="근속연수(1~60년)")]) -> dict:
+                          years_of_service: Annotated[int, Field(description="근속연수(1~60년)")],
+                          retire_year: Annotated[int, Field(description="퇴직한 해(2020~2026). 근속연수공제표(2023 개정)·기본세율표가 이 해 기준", ge=2016, le=2026)] = 2025) -> dict:
     """퇴직소득세(근속연수공제·환산급여 방식). 언제: 퇴직금(퇴직급여)을 지급할 때 퇴직소득세를 계산한다.
-입력: 퇴직소득금액(퇴직급여, 비과세 제외, 원) → income, 근속연수(1~60년) → years_of_service.
+입력: 퇴직소득금액(퇴직급여, 비과세 제외, 원) → income, 근속연수(1~60년) → years_of_service, 퇴직한 해 → retire_year(기본 2025).
+연도: 근속연수공제는 2023.1.1. 이후 퇴직 개정표(100만·200만·250만·300만), 2022년까지는 구표(30만·50만·80만·120만). 기본세율은 퇴직한 해 표.
+지원하지 않음: 2016~2019년 퇴직(종전·개정 방식 세액을 비율로 섞는 경과 부칙, 법률 제12852호).
 결과: 퇴직소득세, 근거(소득세법 제48조·제55조②). Retirement income tax (근속연수공제·환산급여 방식)."""
-    return _ok({"퇴직소득세": I.retirement_tax(income, years_of_service)}, "소득세법 제48조·제55조②")
+    if retire_year < 2020:
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"retire_year={retire_year}: 2016~2019년 퇴직은 종전 방식과 개정 방식 세액을 비율로 섞는 경과 부칙(법률 제12852호) 대상 — 이 도구는 지원하지 않음"]}
+    return _ok({"퇴직소득세": I.retirement_tax(income, years_of_service, retire_year),
+                "근속연수공제": min(I.retirement_service_deduction(years_of_service, retire_year), income)},
+               "소득세법 제48조·제55조②" + (" (2022년 이전 퇴직 — 근속연수공제 구표)" if retire_year <= 2022 else ""))
 
 
 @mcp.tool(annotations=CALC)
