@@ -486,35 +486,44 @@ def capital_gains_tax_amount(base: int, asset_type: str, acquisition_date: str, 
     yr = tr.year
     held = full_years(acq, tr)
     주택 = asset_type == "주택"
-    후보: list[tuple[str, int, str]] = []
+    비사업용 = bool(non_business_land and asset_type == "토지")
+    지정 = bool(비사업용 and designated_area and tr >= _지정지역_비사업용_가산일)
+    # 후보: (세율 표기, 세액, 근거, 세율구분 코드(별지 제84호서식 작성방법), 세율, 누진공제, 가산세율)
+    후보: list[tuple[str, int, str, str, float, int, float]] = []
     기본 = basic_tax(base, yr)
+    한계, 누진 = 한계세율(base, yr)
     if not registered:
-        후보.append(("미등기 70%", int(base * 0.70), "소득세법 제104조①10호"))
+        후보.append(("미등기 70%", int(base * 0.70), "소득세법 제104조①10호", "1-30", 0.70, 0, 0.0))
     else:
         if held < 1:
             if 주택:
                 r = 0.70 if tr >= _주택단기_인상일 else 0.40
-                후보.append((f"주택 1년 미만 {int(r*100)}%", int(base * r), "소득세법 제104조①3호"))
+                후보.append((f"주택 1년 미만 {int(r*100)}%", int(base * r), "소득세법 제104조①3호",
+                           "1-46" if r == 0.70 else "1-40", r, 0, 0.0))
             else:
-                후보.append(("1년 미만 50%", int(base * 0.50), "소득세법 제104조①3호"))
+                후보.append(("1년 미만 50%", int(base * 0.50), "소득세법 제104조①3호",
+                           "1-38" if 지정 else ("1-36" if 비사업용 else "1-20"), 0.50, 0, 0.0))
         elif held < 2:
             if 주택:
                 if tr >= _주택단기_인상일:
-                    후보.append(("주택 1년 이상 2년 미만 60%", int(base * 0.60), "소득세법 제104조①2호"))
+                    후보.append(("주택 1년 이상 2년 미만 60%", int(base * 0.60), "소득세법 제104조①2호", "1-39", 0.60, 0, 0.0))
                 else:
-                    후보.append(("주택 1년 이상 2년 미만 — 기본세율(2021.6.1. 전 양도)", 기본, "소득세법 제104조①1호"))
+                    후보.append(("주택 1년 이상 2년 미만 — 기본세율(2021.6.1. 전 양도)", 기본, "소득세법 제104조①1호", "1-10", 한계, 누진, 0.0))
             else:
-                후보.append(("1년 이상 2년 미만 40%", int(base * 0.40), "소득세법 제104조①2호"))
+                후보.append(("1년 이상 2년 미만 40%", int(base * 0.40), "소득세법 제104조①2호",
+                           "1-37" if 지정 else ("1-35" if 비사업용 else "1-15"), 0.40, 0, 0.0))
         else:
-            후보.append(("2년 이상 보유 — 기본세율", 기본, "소득세법 제104조①1호, 제55조①"))
-        if non_business_land and asset_type == "토지":
-            후보.append(("비사업용 토지 — 기본세율 + 10%p", 기본 + int(base * 0.10), "소득세법 제104조①8호"))
-            if designated_area and tr >= _지정지역_비사업용_가산일:
-                후보.append(("지정지역 비사업용 토지 — 기본세율 + 20%p(제1항제8호 세율 + 10%p)", 기본 + int(base * 0.20), "소득세법 제104조④3호"))
+            후보.append(("2년 이상 보유 — 기본세율", 기본, "소득세법 제104조①1호, 제55조①", "1-10", 한계, 누진, 0.0))
+        if 비사업용:
+            후보.append(("비사업용 토지 — 기본세율 + 10%p", 기본 + int(base * 0.10), "소득세법 제104조①8호", "1-11", 한계, 누진, 0.10))
+            if 지정:
+                후보.append(("지정지역 비사업용 토지 — 기본세율 + 20%p(제1항제8호 세율 + 10%p)", 기본 + int(base * 0.20), "소득세법 제104조④3호",
+                           "1-31", 한계, 누진, 0.20))
     if heavy_surcharge and 주택:
         p = int(round(heavy_surcharge * 100))
         후보.append((f"조정대상지역 {heavy_label or '다주택'} 중과 — 기본세율 + {p}%p", 기본 + base * p // 100,
-                   "소득세법 제104조⑦" + ("3호·4호" if heavy_label == "3주택 이상" else "1호·2호")))
+                   "소득세법 제104조⑦" + ("3호·4호" if heavy_label == "3주택 이상" else "1호·2호"),
+                   _중과_코드(heavy_label, tr, None), 한계, 누진, p / 100))
     주의: list[str] = []
     if designated_area:
         if not (non_business_land and asset_type == "토지"):
@@ -527,15 +536,51 @@ def capital_gains_tax_amount(base: int, asset_type: str, acquisition_date: str, 
             주의.append("지정지역 공고일 이전에 매매계약을 체결하고 계약금을 받은 사실이 증빙으로 확인되면 ④3호 제외(2020.1.1. 이후 제104조④3호 단서) — 해당하면 designated_area=False")
     best = max(후보, key=lambda x: x[1])
     세액 = best[1]
+    코드 = best[3]
+    if heavy_surcharge and 주택 and best[3] in ("1-40", "1-46", "1-39"):
+        # 중과 주택인데 단기 세율이 더 큰 경우 — 별지 제84호서식 작성방법의 중과 단기 코드(1-53·1-57, 1-82·1-84·1-86·1-88)
+        코드 = _중과_코드(heavy_label, tr, best[3])
     return {
         "보유기간_년(세율)": held,
         "적용_세율": best[0],
         "산출세액": 세액,
         "지방소득세": int(세액 * 0.1),
-        "세율_후보": [{"세율": a, "세액": b, "근거": c} for a, b, c in 후보],
+        "세율_후보": [{"세율": a, "세액": b, "근거": c} for a, b, c, *_ in 후보],
         "근거": best[2] + (", 제104조① 단서(둘 이상이면 큰 세액)" if len(후보) > 1 else ""),
         **({"주의": 주의} if 주의 else {}),
+        # 서식(별지 제84호) 칸 계산용 — 호출 쪽에서 계산·계산식_입력으로 옮긴다(결과 키는 그대로)
+        "_서식": {"세율구분_코드": 코드, "세율": best[4], "누진공제": best[5], "가산세율": best[6]},
     }
+
+
+def 한계세율(base: int, year: int) -> tuple[float, int]:
+    """제55조① 기본세율의 과세표준 구간 세율과 누진공제액 — 산출세액 = 과세표준 × 세율 − 누진공제.
+
+    구간표는 calc_income.RATES(연도별). 구간 경계값은 낮은 구간(제55조① '초과' 기준)."""
+    from .calc_income import RATES, _tier
+    tiers = RATES[year]
+    prev = 0
+    for cap, r in tiers:
+        if base <= cap:
+            return float(r), int(round(prev * r - _tier(prev, tiers)))
+        prev = cap
+    return float(tiers[-1][1]), int(round(prev * tiers[-1][1] - _tier(prev, tiers)))
+
+
+def _중과_코드(heavy_label: str | None, tr: date, 단기코드: str | None) -> str:
+    """조정대상지역 다주택 중과 세율구분 코드(별지 제84호서식 작성방법 「과세대상자산 및 세율」).
+
+    2018.4.1.~2021.5.31. 양도: 2주택 1-51(1년 미만 1-53), 3주택 이상 1-55(1년 미만 1-57).
+    2021.6.1. 이후 양도: 2주택 1-47(1년 미만 1-84, 1년 이상 2년 미만 1-82), 3주택 이상 1-49(1-88, 1-86).
+    조합원입주권·분양권과 합친 경우의 코드(1-52·1-48 등)는 다루지 않는다(도구가 분양권·입주권을 지원하지 않음)."""
+    셋 = heavy_label == "3주택 이상"
+    if tr < _주택단기_인상일:
+        return ("1-57" if 셋 else "1-53") if 단기코드 else ("1-55" if 셋 else "1-51")
+    if 단기코드 == "1-46":
+        return "1-88" if 셋 else "1-84"
+    if 단기코드 == "1-39":
+        return "1-86" if 셋 else "1-82"
+    return "1-49" if 셋 else "1-47"
 
 
 # ── 조정대상지역 다주택 중과(소득세법 제104조⑦, 제95조②) ─────────────────────
