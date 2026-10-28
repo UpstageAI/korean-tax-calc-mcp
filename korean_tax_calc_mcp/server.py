@@ -7878,7 +7878,7 @@ def export_workbook(
 
 # ── 도구 찾기 ──────────────────────────────────────────────────────────────
 # 도구가 70개를 넘어 목록만 보고는 맞는 도구를 놓치기 쉽다(10/28 점검: 있는 도구를 "없다"고 판단한 사례 3건).
-# 사용자가 쓰는 말 → 도구. 별칭은 설명문에 없는 일상 표현·옛 용어·시험 용어를 잇는다.
+# 사용자가 쓰는 말 → 도구. 별칭은 설명문에 없는 일상 표현·옛 용어·실무 용어를 잇는다.
 _TOOL_ALIASES: dict[str, list[str]] = {
     "양도세": ["capital_gains_income", "capital_gains_tax"], "양도소득세": ["capital_gains_income", "capital_gains_tax"],
     "단기 양도": ["capital_gains_tax"], "미등기": ["capital_gains_tax"], "비사업용 토지": ["capital_gains_tax", "capital_gains_income"],
