@@ -436,18 +436,24 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
         cols = tbl["cols"]
         center_cols = set(tbl.get("center", []))
         source_rows = (source_data or {}).get(source_name, [])
+        step = int(tbl.get("step", 1))  # 한 source 행이 차지하는 서식 행 수(별지26(갑) 상단·하단 2행)
         if len(source_rows) > max_rows:
             raise ValueError(f"table '{tbl_id}': source 행 {len(source_rows)}개 > max_rows {max_rows}")
         for ri, src_row in enumerate(source_rows):
-            row_num = first_row + ri
-            for col_letter, col_spec in cols.items():
-                ci = ord(col_letter) - 64
-                cell_addr = f"{_col_letter(ci)}{row_num}"
+            base_row = first_row + ri * step
+            for col_key, col_spec in cols.items():
+                # 열 키 'D' 또는 'D+1'(같은 source 행의 아래 칸 — 서식 하단 칸)
+                m_col = _re.match(r"^([A-Z]+)(?:\+(\d+))?$", col_key)
+                if not m_col:
+                    raise ValueError(f"table '{tbl_id}': 열 키 '{col_key}' 형식 오류")
+                col_letter = m_col.group(1)
+                row_num = base_row + int(m_col.group(2) or 0)
+                cell_addr = f"{col_letter}{row_num}"
                 if isinstance(col_spec, str) and col_spec.startswith("="):
-                    # 수식 열: {r}→row_num(문자열), {i}→ri+1(문자열), resolve_formula
+                    # 수식 열: {r}→row_num(문자열), {i}→ri+1(문자열), {p}·{n}→위·아래 행, resolve_formula
                     # local_slot_map의 slot id도 참조 가능 (예: {비율} → C7)
                     formula_tpl = col_spec
-                    local_tbl = {"r": str(row_num), "i": str(ri + 1)}
+                    local_tbl = {"r": str(row_num), "i": str(ri + 1), "p": str(row_num - 1), "n": str(row_num + 1)}
                     local_tbl.update(local_slot_map)
                     f_resolved = resolve_formula(formula_tpl, res=res, call_idx=call_idx if call_idx is not None else 0,
                                                  local=local_tbl, cross=cross_map,
@@ -462,7 +468,7 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
                         ws[cell_addr].value = val
                     elif isinstance(val, str) and val.startswith("="):
                         # source 값이 수식 문자열: resolve_formula
-                        local_tbl2 = {"r": str(row_num), "i": str(ri + 1)}
+                        local_tbl2 = {"r": str(row_num), "i": str(ri + 1), "p": str(row_num - 1), "n": str(row_num + 1)}
                         local_tbl2.update(local_slot_map)
                         f_resolved = resolve_formula(val, res=res, call_idx=call_idx if call_idx is not None else 0,
                                                      local=local_tbl2, cross=cross_map,
@@ -487,7 +493,8 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
             _, _, pa_rs, pa_re = _parse_range(pa)
             for ri in range(pa_rs, pa_re + 1):
                 c = ws.cell(ri, ci)
-                if c.value is not None:
+                # 금액·수식 칸만(문구 칸 — 머리·'합 계' — 은 틀 정렬 유지)
+                if c.value is not None and not (isinstance(c.value, str) and not c.value.startswith("=")):
                     cell_addr = f"{_col_letter(ci)}{ri}"
                     if cell_addr in formats:
                         c.number_format = formats[cell_addr]
@@ -570,3 +577,78 @@ def _load_form_templates() -> dict[str, list[dict]]:
         if tool:
             result.setdefault(tool, []).append(tpl)
     return result
+
+
+# ── 별지 제26호서식(갑)·(을) source (nonbusiness_interest_disallowance 결과 → 표 행) ──
+_NB_EXCLUDED_LOANS = ("기업구매자금", "금융회사제외차입금")  # 영 제53조④ — 총차입금에서 제외, 서식 2.에 적지 않음
+
+
+def _nb_date(s: str) -> str:
+    """'2025-05-01' → '2025.05.01'(서식 ①연월일 표기)."""
+    return s.replace("-", ".") if isinstance(s, str) else s
+
+
+def nonbusiness_form_data(data: dict | None, args: dict | None) -> dict:
+    """적수를 직접 넣은 단순 호출(가지급금 판정 없음 — 도구 결과에 `계산` 없음)이면 서식 칸용 `계산`을 args로 채운 사본.
+    도구 출력은 그대로 두고(하위 호환) 내보내기에서만 쓴다. 판정 호출(`계산` 있음)은 그대로 반환."""
+    data = data or {}
+    if isinstance(data.get("계산"), dict):
+        return data
+    args = args or {}
+    loans = [{"구분": "일반", "지급이자": int(l.get("interest", 0)), "적수": int(l.get("jeoksu") or 0)}
+             for l in args.get("loans", []) or [] if isinstance(l, dict)]
+    calc = {"차입금": loans, "업무무관자산적수": int(args.get("nonbusiness_jeoksu") or 0),
+            "가지급금적수_합계": 0, "가수금적수_합계": 0, "가수금_상계초과적수": 0, "불분명이자_합계": 0,
+            "적수표": {"가지급금": [], "가수금": []}}
+    return {**data, "계산": calc}
+
+
+def nonbusiness_form_sources(data: dict | None) -> dict[str, list[dict]]:
+    """nonbusiness_interest_disallowance 결과(data = {결과, 계산, …})로 별지26 (갑)·(을) 표 source를 만든다.
+
+    - `26_차입금`(갑 2.): 계산.차입금 중 영 제53조④ 제외 차입금 뺀 행. 채권자불분명은 ⑬·⑭ 상단, 비실명은 하단,
+      건설자금은 <16>·<17> 상단(작성요령 6·7). 해당 없는 칸은 None(빈칸).
+    - `26_업무무관자산`(을 1.): 직접 입력한 업무무관자산 적수가 있으면 한 행(부동산·동산 구분 입력 없음).
+    - `26_가지급금`·`26_가수금`(을 3. ⑧·⑨): 계산.적수표 행. ⑤잔액은 사람별 첫 행부터 이어지는 수식.
+    """
+    calc = (data or {}).get("계산") or {}
+    loans: list[dict] = []
+    for row in calc.get("차입금", []) or []:
+        kind = row.get("구분", "일반")
+        if kind in _NB_EXCLUDED_LOANS:
+            continue
+        it = row.get("지급이자", 0)
+        j = row.get("적수")
+        out = {"이자율": row.get("이자율"), "지급이자": it, "적수": j,
+               "불분명_이자": None, "불분명_적수": None, "비실명_이자": None, "비실명_적수": None,
+               "건설_이자": None, "건설_적수": None}
+        if kind == "채권자불분명":
+            out["불분명_이자"], out["불분명_적수"] = it, j
+        elif kind == "비실명":
+            out["비실명_이자"], out["비실명_적수"] = it, j
+        elif kind == "건설자금":
+            out["건설_이자"], out["건설_적수"] = it, j
+        loans.append(out)
+
+    assets: list[dict] = []
+    nb = calc.get("업무무관자산적수") or 0
+    if nb:
+        assets.append({"일자": "", "적요": "업무무관자산 적수(직접 입력)", "적수": nb})
+
+    def _ledger(rows: list[dict], deposit: bool) -> list[dict]:
+        out, prev = [], None
+        for r in rows or []:
+            who = r.get("이름")
+            inc, dec = ("F", "E") if deposit else ("E", "F")
+            head = "G{p}+" if who == prev else ""   # 사람이 바뀌면 그 사람 첫 행부터 잔액을 새로 쌓음
+            out.append({"일자": _nb_date(r.get("일자", "")), "적요": r.get("적요", ""),
+                        "차변": r.get("차변") or None, "대변": r.get("대변") or None,
+                        "잔액": f"={head}N({inc}{{r}})-N({dec}{{r}})",
+                        "일수": r.get("일수", 0)})
+            prev = who
+        return out
+
+    table = calc.get("적수표") or {}
+    return {"26_차입금": loans, "26_업무무관자산": assets,
+            "26_가지급금": _ledger(table.get("가지급금"), False),
+            "26_가수금": _ledger(table.get("가수금"), True)}

@@ -21,7 +21,7 @@ from .engine import calc_inhgift as IG
 from .engine import calc_gold_gaps6 as GG
 from .engine import calc_tax_priority as TP
 from . import vocab
-from .forms_workbook import render_form_sheet, _load_form_templates, tool_value
+from .forms_workbook import render_form_sheet, _load_form_templates, tool_value, nonbusiness_form_sources, nonbusiness_form_data
 
 # ── 세무조사 판정 도구 (audit 패키지) ──
 from .audit.agents import related as _R
@@ -8214,7 +8214,7 @@ def export_workbook(
         # 템플릿_목록을 spec 순서(별지3, 별지15, 별지23갑, 별지23을, 별지20정률, 별지16의2, 별지50을,
         # 부가22, 부가근거63, 부가근거64, 종소배당, 종소근로)로 정렬
         _tpl_render_order = {"별지3": 1, "별지15": 2, "별지23갑": 3, "별지23을": 4,
-                             "별지20정률": 5, "별지16의2": 6, "별지50을": 7,
+                             "별지20정률": 5, "별지16의2": 6, "별지26갑": 6.1, "별지26을": 6.2, "별지50을": 7,
                              "부가22": 8, "부가근거63": 9, "부가근거64": 10, "종소배당": 11, "종소근로": 12}
         템플릿_목록.sort(key=lambda t: _tpl_render_order.get(t["key"], 99))
 
@@ -8238,7 +8238,8 @@ def export_workbook(
         # 자료 원칙에 따른 줄: 법인세 도구 call이 하나라도 있으면
         has_corp_tool = any(
             cd.get("tool") in ("entertainment_adjustment", "income_adjustment_total",
-                                "depreciation_adjustment", "dividend_received_deduction")
+                                "depreciation_adjustment", "dividend_received_deduction",
+                                "nonbusiness_interest_disallowance")
             for cd in 결과들 if not cd.get("error")
         )
         if has_corp_tool:
@@ -8614,10 +8615,17 @@ def export_workbook(
                             과세기간 = f"{year}년 제2기 ( 7월 1일 ~ 12월 31일 )"
                         break
 
-            render_form_sheet(ws, tpl, cd.get("data", cd.get("result", {})), input_map,
+            # 별지26 (갑)·(을): 표 source는 그 call 결과로(같은 도구 call이 여럿이면 call마다 따로)
+            call_sources = source_data
+            form_res = cd.get("data", cd.get("result", {}))
+            if tinfo["tool"] == "nonbusiness_interest_disallowance":
+                form_res = nonbusiness_form_data(form_res, (calls[tinfo["call_idx"]] or {}).get("args", {}))
+                call_sources = {**source_data, **nonbusiness_form_sources(form_res)}
+
+            render_form_sheet(ws, tpl, form_res, input_map,
                                sheet_name_map, slot_map_all, slot_map_cross, tkey,
                                call_idx=tinfo["call_idx"], company=company, period=period, biz_no=biz_no,
-                               source_data=source_data, all_slots=all_slots,
+                               source_data=call_sources, all_slots=all_slots,
                                label=cd.get("label", ""), 과세기간=과세기간)
             시트이름들.append(tinfo["sheet"])
 
@@ -8895,7 +8903,11 @@ def export_workbook(
         판단목록 = (cd.get("data") or {}).get("판단", [])
         if not 판단목록:
             continue
+        if isinstance(판단목록, (str, dict)):
+            판단목록 = [판단목록]
         for j in 판단목록:
+            if not isinstance(j, dict):  # 판단이 문장 목록인 도구(예: nonbusiness_interest_disallowance)
+                j = {"결론": j}
             ws_jud.cell(행, 1, label)
             ws_jud.cell(행, 2, j.get("항목", ""))
             con = ws_jud.cell(행, 3, _cell_value(j.get("결론", "")))
