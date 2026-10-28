@@ -942,7 +942,10 @@ def vat_deemed_input_credit(period: Annotated[str, Field(description="과세기�
                             used_exempt: Annotated[int, Field(description="면세사업 사용·판매액(원)")] = 0,
                             ending_inventory_common: Annotated[int, Field(description="실지귀속 불분명 기말재고(원)")] = 0,
                             taxable_supply: Annotated[int, Field(description="해당 기간 과세 공급가액(원)")] = 0,
-                            exempt_supply: Annotated[int, Field(description="해당 기간 면세 공급가액(원)")] = 0) -> dict:
+                            exempt_supply: Annotated[int, Field(description="해당 기간 면세 공급가액(원)")] = 0,
+                            filing: Annotated[Literal["확정", "예정"], Field(description=(
+                                "신고 구분(기본 '확정'). '예정'이면 공제 한도(과세표준 × 한도율)를 적용하지 않음 — "
+                                "한도는 확정신고 때 과세기간 전체로 정산(부가가치세법 제42조②)"))] = "확정") -> dict:
     """의제매입세액공제(면세농산물 등 매입가액 × 공제율, 연장·운반비율 제외·공통분 안분). 언제: 음식점·제조업 등에서 면세농산물 등을 매입할 때 의제매입세액공제를 계산한다.
 입력: 과세기간('YYYY-1' 또는 'YYYY-2') → period, 업종 → industry, 면세농산물 등 매입가액(원) → purchase, 해당 과세기간 과세표준(원) → base, 개인사업자 여부 → individual, 중소기업 여부(제조 법인) → sme, 면세농산물 등 총 구입액(원) → purchase_total, 구입액에 포함된 운반비(원) → freight_included, 과세사업 사용·소비액(원) → used_taxable, 면세사업 사용·판매액(원) → used_exempt, 실지귀속 불분명 기말재고(원) → ending_inventory_common, 해당 기간 과세 공급가액(원) → taxable_supply, 해당 기간 면세 공급가액(원) → exempt_supply.
 결과: 공제대상 매입가액·의제매입세액·공제율·한도율·과세비율·단계별 계산, 근거(부가가치세법 제42조, 시행령 제81조·제84조)."""
@@ -1060,7 +1063,9 @@ def vat_deemed_input_credit(period: Annotated[str, Field(description="과세기�
     # 기존 방식(purchase, base 사용)의 공제율·한도율
     num, den = deemed_input_rate(industry, period, individual, effective_base, sme)
     # effective_base가 0이면 한도 계산 생략 (한도 무한대)
-    if effective_base > 0:
+    if filing == "예정":
+        limit_ratio = float("inf")  # 예정신고는 한도 없이 공제, 확정신고 때 과세기간 전체로 정산
+    elif effective_base > 0:
         limit_ratio = deemed_input_limit_ratio(period, individual, industry == "음식점", effective_base)
     else:
         limit_ratio = None  # 한도 없음
@@ -1072,6 +1077,8 @@ def vat_deemed_input_credit(period: Annotated[str, Field(description="과세기�
         rate_num=num, rate_den=den, limit_ratio=limit_ratio,
         period=period, industry=industry, individual=individual, sme=sme
     )
+    if filing == "예정":
+        limit_ratio = None  # 출력용 — JSON에 Infinity를 내보내지 않음
 
     # 운반비율 적용 결과
     freight_exclusion = {
@@ -1115,7 +1122,7 @@ def vat_deemed_input_credit(period: Annotated[str, Field(description="과세기�
     steps.extend([
         {"항목": "공제대상 매입가액 = 과세 사용분 + 공통 재고 × 과세비율", "금액": eligible_purchase, "근거": "부가가치세법 제42조, 시행령 제84조, 제81조"},
         {"항목": f"공제율 ({num}/{den})", "금액": f"{num}/{den}", "근거": "부가가치세법 제42조"},
-        {"항목": f"한도율 ({limit_ratio})", "금액": limit_ratio, "근거": "부가가치세법 시행령 제84조"},
+        {"항목": f"한도율 ({limit_ratio})" if limit_ratio is not None else ("한도율 (예정신고 — 한도 없이 공제, 확정신고 때 정산)" if filing == "예정" else "한도율 (과세표준 없음 — 한도 미적용)"), "금액": limit_ratio, "근거": "부가가치세법 시행령 제84조"},
         {"항목": "의제매입세액 = min(공제대상 매입, 과세표준 × 한도율) × 공제율", "금액": deemed_tax, "근거": "부가가치세법 제42조"},
     ])
 
@@ -3268,7 +3275,8 @@ def simplified_vat_return(year: YEAR,
          "근거": "부가가치세법 제63조⑥"},
         {"항목": "세금계산서미수취가산세", "결론": (
             f"{미수취가산세:,}원 (미수취 매입 {미수취매입:,}원 × {미수취가산세율*100:.1f}%)" if 미수취가산세 > 0 else
-            f"0원 (직전연도 공급대가 {직전연도:,}원 < 영수증발급기준 {영수증발급기준:,}원 → 영수증 발급 기간)",
+            (f"0원 (직전연도 공급대가 {직전연도:,}원 < 영수증발급기준 {영수증발급기준:,}원 → 영수증 발급 기간)" if 직전연도 < 영수증발급기준 else
+             f"0원 (직전연도 공급대가 {직전연도:,}원 ≥ {영수증발급기준:,}원 — 세금계산서 발급 대상 간이과세자, 미수취 매입 {미수취매입:,}원)"),
             ),
          "근거": "부가가치세법 제68조의2②1호, 제36조①2호가목"},
         {"항목": "차가감납부세액", "결론": f"{차가감납부세액:,}원 (공제후세액 {공제후세액:,}원 + 가산세 {미수취가산세:,}원 − 예정고지 {예정고지:,}원)",
@@ -3285,7 +3293,7 @@ def simplified_vat_return(year: YEAR,
         f"신용카드매출전표등발급세액공제 = min(card × {카드공제율}, {카드공제한도:,}) = min({카드발급:,} × {카드공제율}, {카드공제한도:,}) = {카드발급공제:,}원 (제46조①3호)",
         f"공제합계 = min(매입공제 + 카드공제, 납부세액) = min({세금계산서수취공제:,} + {카드발급공제:,}, {납부세액:,}) = {공제합계:,}원 (제63조⑥)",
         f"공제후세액 = max(0, 납부세액 − 공제합계) = max(0, {납부세액:,} − {공제합계:,}) = {공제후세액:,}원",
-        f"세금계산서미수취가산세 = {'0원 (영수증 발급 기간)' if 미수취가산세 == 0 else f'no_tax_invoice × 0.5% = {미수취매입:,} × 0.005 = {미수취가산세:,}원 (제68조의2②1호)'}",
+        f"세금계산서미수취가산세 = {('0원 (영수증 발급 기간)' if 직전연도 < 영수증발급기준 else '0원 (미수취 매입 없음)') if 미수취가산세 == 0 else f'no_tax_invoice × 0.5% = {미수취매입:,} × 0.005 = {미수취가산세:,}원 (제68조의2②1호)'}",
         f"차가감납부세액 = max(0, 공제후세액 + 가산세 − 예정고지) = max(0, {공제후세액:,} + {미수취가산세:,} − {예정고지:,}) = {차가감납부세액:,}원",
     ]
 
@@ -3790,7 +3798,7 @@ def input_tax_recalculation(asset_type: Annotated[str, Field(description="자산
       · 일괄공급 안분 연결(신규 대안): bundle={total_price, vat_included, appraisal?:{building,land}, standard_value?:{building,land}, book_value?:{building,land}}.
         bundle이 주어지면 내부에서 bundled_supply_split과 같은 규칙으로 건물 공급가액을 안분해 부가가치세를 input_tax로 쓴다.
         input_tax와 bundle 둘 다 주면 error.
-    결과: 이력(기간별 비율·기준비율·변동·재계산 여부·경과과세기간수·세액)·결과(당기_납부세액_가산·건물_매입세액)·판단(안분 기준)·근거."""
+    결과: 이력(기간별 비율·기준비율·변동·재계산 여부·경과과세기간수·세액)·결과(당기_납부세액_가산·매입세액, 건물_매입세액은 옛 이름)·판단(안분 기준)·근거."""
 
     # ── 입력 충돌 검사 ──
     if input_tax is not None and bundle is not None:
@@ -3912,7 +3920,8 @@ def input_tax_recalculation(asset_type: Annotated[str, Field(description="자산
         "이력": 이력,
         "결과": {
             "당기_납부세액_가산": 당기_세액,
-            "건물_매입세액": input_tax,
+            "매입세액": input_tax,
+            "건물_매입세액": input_tax,   # 옛 이름(호환용) — 자산 종류와 무관하게 같은 값
         },
         "판단": 판단,
         "근거": vocab.basis("공통매입세액_재계산", recal_year),
