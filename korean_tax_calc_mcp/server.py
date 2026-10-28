@@ -332,7 +332,7 @@ _도구별_필수필드 = {
         "인정상여": {"허용": ["facts", "service_year"]},
         "식사대": {"허용": ["facts", "months", "meal_provided"]},
         "자가운전보조금": {"허용": ["facts", "months", "vehicle", "business_use", "actual_travel_reimbursed"]},
-        "출산·보육수당": {"허용": ["facts", "purpose", "months", "child_age", "within_2y_of_birth", "payment_count", "related_party"]},
+        "출산·보육수당": {"허용": ["facts", "purpose", "months", "child_age", "child_ages", "child_count", "child", "within_2y_of_birth", "payment_count", "related_party"]},
         "직무발명보상금": {"허용": ["facts", "retired", "related_party"]},
         "연장근로수당": {"허용": ["facts", "eligible_occupation", "monthly_regular_wage", "prior_year_gross", "mine_or_daily"]},
         "사택제공이익": {"허용": ["facts", "position"]},
@@ -1346,7 +1346,9 @@ def earned_income_gross_pay(year: YEAR,
         · 급여·상여 — 다른 해 근로분이면 service_year
         · 잉여금처분상여 — resolution_date(결의일 연도 귀속) / 인정상여 — service_year
         · 식사대 — months, meal_provided / 자가운전보조금 — months, vehicle(본인소유|본인명의임차|기타), business_use, actual_travel_reimbursed
-        · 출산·보육수당 — purpose(보육: months, child_age / 출산: 2024~ within_2y_of_birth·payment_count·related_party, 그 전 months)
+        · 출산·보육수당 — purpose(보육: months, child_age(과세기간 개시일 현재 만 나이, 6세 이하) / 출산: 2024~ within_2y_of_birth·payment_count·related_party, 그 전 months).
+          보육 한도: 2016~2023 월 10만원(출산 포함), 2024~2025 월 20만원(근로자 1인당), 2026~ 자녀 1명당 월 20만원 —
+          2026~는 child_ages(자녀별 개시일 나이 목록) 또는 child_count, 또는 자녀별 항목으로 나누고 facts.child(자녀 이름)를 다르게
         · 직무발명보상금 — retired(퇴직 후면 기타소득), 2024~ related_party
         · 연장근로수당 — eligible_occupation, 해당 시 monthly_regular_wage·prior_year_gross(광산·일용은 mine_or_daily)
         · 사택제공이익 — position / 주택자금대여이익 — sme(2024~ related_party)
@@ -1365,6 +1367,18 @@ def earned_income_gross_pay(year: YEAR,
         if k in _EGP_월한도_종류:
             월한도_건수[k] = 월한도_건수.get(k, 0) + 1
     for k, cnt in 월한도_건수.items():
+        if cnt > 1 and k == "출산·보육수당" and vocab.rule(k, year).get("보육_자녀1명당"):
+            # 2026~ 보육수당은 자녀 1명당 월 20만원(제12조3호머목2) — 자녀별 항목(facts.child 서로 다름)이면 허용
+            _보육 = [it for it in items if it.get("kind") == k]
+            _자녀 = [(it.get("facts") or {}).get("child") for it in _보육]
+            if all((it.get("facts") or {}).get("purpose") == "보육" for it in _보육) \
+                    and all(c not in (None, "") for c in _자녀) and len(set(_자녀)) == len(_자녀):
+                continue
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"같은 kind '{k}'가 {cnt}번 입력됨 — {year}년 보육수당은 자녀 1명당 월 한도이므로 "
+                             "자녀별로 나눌 때는 모든 항목을 purpose='보육'으로 하고 facts.child(자녀 이름)를 서로 다르게 넣거나, "
+                             "한 항목에 child_ages(과세기간 개시일 기준 자녀 나이 목록)를 넣으세요"],
+                    "필요 입력": {k: ["amount", "months", "purpose", "child", "child_age"]}}
         if cnt > 1:
             return {"error": "입력 확인 필요 — 계산하지 않음",
                     "문제": [f"같은 kind '{k}'가 {cnt}번 입력됨 — 월 한도는 한 항목으로 합쳐 입력하세요"],
@@ -1495,14 +1509,32 @@ def earned_income_gross_pay(year: YEAR,
             출산전액 = r.get("출산전액비과세", False)
 
             if purpose == "보육":
-                if child_age is not None and int(child_age) > 6:
+                # 자녀 나이는 과세기간 개시일(1/1) 현재 만 나이 — "6세 이하"(제12조3호머목2)
+                자녀1명당 = bool(r.get("보육_자녀1명당"))   # 2026~ 자녀 1명당 월 20만원, 2025년까지 근로자 1인당
+                child_ages = facts.get("child_ages")
+                if child_ages:
+                    대상자녀수 = sum(1 for a in child_ages if int(a) <= 6)
+                elif facts.get("child_count") is not None:
+                    대상자녀수 = int(facts["child_count"])
+                else:
+                    대상자녀수 = 0 if (child_age is not None and int(child_age) > 6) else 1
+                if 대상자녀수 == 0:
                     과세액 = amount; 비과세액 = 0
-                    사유 = f"자녀 나이 {int(child_age)}세 — 6세 이하 한도 초과, 전액 과세"
+                    _나이 = child_ages if child_ages else f"{int(child_age)}세"
+                    사유 = f"자녀 나이 {_나이}(과세기간 개시일 기준) — 6세 이하 아님, 전액 과세"
                     비과세_성격 = "과세(연령 초과)"
                 else:
+                    배수 = 대상자녀수 if 자녀1명당 else 1
+                    월한도 = 월한도 * 배수
                     비과세액 = min(amount, 월한도 * months)
                     과세액 = amount - 비과세액
-                    사유 = f"6세 이하 자녀 보육 — 월 {월한도:,}원 × {months}개월 이내 비과세"
+                    if 자녀1명당:
+                        사유 = (f"6세 이하 자녀 {대상자녀수}명 보육 — 자녀 1명당 월 {r['월한도']:,}원 × {대상자녀수}명 × "
+                                f"{months}개월 이내 비과세({year}년~ 제12조3호머목2)")
+                    else:
+                        사유 = f"6세 이하 자녀 보육 — 월 {월한도:,}원 × {months}개월 이내 비과세"
+                        if 대상자녀수 > 1:
+                            사유 += f"({year}년은 자녀 수와 관계없이 근로자 1인당 월 한도 — 자녀 1명당 한도는 2026년부터)"
                     비과세_성격 = "월한도비과세"
             elif purpose == "출산":
                 if year >= 2024 and 출산전액 and within_2y and payment_count <= r.get("출산지급횟수한도", 2) and not related_party:
