@@ -326,21 +326,21 @@ _도구별_필수필드 = {
         "복권당첨금": {"필요": ["amount"], "허용": ["actual_cost"]},
     },
     "earned_income_gross_pay": {
-        "급여": {"허용": ["facts", "service_year"]},
+        "급여": {"허용": ["facts", "service_year", "regular_monthly"]},
         "상여": {"허용": ["facts", "service_year"]},
         "잉여금처분상여": {"허용": ["facts", "resolution_date"]},
         "인정상여": {"허용": ["facts", "service_year"]},
-        "식사대": {"허용": ["facts", "months", "meal_provided"]},
-        "자가운전보조금": {"허용": ["facts", "months", "vehicle", "business_use", "actual_travel_reimbursed"]},
-        "출산·보육수당": {"허용": ["facts", "purpose", "months", "child_age", "child_ages", "child_count", "child", "within_2y_of_birth", "payment_count", "related_party"]},
-        "직무발명보상금": {"허용": ["facts", "retired", "related_party"]},
-        "연장근로수당": {"허용": ["facts", "eligible_occupation", "monthly_regular_wage", "prior_year_gross", "mine_or_daily"]},
-        "사택제공이익": {"허용": ["facts", "position"]},
-        "주택자금대여이익": {"허용": ["facts", "sme", "related_party"]},
-        "단체보험료": {"허용": ["facts"]},
-        "학자금": {"허용": ["facts", "beneficiary", "requirements_met"]},
-        "실비변상여비": {"허용": ["facts", "actual_cost"]},
-        "사회보험료_본인부담분_회사대납": {"허용": ["facts"]},
+        "식사대": {"허용": ["facts", "months", "meal_provided", "regular_monthly"]},
+        "자가운전보조금": {"허용": ["facts", "months", "vehicle", "business_use", "actual_travel_reimbursed", "regular_monthly"]},
+        "출산·보육수당": {"허용": ["facts", "purpose", "months", "child_age", "child_ages", "child_count", "child", "within_2y_of_birth", "payment_count", "related_party", "regular_monthly"]},
+        "직무발명보상금": {"허용": ["facts", "retired", "related_party", "regular_monthly"]},
+        "연장근로수당": {"허용": ["facts", "eligible_occupation", "monthly_regular_wage", "prior_year_gross", "mine_or_daily", "months"]},
+        "사택제공이익": {"허용": ["facts", "position", "regular_monthly"]},
+        "주택자금대여이익": {"허용": ["facts", "sme", "related_party", "regular_monthly"]},
+        "단체보험료": {"허용": ["facts", "regular_monthly"]},
+        "학자금": {"허용": ["facts", "beneficiary", "requirements_met", "regular_monthly"]},
+        "실비변상여비": {"허용": ["facts", "actual_cost", "regular_monthly"]},
+        "사회보험료_본인부담분_회사대납": {"허용": ["facts", "regular_monthly"]},
         "사회보험료_사용자부담분": {"허용": ["facts"]},
     },
 }
@@ -1335,6 +1335,136 @@ _EGP_KIND_필요사실 = {
 _EGP_월한도_종류 = {"식사대", "자가운전보조금", "출산·보육수당"}
 
 
+_EGP_근무월수_종류 = ("식사대", "자가운전보조금", "출산·보육수당")
+
+
+def _egp_월정액급여_산정(year: int, items: list, 판정: dict, 제외_idx: dict, 본인_idx: int) -> dict:
+    """영 제17조① 후단의 월정액급여를 같은 호출의 다른 항목으로 산정한다.
+    월정액급여 = 매월 직급별로 받는 봉급·급료·보수·임금·수당, 그 밖에 이와 유사한 성질의 급여
+      (상여 등 부정기적인 급여, 영 제12조 실비변상적 급여, [2021~] 영 제17조의4 복리후생적 급여 제외)의 총액
+      − 「근로기준법」 연장·야간·휴일근로 급여(·「선원법」 생산수당).
+    판정: {원래 index: 항목별 dict(과세액·비과세액·비과세_성격)}, 제외_idx: {원래 index: 제외 사유}.
+    반환: {"월정액급여", "근무월수", "포함", "제외", "산식"} 또는 {"error", ...}."""
+    복리후생_제외 = year >= 2021   # 영 제17조① 개정 2021.2.17 — 제17조의4 복리후생적 급여 제외 문구 추가
+    포함: list[dict] = []
+    제외: list[dict] = []
+    모호: list[str] = []
+    필요: dict[str, list[str]] = {}
+
+    def _모호(k, 문구, 키="regular_monthly"):
+        모호.append(f"{k}: {문구}")
+        필요.setdefault(k, [])
+        if 키 not in 필요[k]:
+            필요[k].append(키)
+
+    # 근무월수 — 연장근로수당 facts.months, 없으면 월 한도 항목의 months(모두 같을 때), 둘 다 없으면 12
+    본인_facts = (items[본인_idx].get("facts") or {})
+    if 본인_facts.get("months") not in (None, ""):
+        근무월수 = int(본인_facts["months"]); 월수_출처 = "연장근로수당 facts.months"
+    else:
+        월수들 = {int((it.get("facts") or {})["months"]) for it in items
+                  if it.get("kind") in _EGP_근무월수_종류 and (it.get("facts") or {}).get("months") not in (None, "")}
+        if len(월수들) > 1:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"연장근로수당: 월정액급여 산정용 근무월수가 항목마다 다름 {sorted(월수들)} — "
+                             "연장근로수당 facts.months(근무월수)를 넣거나 monthly_regular_wage를 직접 입력"],
+                    "필요 입력": {"연장근로수당": ["months", "monthly_regular_wage"]}}
+        if 월수들:
+            근무월수 = 월수들.pop(); 월수_출처 = "식사대·자가운전보조금 등 facts.months"
+        else:
+            근무월수 = 12; 월수_출처 = "근무월수 입력 없음 — 12개월로 봄"
+    if 근무월수 <= 0:
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": ["연장근로수당: 근무월수(months)가 0 이하"],
+                "필요 입력": {"연장근로수당": ["months"]}}
+
+    if not any(it.get("kind") == "급여" and i not in 제외_idx for i, it in enumerate(items)):
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": ["연장근로수당: monthly_regular_wage가 없고, 월정액급여를 산정할 해당 연도 급여(봉급·임금) 항목도 없음"],
+                "필요 입력": {"연장근로수당": ["monthly_regular_wage"], "급여": ["amount"]}}
+
+    for i, it in enumerate(items):
+        k = it.get("kind", "")
+        amount = int(it.get("amount", 0) or 0)
+        facts = it.get("facts") or {}
+        정기 = facts.get("regular_monthly")   # 매월 정기 지급 여부(선택)
+        if i in 제외_idx:
+            제외.append({"kind": k, "금액": amount, "사유": f"{year}년 근로소득 아님 — {제외_idx[i]}"})
+            continue
+        p = 판정.get(i) or {"과세액": amount, "비과세액": 0}   # 연장근로수당(아직 판정 전)은 금액 그대로
+        과세, 비과세 = p["과세액"], p["비과세액"]
+        if k == "연장근로수당":
+            제외.append({"kind": k, "금액": amount, "사유": "「근로기준법」 연장·야간·휴일근로로 통상임금에 더하여 받는 급여 — 총액에서 뺌(영 제17조① 후단)"})
+        elif k in ("상여", "잉여금처분상여", "인정상여"):
+            제외.append({"kind": k, "금액": amount, "사유": "상여 등 부정기적인 급여 — 제외(영 제17조① 후단 괄호)"})
+        elif k == "사회보험료_사용자부담분":
+            제외.append({"kind": k, "금액": amount, "사유": "사용자 부담분 — 근로자가 받는 급여 아님(법 제12조3호너목)"})
+        elif k in ("급여", "식사대", "사회보험료_본인부담분_회사대납") or (k == "출산·보육수당" and facts.get("purpose") == "보육"):
+            if 정기 is False:
+                제외.append({"kind": k, "금액": amount, "사유": "매월 정기 지급 아님(regular_monthly=false) — 부정기적인 급여로 제외"})
+            else:
+                사유 = {"급여": "매월 받는 봉급·급료·임금 — 포함",
+                        "식사대": "매월 받는 수당 — 포함(비과세 식사대도 영 제17조의2 근거로 제12조 실비변상·제17조의4 복리후생 제외 대상 아님)",
+                        "사회보험료_본인부담분_회사대납": "근로자 부담분 회사 대납 — 매월 급여와 유사한 성질의 급여로 포함",
+                        "출산·보육수당": "매월 받는 보육수당 — 포함(비과세 근거 법 제12조3호머목, 제외 대상 아님)"}[k]
+                포함.append({"kind": k, "금액": amount, "사유": 사유})
+        elif k == "자가운전보조금":
+            if 비과세 > 0:
+                제외.append({"kind": k, "금액": 비과세, "사유": "비과세 자가운전보조금 — 영 제12조 실비변상적 급여로 제외"})
+            if 과세 > 0:
+                if 정기 is False:
+                    제외.append({"kind": k, "금액": 과세, "사유": "과세분 — 매월 정기 지급 아님(regular_monthly=false)"})
+                else:
+                    포함.append({"kind": k, "금액": 과세, "사유": "비과세 한도 초과 과세분 — 영 제12조 실비변상적 급여 아님, 매월 받는 수당으로 포함"})
+        elif k == "실비변상여비":
+            if 비과세 > 0:
+                제외.append({"kind": k, "금액": 비과세, "사유": "실비변상 여비 — 영 제12조 실비변상적 급여로 제외"})
+            if 과세 > 0:
+                if 정기 is None:
+                    _모호(k, "실비 정산이 아닌 여비(과세분) — 매월 정기 지급 수당인지(regular_monthly) 입력 필요")
+                elif 정기:
+                    포함.append({"kind": k, "금액": 과세, "사유": "실비 정산 아닌 정액 여비, 매월 정기 지급 — 포함"})
+                else:
+                    제외.append({"kind": k, "금액": 과세, "사유": "부정기 지급 — 제외"})
+        elif k in ("사택제공이익", "주택자금대여이익", "단체보험료"):
+            나머지 = amount
+            if 비과세 > 0 and 복리후생_제외:
+                제외.append({"kind": k, "금액": 비과세, "사유": "영 제17조의4 복리후생적 급여 — 제외(영 제17조① 후단, 2021.2.17 개정분)"})
+                나머지 -= 비과세
+            if p.get("비과세_성격") == "근로소득 아님":
+                제외.append({"kind": k, "금액": 나머지, "사유": "근로소득 아님(영 제38조① 단서) — 급여 총액에 넣지 않음"})
+                나머지 = 0
+            if 나머지 > 0:
+                if 정기 is None:
+                    근거문 = "" if 복리후생_제외 else f"({year}년 영 제17조①에는 복리후생적 급여 제외 문구 없음 — 2021.2.17 개정으로 추가) "
+                    _모호(k, f"{나머지:,}원 {근거문}— 매월 정기적으로 받는 급여인지(regular_monthly) 입력 필요")
+                elif 정기:
+                    포함.append({"kind": k, "금액": 나머지, "사유": "매월 정기적으로 받는 급여 — 포함"})
+                else:
+                    제외.append({"kind": k, "금액": 나머지, "사유": "부정기 — 제외"})
+        else:
+            # 직무발명보상금·학자금·출산 급여 등 — 지급 형태가 항목 이름만으로 정해지지 않음
+            if 정기 is None:
+                _모호(k, "매월 정기 지급(월정액급여 포함)인지 부정기 지급(제외)인지 알 수 없음 — regular_monthly(true/false) 입력 필요")
+            elif 정기:
+                포함.append({"kind": k, "금액": amount, "사유": "매월 정기 지급 — 포함"})
+            else:
+                제외.append({"kind": k, "금액": amount, "사유": "부정기적인 급여 — 제외(영 제17조① 후단 괄호)"})
+
+    if 모호:
+        필요.setdefault("연장근로수당", []).append("monthly_regular_wage")
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"연장근로수당: monthly_regular_wage가 없어 월정액급여를 항목으로 산정하려 했으나 판단할 수 없는 항목이 있음 — {m}"
+                         for m in 모호],
+                "필요 입력": 필요}
+
+    포함합 = sum(x["금액"] for x in 포함)
+    월정액 = 포함합 // 근무월수
+    산식 = (f"월정액급여 = (" + " + ".join(f"{x['kind']} {x['금액']:,}" for x in 포함) +
+            f") ÷ {근무월수}개월 = {포함합:,} ÷ {근무월수} = {월정액:,}원 ({월수_출처})")
+    return {"월정액급여": 월정액, "포함_합계": 포함합, "근무월수": 근무월수, "포함": 포함, "제외": 제외, "산식": 산식}
+
+
 @mcp.tool(annotations=CALC)
 @_guard
 def earned_income_gross_pay(year: YEAR,
@@ -1350,7 +1480,9 @@ def earned_income_gross_pay(year: YEAR,
           보육 한도: 2016~2023 월 10만원(출산 포함), 2024~2025 월 20만원(근로자 1인당), 2026~ 자녀 1명당 월 20만원 —
           2026~는 child_ages(자녀별 개시일 나이 목록) 또는 child_count, 또는 자녀별 항목으로 나누고 facts.child(자녀 이름)를 다르게
         · 직무발명보상금 — retired(퇴직 후면 기타소득), 2024~ related_party
-        · 연장근로수당 — eligible_occupation, 해당 시 monthly_regular_wage·prior_year_gross(광산·일용은 mine_or_daily)
+        · 연장근로수당 — eligible_occupation, 해당 시 prior_year_gross(필수)·monthly_regular_wage(광산·일용은 mine_or_daily).
+          monthly_regular_wage가 없으면 같은 호출 항목으로 영 제17조① 월정액급여를 산정(연간 합계 ÷ months, 기본 12) —
+          지급 형태가 이름만으로 정해지지 않는 항목(직무발명보상금·학자금·출산 급여 등)은 facts.regular_monthly(매월 정기 지급 여부)
         · 사택제공이익 — position / 주택자금대여이익 — sme(2024~ related_party)
         · 학자금 — beneficiary(본인|가족), 본인이면 requirements_met / 실비변상여비 — actual_cost
         · 단체보험료(연 한도) / 사회보험료_본인부담분_회사대납(과세) / 사회보험료_사용자부담분 — insurance
@@ -1419,8 +1551,15 @@ def earned_income_gross_pay(year: YEAR,
     직무발명보상금_비과세_사용액 = 0
     산식_목록: list[str] = []
     근거_목록: list[list[str]] = []
+    판단_목록: list[dict] = []
+    # 연장근로수당은 월정액급여를 다른 항목 판정 결과로 산정할 수 있게 맨 뒤에 판정(출력 순서는 입력 순서 유지)
+    처리순서 = [i for i, it in enumerate(items) if it.get("kind") != "연장근로수당"] + \
+              [i for i, it in enumerate(items) if it.get("kind") == "연장근로수당"]
+    판정_idx: dict[int, dict] = {}     # 원래 index → 항목별 dict
+    제외_idx: dict[int, str] = {}      # 원래 index → 제외 사유
 
-    for it in items:
+    for _idx in 처리순서:
+        it = items[_idx]
         k = it["kind"]
         amount = int(it.get("amount", 0))
         facts = it.get("facts", {}) or {}
@@ -1438,7 +1577,7 @@ def earned_income_gross_pay(year: YEAR,
             if sy is not None and int(sy) != year:
                 제외_항목.append({"kind": k, "금액": amount, "사유": f"{int(sy)}년 귀속(근로 제공 연도) — {year}년 총급여에서 제외",
                                   "근거": b})
-                continue
+                제외_idx[_idx] = 제외_항목[-1]["사유"]; continue
         elif k == "잉여금처분상여":
             rd = facts.get("resolution_date")
             if rd:
@@ -1446,13 +1585,13 @@ def earned_income_gross_pay(year: YEAR,
                 if 결의연도 != year:
                     제외_항목.append({"kind": k, "금액": amount, "사유": f"{결의연도}년 귀속(잉여금처분결의일) — {year}년 총급여에서 제외",
                                       "근거": b})
-                    continue
+                    제외_idx[_idx] = 제외_항목[-1]["사유"]; continue
         elif k == "인정상여":
             sy = facts.get("service_year")
             if sy is not None and int(sy) != year:
                 제외_항목.append({"kind": k, "금액": amount, "사유": f"{int(sy)}년 귀속(근로 제공 사업연도) — {year}년 총급여에서 제외",
                                   "근거": b})
-                continue
+                제외_idx[_idx] = 제외_항목[-1]["사유"]; continue
 
         # ── 항목별 과세·비과세 판정 ──
         if k == "식사대":
@@ -1564,11 +1703,11 @@ def earned_income_gross_pay(year: YEAR,
             if year == 2016:
                 제외_항목.append({"kind": k, "금액": amount, "사유": "기타소득(2016년까지는 근로소득 범위 밖 — 소득세법 제20조 2016 시행본에 직무발명보상금 없음)",
                                   "근거": b})
-                continue
+                제외_idx[_idx] = 제외_항목[-1]["사유"]; continue
             if retired:
                 제외_항목.append({"kind": k, "금액": amount, "사유": "기타소득(퇴직 후 수령 — 발명진흥법 직무발명보상금, 소득세법 제21조 22호의2)",
                                   "근거": b})
-                continue
+                제외_idx[_idx] = 제외_항목[-1]["사유"]; continue
             if year >= 2024 and 특수관계제외 and related_party:
                 과세액 = amount; 비과세액 = 0
                 사유 = "2024년부터 사용자등과 특수관계자는 비과세 제외(영 제17조의3 ②)"
@@ -1586,14 +1725,35 @@ def earned_income_gross_pay(year: YEAR,
             if eligible:
                 mrw = facts.get("monthly_regular_wage")
                 pYG = facts.get("prior_year_gross")
-                if mrw is None or pYG is None:
-                    빠진 = [n for n, v in (("monthly_regular_wage(월정액급여)", mrw), ("prior_year_gross(직전연도 총급여)", pYG)) if v is None]
+                if pYG is None:
+                    # 직전 과세기간 총급여액은 이번 호출 항목으로 알 수 없음 — 항상 입력 필요
                     return {"error": "입력 확인 필요 — 계산하지 않음",
-                            "문제": [f"연장근로수당: eligible_occupation=True이나 {'·'.join(빠진)} 누락 — 월정액급여 = 매월 받는 급여 총액 − 상여 등 부정기 급여 − 실비변상적 급여(비과세분) − 연장·야간·휴일근로수당(영 제17조①), facts에 직접 계산해 넣으세요"],
-                            "필요 입력": {"연장근로수당": ["monthly_regular_wage", "prior_year_gross"]}}
+                            "문제": ["연장근로수당: eligible_occupation=True이나 직전연도 총급여(prior_year_gross) 누락"
+                                     + ("" if mrw is not None else " — 월정액급여는 monthly_regular_wage가 없으면 같은 호출의 항목으로 산정")],
+                            "필요 입력": {"연장근로수당": ["prior_year_gross"] + (
+                                ["monthly_regular_wage"] if mrw is None and not any(x.get("kind") == "급여" for x in items) else [])}}
                 월정액한도 = r["월정액급여한도"]
                 총급여한도 = r["직전연도총급여한도"]
-                if int(mrw) > 월정액한도 or int(pYG) > 총급여한도:
+                월정액_초과 = None
+                월정액_산정됨 = mrw is None
+                if mrw is None:
+                    # 영 제17조① 후단 정의대로 같은 호출의 다른 항목으로 월정액급여 산정
+                    산정 = _egp_월정액급여_산정(year, items, 판정_idx, 제외_idx, _idx)
+                    if "error" in 산정:
+                        return 산정
+                    mrw = 산정["월정액급여"]
+                    월정액_초과 = 산정["포함_합계"] > 월정액한도 * 산정["근무월수"]   # 원 단위 절사 전 비교
+                    산식_목록.append(산정["산식"])
+                    판단_목록.append({"항목": "월정액급여 산정(영 제17조① 후단)",
+                                     "결론": f"월정액급여 {mrw:,}원 — {'한도 ' + format(월정액한도, ',') + '원 초과' if 월정액_초과 else '한도 ' + format(월정액한도, ',') + '원 이하'}",
+                                     "포함": 산정["포함"], "제외": 산정["제외"], "산식": 산정["산식"],
+                                     "근거": "소득세법 시행령 제17조① 후단(상여 등 부정기 급여·영 제12조 실비변상적 급여"
+                                             + ("·영 제17조의4 복리후생적 급여" if year >= 2021 else "")
+                                             + " 제외, 연장·야간·휴일근로 급여 차감)",
+                                     "주의": "연간 금액을 근무월수로 나눈 평균 — 달마다 월정액급여가 달라 한도를 넘는 달이 있으면 monthly_regular_wage로 그 달 금액을 직접 입력"})
+                if 월정액_초과 is None:
+                    월정액_초과 = int(mrw) > 월정액한도
+                if 월정액_초과 or int(pYG) > 총급여한도:
                     과세액 = amount; 비과세액 = 0
                     사유 = f"월정액급여 {int(mrw):,}원 > {월정액한도:,}원 또는 직전연도 총급여 {int(pYG):,}원 > {총급여한도:,}원 — 비과세 요건 미충족(영 제17조①)"
                     비과세_성격 = "과세(요건 미충족)"
@@ -1607,6 +1767,8 @@ def earned_income_gross_pay(year: YEAR,
                     과세액 = amount - 비과세액
                     사유 = f"생산직 등 요건 충족 — 연 {연한도:,}원 이내 비과세(영 제17조② 1호)"
                     비과세_성격 = "연한도비과세"
+                if 월정액_산정됨:
+                    사유 += f" [월정액급여 {int(mrw):,}원은 같은 입력 항목으로 산정 — 판단 참고]"
             else:
                 과세액 = amount; 비과세액 = 0
                 사유 = "생산직 등 요건 미해당 — 전액 과세"
@@ -1729,6 +1891,7 @@ def earned_income_gross_pay(year: YEAR,
             "근거": b,
             "사유": 사유,
         })
+        판정_idx[_idx] = 항목별[-1]
         총급여액 += 과세액
         비과세_합계 += 비과세액
 
@@ -1737,6 +1900,10 @@ def earned_income_gross_pay(year: YEAR,
         #   vocab 판단.비과세성격 필드가 없고 판단.구분="비과세" → 비과세_합계에만 포함.
         if r.get("비과세성격") == "근로소득 아님":
             근로소득_아님_합계 += amount
+
+    # 출력 순서는 입력 순서대로(연장근로수당을 뒤에서 판정했어도)
+    _순번 = {id(v): i for i, v in 판정_idx.items()}
+    항목별.sort(key=lambda x: _순번.get(id(x), 0))
 
     # ── 5. 근로소득공제·근로소득금액 ──
     근로소득공제 = I.earned_deduction(총급여액, year)
@@ -1801,7 +1968,8 @@ def earned_income_gross_pay(year: YEAR,
        제외_항목=제외_항목,
        산식=산식_목록,
        계산식_입력=계산식_입력,
-       계산식=계산식)
+       계산식=계산식,
+       **({"판단": 판단_목록} if 판단_목록 else {}))
 
 
 # ───────── 세무조사 판정 도구 11개 ─────────
