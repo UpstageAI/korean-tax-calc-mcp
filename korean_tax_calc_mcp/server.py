@@ -312,6 +312,8 @@ _도구별_필수필드 = {
     },
     "other_income_aggregate": {
         "산업재산권대여": {"필요": ["amount"], "허용": ["actual_cost", "actual_expense"]},
+        "공익사업지상권대여": {"필요": ["amount"], "허용": ["actual_cost", "actual_expense"]},
+        "서화골동품양도": {"필요": ["amount"], "허용": ["actual_cost", "held_years", "museum", "living_domestic_artist"]},
         "일시적인적용역": {"필요": ["amount"], "허용": ["actual_cost", "actual_expense"]},
         "뇌물": {"필요": ["amount"], "허용": ["forfeited"]},
         "위약금·배상금": {"필요": ["amount"], "허용": ["deposit_substituted"]},
@@ -2865,12 +2867,14 @@ def financial_income_aggregate(year: YEAR,
 @mcp.tool(annotations=CALC)
 @_guard
 def other_income_aggregate(year: YEAR,
-                           items: Annotated[list, Field(description="기타소득 항목 [{kind, amount, ...}] — kind: 산업재산권대여·일시적인적용역·뇌물·위약금·배상금·주택입주지체상금·연금외수령·직무발명보상금_퇴직후·승마투표권환급금·슬롯머신당첨금")]) -> dict:
+                           items: Annotated[list, Field(description="기타소득 항목 [{kind, amount, ...}] — kind: 산업재산권대여·공익사업지상권대여·서화골동품양도·일시적인적용역·뇌물·위약금·배상금·주택입주지체상금·연금외수령·직무발명보상금_퇴직후·승마투표권환급금·슬롯머신당첨금")]) -> dict:
     """거주자의 기타소득 항목을 원래 사실관계로 받아 ① 항목별 과세 구분(종합/분리/비과세/제외) ② 비과세·필요경비 ③ 소득금액·원천징수세액 ④ 종합소득 합산액과 기납부세액까지 계산한다(소득세법 제21조·제12조·제14조③·제127조·제129조, 시행령 제18조②·제87조).
     언제: 종합소득세 신고에서 기타소득의 과세 구분·필요경비·원천징수세액·종합소득 합산액을 계산할 때.
     입력: 귀속연도(2016~2026) → year, 기타소득 항목 목록 [{kind, amount, ...}] → items.
       kind 허용값(어휘 기반, 별칭 포함):
         · 산업재산권대여 — 광업권·어업권·산업재산권·산업정보 등을 양도·대여하고 받는 금품
+        · 공익사업지상권대여 — 공익사업 관련 지역권·지상권 설정·대여 대가(필요경비율은 산업재산권대여와 같음, 공익사업과 무관한 지상권 대여는 사업소득)
+        · 서화골동품양도 — 개당·점당 6천만원 이상 서화·골동품 양도(필요경비 1억 이하 90%·초과분 80%, held_years≥10이면 90%, museum=true 박물관·미술관 양도 비과세, living_domestic_artist=true 생존 국내 작가 작품 과세 제외, 무조건 분리과세 20%)
         · 일시적인적용역 — 고용관계 없이 일시적으로 제공한 강연·방송 해설·자문 등 인적용역의 대가
         · 뇌물 — 뇌물로 받은 금품(몰수·추징 확정액은 forfeited로 입력, 기본 0)
         · 위약금·배상금 — 계약의 위약·해약으로 받는 위약금·배상금(계약금 대체분은 deposit_substituted로 입력, 기본 0, 주택입주 지체상금 제외)
@@ -3043,7 +3047,32 @@ def other_income_aggregate(year: YEAR,
                 산식_목록.append(f"{k}: 당첨금 {amount:,}원, 원천징수 {amount:,} × 20% = {원천징수세액:,}원 (소득세법 제21조①4호·제84조2호, 무조건 분리과세)")
             근거_목록.extend(basis)
 
-        elif k in ("산업재산권대여", "일시적인적용역", "주택입주지체상금"):
+        elif k == "서화골동품양도":
+            held = int(it.get("held_years", 0) or 0)
+            actual = int(it.get("actual_cost", 0) or 0)
+            if it.get("museum"):
+                과세구분표시, 소득, 원천징수세액, 필요경비, 비과세 = "비과세", 0, 0, 0, amount
+                산식_목록.append(f"{k}: 박물관·미술관 양도 {amount:,}원 → 비과세(소득세법 제12조5호)")
+            elif it.get("living_domestic_artist") or amount < rule.get("과세기준가액", 60000000):
+                과세구분표시, 소득, 원천징수세액, 필요경비, 비과세 = "제외", 0, 0, 0, 0
+                사유 = "양도일 현재 생존한 국내 원작자 작품" if it.get("living_domestic_artist") else "개당·점당 6천만원 미만"
+                산식_목록.append(f"{k}: {amount:,}원 — {사유} → 과세 대상 아님(소득세법 시행령 제41조⑭)")
+            else:
+                율경비 = int(amount * 0.9) if (held >= 10 or amount <= 100000000) else int(100000000 * 0.9 + (amount - 100000000) * 0.8)
+                필요경비 = max(율경비, actual)
+                소득 = amount - 필요경비
+                원천징수세액 = int(소득 * rule.get("원천징수세율", 0.2))
+                과세구분표시, 비과세 = "분리과세", 0
+                분리과세_기타소득금액 += 소득
+                분리과세_원천징수세액 += 원천징수세액
+                산식_목록.append(f"{k}: {amount:,}원 − 필요경비 max(율 {율경비:,}, 실제 {actual:,}) = 소득금액 {소득:,}원"
+                                 f"({'보유 10년 이상 90%' if held >= 10 else ('1억 이하 90%' if amount <= 100000000 else '1억까지 90%·초과분 80%')}), 원천징수 20% = {원천징수세액:,}원 (무조건 분리과세)")
+            비과세_합계 += 비과세
+            항목별.append({"kind": k, "총수입금액": amount, "비과세": 비과세, "필요경비": 필요경비,
+                           "소득금액": 소득, "과세구분": 과세구분표시, "원천징수세액": 원천징수세액, "근거": basis})
+            근거_목록.extend(basis)
+
+        elif k in ("산업재산권대여", "공익사업지상권대여", "일시적인적용역", "주택입주지체상금"):
             필요경비율 = rule.get("필요경비율", 0)
             actual_expense = int(it.get("actual_cost", it.get("actual_expense", 0)))
             과세대상금액 = amount
