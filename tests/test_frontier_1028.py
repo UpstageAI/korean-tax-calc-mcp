@@ -66,3 +66,24 @@ def test_find_tool_surfaces_tools_models_missed():
     assert "capital_gains_income" in _top("아파트 팔았을 때 양도세")
     assert _top("업무무관 가지급금 지급이자")[0] == "nonbusiness_interest_disallowance"
     assert "deemed_interest" in _top("unfair transaction deemed interest")
+
+
+def test_capital_gains_income_now_returns_tax():
+    r = c("capital_gains_income", {"asset_type": "주택", "acquisition_date": "2015-03-10", "transfer_date": "2025-06-20",
+          "transfer_price": 2000000000, "acquisition_price": 800000000, "transfer_expenses": 20000000,
+          "one_house": True, "exempt_met": True, "residence_years": 10, "apply_basic_deduction": True})
+    assert r["결과"]["양도소득_과세표준"] == 91900000 and r["결과"]["산출세액"] == 16725000 and r["결과"]["지방소득세"] == 1672500
+
+
+def test_capital_gains_short_term_vs_nonbusiness_land_takes_larger():
+    r = c("capital_gains_income", {"asset_type": "토지", "acquisition_date": "2024-03-01", "transfer_date": "2025-09-01",
+          "transfer_price": 500000000, "acquisition_price": 300000000, "one_house": False, "exempt_met": False,
+          "apply_basic_deduction": True, "non_business_land": True})
+    assert r["결과"]["산출세액"] == 79000000   # 40% 79,000,000 > 기본세율+10%p 74,860,000
+
+
+def test_capital_gains_tax_housing_short_term_by_transfer_date():
+    a = {"base": 100000000, "asset_type": "주택", "acquisition_date": "2020-01-10"}
+    assert c("capital_gains_tax", {**a, "transfer_date": "2021-03-01"})["결과"]["산출세액"] == 20100000
+    assert c("capital_gains_tax", {**a, "transfer_date": "2021-07-01"})["결과"]["산출세액"] == 60000000
+    assert c("capital_gains_tax", {**a, "transfer_date": "2021-07-01", "registered": False})["결과"]["산출세액"] == 70000000
