@@ -1486,3 +1486,223 @@ def _pension_deduction(total_pension):
     ded = int(ded)
     return min(ded, 9_000_000, total_pension)
 
+
+
+# ── 자녀세액공제(소득세법 제59조의2) 귀속연도표 2016~2026 ────────────────────────
+# 각 기간은 law_article(as_of 그해 12/31) 본문과 article_addenda 부칙으로 대조했다.
+#  · 2016: ①1명 15만·2명 30만·3명 이상 30만+2명 초과 1명당 30만, ②6세 이하 2명 이상 1명 초과 1명당 15만,
+#          ③출생·입양 1명당 30만 (2015.5.13 개정, 부칙 제2조 "2014년 과세기간에 발생한 소득분부터").
+#  · 2017: ③을 첫째 30만·둘째 50만·셋째 이상 70만으로 (2016.12.20 개정, 부칙 제1조 2017.1.1 시행·
+#          제2조① 시행 이후 발생 소득분부터, 제13조 시행 전 출산·입양분은 종전 규정).
+#  · 2018: ② 6세 이하 추가공제 삭제 (2017.12.19 개정, 부칙 제1조 2018.1.1 시행·제2조① 시행 이후 발생 소득분부터).
+#  · 2019: ① 7세 이상(7세 미만 취학아동 포함)으로 한정 (2017.12.19 부칙 제1조 단서 3호 "제59조의2제1항 … 2019년 1월 1일",
+#          2018.12.31 개정으로 취학아동 문구 추가, 부칙 제1조 2019.1.1 시행·제2조① 시행 이후 발생 소득분부터).
+#  · 2020: 취학아동 문구 삭제 — 7세 이상 (2019.12.31 개정, 부칙 제1조 2020.1.1 시행·제2조① 시행 이후 발생 소득분부터).
+#  · 2023: 8세 이상 (2022.12.31 개정, 부칙 제16조 "이 법 시행 전에 개시한 과세기간 … 연령기준은 종전의 규정").
+#  · 2024: 손자녀 포함, 2명 35만·3명 이상 35만+1명당 30만 (2023.12.31 개정, 부칙 제3조① 손자녀(각 호 외의 부분)는
+#          "이 법 시행 이후 종합소득과세표준을 신고하거나 소득세를 결정하거나 연말정산하는 경우부터",
+#          제3조② 금액(제2호·제3호)은 "이 법 시행일이 속하는 과세기간분부터").
+#  · 2025: 1명 25만·2명 55만·3명 이상 55만+1명당 40만 (2024.12.31 개정, 부칙 제7조 "시행일이 속하는 과세기간분부터").
+#  · 2026: 본문 13세 이상 (2026.4.21 개정, 부칙 제2조① "시행일이 속하는 과세기간분부터"), 다만 부칙 제2조②1호
+#          "2026년 … 과세기간분: 9세 이상", 제2조③ "2017년 … 출생한 공제대상자녀 및 손자녀에 대해서는 제2항을 적용하지 아니한다"
+#          → 2017년생은 본문 13세 기준.
+CHILD_CREDIT_YEARS = range(2016, 2027)
+
+_CHILD_REL = {"자녀": "자녀", "아들": "자녀", "딸": "자녀", "직계비속": "자녀", "입양자": "자녀", "위탁아동": "자녀",
+              "손자녀": "손자녀", "손자": "손자녀", "손녀": "손자녀"}
+_ORDER_WORDS = {"첫째": 1, "둘째": 2, "셋째": 3, "셋째 이상": 3, "넷째": 4, "다섯째": 5}
+
+
+def _child_basic_amounts(year):
+    """① 인원별 금액 (1명, 2명, 2명 초과 1명당) 과 근거."""
+    if year <= 2023:
+        return (150_000, 300_000, 300_000), "소득세법 제59조의2①1~3호(2015.5.13 개정: 15만·30만·30만+초과 1명당 30만)"
+    if year == 2024:
+        return (150_000, 350_000, 300_000), "소득세법 제59조의2①1~3호(2023.12.31 개정, 부칙 제3조②: 15만·35만·35만+초과 1명당 30만)"
+    return (250_000, 550_000, 400_000), "소득세법 제59조의2①1~3호(2024.12.31 개정, 부칙 제7조: 25만·55만·55만+초과 1명당 40만)"
+
+
+def _child_basic_amount(year, n):
+    (one, two, extra), _ = _child_basic_amounts(year)
+    if n <= 0:
+        return 0
+    if n == 1:
+        return one
+    return two + extra * (n - 2)
+
+
+def _child_age_rule(year, birth_year):
+    """① 연령 하한과 근거. None이면 연령 제한 없음."""
+    if year <= 2018:
+        return None, "2016~2018 귀속: ① 연령 요건 없음(2019.1.1 시행 개정 전)"
+    if year == 2019:
+        return 7, "2019 귀속: ① 7세 이상(7세 미만의 취학아동 포함) — 2017.12.19 부칙 제1조 단서 3호·2018.12.31 개정"
+    if year <= 2022:
+        return 7, "2020~2022 귀속: ① 7세 이상 — 2019.12.31 개정(취학아동 문구 삭제)"
+    if year <= 2025:
+        return 8, "2023~2025 귀속: ① 8세 이상 — 2022.12.31 개정, 부칙 제16조"
+    if birth_year == 2017:
+        return 13, ("2026 귀속 2017년생: 본문 13세 이상 적용 — 2026.4.21 개정 부칙 제2조③"
+                    "(2017년 출생 공제대상자녀·손자녀는 제2조② 경과 연령 미적용)")
+    return 9, "2026 귀속: 부칙(2026.4.21) 제2조②1호 9세 이상(본문 13세 이상의 경과 기준)"
+
+
+def child_tax_credit(year, children, settlement_date=None):
+    """자녀세액공제(소득세법 제59조의2) 귀속연도 2016~2026.
+
+    children: [{name?, relation?, age?|birth_date?|birth_year?, basic_deduction, born_or_adopted_this_year?, order?, school_enrolled?}]
+    나이: 과세기간 종료일 현재 만 나이 = 귀속연도 − 출생연도(제53조④·⑤).
+    settlement_date: 신고·결정·연말정산일(YYYY-MM-DD) — 2023년 이전 귀속분에 손자녀가 있을 때만 필요(2023.12.31 부칙 제3조①).
+    """
+    if year not in CHILD_CREDIT_YEARS:
+        raise NoYearTable(f"자녀세액공제 연도표 없음: {year} (지원 2016~2026)")
+    if not isinstance(children, list):
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["children은 목록이어야 함"]}
+    문제 = []
+    sd = None
+    if settlement_date is not None:
+        try:
+            from datetime import date as _d
+            sd = _d.fromisoformat(str(settlement_date))
+        except ValueError:
+            문제.append(f"settlement_date 형식 오류: {settlement_date!r} (YYYY-MM-DD)")
+    rows = []
+    for i, ch in enumerate(children):
+        name = ch.get("name") or f"자녀{i + 1}"
+        rel_in = ch.get("relation", "자녀")
+        rel = _CHILD_REL.get(str(rel_in).strip())
+        if rel is None:
+            문제.append(f"{name}: relation '{rel_in}' 허용값 아님(자녀·입양자·위탁아동·손자녀)")
+            continue
+        bd = ch.get("basic_deduction")
+        if not isinstance(bd, bool):
+            문제.append(f"{name}: basic_deduction(기본공제대상자 여부, true/false) 필요")
+            continue
+        by = None
+        if ch.get("birth_date") is not None:
+            try:
+                from datetime import date as _d
+                by = _d.fromisoformat(str(ch["birth_date"])).year
+            except ValueError:
+                문제.append(f"{name}: birth_date 형식 오류(YYYY-MM-DD)")
+                continue
+        if ch.get("birth_year") is not None:
+            if by is not None and by != ch["birth_year"]:
+                문제.append(f"{name}: birth_date와 birth_year 불일치"); continue
+            by = ch["birth_year"]
+        age = ch.get("age")
+        if by is not None:
+            if by > year:
+                문제.append(f"{name}: 출생연도 {by}가 귀속연도 {year}보다 뒤"); continue
+            if age is not None and age != year - by:
+                문제.append(f"{name}: age {age}와 출생연도 {by}(→ {year - by}세) 불일치 — age는 과세기간 종료일 현재 만 나이"); continue
+            age = year - by
+        if age is None:
+            문제.append(f"{name}: age(과세기간 종료일 현재 만 나이) 또는 birth_date 필요"); continue
+        if isinstance(age, bool) or not isinstance(age, int) or age < 0:
+            문제.append(f"{name}: age는 0 이상 정수"); continue
+        if by is None:
+            by = year - age
+        born = ch.get("born_or_adopted_this_year", False)
+        if not isinstance(born, bool):
+            문제.append(f"{name}: born_or_adopted_this_year는 true/false"); continue
+        order = ch.get("order")
+        if isinstance(order, str):
+            order = _ORDER_WORDS.get(order.strip())
+            if order is None:
+                문제.append(f"{name}: order 허용값 아님(1·2·3 또는 첫째·둘째·셋째 이상)"); continue
+        if order is not None and (isinstance(order, bool) or not isinstance(order, int) or order < 1):
+            문제.append(f"{name}: order는 1 이상 정수"); continue
+        if born and bd and rel == "자녀" and year >= 2017 and order is None:
+            문제.append(f"{name}: 해당 과세기간 출생·입양 자녀 — order(첫째 1·둘째 2·셋째 이상 3) 필요(제59조의2③, 2017 귀속~)")
+            continue
+        school = ch.get("school_enrolled")
+        if year == 2019 and rel == "자녀" and bd and age == 6 and school is None:
+            문제.append(f"{name}: 2019 귀속 6세 — 7세 미만 취학아동 여부 school_enrolled(true/false) 필요(2018.12.31 개정 제59조의2①)")
+            continue
+        if rel == "손자녀" and bd and year <= 2023:
+            if sd is None:
+                문제.append(f"{name}: {year} 귀속 손자녀 — 손자녀 포함은 2024.1.1 이후 신고·결정·연말정산분부터(2023.12.31 부칙 제3조①). "
+                          "settlement_date(신고·결정·연말정산일) 필요")
+                continue
+            if year <= 2022 and sd.year >= 2024:
+                문제.append(f"{name}: {year} 귀속 손자녀를 2024년 이후 신고·결정하는 경우 — 부칙 제3조① 적용 범위를 이 도구는 판단하지 않음")
+                continue
+        rows.append({"name": name, "rel": rel, "bd": bd, "age": age, "by": by, "born": born, "order": order,
+                     "school": bool(school)})
+    if 문제:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제}
+
+    판단 = []
+    대상_1 = []
+    대상_6세 = []
+    출산 = []
+    for r in rows:
+        if not r["bd"]:
+            판단.append({"항목": r["name"], "결론": "제외 — 기본공제대상자 아님", "금액": 0,
+                       "근거": "소득세법 제59조의2①", "이유": "공제대상자녀는 기본공제대상자에 해당하는 자녀(손자녀)"})
+            continue
+        이유 = []
+        if r["rel"] == "손자녀" and year <= 2023 and sd.year < 2024:
+            포함 = False
+            이유.append(f"손자녀 — {sd.isoformat()} 신고·결정·연말정산분은 2024.1.1 전이라 제외(2023.12.31 부칙 제3조①)")
+            기준, 연령근거 = None, ""
+        else:
+            기준, 연령근거 = _child_age_rule(year, r["by"])
+            if 기준 is None:
+                포함 = True
+            elif r["age"] >= 기준:
+                포함 = True
+            elif year == 2019 and r["school"] and r["age"] < 7:
+                포함 = True
+                이유.append("7세 미만 취학아동")
+            else:
+                포함 = False
+            이유.append(연령근거 + f" — {r['age']}세")
+            if r["rel"] == "손자녀" and year == 2023:
+                이유.append(f"손자녀 — {sd.isoformat()} 신고·결정·연말정산분이라 포함(2023.12.31 부칙 제3조①)")
+        if 포함:
+            대상_1.append(r["name"])
+        if year <= 2017 and r["rel"] == "자녀" and r["age"] <= 6:
+            대상_6세.append(r["name"])
+        출산금액 = 0
+        if r["born"]:
+            if r["rel"] != "자녀":
+                이유.append("출산·입양 공제(③)는 공제대상자녀만 — 손자녀 제외")
+            else:
+                if year == 2016:
+                    출산금액 = 300_000
+                else:
+                    출산금액 = {1: 300_000, 2: 500_000}.get(r["order"], 700_000)
+                출산.append({"이름": r["name"], "순서": r["order"], "금액": 출산금액})
+        판단.append({"항목": r["name"],
+                   "결론": ("①인원 포함" if 포함 else "①인원 제외") + (f", ③출산·입양 {출산금액:,}원" if 출산금액 else ""),
+                   "금액": 출산금액, "근거": "소득세법 제59조의2·제53조④⑤", "이유": "; ".join(이유)})
+
+    n1 = len(대상_1)
+    기본분 = _child_basic_amount(year, n1)
+    _, 기본근거 = _child_basic_amounts(year)
+    추가분 = 150_000 * (len(대상_6세) - 1) if year <= 2017 and len(대상_6세) >= 2 else 0
+    출산분 = sum(x["금액"] for x in 출산)
+    합계 = 기본분 + 추가분 + 출산분
+    근거 = [기본근거]
+    if year <= 2017:
+        근거.append("소득세법 제59조의2②(6세 이하 2명 이상, 1명 초과 1명당 15만 — 2017.12.19 삭제, 2018 귀속부터 없음)")
+    else:
+        근거.append("제59조의2② 6세 이하 추가공제: 2017.12.19 삭제(부칙 제1조 2018.1.1 시행) — 적용 없음")
+    근거.append("소득세법 제59조의2③ 출산·입양: " + ("1명당 30만(2015.5.13 개정)" if year == 2016 else
+                                             "첫째 30만·둘째 50만·셋째 이상 70만(2016.12.20 개정, 부칙 제13조)"))
+    if year >= 2024:
+        근거.append("손자녀 포함(2023.12.31 개정 제59조의2① 각 호 외의 부분)")
+    근거.append("나이: 과세기간 종료일 현재, 그 나이에 해당하는 날이 있으면 해당(제53조④·⑤)")
+    산식 = (f"① 대상 {n1}명 → {기본분:,}원" + (f" + ② 6세 이하 {len(대상_6세)}명 → {추가분:,}원" if year <= 2017 else "")
+          + f" + ③ 출산·입양 {len(출산)}명 → {출산분:,}원 = {합계:,}원")
+    return {
+        "결과": {"자녀세액공제": 합계, "기본분_①": 기본분, "6세이하_추가_②": 추가분, "출산입양_③": 출산분,
+               "①대상_인원": n1, "①대상": 대상_1, "6세이하_인원": len(대상_6세) if year <= 2017 else 0,
+               "출산입양_내역": 출산, "귀속연도": year},
+        "판단": 판단, "산식": 산식, "근거": " / ".join(근거),
+        "주의": ["종합소득산출세액을 넘는 공제액 처리(제61조)·다른 세액공제와의 적용순서·근로소득세액공제 한도는 계산하지 않음",
+               "아동수당 수급 여부는 제59조의2 요건이 아님(연령 기준으로만 판정)",
+               "부부가 같은 자녀를 함께 공제할 수 없음 — 기본공제를 받는 사람에게만 basic_deduction=true로 입력"],
+    }
