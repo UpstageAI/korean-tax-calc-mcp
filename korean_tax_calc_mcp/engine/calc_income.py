@@ -318,11 +318,17 @@ def payment_statement_penalty(amount, within_3m=False, due_date=None, daily_work
     return int(amount * (0.005 if within_3m else 0.01))
 
 
-# ── 퇴직소득세(소득세법 제48조·제55조②, 2025.1.1. 이후 퇴직분, 시행 2023.1.1. 개정 공제표) ─────
-def retirement_service_deduction(years):
-    """근속연수공제(제48조①1호): 5년 이하 100만×n, 10년 이하 500만+200만×(n−5),
-    20년 이하 1,500만+250만×(n−10), 초과 4,000만+300만×(n−20). 근속연수는 1년 미만 절상한 정수."""
+# ── 퇴직소득세(소득세법 제48조·제55조②) — 근속연수공제는 2023.1.1. 시행 개정표, 그 전은 구표 ─────
+def retirement_service_deduction(years, retire_year=2025):
+    """근속연수공제(제48조①1호). 근속연수는 1년 미만 절상한 정수.
+    2023.1.1. 이후 퇴직: 5년 이하 100만×n, 10년 이하 500만+200만×(n−5), 20년 이하 1,500만+250만×(n−10), 초과 4,000만+300만×(n−20).
+    2022.12.31. 이전 퇴직: 5년 이하 30만×n, 10년 이하 150만+50만×(n−5), 20년 이하 400만+80만×(n−10), 초과 1,200만+120만×(n−20)."""
     n = years
+    if retire_year <= 2022:
+        if n <= 5: return 300_000 * n
+        if n <= 10: return 1_500_000 + 500_000 * (n - 5)
+        if n <= 20: return 4_000_000 + 800_000 * (n - 10)
+        return 12_000_000 + 1_200_000 * (n - 20)
     if n <= 5: return 1_000_000 * n
     if n <= 10: return 5_000_000 + 2_000_000 * (n - 5)
     if n <= 20: return 15_000_000 + 2_500_000 * (n - 10)
@@ -339,16 +345,16 @@ def converted_pay_deduction(conv):
     return 151_700_000 + (conv - 300_000_000) * 0.35
 
 
-def retirement_tax(income, years):
+def retirement_tax(income, years, retire_year=2025):
     """퇴직소득 산출세액. income=퇴직소득금액(비과세 제외), years=근속연수(1년 미만 절상).
     ① 근속연수공제(퇴직소득금액 한도, 제48조②) → ② 환산급여 = (금액−①)/근속연수×12
     → ③ 과세표준 = 환산급여 − 환산급여공제 → ④ 산출세액 = 기본세율(제55조①)(과세표준)/12×근속연수(제55조②).
     원 미만 절사만 적용(원천징수 10원 미만 절사는 국고금관리법 — 호출자 처리)."""
     if income <= 0 or years <= 0: return 0
-    sd = min(retirement_service_deduction(years), income)
+    sd = min(retirement_service_deduction(years, retire_year), income)
     conv = (income - sd) / years * 12
     base = max(0, conv - converted_pay_deduction(conv))
-    return int(_tier(base, RATES[2025]) / 12 * years)
+    return int(_tier(base, RATES[_y(retire_year)]) / 12 * years)   # 기본세율은 퇴직한 해의 표(제55조②1호 "제1항의 세율")
 
 
 # ── 원천징수세율(소득세법 제129조①②, 2025.1.1. 시행 법률 제20615호 기준) ─────────────────
