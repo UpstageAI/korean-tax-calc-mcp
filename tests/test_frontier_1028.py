@@ -53,3 +53,16 @@ def test_simplified_vat_wording_consistent_above_threshold():
                      "매입": [{"항목": "조미료(세금계산서)", "금액": 22000000}]}})
     txt = json.dumps(r, ensure_ascii=False)
     assert "< 영수증발급기준" not in txt
+
+
+def _top(q, n=3):
+    return [x["도구"] for x in c("find_tool", {"query": q, "n": n})["결과"]["후보"]]
+
+
+def test_find_tool_surfaces_tools_models_missed():
+    assert _top("해산한 법인 청산소득")[0] == "liquidation_income"
+    assert _top("보험차익으로 대체 취득한 기계 일시상각충당금")[0] == "asset_grant_reserve"
+    assert _top("당기순이익에서 차가감소득금액")[0] == "income_adjustment_total"
+    assert "capital_gains_income" in _top("아파트 팔았을 때 양도세")
+    assert _top("업무무관 가지급금 지급이자")[0] == "nonbusiness_interest_disallowance"
+    assert "deemed_interest" in _top("unfair transaction deemed interest")
