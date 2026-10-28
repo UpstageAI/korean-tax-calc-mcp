@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from .engine import calc as K, calc_cit as C, calc_income as I, calc_vat as V, calc_capgains as CG
 from .engine import calc_inhgift as IG
 from .engine import calc_gold_gaps6 as GG
+from .engine import calc_tax_priority as TP
 from . import vocab
 from .forms_workbook import render_form_sheet, _load_form_templates, tool_value
 
@@ -8877,6 +8878,35 @@ def export_workbook(
     }
 
 
+# ── 국세 우선권에 따른 매각대금 배분(국세기본법 제35조·제36조) ──────────────────────
+@mcp.tool(annotations=CALC)
+@_guard
+def tax_priority_distribution(
+    sale_amount: Annotated[int, Field(description="매각대금(원) — 경매 매각대금 또는 공매 매각금액", ge=0)],
+    sale_date: Annotated[str, Field(description="매각결정일·매각허가결정일 YYYY-MM-DD(2016-01-01~2026-12-31) — 2023.4.1.·2024.1.1. 개정 적용을 이 날짜로 판정")],
+    claims: Annotated[list, Field(description=(
+        "배분 받을 채권 목록. 각 항목 {종류, 금액, 이름?, ...}. 종류: 소액임차보증금(최우선변제 일정액) | 최우선임금채권(최종 3개월 임금·재해보상금·최종 3년 퇴직금) | "
+        "당해세(세목=상속세·증여세·종합부동산세, 그 재산에 부과된 국세) | 국세 | 지방세(당해세=True면 세목=재산세·자동차세·지역자원시설세·지방교육세) | "
+        "저당권 | 근저당권 | 전세권 | 질권 | 가등기담보 | 확정일자임차보증금 | 일반임금채권 | 일반채권. "
+        "조세: 법정기일 YYYY-MM-DD(또는 확정방식=신고|고지|원천징수|인지세|제2차납세의무|양도담보|압류후확정 + 기준일), 압류일?(압류한 조세). "
+        "담보: 설정일(확정일자 임차인은 대항요건·확정일자를 모두 갖춘 날), 순위?(같은 날 설정 시 접수 순서), 양도전_설정?(True=현 소유자 취득 전 설정, ①3호의2). "
+        "일반채권: 가압류일?. 금액은 배분 요구액(원)."))],
+    execution_cost: Annotated[int, Field(description="집행비용(원) — 강제집행·경매·공매 절차 비용(국세기본법 제35조①2호)", ge=0)] = 0,
+    property_type: Annotated[Literal["주택", "상가건물", "기타"], Field(description="매각 재산 종류 — 소액임차 2분의 1 한도·주택 임차인 당해세 특례(제35조⑦) 판정용")] = "기타",
+    prior_owner: Annotated[dict | None, Field(description=(
+        "양도전_설정 담보가 있고 2023.4.1. 이후 매각일 때만: 직전 보유자 체납 정보 {체납: [{금액, 법정기일}], 보유전_전세권등: bool, 최초설정일?} "
+        "또는 계산된 한도 {한도: 원}(시행령 제18조③)"))] = None) -> dict:
+    """국세 우선권에 따른 매각대금 배분 순서·금액(경매·공매, 국세기본법 제35조·제36조). 언제: 체납자 재산이 경매·공매로 매각될 때 집행비용 → 최우선변제 → 당해세 → 법정기일과 담보 설정일 비교 → 임금 → 그 밖의 조세 → 일반채권 순으로 누가 얼마를 받는지 계산할 때.
+    입력: 매각대금 → sale_amount, 매각(허가)결정일 → sale_date, 채권 목록 → claims, 집행비용 → execution_cost, 재산 종류 → property_type, 직전 보유자 체납(양도된 재산) → prior_owner.
+    지원 연도: 2016.1.1.~2026.12.31. 매각결정분. 2023.4.1. 이후 매각결정분은 ①3호의2(양도 전 설정 담보 > 현 소유자 국세, 직전 보유자 체납액 한도 안 국세는 우선)·③ 후단(3호의2 재산은 종부세만 당해세 우선)·⑦(주택 임차인 당해세 순위 대신 변제), 2024.1.1. 이후는 한도 안 국세를 법정기일이 설정일보다 빠른 것으로 한정. 지방세 당해세·법정기일 비교(지방세기본법 제71조), 국세·지방세 상호간 압류선착(제36조·지방세기본법 제73조, 압류 없으면 동순위 안분).
+    지원하지 않음(입력 확인 필요로 반환): 가압류채권과 후순위 담보권 안분·흡수배당, 조세 상호간 흡수배당(조세가 담보권 앞뒤로 나뉘고 뒤 조세가 덜 받는 경우), 담보권 사이 순환관계, 공과금, 납세담보(제37조), 3호·3호의2 담보 혼재·3호의2 담보 둘 이상, 일반임금채권과 전세권·확정일자 임차권의 순위, 제35조⑦ 대상 임차인 둘 이상. 소액임차 일정액·최우선임금 범위는 계산된 금액을 넣는다(2분의 1 한도만 적용).
+    결과: 채권별 배분액·미배분액·단계별 근거, 배분 순서, 잔여(소유자 몫), 판단(적용한 개정·특례), 적용표."""
+    try:
+        return TP.distribute(sale_amount, execution_cost, sale_date, property_type, claims, prior_owner)
+    except TP.입력확인 as e:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": e.문제, **e.extra}
+
+
 # ── 도구 찾기 ──────────────────────────────────────────────────────────────
 # 도구가 70개를 넘어 목록만 보고는 맞는 도구를 놓치기 쉽다(10/28 점검: 있는 도구를 "없다"고 판단한 사례 3건).
 # 사용자가 쓰는 말 → 도구. 별칭은 설명문에 없는 일상 표현·옛 용어·실무 용어를 잇는다.
@@ -8926,6 +8956,11 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "기타소득": ["other_income_aggregate"], "종교인소득": ["religious_income"], "종교인": ["religious_income"], "목사": ["religious_income"], "사례비": ["religious_income"], "승려": ["religious_income"], "복권": ["other_income_aggregate"], "강연료": ["other_income_aggregate"],
     "연금소득": ["pension_income"], "제척기간": ["assessment_limitation"], "과소자본": ["thin_capitalization"],
     "수입배당금": ["dividend_received_deduction"], "엑셀": ["export_workbook"], "서식": ["export_workbook"], "신고서 검토": ["return_precheck", "precheck_schema"],
+    "국세 우선": ["tax_priority_distribution"], "국세우선권": ["tax_priority_distribution"], "당해세": ["tax_priority_distribution"],
+    "법정기일": ["tax_priority_distribution"], "배당표": ["tax_priority_distribution"], "배당 순위": ["tax_priority_distribution"], "매각대금 배분": ["tax_priority_distribution"],
+    "경매": ["tax_priority_distribution"], "공매": ["tax_priority_distribution"], "매각대금": ["tax_priority_distribution"],
+    "압류선착": ["tax_priority_distribution"], "저당권": ["tax_priority_distribution"], "전세권": ["tax_priority_distribution"],
+    "소액임차": ["tax_priority_distribution"], "최우선변제": ["tax_priority_distribution"], "임금채권": ["tax_priority_distribution"],
 }
 
 
