@@ -37,3 +37,19 @@ def test_form_keeps_traditional_market_ratio_with_zero_spending():
               "args": {"year": 2025, "sme": True, "revenue": {"매출액": 15000000000}, "ledger": [{"항목": "카드", "금액": 93000000}]}}]})
         ws = openpyxl.load_workbook(r["결과"]["파일"])["별지23(갑) 기업업무추진비"]
         assert "전통시장등비율" in str(ws["D25"].value)
+
+
+def test_deemed_input_preliminary_return_skips_limit():
+    base = {"period": "2026-1", "industry": "제조", "individual": False, "sme": False, "purchase": 100000000, "base": 40000000}
+    final = c("vat_deemed_input_credit", base)
+    pre = c("vat_deemed_input_credit", {**base, "filing": "예정"})
+    assert pre["결과"]["의제매입세액"] > final["결과"]["의제매입세액"] if "결과" in pre else pre["의제매입세액"] > final["의제매입세액"]
+    assert "Infinity" not in json.dumps(pre)
+
+
+def test_simplified_vat_wording_consistent_above_threshold():
+    r = c("simplified_vat_return", {"year": 2026, "business_type": "음식점업", "prior_year_supplies": 75000000,
+          "ledger": {"공급": [{"항목": "신용카드매출전표 발행분", "금액": 50000000}],
+                     "매입": [{"항목": "조미료(세금계산서)", "금액": 22000000}]}})
+    txt = json.dumps(r, ensure_ascii=False)
+    assert "< 영수증발급기준" not in txt
