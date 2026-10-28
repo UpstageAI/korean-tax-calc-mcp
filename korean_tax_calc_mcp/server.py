@@ -7,6 +7,7 @@ import asyncio
 import functools
 import math
 import os
+import re
 from datetime import date
 from typing import Annotated, Any, Literal
 
@@ -163,7 +164,8 @@ officers/employees: {법인: [이름]}, livelihood: [[부양자, 피부양자]],
 
 mcp = MCPServer(
     "korean-tax-calc-mcp", title="Korea Tax Calculator (한국 세금 계산)",
-    instructions="계산 문제는 먼저 해당 계산 도구가 있는지 확인하고, 문제 자료를 도구 입력으로 옮겨 계산할 것. "
+    instructions="도구가 70개가 넘으므로 맞는 도구 이름을 모르면 먼저 find_tool(query=평소 말)로 찾고, '도구가 없다'고 판단하기 전에도 find_tool을 부를 것. "
+                 "계산 문제는 먼저 해당 계산 도구가 있는지 확인하고, 문제 자료를 도구 입력으로 옮겨 계산할 것. "
                  "도구 결과의 단계별 값을 그대로 인용할 것. "
                  "한국 세금 계산은 반드시 이 도구 결과를 쓰고 직접 계산하지 않는다. 결과의 근거 조문을 함께 제시한다. "
                  "연도표가 없는 해는 오류로 멈추므로 추정하지 않는다. 계산 근거 원문·해석은 korean-tax-mcp로 확인한다. "
@@ -7694,6 +7696,115 @@ def export_workbook(
         },
         "근거": "계산 도구 결과 정리(세무 자문 아님)",
     }
+
+
+# ── 도구 찾기 ──────────────────────────────────────────────────────────────
+# 도구가 70개를 넘어 목록만 보고는 맞는 도구를 놓치기 쉽다(10/28 점검: 있는 도구를 "없다"고 판단한 사례 3건).
+# 사용자가 쓰는 말 → 도구. 별칭은 설명문에 없는 일상 표현·옛 용어·시험 용어를 잇는다.
+_TOOL_ALIASES: dict[str, list[str]] = {
+    "양도세": ["capital_gains_income", "income_tax"], "양도소득세": ["capital_gains_income", "income_tax"],
+    "집 팔": ["capital_gains_income"], "아파트 매도": ["capital_gains_income"], "1세대1주택": ["capital_gains_income"],
+    "고가주택": ["capital_gains_income"], "장기보유특별공제": ["capital_gains_income"], "부담부증여": ["capital_gains_income", "gift_tax"],
+    "청산": ["liquidation_income"], "해산": ["liquidation_income"], "잔여재산": ["liquidation_income", "deemed_dividend_capital_reduction"],
+    "보험차익": ["asset_grant_reserve"], "국고보조금": ["asset_grant_reserve"], "공사부담금": ["asset_grant_reserve"],
+    "일시상각충당금": ["asset_grant_reserve"], "압축기장충당금": ["asset_grant_reserve"],
+    "차가감소득금액": ["income_adjustment_total"], "각사업연도소득": ["income_adjustment_total", "corporate_tax"],
+    "세무조정 합계": ["income_adjustment_total"], "소득금액조정합계표": ["income_adjustment_total"],
+    "접대비": ["entertainment_adjustment"], "기업업무추진비": ["entertainment_adjustment"],
+    "연말정산": ["wage_income_tax", "special_tax_credit", "personal_deduction", "earned_income_gross_pay"],
+    "월정액급여": ["earned_income_gross_pay"], "비과세 근로소득": ["earned_income_gross_pay"], "식대": ["earned_income_gross_pay"],
+    "가지급금": ["nonbusiness_interest_disallowance", "deemed_interest"], "업무무관": ["nonbusiness_interest_disallowance"],
+    "인정이자": ["deemed_interest"], "간주임대료": ["vat_deemed_rent", "corporate_deemed_rent_income"],
+    "임대보증금": ["corporate_deemed_rent_income", "vat_deemed_rent"], "상속세": ["inheritance_tax", "inheritance_gift_valuation"],
+    "증여세": ["gift_tax", "inheritance_gift_valuation"], "재산평가": ["inheritance_gift_valuation"], "시가": ["inheritance_gift_valuation"],
+    "무상주": ["deemed_dividend_bonus_shares"], "감자": ["deemed_dividend_capital_reduction"], "의제배당": ["deemed_dividend_bonus_shares", "deemed_dividend_capital_reduction"],
+    "금융소득": ["financial_income_aggregate"], "그로스업": ["financial_income_aggregate"], "gross-up": ["financial_income_aggregate"],
+    "결손금": ["income_loss_offset", "loss_carryforward_limit"], "이월결손금": ["loss_carryforward_limit", "income_loss_offset"],
+    "연금저축": ["pension_account_withdrawal", "pension_income"], "연금수령한도": ["pension_account_withdrawal"], "IRP": ["pension_account_withdrawal"],
+    "퇴직금": ["retirement_income_tax", "retirement_allowance_adjustment"], "퇴직소득": ["retirement_income_tax"],
+    "감가상각": ["depreciation_adjustment"], "대손": ["bad_debt_adjustment", "bad_debt_allowance", "vat_bad_debt_credit"],
+    "재고자산": ["inventory_valuation_adjustment"], "업무용승용차": ["business_car_expense"], "법인차": ["business_car_expense"],
+    "기부금": ["donation_limit"], "최저한세": ["minimum_tax"], "외국납부세액": ["foreign_tax_credit"],
+    "재해손실": ["disaster_loss_credit"], "부당행위": ["unfair_transaction", "deemed_interest"], "특수관계": ["related_judge", "kinship_check"],
+    "친족": ["kinship_check"], "일감몰아주기": ["tunnelling_gift_nts", "tunnelling_gift", "dominant_shareholder"],
+    "가산세": ["underreporting_penalty", "late_payment_penalty", "invoice_penalty"], "납부지연": ["late_payment_penalty"],
+    "세금계산서": ["invoice_penalty", "vat_input_tax_deduction"], "공통매입세액": ["common_input_tax", "vat_common_input_allocation", "input_tax_recalculation"],
+    "면세전용": ["vat_exempt_use_deemed_supply"], "간주공급": ["vat_deemed_supply_items", "vat_exempt_use_deemed_supply"],
+    "의제매입": ["vat_deemed_input_credit"], "농산물": ["vat_deemed_input_credit"], "간이과세": ["simplified_vat_return", "vat_simplified_taxpayer"],
+    "신용카드매출": ["vat_card_sales_credit"], "일괄공급": ["bundled_supply_split"], "토지 건물 안분": ["bundled_supply_split"],
+    "비거주자": ["nonresident_withholding"], "원천징수": ["withholding_tax", "nonresident_withholding", "daily_worker_withholding"],
+    "일용": ["daily_worker_withholding"], "추계": ["estimated_business_income"], "경비율": ["estimated_business_income"],
+    "인적공제": ["personal_deduction"], "의료비": ["special_tax_credit"], "교육비": ["special_tax_credit"], "보험료": ["special_tax_credit"],
+    "기타소득": ["other_income_aggregate"], "복권": ["other_income_aggregate"], "강연료": ["other_income_aggregate"],
+    "연금소득": ["pension_income"], "제척기간": ["assessment_limitation"], "과소자본": ["thin_capitalization"],
+    "수입배당금": ["dividend_received_deduction"], "엑셀": ["export_workbook"], "서식": ["export_workbook"], "신고서 검토": ["return_precheck", "precheck_schema"],
+}
+
+
+def _bigrams(text: str) -> set[str]:
+    t = "".join(ch for ch in text.lower() if not ch.isspace())
+    return {t[i:i + 2] for i in range(len(t) - 1)}
+
+
+@mcp.tool(annotations=CALC)
+def find_tool(query: Annotated[str, Field(description="찾는 계산을 평소 말로. 예: '아파트 팔았을 때 양도세', '보험차익으로 산 기계', '접대비 한도', '해산한 법인 청산소득'")],
+              n: Annotated[int, Field(description="돌려줄 도구 수(1~10)", ge=1, le=10)] = 5) -> dict:
+    """맞는 계산 도구 찾기 — 도구가 70개가 넘으니, 어떤 도구를 쓸지 모르겠으면 먼저 이걸 부른다.
+    언제: 계산 문제를 받았는데 맞는 도구 이름이 바로 떠오르지 않을 때, 또는 '이 계산 도구는 없다'고 판단하기 전에 반드시.
+    입력: 찾는 계산 → query(평소 말, 세목·쟁점·조문 무엇이든), 개수 → n.
+    결과: 후보 도구 목록(이름·한 줄 설명·언제 쓰는지·일치 이유). 후보가 없으면 계산 도구가 없는 것이니 korean-tax-mcp로 조문을 찾는다."""
+    tools = _tool_catalog()
+    q = query.strip()
+    qb = _bigrams(q)
+    scores: dict[str, float] = {}
+    why: dict[str, list[str]] = {}
+    for alias, targets in _TOOL_ALIASES.items():
+        a = alias.replace(" ", "")
+        if a.lower() in q.replace(" ", "").lower():
+            for rank, name in enumerate(targets):
+                scores[name] = scores.get(name, 0) + 3.0 - rank * 0.5
+                why.setdefault(name, []).append(f"'{alias}'")
+    for name, desc in tools.items():
+        if name.lower() in q.lower():
+            scores[name] = scores.get(name, 0) + 5.0
+            why.setdefault(name, []).append("도구 이름")
+        words = {w for w in re.findall(r"[a-z]+", q.lower()) if len(w) > 2}
+        name_words = set(name.split("_")) | set(re.findall(r"[a-z]+", desc.lower()))
+        hit = words & name_words
+        if hit:
+            scores[name] = scores.get(name, 0) + 1.5 * len(hit)
+            why.setdefault(name, []).append("영어 낱말 " + ", ".join(sorted(hit)))
+        db = _bigrams(desc[:600])
+        if qb and db:
+            ov = len(qb & db) / len(qb)
+            if ov > 0:
+                scores[name] = scores.get(name, 0) + ov * 2.0
+    ranked = sorted((k for k in scores if k in tools), key=lambda k: -scores[k])[:n]
+    out = []
+    for name in ranked:
+        desc = tools[name]
+        lines = [ln.strip() for ln in desc.splitlines() if ln.strip()]
+        언제 = next((ln for ln in lines if ln.startswith("언제")), "")
+        out.append({"도구": name, "설명": lines[0][:160] if lines else "", "언제": 언제[:200],
+                    "일치": ", ".join(why.get(name, [])) or "설명문 낱말 겹침", "점수": round(scores[name], 2)})
+    return {"결과": {"후보": out,
+                    "안내": "후보의 설명·입력 스키마를 확인한 뒤 호출하세요. 후보에 맞는 도구가 없으면 이 서버에 해당 계산이 없는 것이니 "
+                            "조문 계산은 korean-tax-mcp(find_article·law_article)로 근거를 찾아 직접 계산하고 그 사실을 답에 밝히세요."},
+            "근거": "도구 목록 검색(세무 자문 아님)"}
+
+
+_CATALOG: dict[str, str] | None = None
+
+
+def _tool_catalog() -> dict[str, str]:
+    global _CATALOG
+    if _CATALOG is None:
+        cat = {}
+        for t in mcp._tool_manager.list_tools():
+            if t.name != "find_tool":
+                cat[t.name] = (t.title or "") + "\n" + (t.description or "")
+        _CATALOG = cat
+    return _CATALOG
 
 
 if __name__ == "__main__":
