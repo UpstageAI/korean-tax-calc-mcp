@@ -5913,6 +5913,46 @@ def personal_deduction(
     return _ok(r["결과"], "소득세법 제50조·제51조·제53조", 사람별=r["결과"]["사람별"])
 
 
+# ── 자녀세액공제(소득세법 제59조의2) ────────────────────────────────────────
+class ChildEntry(BaseModel):
+    model_config = {"extra": "forbid"}
+    name: str | None = None
+    relation: str = "자녀"
+    age: int | None = None
+    birth_date: str | None = None
+    birth_year: int | None = None
+    basic_deduction: bool
+    born_or_adopted_this_year: bool = False
+    order: int | str | None = None
+    school_enrolled: bool | None = None
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def child_tax_credit(
+    year: YEAR,
+    children: Annotated[list[ChildEntry], Field(description=(
+        "[{name?, relation?, age?|birth_date?|birth_year?, basic_deduction, born_or_adopted_this_year?, order?, school_enrolled?}] — "
+        "relation: 자녀(기본, 입양자·위탁아동 포함)·손자녀. age: 과세기간 종료일 현재 만 나이(= 귀속연도 − 출생연도), "
+        "birth_date(YYYY-MM-DD)·birth_year로 대신 입력 가능. basic_deduction: 이 납세자의 기본공제대상자인지(필수). "
+        "born_or_adopted_this_year: 해당 과세기간에 출생·입양 신고(기본 false). order: 출산·입양 자녀의 순서 1·2·3(셋째 이상) 또는 '첫째'·'둘째'·'셋째' "
+        "(2017 귀속부터 출산·입양 자녀에 필수). school_enrolled: 2019 귀속 6세 자녀의 취학 여부(그때만 필수). "
+        "예: [{\"age\":10,\"basic_deduction\":true},{\"age\":0,\"basic_deduction\":true,\"born_or_adopted_this_year\":true,\"order\":2}]"
+    ))],
+    settlement_date: Annotated[str | None, Field(description=(
+        "신고·결정·연말정산일(YYYY-MM-DD). 2023년 이전 귀속분에 손자녀가 있을 때만 필요 — "
+        "손자녀 포함은 2024.1.1 이후 신고·결정·연말정산분부터(2023.12.31 개정 부칙 제3조①)"))] = None,
+) -> dict:
+    """자녀세액공제(소득세법 제59조의2) 귀속연도별 계산 — 기본공제대상 자녀 수별 금액·6세 이하 추가공제·출산·입양 공제. Child tax credit by tax year (2016~2026).
+    언제: 종합소득세 신고·연말정산에서 자녀세액공제 금액을 구할 때(자녀 수·나이·출산·입양·손자녀).
+    입력: 귀속연도(2016~2026) → year, 자녀 목록 → children(나이·기본공제대상 여부·출산·입양·순서), 손자녀가 있는 2023년 이전 귀속분만 신고·연말정산일 → settlement_date.
+    결과: 자녀세액공제 합계와 ①인원별 금액·②6세 이하 추가(2016~2017)·③출산·입양, 자녀별 판단·산식·근거(개정 부칙 포함).
+    연도별: ① 2016~2023 15만·30만·초과 1명당 30만 / 2024 15만·35만·30만 / 2025~ 25만·55만·40만. 연령 2019 7세 이상(7세 미만 취학아동 포함)·2020 7세·2023 8세·2026 9세(2017년생은 13세, 2026.4.21 부칙). 손자녀 2024~(2023 귀속은 2024 이후 연말정산·신고분). ② 6세 이하 추가 2016~2017만. ③ 2016 1명당 30만, 2017~ 첫째 30만·둘째 50만·셋째 이상 70만.
+    지원 안 함: 2016 전·2027 이후 귀속, 산출세액 초과분 처리(제61조)·다른 공제와 적용순서, 2022년 이전 귀속 손자녀를 2024년 이후 신고·결정하는 경우(입력 확인 필요로 멈춤). 아동수당 수급 여부는 조문 요건이 아니어서 묻지 않는다."""
+    return I.child_tax_credit(year=year, children=[c.model_dump(exclude_none=True) for c in children],
+                              settlement_date=settlement_date)
+
+
 # ── 연금소득금액(소득세법 제20조의3·제14조③9호·제47조의2·제64조의4·제40조) ────────
 @mcp.tool(annotations=CALC)
 @_guard
@@ -8270,7 +8310,9 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "신용카드매출": ["vat_card_sales_credit"], "일괄공급": ["bundled_supply_split"], "토지 건물 안분": ["bundled_supply_split"],
     "비거주자": ["nonresident_withholding"], "원천징수": ["withholding_tax", "nonresident_withholding", "daily_worker_withholding"],
     "일용": ["daily_worker_withholding"], "추계": ["estimated_business_income"], "경비율": ["estimated_business_income"],
-    "인적공제": ["personal_deduction"], "의료비": ["special_tax_credit"], "교육비": ["special_tax_credit"], "보험료": ["special_tax_credit"],
+    "인적공제": ["personal_deduction"], "자녀세액공제": ["child_tax_credit"], "자녀공제": ["child_tax_credit", "personal_deduction", "inheritance_tax"],
+    "출산공제": ["child_tax_credit"], "출생": ["child_tax_credit"], "입양": ["child_tax_credit"], "손자녀": ["child_tax_credit"],
+    "다자녀": ["child_tax_credit"], "자녀 세액": ["child_tax_credit"], "의료비": ["special_tax_credit"], "교육비": ["special_tax_credit"], "보험료": ["special_tax_credit"],
     "기타소득": ["other_income_aggregate"], "복권": ["other_income_aggregate"], "강연료": ["other_income_aggregate"],
     "연금소득": ["pension_income"], "제척기간": ["assessment_limitation"], "과소자본": ["thin_capitalization"],
     "수입배당금": ["dividend_received_deduction"], "엑셀": ["export_workbook"], "서식": ["export_workbook"], "신고서 검토": ["return_precheck", "precheck_schema"],
