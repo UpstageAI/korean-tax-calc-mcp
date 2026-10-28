@@ -276,7 +276,7 @@ def test_주택_one_house_false_heavy_누락_오류():
     assert "heavy_multi_home" in str(r.get("필요 입력", {}))
 
 
-# ── TEST 11: heavy_multi_home=True → 지원하지 않음 오류 ──
+# ── TEST 11: heavy_multi_home=True만 → 사실(houses_count·adjusted_area) 요구 오류 ──
 def test_다주택중과_지원안함():
     r = c("capital_gains_income", {
         "asset_type": "주택",
@@ -292,7 +292,7 @@ def test_다주택중과_지원안함():
         "apply_basic_deduction": False,
     })
     assert "error" in r
-    assert "지원하지 않음" in r["error"]
+    assert r["error"].startswith("입력 확인 필요") and "houses_count" in r["필요 입력"]
 
 
 # ── TEST 12: 2021.12.7 이전 양도 → 고가주택 기준 9억 ──
