@@ -2348,7 +2348,8 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
     # 2023·2024: 전통시장만, 비율 10% (법률 19936 부칙§35)
     # 2025: 전통시장+지역사랑상품권, 비율 20% (법률 21223 부칙§31)
     # 2026~2028: 전통시장+지역사랑+온누리, 비율 20% (법률 21612 부칙§4)
-    if 2023 <= year <= 2028 and 전통시장등_총액 > 0:
+    # 지출이 0이어도 비율·금액을 넘긴다 — 서식 엑셀에서 지출액을 나중에 넣어도 한도 수식이 살아 있게
+    if 2023 <= year <= 2028:
         비율 = C.YEAR[year].get("전통시장등_비율", 0)
         계산식_입력.append({"이름": "전통시장등비율", "값": 비율,
                              "설명": f"전통시장등 추가한도 비율 — 조특법 제136조⑥, {'법률 19936 부칙§35(2023·2024)' if year in (2023, 2024) else '법률 21223 부칙§31(2025)' if year == 2025 else '법률 21612 부칙§4(2026~2028)'}"})
@@ -2408,7 +2409,8 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
                           "이유": "전통시장등 추가한도는 2024.1.1 이후 신고분부터 적용(2023 사업연도~) — 해당 연도 이전 또는 2029 이후는 일반 기업업무추진비로 시부인"})
 
     result = {"한도": limit, "한도초과": over_limit, "직부인_대표자상여": no_receipt_total + private_use_total, "직부인_기타사외유출": no_qual_total, "시부인_대상": si_bu_shin}
-    전통시장등비율 = C.YEAR[year].get("전통시장등_비율", 0) if 2023 <= year <= 2028 and 전통시장등_총액 > 0 else 0
+    # 지출이 0이어도 그 해 비율을 넘긴다 — 서식 엑셀에서 지출액을 나중에 넣어도 한도 수식이 살아 있게
+    전통시장등비율 = C.YEAR[year].get("전통시장등_비율", 0) if 2023 <= year <= 2028 else 0
     calc_dict = {"기본한도": ent["일반한도"], "문화한도": ent["문화한도"], "전통시장한도": ent["전통시장한도"],
                "시부인 대상": si_bu_shin, "직부인(증빙없음·심사비)": no_receipt_total + no_qual_total,
                "전통시장_지출": (전통시장_총액 if 2023 <= year <= 2028 else 0),
@@ -5559,8 +5561,10 @@ def pension_income(
 def income_loss_offset(
     year: YEAR,
     incomes: Annotated[dict, Field(description=(
-        "{부동산임대, 근로, 연금, 기타, 이자, 배당} — 각 소득금액(원). "
-        "부동산임대는 음수=결손금. 사업소득은 business로 입력(사업소득은 incomes['사업']으로 넣지 않음)."
+        "{부동산임대, 주거용임대, 근로, 연금, 기타, 이자, 배당} — 각 소득금액(원), 음수=결손금. "
+        "부동산임대 = 주거용 건물 임대업을 뺀 부동산임대업(결손금은 부동산임대 소득에서만 공제, 제45조②). "
+        "주거용임대 = 주거용 건물 임대업(결손금도 다른 종합소득에서 공제, 제45조② 단서) — 임대 결손금은 주거용분을 꼭 나눠 넣는다. "
+        "사업소득은 business로 입력(사업소득은 incomes['사업']으로 넣지 않음)."
     ))],
     carryforwards: Annotated[list | None, Field(description=(
         "[{year, kind, amount}] — 이월결손금 목록. kind: '사업'|'부동산임대'. "
