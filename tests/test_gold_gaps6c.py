@@ -5,7 +5,7 @@ from korean_tax_calc_mcp.server import mcp
 
 def test_non_pension_part_follows_order():
     # 잔액 1억 = 과세제외 300만 + 이연퇴직 4,000만 + 그밖(6,000만 − 300만) 5,700만
-    a = {"year": 2024, "birth_date": "1959-03-01", "join_date": "2012-01-15", "start_request_date": "2023-01-01",
+    a = {"year": 2024, "birth_date": "1968-01-01", "join_date": "2012-01-15", "start_request_date": "2023-01-01",
          "balance_at_period_start": 100000000, "withdrawal": 45000000,
          "contributions_total": 60000000, "contributions_not_deducted": 3000000,
          "deferred_retirement_income": 40000000, "investment_income": 0}
