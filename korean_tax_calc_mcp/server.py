@@ -5321,7 +5321,11 @@ def capital_gains_income(
         residence_years: Annotated[int | None, Field(description="one_house=True일 때: 보유기간 중 거주기간(만 년수, 1년 미만 버림)", ge=0)] = None,
         residence_start: Annotated[str | None, Field(description="거주 시작일 YYYY-MM-DD — residence_end와 함께 입력하면 거주기간(만 년수)을 도구가 계산함. residence_years와 다르면 문제로 거부")] = None,
         residence_end: Annotated[str | None, Field(description="거주 종료일 YYYY-MM-DD — 생략 시 transfer_date를 사용")] = None,
-        heavy_multi_home: Annotated[bool | None, Field(description="one_house=False인 주택: 다주택 중과(제104조⑦) 대상 여부. True면 지원하지 않음")] = None,
+        heavy_multi_home: Annotated[bool | None, Field(description="one_house=False인 주택: 다주택 중과(제104조⑦) 대상 여부(이전 입력). False=중과 대상 아님. True만으로는 계산하지 않음 — houses_count·adjusted_area로 입력")] = None,
+        houses_count: Annotated[int | None, Field(description="one_house=False인 주택: 양도일 현재 1세대 주택 수(조합원입주권·분양권 포함, 분양권은 2021.1.1. 이후 취득분부터). 영 제167조의3①·제167조의10① 각 호 외의 부분 괄호(지방 기준시가 3억원 이하 주택 등)로 주택 수에서 빼는 주택은 사용자가 판단해 뺀 수. 2=1세대 2주택(제104조⑦1호·2호), 3 이상=3주택 이상(3호·4호)", ge=1)] = None,
+        adjusted_area: Annotated[bool | None, Field(description="one_house=False인 주택: 양도일 현재 양도 주택이 조정대상지역(주택법 제63조의2①1호)에 있는지")] = None,
+        exclusion_reason: Annotated[str | None, Field(description="중과 배제 사유(사용자 주장, 요건 충족은 사용자 확인): '지방저가주택'|'장기임대주택'|'감면대상장기임대주택'|'장기사원용주택'|'조특법감면주택'|'문화재주택'|'상속주택'|'저당권실행취득주택'|'어린이집주택'|'취학근무요양'(2주택만)|'수도권밖주택'(2주택만)|'소송주택'(2주택만)|'기준시가1억이하'(2주택만)|'일반주택'|'조정지역공고전계약'|'1세대1주택특례주택'|'한시배제_경과'(2026.5.10.~11.9. 양도, 영 12호의2 나·다목)|'기타'(exclusion_basis 필수). 한시 배제(2019.12.17.~2020.6.30. 보유 10년 이상, 2022.5.10.~2026.5.9. 보유 2년 이상)는 도구가 날짜로 판정")] = None,
+        exclusion_basis: Annotated[str | None, Field(description="exclusion_reason='기타'일 때 근거 조문·호와 요건 충족 사실")] = None,
         designated_area: Annotated[bool, Field(description="non_business_land=True인 토지: 지정지역(제104조의2②) 소재 여부. True면 2018.1.1. 이후 양도분 기본세율+20%p(제104조④3호). apply_basic_deduction=True일 때 산출세액에 반영")] = False,
         apply_basic_deduction: Annotated[bool, Field(description="True면 양도소득 기본공제(연 250만원)와 과세표준까지 계산(같은 해 같은 그룹에서 이미 공제받았으면 False)")] = False,
         burdened_gift: Annotated[dict | None, Field(description="부담부증여(소득세법 시행령 제159조) — {증여가액, 채무액, 평가:'시가'|'기준시가', 취득_기준시가?(평가='기준시가'면 필수), 취득가액_실지?(평가='시가'면 필수)}. 증여가액·채무액으로 양도가액과 취득가액을 자동 계산. transfer_price나 acquisition_price와 함께 입력 불가")] = None) -> dict:
@@ -5334,9 +5338,11 @@ def capital_gains_income(
       (환산취득가액) acquisition_price=0이고 취득·양도 당시 기준시가 둘 다 있으면 환산취득가액 자동 계산(소득세법 시행령 제176조의2②2호, 제163조⑥).
       (부담부증여) burdened_gift={증여가액, 채무액, 평가:'시가'|'기준시가', 취득_기준시가?, 취득가액_실지?} — 비율=채무액÷증여가액, 양도가액=증여가액×비율(=채무액), 취득가액: 평가='기준시가'면 취득_기준시가×비율+개산공제(토지·건물 3%, 미등기 0.3%), '시가'면 취득가액_실지×비율. transfer_price·acquisition_price와 함께 입력 불가.
       (주택) 1세대1주택 여부 → one_house, 비과세 요건 충족 → exempt_met, 거주기간(년) → residence_years,
-      (주택, 1주택 아님) 다주택 중과 대상 → heavy_multi_home,
+      (주택, 1주택 아님) 다주택 중과(제104조⑦) → houses_count(1세대 주택 수)·adjusted_area(양도일 현재 조정대상지역)·exclusion_reason(배제 사유, 선택). 중과 대상 아님이 확실하면 heavy_multi_home=False.
+        중과: 2018.4.1.~2021.5.31. 양도 2주택 +10%p·3주택 이상 +20%p, 2021.6.1.~ +20%p·+30%p, 장기보유특별공제 배제(제95조②), 단기 보유는 제104조①2호·3호 세액과 비교해 큰 세액.
+        한시 배제: 2019.12.17.~2020.6.30. 보유 10년 이상(영 12호), 2022.5.10.~2026.5.9. 보유 2년 이상(영 12호의2) — 날짜로 도구가 판정. 2026.5.10. 이후 나·다목 경과 요건은 exclusion_reason='한시배제_경과'(사용자 주장).
       기본공제·과세표준·산출세액까지 → apply_basic_deduction(True면 제104조 세율로 산출세액·지방소득세도 계산: 보유 1년 미만·2년 미만 단기세율, 미등기 70%, 비사업용 토지 → non_business_land, 지정지역 비사업용 토지 → designated_area).
-      지원하지 않음(error): 분양권·조합원입주권·주식, 다주택·조정대상지역 중과, 비과세 보유기간 예외, 주거용 전환, 고가주택 일부 양도.
+      지원하지 않음(error): 분양권·조합원입주권·주식, 2018.4.1. 전 양도 지정지역 3주택 이상 가산(제104조④1호·2호), 주택 수 계산(사용자 판단), 비과세 보유기간 예외, 주거용 전환, 고가주택 일부 양도.
       토지는 one_house=False, exempt_met=False 입력해도 오류 아님(주택 요건 무관).
     결과: 판단(비과세·고가주택·적용 표, 환산취득가액 사용 시 필요경비 선택 근거)·결과(양도차익·과세대상 양도차익·보유·거주기간·공제율·장기보유특별공제액·양도소득금액, 선택 시 기본공제·과세표준·산출세액·지방소득세·적용 세율)·산식·근거."""
     양도일_dt = date.fromisoformat(transfer_date)
@@ -5448,6 +5454,8 @@ def capital_gains_income(
             "exempt_met": exempt_met,
             "residence_years": effective_residence_years,
             "heavy_multi_home": heavy_multi_home,
+            "houses_count": houses_count, "adjusted_area": adjusted_area,
+            "exclusion_reason": exclusion_reason, "exclusion_basis": exclusion_basis,
             "apply_basic_deduction": apply_basic_deduction,
             "환산취득가액_사용": False,
             "개산공제": 0,
@@ -5469,6 +5477,8 @@ def capital_gains_income(
             "exempt_met": exempt_met,
             "residence_years": effective_residence_years,
             "heavy_multi_home": heavy_multi_home,
+            "houses_count": houses_count, "adjusted_area": adjusted_area,
+            "exclusion_reason": exclusion_reason, "exclusion_basis": exclusion_basis,
             "apply_basic_deduction": apply_basic_deduction,
             "환산취득가액_사용": 사용환산취득가액,
             "개산공제": 개산공제,
@@ -5535,8 +5545,11 @@ def capital_gains_income(
     if apply_basic_deduction:
         # 환산취득가액 경로는 양도소득금액을 덮어쓰므로 과세표준도 다시 맞춘다
         r["결과"]["양도소득_과세표준"] = max(0, r["결과"]["양도소득금액"] - r["결과"].get("양도소득_기본공제", 0))
+        _중과 = r["결과"].get("다주택_중과") or {}
         세 = CG.capital_gains_tax_amount(r["결과"]["양도소득_과세표준"], asset_type, acquisition_date, transfer_date,
-                                      registered, non_business_land, I.income_tax, designated_area=designated_area)
+                                      registered, non_business_land, I.income_tax, designated_area=designated_area,
+                                      heavy_surcharge=_중과["가산세율"] if _중과.get("적용") else 0.0,
+                                      heavy_label=_중과.get("구분"))
         r["결과"]["산출세액"] = 세["산출세액"]
         r["결과"]["지방소득세"] = 세["지방소득세"]
         r["결과"]["적용_세율"] = 세["적용_세율"]
@@ -5547,7 +5560,7 @@ def capital_gains_income(
         r["판단"] = r.get("판단", []) + [{"항목": "양도소득 세율", "결론": 결론문, "근거": 세["근거"]}]
         for 주의문 in 세.get("주의", []):
             r["판단"].append({"항목": "지정지역 비사업용 토지", "결론": 주의문, "근거": "소득세법 제104조④3호"})
-        r["근거"] = r["근거"] + [["소득세법", "제104조", "④" if "④" in 세["근거"] else "①", 세["적용_세율"]]]
+        r["근거"] = r["근거"] + [["소득세법", "제104조", "⑦" if "⑦" in 세["근거"] else ("④" if "④" in 세["근거"] else "①"), 세["적용_세율"]]]
     elif non_business_land or designated_area:
         r["판단"] = r.get("판단", []) + [{"항목": "양도소득 세율", "결론": "non_business_land·designated_area는 apply_basic_deduction=True일 때 산출세액에 반영", "근거": "소득세법 제104조①8호·④3호"}]
 
@@ -5989,41 +6002,47 @@ def capital_gains_tax(base: Annotated[int, Field(description="양도소득 과�
                       registered: Annotated[bool, Field(description="등기 여부(False = 미등기 70%)")] = True,
                       non_business_land: Annotated[bool, Field(description="토지만: 비사업용 토지(기본세율+10%p)")] = False,
                       designated_area: Annotated[bool, Field(description="비사업용 토지가 지정지역(제104조의2②)에 있으면 True — 2018.1.1. 이후 양도분 기본세율+20%p(제104조④3호)")] = False,
-                      heavy_multi_home: Annotated[bool | None, Field(description="주택만: 조정대상지역 다주택 중과(제104조⑦) 대상 여부. True면 중과 기간(2018.4.1.~)은 지원하지 않음, 한시 배제(2022.5.10.~2026.5.9. 양도·보유 2년 이상)면 기본 세율로 계산")] = None) -> dict:
-    """양도소득 과세표준 → 산출세액·지방소득세(소득세법 제104조①·④). 언제: 양도소득 과세표준이 이미 주어졌거나 따로 계산했을 때 세율을 적용한다(가액부터 계산하면 capital_gains_income에 apply_basic_deduction=True).
-    입력: 과세표준 → base, 자산 종류 → asset_type, 취득일·양도일 → acquisition_date·transfer_date, 등기 → registered, 비사업용 토지 → non_business_land, 지정지역 → designated_area, 다주택 중과 대상 주택 → heavy_multi_home.
+                      heavy_multi_home: Annotated[bool | None, Field(description="주택만: 조정대상지역 다주택 중과(제104조⑦) 대상 여부(이전 입력). True만 주면 2018.4.1. 전 양도·한시 배제(2022.5.10.~2026.5.9. 양도·보유 2년 이상)만 계산하고, 중과 기간은 houses_count·adjusted_area를 요구")] = None,
+                      houses_count: Annotated[int | None, Field(description="주택만: 양도일 현재 1세대 주택 수(조합원입주권·분양권 포함, 분양권은 2021.1.1. 이후 취득분부터). 영 제167조의3①·제167조의10① 괄호로 주택 수에서 빼는 주택은 사용자가 판단해 뺀 수", ge=1)] = None,
+                      adjusted_area: Annotated[bool | None, Field(description="주택만: 양도일 현재 조정대상지역 소재 여부")] = None,
+                      exclusion_reason: Annotated[str | None, Field(description="중과 배제 사유(사용자 주장) — capital_gains_income의 exclusion_reason과 같은 값. 한시 배제는 도구가 날짜로 판정")] = None,
+                      exclusion_basis: Annotated[str | None, Field(description="exclusion_reason='기타'일 때 근거 조문·호와 요건 충족 사실")] = None) -> dict:
+    """양도소득 과세표준 → 산출세액·지방소득세(소득세법 제104조①·④·⑦). 언제: 양도소득 과세표준이 이미 주어졌거나 따로 계산했을 때 세율을 적용한다(가액부터 계산하면 capital_gains_income에 apply_basic_deduction=True).
+    입력: 과세표준 → base, 자산 종류 → asset_type, 취득일·양도일 → acquisition_date·transfer_date, 등기 → registered, 비사업용 토지 → non_business_land, 지정지역 → designated_area, 다주택 중과(주택) → houses_count·adjusted_area·exclusion_reason(선택).
     세율: 2년 이상 기본세율(제55조) / 1년 이상 2년 미만 40%(주택 60%, 2021.6.1. 전 양도 주택은 기본세율) / 1년 미만 50%(주택 70%, 2021.6.1. 전 40%) / 미등기 70% / 비사업용 토지 기본세율+10%p(지정지역 2018~ +20%p) — 둘 이상이면 큰 세액.
-    지원하지 않음: 다주택 중과(제104조⑦) 적용 양도 — 단, 보유 2년 이상 주택의 2022.5.10.~2026.5.9. 양도는 중과 한시 배제(시행령 제167조의3①12호의2·제167조의10①12호의2)라 계산함. 분양권·조합원입주권·주식.
+    다주택 중과(제104조⑦, 조정대상지역): 2018.4.1.~2021.5.31. 양도 2주택 +10%p·3주택 이상 +20%p, 2021.6.1.~ +20%p·+30%p, 단기 보유는 제104조①2호·3호 세액과 비교해 큰 세액. 한시 배제(영 제167조의3①·제167조의10① 12호 2019.12.17.~2020.6.30. 보유 10년 이상, 12호의2 2022.5.10.~2026.5.9. 보유 2년 이상)는 날짜로 판정, 그 밖의 배제 사유와 2026.5.10. 이후 나·다목 경과 요건은 사용자 주장(exclusion_reason).
+    지원하지 않음: 2018.4.1. 전 양도 지정지역 3주택 이상 가산(제104조④1호·2호), 주택 수 계산(사용자 판단), 분양권·조합원입주권·주식.
     결과: 산출세액·지방소득세(10%)·적용 세율·세율 후보·근거."""
     if not (2016 <= int(transfer_date[:4]) <= 2026):
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"transfer_date={transfer_date} — 2016~2026 양도분만 지원"]}
     판단: list[dict] = []
-    if heavy_multi_home:
+    중과사실 = houses_count is not None or adjusted_area is not None or exclusion_reason is not None
+    중과 = None
+    if heavy_multi_home or 중과사실:
         if asset_type != "주택":
             return {"error": "입력 확인 필요 — 계산하지 않음",
-                    "문제": [f"heavy_multi_home은 주택에만 입력(asset_type={asset_type})"],
+                    "문제": [f"heavy_multi_home·houses_count·adjusted_area·exclusion_reason은 주택에만 입력(asset_type={asset_type})"],
                     "필요 입력": {"heavy_multi_home": "None|False(주택이 아닌 자산)"}}
-        양도일, 취득일 = date.fromisoformat(transfer_date), date.fromisoformat(acquisition_date)
-        보유2년 = CG.full_years(취득일, 양도일) >= 2
-        if 양도일 < date(2018, 4, 1):
-            if designated_area:
-                return {"error": "지원하지 않음 — 지정지역 다주택 가산(제104조④1호·2호, 2018.4.1. 전 양도)",
-                        "문제": ["heavy_multi_home=True·designated_area=True, 2018.4.1. 전 양도: 지정지역 1세대 3주택 이상 등 +10%p(제104조④1호·2호) — 지원하지 않음"],
-                        "지원하지 않음": "지정지역 다주택 가산(제104조④1호·2호)"}
-            판단.append({"항목": "다주택 중과", "결론": "조정대상지역 다주택 중과(제104조⑦)는 2018.4.1. 이후 양도분부터 — 이 양도는 일반 세율로 계산", "근거": "소득세법 제104조⑦(2017.12.19. 신설)"})
-        elif date(2022, 5, 10) <= 양도일 <= date(2026, 5, 9) and 보유2년:
-            판단.append({"항목": "다주택 중과", "결론": "보유 2년 이상 주택을 2022.5.10.~2026.5.9.에 양도 — 중과 한시 배제, 일반 세율로 계산",
-                         "근거": "소득세법 시행령 제167조의3①12호의2, 제167조의10①12호의2"})
-        else:
-            사유 = ("보유 2년 미만" if (date(2022, 5, 10) <= 양도일 <= date(2026, 5, 9)) else
-                   "2026.5.10. 이후 양도 — 한시 배제는 2026.5.9.까지 계약·토지거래허가 신청 등 요건(시행령 제167조의3①·제167조의10① 12호의2 나·다목)을 갖춘 경우만" if 양도일 > date(2026, 5, 9) else
-                   "2018.4.1.~2022.5.9. 양도 — 한시 배제 전")
-            return {"error": "지원하지 않음 — 다주택 중과(제104조⑦) 대상 자산",
-                    "문제": [f"heavy_multi_home=True: {사유} — 중과 세율(기본세율+20%p/30%p 등) 지원하지 않음"],
-                    "지원하지 않음": "다주택·조정대상지역 중과(제104조⑦)"}
+        if heavy_multi_home and not 중과사실 and designated_area and date.fromisoformat(transfer_date) < date(2018, 4, 1):
+            return {"error": "지원하지 않음 — 지정지역 다주택 가산(제104조④1호·2호, 2018.4.1. 전 양도)",
+                    "문제": ["heavy_multi_home=True·designated_area=True, 2018.4.1. 전 양도: 지정지역 1세대 3주택 이상 등 +10%p(제104조④1호·2호) — 지원하지 않음"],
+                    "지원하지 않음": "지정지역 다주택 가산(제104조④1호·2호)"}
+        중과 = CG.다주택_중과_판정(acquisition_date, transfer_date, houses_count=houses_count, adjusted_area=adjusted_area,
+                            exclusion_reason=exclusion_reason, exclusion_basis=exclusion_basis,
+                            heavy_multi_home=heavy_multi_home, flag_only_ok=True)
+        if "error" in 중과:
+            return 중과
+        판단.extend(중과["판단"])
+    적용 = bool(중과 and 중과["적용"])
     r = CG.capital_gains_tax_amount(base, asset_type, acquisition_date, transfer_date, registered, non_business_land,
-                                    I.income_tax, designated_area=designated_area)
+                                    I.income_tax, designated_area=designated_area,
+                                    heavy_surcharge=중과["가산세율"] if 적용 else 0.0, heavy_label=중과["구분"] if 적용 else None)
     근거 = r.pop("근거")
+    if 적용:
+        근거 = f"{근거}; {중과['근거']}"
+        r["다주택_중과"] = {"적용": True, "가산세율": 중과["가산세율"], "구분": 중과["구분"]}
+    elif 중과 is not None and 중과["사실입력"]:
+        r["다주택_중과"] = {"적용": False, "가산세율": 0.0, "구분": 중과["구분"]}
     for 주의문 in r.pop("주의", []):
         판단.append({"항목": "지정지역 비사업용 토지", "결론": 주의문, "근거": "소득세법 제104조④3호"})
     if 판단:
@@ -8517,6 +8536,8 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "양도세": ["capital_gains_income", "capital_gains_tax"], "양도소득세": ["capital_gains_income", "capital_gains_tax"],
     "단기 양도": ["capital_gains_tax"], "미등기": ["capital_gains_tax"], "비사업용 토지": ["capital_gains_tax", "capital_gains_income"],
     "집 팔": ["capital_gains_income"], "아파트 매도": ["capital_gains_income"], "1세대1주택": ["capital_gains_income"],
+    "다주택 중과": ["capital_gains_income", "capital_gains_tax"], "다주택자": ["capital_gains_income", "capital_gains_tax"],
+    "조정대상지역": ["capital_gains_income", "capital_gains_tax"], "중과세율": ["capital_gains_tax", "capital_gains_income"],
     "고가주택": ["capital_gains_income"], "장기보유특별공제": ["capital_gains_income"], "부담부증여": ["capital_gains_income", "gift_tax"],
     "청산": ["liquidation_income"], "해산": ["liquidation_income"], "잔여재산": ["liquidation_income", "deemed_dividend_capital_reduction"],
     "보험차익": ["asset_grant_reserve"], "국고보조금": ["asset_grant_reserve"], "공사부담금": ["asset_grant_reserve"],

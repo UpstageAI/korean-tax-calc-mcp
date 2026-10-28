@@ -95,7 +95,7 @@ def test_capital_gains_income_designated_area():
 def test_heavy_multi_home_rejected_in_heavy_period():
     r = c("capital_gains_tax", {"base": 100_000_000, "asset_type": "주택", "acquisition_date": "2015-01-01",
                                 "transfer_date": "2021-03-01", "heavy_multi_home": True})
-    assert r["error"].startswith("지원하지 않음")
+    assert r["error"].startswith("입력 확인 필요") and "houses_count" in r["필요 입력"]
 
 
 def test_heavy_multi_home_temporary_exclusion_computes():
