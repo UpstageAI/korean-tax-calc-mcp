@@ -442,13 +442,18 @@ def calc_cg(args: dict[str, Any], vocab_on) -> dict:
 # ── 양도소득 산출세액(소득세법 제104조①) ─────────────────────────────────────
 # 2021.6.1. 이후 양도분부터 주택(조합원입주권 포함) 단기 세율 인상(법률 제17477호 부칙).
 _주택단기_인상일 = date(2021, 6, 1)
+# 지정지역 비사업용 토지: 2017.12.19. 개정으로 제104조④ 3호는 제1항제8호 세율(기본세율+10%p)에 10%p를 더함
+# (2018.1.1. 시행본부터). 그 전 ④는 제55조① 세율+10%p라 제1항제8호와 같은 세율.
+_지정지역_비사업용_가산일 = date(2018, 1, 1)
 
 
 def capital_gains_tax_amount(base: int, asset_type: str, acquisition_date: str, transfer_date: str,
-                             registered: bool, non_business_land: bool, basic_tax) -> dict:
+                             registered: bool, non_business_land: bool, basic_tax,
+                             designated_area: bool = False) -> dict:
     """양도소득 과세표준 → 산출세액. basic_tax(base, year) = 제55조 기본세율 세액.
 
-    후보 세율이 둘 이상이면 큰 세액(제104① 각 호 외 단서). 다주택 중과·분양권은 지원하지 않음(호출 쪽에서 거부)."""
+    후보 세율이 둘 이상이면 큰 세액(제104① 각 호 외 단서). 다주택 중과·분양권은 지원하지 않음(호출 쪽에서 거부).
+    designated_area=True(지정지역, 제104조의2②)인 비사업용 토지는 2018.1.1. 이후 양도분 기본세율+20%p(제104조④3호)."""
     acq, tr = _parse_date(acquisition_date), _parse_date(transfer_date)
     if tr < acq:
         raise ValueError("transfer_date가 acquisition_date보다 앞섬")
@@ -478,6 +483,18 @@ def capital_gains_tax_amount(base: int, asset_type: str, acquisition_date: str, 
             후보.append(("2년 이상 보유 — 기본세율", 기본, "소득세법 제104조①1호, 제55조①"))
         if non_business_land and asset_type == "토지":
             후보.append(("비사업용 토지 — 기본세율 + 10%p", 기본 + int(base * 0.10), "소득세법 제104조①8호"))
+            if designated_area and tr >= _지정지역_비사업용_가산일:
+                후보.append(("지정지역 비사업용 토지 — 기본세율 + 20%p(제1항제8호 세율 + 10%p)", 기본 + int(base * 0.20), "소득세법 제104조④3호"))
+    주의: list[str] = []
+    if designated_area:
+        if not (non_business_land and asset_type == "토지"):
+            주의.append("designated_area는 지정지역의 비사업용 토지(non_business_land=True, 토지)에만 가산(제104조④3호) — 이 자산에는 반영하지 않음")
+        elif not registered:
+            주의.append("미등기 70%(제104조①10호) 적용 — 지정지역 가산 후보는 비교하지 않음")
+        elif tr < _지정지역_비사업용_가산일:
+            주의.append("2018.1.1. 전 양도: 제104조④3호 세율이 제55조① 세율+10%p로 제1항제8호(비사업용 토지)와 같아 추가 가산 없음")
+        elif tr >= date(2020, 1, 1):
+            주의.append("지정지역 공고일 이전에 매매계약을 체결하고 계약금을 받은 사실이 증빙으로 확인되면 ④3호 제외(2020.1.1. 이후 제104조④3호 단서) — 해당하면 designated_area=False")
     best = max(후보, key=lambda x: x[1])
     세액 = best[1]
     return {
@@ -487,4 +504,5 @@ def capital_gains_tax_amount(base: int, asset_type: str, acquisition_date: str, 
         "지방소득세": int(세액 * 0.1),
         "세율_후보": [{"세율": a, "세액": b, "근거": c} for a, b, c in 후보],
         "근거": best[2] + (", 제104조① 단서(둘 이상이면 큰 세액)" if len(후보) > 1 else ""),
+        **({"주의": 주의} if 주의 else {}),
     }
