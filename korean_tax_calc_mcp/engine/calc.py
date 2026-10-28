@@ -218,60 +218,79 @@ def _income_loss_offset_core(year, incomes, carryforwards, estimated, financial_
     else:
         부동산임대_이월잔액 = 0
 
-    # --- 3) 이월결손금 (estimated=True면 전부 건너뜀) ---
-    if not estimated:
-        sorted_cf = sorted(carryforwards, key=lambda x: x["year"])
-        for cf in sorted_cf:
-            cf_year = cf["year"]
-            cf_kind = cf["kind"]
-            cf_amount = cf["amount"]
-            if cf_amount <= 0:
-                continue
+    # --- 3) 이월결손금 ---
+    # 발생연도별로 남은 금액을 따로 들고 다님 — 소멸기한(제45조③: 2019년 이전 발생 10년, 2020년 이후 발생 15년)이
+    # 발생연도 기준이므로 다음 연도로 넘길 때 연도를 덮어쓰지 않는다.
+    # 추계신고·추계결정 연도(estimated=True)는 이월결손금을 공제하지 않지만(제45조④) 소멸시키지도 않는다 — 그대로 다음 연도로.
+    남은_목록 = []
+    추계_공제배제 = []
+    sorted_cf = sorted(carryforwards, key=lambda x: x["year"])
+    for cf in sorted_cf:
+        cf_year = cf["year"]
+        cf_kind = cf["kind"]
+        cf_amount = cf["amount"]
+        if cf_amount <= 0:
+            continue
 
-            유효기간 = 15 if cf_year >= 2020 else 10
-            if cf_year + 유효기간 < year:
-                소멸목록.append({
-                    "연도": cf_year, "종류": cf_kind, "금액": cf_amount,
-                    "사유": f"{cf_year}년 발생 이월결손금({유효기간}년 경과) 소멸",
-                })
-                continue
+        유효기간 = 15 if cf_year >= 2020 else 10
+        if cf_year + 유효기간 < year:
+            소멸목록.append({
+                "연도": cf_year, "종류": cf_kind, "금액": cf_amount,
+                "사유": f"{cf_year}년 발생 이월결손금({유효기간}년 경과) 소멸",
+            })
+            continue
 
-            amount = cf_amount
+        amount = cf_amount
 
-            if cf_kind == "사업":
-                공제순서_cf = [
-                    ("사업", after["사업"]),
-                    ("부동산임대", after["부동산임대"]),
-                    ("근로", after["근로"]),
-                    ("연금", after["연금"]),
-                    ("기타", after["기타"]),
-                    ("이자", max(0, 이자대상)),
-                    ("배당", max(0, 배당대상)),
-                ]
-                for 소득명, 공제대상금액 in 공제순서_cf:
-                    if amount > 0 and 공제대상금액 > 0:
-                        공제액 = min(amount, 공제대상금액)
-                        if 소득명 == "이자":
-                            after["이자"] -= 공제액
-                            이자대상 -= 공제액
-                        elif 소득명 == "배당":
-                            after["배당"] -= 공제액
-                            배당대상 -= 공제액
-                        else:
-                            after[소득명] -= 공제액
-                        amount -= 공제액
-                        공제내역.append({"결손금": f"사업(이월 {cf_year}년)", "공제한 소득": 소득명, "금액": 공제액})
-                if amount > 0:
-                    사업_이월잔액 += amount
-
-            elif cf_kind == "부동산임대":
-                if after["부동산임대"] > 0:
-                    공제액 = min(amount, after["부동산임대"])
-                    after["부동산임대"] -= 공제액
+        if estimated:
+            추계_공제배제.append({"연도": cf_year, "종류": cf_kind, "금액": amount,
+                              "사유": "추계 연도 — 공제하지 않고 다음 연도로 이월(제45조④)"})
+        elif cf_kind == "사업":
+            공제순서_cf = [
+                ("사업", after["사업"]),
+                ("부동산임대", after["부동산임대"]),
+                ("근로", after["근로"]),
+                ("연금", after["연금"]),
+                ("기타", after["기타"]),
+                ("이자", max(0, 이자대상)),
+                ("배당", max(0, 배당대상)),
+            ]
+            for 소득명, 공제대상금액 in 공제순서_cf:
+                if amount > 0 and 공제대상금액 > 0:
+                    공제액 = min(amount, 공제대상금액)
+                    if 소득명 == "이자":
+                        after["이자"] -= 공제액
+                        이자대상 -= 공제액
+                    elif 소득명 == "배당":
+                        after["배당"] -= 공제액
+                        배당대상 -= 공제액
+                    else:
+                        after[소득명] -= 공제액
                     amount -= 공제액
-                    공제내역.append({"결손금": f"부동산임대(이월 {cf_year}년)", "공제한 소득": "부동산임대", "금액": 공제액})
-                if amount > 0:
-                    부동산임대_이월잔액 += amount
+                    공제내역.append({"결손금": f"사업(이월 {cf_year}년)", "공제한 소득": 소득명, "금액": 공제액})
+
+        elif cf_kind == "부동산임대":
+            if after["부동산임대"] > 0:
+                공제액 = min(amount, after["부동산임대"])
+                after["부동산임대"] -= 공제액
+                amount -= 공제액
+                공제내역.append({"결손금": f"부동산임대(이월 {cf_year}년)", "공제한 소득": "부동산임대", "금액": 공제액})
+
+        if amount > 0:
+            if cf_kind == "사업":
+                사업_이월잔액 += amount
+            elif cf_kind == "부동산임대":
+                부동산임대_이월잔액 += amount
+            남은_목록.append({"year": cf_year, "kind": cf_kind, "amount": amount})
+
+    # 당기 발생분은 당기 연도로 이월
+    당기_사업 = 사업_이월잔액 - sum(x["amount"] for x in 남은_목록 if x["kind"] == "사업")
+    당기_임대 = 부동산임대_이월잔액 - sum(x["amount"] for x in 남은_목록 if x["kind"] == "부동산임대")
+    if 당기_사업 > 0:
+        남은_목록.append({"year": year, "kind": "사업", "amount": 당기_사업})
+    if 당기_임대 > 0:
+        남은_목록.append({"year": year, "kind": "부동산임대", "amount": 당기_임대})
+    남은_목록.sort(key=lambda x: x["year"])
 
     종합소득금액 = sum(after.values())
 
@@ -283,6 +302,8 @@ def _income_loss_offset_core(year, incomes, carryforwards, estimated, financial_
         "소멸목록": 소멸목록,
         "사업소득_계산과정": 사업소득_계산과정,
         "종합소득금액": 종합소득금액,
+        "이월잔액_목록": 남은_목록,
+        "추계_공제배제": 추계_공제배제,
     }
 
 
@@ -295,7 +316,7 @@ def income_loss_offset(year, incomes, carryforwards=None, estimated=False, finan
         부동산임대 = 주거용 건물 임대업을 뺀 부동산임대업(결손금은 부동산임대 소득에서만 공제, 제45조②)
         주거용임대 = 주거용 건물 임대업(제45조② 단서 — 결손금도 사업 결손금처럼 다른 종합소득에서 공제)
       carryforwards: [{year, kind: "사업"|"부동산임대", amount}] (기본 [])
-      estimated: 추계 여부(True면 이월결손금 전부 건너뜀)
+      estimated: 추계 여부(True면 그 연도 이월결손금 공제 안 함 — 소멸되지 않고 다음 연도로 이월, 제45조④)
       financial_flat_rate: 이자·배당 중 원천징수세율 적용분 합계(이자에서 먼저, 남으면 배당에서 뺀 금액이 공제 대상)
       business: {book_income: 장부상 사업 손익(원, 손실은 음수), adjustments:[{kind, amount}]} — 사업소득은 business로 입력
       history: [{year, incomes, business?, financial_flat_rate?, estimated?}] — 대상 연도보다 앞선 연도들. year 오름차순으로 계산 후 이월결손금을 다음 연도로 넘김.
@@ -340,15 +361,14 @@ def income_loss_offset(year, incomes, carryforwards=None, estimated=False, finan
             )
             if "error" in h_result:
                 return h_result
-            current_carryforwards = [
-                {"year": h["year"], "kind": "사업", "amount": h_result["사업_이월잔액"]}
-            ] if h_result["사업_이월잔액"] > 0 else []
-            if h_result["부동산임대_이월잔액"] > 0:
-                current_carryforwards.append({"year": h["year"], "kind": "부동산임대", "amount": h_result["부동산임대_이월잔액"]})
+            # 발생연도별 잔액을 그대로 넘김(소멸기한은 발생연도 기준, 제45조③)
+            current_carryforwards = h_result["이월잔액_목록"]
             이력_계산.append({
                 "year": h["year"],
                 "종합소득금액": h_result["종합소득금액"],
                 "남은_결손금": {"사업": h_result["사업_이월잔액"], "부동산임대": h_result["부동산임대_이월잔액"]},
+                "남은_결손금_발생연도별": [dict(x) for x in h_result["이월잔액_목록"]],
+                "소멸": h_result["소멸목록"],
             })
 
         # 대상 연도 계산 (history의 이월결손금을 carryforwards로 사용)
@@ -399,7 +419,10 @@ def income_loss_offset(year, incomes, carryforwards=None, estimated=False, finan
         "공제 내역": 공제내역,
         "소멸": 소멸목록,
         "이력_계산": 이력_계산,
+        "이월결손금_발생연도별": core_result["이월잔액_목록"],
     }
+    if core_result["추계_공제배제"]:
+        결과["추계_공제배제"] = core_result["추계_공제배제"]
     if 사업소득_계산과정 is not None:
         결과["사업소득_계산과정"] = 사업소득_계산과정
 
