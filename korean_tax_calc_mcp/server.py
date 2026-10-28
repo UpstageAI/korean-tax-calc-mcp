@@ -5775,7 +5775,7 @@ def income_loss_offset(
         "[{year, kind, amount}] — 이월결손금 목록. kind: '사업'|'부동산임대'. "
         "예: [{\"year\":2022, \"kind\":\"사업\", \"amount\":10000000}]"
     ))] = None,
-    estimated: Annotated[bool, Field(description="추계 과세 여부(True면 이월결손금 전부 건너뜀)")] = False,
+    estimated: Annotated[bool, Field(description="추계 과세 여부(True면 그 연도에는 이월결손금을 공제하지 않고 소멸 없이 다음 연도로 넘김, 제45조④)")] = False,
     financial_flat_rate: Annotated[int, Field(description="이자·배당 중 원천징수세율 적용분 합계(원, 이자에서 먼저 차감)")] = 0,
     business: Annotated[dict | None, Field(description=(
         "{book_income, adjustments} — 사업소득 계산용. book_income: 장부상 사업 손익(원, 손실은 음수). "
