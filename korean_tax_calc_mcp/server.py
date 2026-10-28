@@ -1587,8 +1587,9 @@ def earned_income_gross_pay(year: YEAR,
                 mrw = facts.get("monthly_regular_wage")
                 pYG = facts.get("prior_year_gross")
                 if mrw is None or pYG is None:
+                    빠진 = [n for n, v in (("monthly_regular_wage(월정액급여)", mrw), ("prior_year_gross(직전연도 총급여)", pYG)) if v is None]
                     return {"error": "입력 확인 필요 — 계산하지 않음",
-                            "문제": ["연장근로수당: eligible_occupation=True이나 월정액급여·직전연도 총급여 누락"],
+                            "문제": [f"연장근로수당: eligible_occupation=True이나 {'·'.join(빠진)} 누락 — 월정액급여 = 매월 받는 급여 총액 − 상여 등 부정기 급여 − 실비변상적 급여(비과세분) − 연장·야간·휴일근로수당(영 제17조①), facts에 직접 계산해 넣으세요"],
                             "필요 입력": {"연장근로수당": ["monthly_regular_wage", "prior_year_gross"]}}
                 월정액한도 = r["월정액급여한도"]
                 총급여한도 = r["직전연도총급여한도"]
@@ -2254,6 +2255,8 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
                 평가액 = int(시가)
             elif 장부가액 is not None:
                 평가액 = int(장부가액)
+            elif 금액:
+                평가액 = int(금액); 시가 = 금액   # 시가·장부가액이 없으면 입력 금액을 평가액으로(영 제42조⑥ — 시가·장부가액 중 큰 금액을 알면 따로 입력)
             else:
                 return {"error": "입력 확인 필요 — 현물 항목인데 금액·시가·장부가액 중 하나 필요"}
             if 부가세별도:
@@ -2458,9 +2461,15 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
         비율 = C.YEAR[year].get("전통시장등_비율", 0)
         대상설명 = "전통시장" if year in (2023, 2024) else ("전통시장+지역사랑상품권" if year == 2025 else "전통시장+지역사랑상품권+온누리상품권")
         부칙근거 = "법률 19936 부칙§35" if year in (2023, 2024) else ("법률 21223 부칙§31" if year == 2025 else "법률 21612 부칙§4")
+        if year == 2025:
+            judgments.append({"항목": "전통시장등 비율(2025 사업연도)", "성격": "전통시장", "결론": "20% 적용 — 2025.12.31 시행 조문 본문은 100분의 10이지만, 2025.12.23 개정 법률 제21223호 부칙 제31조로 2026.1.1 이후 신고분부터 20%. 개정 전 기준(10%)이 필요하면 따로 계산",
+                              "금액": 0, "근거": "조세특례제한법 제136조⑥, 법률 제21223호 부칙 제31조", "이유": "본문 시행본과 부칙 적용 시점이 달라 결과가 다르게 보일 수 있음"})
         judgments.append({"항목": "전통시장등 추가한도", "성격": "전통시장", "결론": f"{대상설명} 지출 {전통시장등_총액:,}원 → 추가한도 min({전통시장등_총액:,}, (기본한도+수입금액한도) {ent['일반한도']:,} × {비율}) = {ent['전통시장한도']:,}원 (조특법 제136조⑥, {부칙근거})",
                           "금액": 전통시장등_총액, "근거": "조세특례제한법 제136조⑥",
                           "이유": f"전통시장등 추가한도 대상 성격 합계 {전통시장등_총액:,}원 — (기본한도+수입금액한도) × {비율}과 지출액 중 작은 금액이 추가한도"})
+    elif 2023 <= year <= 2028:
+        judgments.append({"항목": "전통시장등 추가한도", "성격": "전통시장", "결론": f"{year} 사업연도는 추가한도 적용 기간이나 전통시장등 지출이 없어 0원", "금액": 0,
+                          "근거": "조세특례제한법 제136조⑥", "이유": "추가한도 대상 성격(전통시장·지역사랑상품권·온누리상품권) 지출 0"})
     else:
         judgments.append({"항목": "전통시장 추가한도", "성격": "전통시장", "결론": "전통시장 추가한도는 2024.1.1 이후 신고분(2023 사업연도)부터 — 일반 한도로 처리", "금액": 0,
                           "근거": "조세특례제한법 제136조⑥",
@@ -2507,7 +2516,8 @@ def _corporate_basis(source, has_self_stock_shift):
         if has_self_stock_shift:
             b = "법인세법 제16조①3호, 영 제14조①1호가목"
         else:
-            b = "법인세법 제16조①3호 단서(과세 제외 재원 — 의제배당 아님)"
+            b = ("법인세법 제16조①2호 단서 나목(재평가적립금 — 의제배당 아님)" if source == "재평가적립금"
+                 else "법인세법 제16조①2호 단서 가목, 영 제12조①(자본준비금 — 의제배당 아님)")
     else:
         b = ""
     return b
@@ -2706,7 +2716,14 @@ def _직장공제회_원천(amt: int, 납입연수, year: int) -> str:
 @mcp.tool(annotations=CALC)
 @_guard
 def financial_income_aggregate(year: YEAR,
-                               items: Annotated[list, Field(description="금융소득 항목 [{kind, amount, withheld?, ...}] — withheld=false: 국내에서 원천징수되지 않은 이자·배당(예: 개인 간 대여 이자, 국외 배당)은 2천만원 이하여도 종합과세(제14조③6호), 기본 true — kind: 예금이자·비영업대금이익·소비대차전환이자·외상매출금지급기일연장이자·저축성보험차익·투자신탁환매이익·파생결합사채이익·장내파생상품이익·상장법인현금배당·비상장법인현금배당·의제배당_잉여금자본전입·인정배당·손해배상법정이자·공익신탁이익")]) -> dict:
+                               items: Annotated[list, Field(description="금융소득 항목 [{kind, amount, withheld?, ...}]. "
+                                   "kind: 예금이자·비영업대금이익·소비대차전환이자·외상매출금지급기일연장이자·저축성보험차익·투자신탁환매이익·파생결합사채이익·장내파생상품이익·"
+                                   "상장법인현금배당·비상장법인현금배당·의제배당_잉여금자본전입·인정배당·출자공동사업자배당·외국법인배당·환매조건부매매차익·법원보증금이자·직장공제회초과반환금·손해배상법정이자·공익신탁이익. "
+                                   "withheld=false: 국내에서 원천징수되지 않은 이자·배당(개인 간 대여 이자, 국외 배당)은 2천만원 이하여도 종합과세(제14조③6호), 기본 true. "
+                                   "의제배당_잉여금자본전입은 source 필수 — 이익잉여금·자기주식처분이익·상환주식_주식발행초과금·자기주식소각이익_2년내(과세) / 주식발행초과금·자본준비금·재평가적립금·합병차익·분할차익·주식의포괄적교환차익·주식의포괄적이전차익·자기주식소각이익(과세 제외) / 재평가적립금_토지1%. "
+                                   "투자신탁환매이익은 components 필수 — [{asset, gain}] 목록, asset이 '상장주식'인 손익만 빼고 나머지(채권·비상장주식·배당·이자 등 아무 이름)는 합산, 손실은 음수. "
+                                   "예: {kind:'투자신탁환매이익', amount:18000000, components:[{asset:'상장주식', gain:3000000}, {asset:'배당', gain:15000000}]}. "
+                                   "직장공제회초과반환금은 contribution_years(납입연수)를 주면 연분연승 세액까지")]) -> dict:
     """종합소득 합산 금융소득(이자·배당)과 Gross-up 계산(소득세법 제14조·제16조·제17조·제56조).
     언제: 종합소득세 신고에서 금융소득 종합과세 대상 여부와 배당가산(Gross-up)액을 계산할 때.
     입력: 귀속연도(2016~2026) → year, 금융소득 항목 목록 [{kind, amount, ...}] → items.
@@ -3264,7 +3281,7 @@ def other_income_aggregate(year: YEAR,
 @_guard
 def simplified_vat_return(year: YEAR,
                          business_type: Annotated[str, Field(description="업종 — 어휘 간이과세자_납부세액.적용[].판단.부가가치율 키(소매업·음식점업·제조업·숙박업·건설업·부동산임대업·그 밖의 서비스업 등)")],
-                         prior_year_supplies: Annotated[int, Field(description="직전연도 공급대가 합계(원)")],
+                         prior_year_supplies: Annotated[int | None, Field(description="직전연도 공급대가 합계(원) — 세금계산서 미수취 가산세 판정에만 씀. 미수취 매입이 없으면 생략 가능")] = None,
                          bad_debt_confirmed: Annotated[int, Field(description="대손 확정액(기본 0, 납부세액에 영향 없음 — 판단에 명시)")] = 0,
                          prepaid_assessed: Annotated[int, Field(description="예정부과 고지세액")] = 0,
                          ledger: Annotated[dict, Field(description="원장형 입력 {공급: [{항목, 금액}], 매입: [{항목, 금액}]} — 금액은 공급대가(부가세 포함). 공급 항목이 없으면 error. 항목명은 어휘 간이과세자_원장항목의 키워드로 역할을 정함")] = ...) -> dict:
@@ -3361,6 +3378,11 @@ def simplified_vat_return(year: YEAR,
                 "허용값": {k: {"설명": f"부가가치율 {v}"} for k, v in 부가가치율표.items()},
                 "안내": "허용 업종 목록에서 선택하세요."}
     대손확정 = int(bad_debt_confirmed)
+    if prior_year_supplies is None:
+        if 미수취매입 > 0:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"세금계산서 미수취 매입 {미수취매입:,}원이 있어 가산세 판정에 prior_year_supplies(직전연도 공급대가)가 필요"]}
+        prior_year_supplies = 0   # 미수취 매입이 없으면 가산세 0이라 값과 무관
     직전연도 = int(prior_year_supplies)
     예정고지 = int(prepaid_assessed)
 
@@ -5843,7 +5865,7 @@ def _소형주택_제외기준(year: int) -> tuple[int, int] | None:
 def housing_deemed_rent_income(
     year: YEAR,
     houses: Annotated[list, Field(description=(
-        "소유 주택 전부 [{이름?, 기준시가(원), 면적(㎡, 주거 전용), 보증금(원, 임대 안 하면 0), 일수?(보증금 받은 일수, 기본 그 해 일수)}] — "
+        "소유 주택 전부 [{이름?, 기준시가(원), 면적?(㎡, 주거 전용 — 소형주택 판정용, 모르면 생략하면 소형 아님으로 봄), 보증금(원, 임대 안 하면 0), 일수?(보증금 받은 일수, 기본 그 해 일수)}] — "
         "임대하지 않는 주택도 주택 수 판정에 넣는다(부부 합산 등 주택 수 계산은 시행령 제8조의2 — 합산한 목록을 넣을 것)"))],
     financial_income: Annotated[int, Field(description="임대사업 부분에서 생긴 수입이자·할인료·배당금(장부로 보증금 운용이 확인되는 것, 원). 추계면 무시", ge=0)] = 0,
     estimated: Annotated[bool, Field(description="추계신고·결정이면 True — 금융수익을 빼지 않음(시행령 제53조④)")] = False,
@@ -5958,7 +5980,7 @@ def disaster_loss_credit(
     assets_lost: Annotated[int, Field(description="상실 자산가액(토지 제외, 원) — assets 사용 시 생략")] = 0,
     current_tax: Annotated[int, Field(description="재해 발생 사업연도 법인세 산출세액(원, 공제·감면 전)")] = 0,
     other_credits: Annotated[int, Field(description="공제대상 법인세에서 차감할 다른 감면·공제세액(원, 기존 호환용 — credit_items와 함께 입력 불가)")] = 0,
-    unpaid_prior_tax: Annotated[int, Field(description="재해일 현재 미납·미부과 법인세(원)")] = 0,
+    unpaid_prior_tax: Annotated[int, Field(description="재해일 현재 미납·미부과 법인세 본세(원) — 가산세는 넣지 말고 penalty_items로 따로(두 번 들어감)")] = 0,
     penalty: Annotated[int, Field(description="가산세(원, 기존 호환용 — penalty_items와 함께 입력 불가)")] = 0,
     assets: Annotated[list | None, Field(description=(
         "[{구분, 장부가액, 상실액}] — assets_before/assets_lost 대신 사용. "
@@ -5993,7 +6015,7 @@ def asset_grant_reserve(
     year: YEAR,
     kind: Annotated[Literal["국고보조금", "공사부담금", "보험차익"], Field(description="재원 구분")],
     received: Annotated[int, Field(description="수령액(금전·현물 가액)")],
-    assets: Annotated[list, Field(description="[{asset, cost, used?(그 자산에 쓴 보조금·공사부담금 금액, 원), depreciable, depreciation_this_year, disposed?, disposed_ratio?, book_provision?, book_reversal?}]")],
+    assets: Annotated[list, Field(description="[{asset, cost, used?(그 자산에 쓴 보조금·공사부담금·보험차익 금액, 원), depreciable, depreciation_this_year(그해 세무상 손금으로 인정되는 감가상각비 — 회사계상액이 상각범위액을 넘으면 상각범위액, depreciation_adjustment로 먼저 계산), disposed?, disposed_ratio?, book_provision?, book_reversal?}]")],
     lost_book_value: Annotated[int | None, Field(description="멸실·손괴 보험대상자산 장부가액")] = None,
     receipt_year: Annotated[bool, Field(description="수령·설정 연도")] = True,
     planned_use: WON = 0,
@@ -6444,7 +6466,7 @@ def liquidation_income(
 @_guard
 def income_adjustment_total(
     net_income: WON,
-    items: Annotated[list, Field(description="[{항목(이름), 종류, 금액(원), 방향?('가산'|'차감'|'없음'), 소득처분?}]")],
+    items: Annotated[list, Field(description="[{항목(이름), 종류, 금액(원), 방향?('가산'|'차감'|'없음'), 소득처분?}] — 종류: 법인세비용·법인지방소득세·벌금·과태료·가산세·환급금이자·자기주식처분이익(자본잉여금)·미수이자(원천징수대상)·비지정기부금·기업업무추진비 한도초과·감가상각비 한도초과·업무무관 지급이자·수입배당금 익금불산입·이월결손금 보전 자산수증이익·사업용 재산세·기부금 한도초과(별칭: 법인세·국세환급가산금·자기주식처분이익·미수이자·재산세 등). 사전에 없으면 방향을 주면 됨")],
     donation_excess: Annotated[int, Field(description="기부금 한도초과액(원), 차가감 이후 가산", ge=0)] = 0,
     donation_carryover_deduction: Annotated[int, Field(description="기부금 한도초과 이월액 손금산입(원)", ge=0)] = 0,
 ) -> dict:
@@ -6452,6 +6474,24 @@ def income_adjustment_total(
 입력: 당기순이익(원) → net_income, 조정 항목 목록 [{항목, 종류, 금액, 방향, 소득처분}] → items, 기부금 한도초과액(원) → donation_excess, 기부금 한도초과 이월액 손금산입(원) → donation_carryover_deduction.
 결과: 차가감소득금액·각사업연도소득금액·익금산입_손금불산입·손금산입_익금불산입·세무조정, 판단, 근거(법인세법 제18·19·21·23·24·25·28조 등)."""
     kinds = vocab.INCOME_ADJUSTMENT_KINDS
+    # 흔히 쓰는 다른 이름 → 사전 종류 (Claude 2026-10-28)
+    _별칭 = {"법인세": "법인세비용", "법인세등": "법인세비용", "국세환급가산금": "환급금이자", "지방세환급가산금": "환급금이자",
+            "자기주식처분이익": "자기주식처분이익(자본잉여금)", "미수이자": "미수이자(원천징수대상)", "재산세": "사업용 재산세",
+            "접대비 한도초과": "기업업무추진비 한도초과", "벌금": "벌금·과태료·가산세", "과태료": "벌금·과태료·가산세", "가산세": "벌금·과태료·가산세"}
+    for it in items:
+        if it.get("종류") in _별칭:
+            it["종류"] = _별칭[it["종류"]]
+    _모름 = [f"'{it.get('항목', '')}'(종류 '{it.get('종류', '')}')" for it in items
+            if it.get("종류") not in kinds and it.get("방향") is None]
+    if _모름:
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"사전에 없는 종류 {len(_모름)}건: {', '.join(_모름)} — 종류를 아래 중에서 고르거나 방향('가산'|'차감'|'없음')을 주세요"],
+                "허용 종류": list(kinds)}
+    # 조정 이름: 가산 = 익금산입 또는 손금불산입, 차감 = 손금산입 또는 익금불산입
+    _조정명 = {"법인세비용": "손금불산입", "법인지방소득세": "손금불산입", "벌금·과태료·가산세": "손금불산입", "비지정기부금": "손금불산입",
+             "기업업무추진비 한도초과": "손금불산입", "감가상각비 한도초과": "손금불산입", "업무무관 지급이자": "손금불산입",
+             "자기주식처분이익(자본잉여금)": "익금산입", "환급금이자": "익금불산입", "수입배당금 익금불산입": "익금불산입",
+             "이월결손금 보전 자산수증이익": "익금불산입", "미수이자(원천징수대상)": "익금불산입"}
     익금산입 = 0
     손금산입 = 0
     세무조정 = []
@@ -6510,13 +6550,15 @@ def income_adjustment_total(
 
         if 방향 == "가산":
             익금산입 += 금액
-            세무조정.append({"구분": 항목명, "금액": 금액, "소득처분": 소득처분, "조정": "익금산입", "종류": 종류})
-            판단.append({"항목": 항목명, "결론": f"익금산입(가산) +{금액:,}원, 소득처분 {소득처분}",
+            조정 = _조정명.get(종류, "익금산입·손금불산입")
+            세무조정.append({"구분": 항목명, "금액": 금액, "소득처분": 소득처분, "조정": "익금산입", "조정구분": 조정, "종류": 종류})   # '조정'은 방향(엑셀 SUMIF용, 호환)
+            판단.append({"항목": 항목명, "결론": f"{조정}(가산) +{금액:,}원, 소득처분 {소득처분}",
                          "근거": 근거})
         elif 방향 == "차감":
             손금산입 += 금액
-            세무조정.append({"구분": 항목명, "금액": 금액, "소득처분": 소득처분, "조정": "손금산입", "종류": 종류})
-            판단.append({"항목": 항목명, "결론": f"손금산입(차감) −{금액:,}원, 소득처분 {소득처분}",
+            조정 = _조정명.get(종류, "손금산입·익금불산입")
+            세무조정.append({"구분": 항목명, "금액": 금액, "소득처분": 소득처분, "조정": "손금산입", "조정구분": 조정, "종류": 종류})   # '조정'은 방향(엑셀 SUMIF용, 호환)
+            판단.append({"항목": 항목명, "결론": f"{조정}(차감) −{금액:,}원, 소득처분 {소득처분}",
                          "근거": 근거})
 
     차가감소득금액 = net_income + 익금산입 - 손금산입
@@ -8097,14 +8139,17 @@ def _bigrams(text: str) -> set[str]:
 
 
 @mcp.tool(annotations=CALC)
-def find_tool(query: Annotated[str, Field(description="찾는 계산을 평소 말로. 예: '아파트 팔았을 때 양도세', '보험차익으로 산 기계', '접대비 한도', '해산한 법인 청산소득'")],
-              n: Annotated[int, Field(description="돌려줄 도구 수(1~10)", ge=1, le=10)] = 5) -> dict:
+def find_tool(query: Annotated[str, Field(description="찾는 계산을 평소 말로. 예: '아파트 팔았을 때 양도세', '보험차익으로 산 기계', '접대비 한도', '해산한 법인 청산소득'")] = "",
+              n: Annotated[int, Field(description="돌려줄 도구 수(1~10)", ge=1, le=10)] = 5,
+              keyword: Annotated[str, Field(description="query와 같음(korean-tax-mcp find_article과 같은 이름으로 불러도 되게)")] = "") -> dict:
     """맞는 계산 도구 찾기 — 도구가 70개가 넘으니, 어떤 도구를 쓸지 모르겠으면 먼저 이걸 부른다.
     언제: 계산 문제를 받았는데 맞는 도구 이름이 바로 떠오르지 않을 때, 또는 '이 계산 도구는 없다'고 판단하기 전에 반드시.
     입력: 찾는 계산 → query(평소 말, 세목·쟁점·조문 무엇이든), 개수 → n.
     결과: 후보 도구 목록(이름·한 줄 설명·언제 쓰는지·일치 이유). 후보가 없으면 계산 도구가 없는 것이니 korean-tax-mcp로 조문을 찾는다."""
     tools = _tool_catalog()
-    q = query.strip()
+    q = (query or keyword).strip()
+    if not q:
+        return {"error": "입력 확인 필요 — query(찾는 계산)를 넣으세요"}
     qb = _bigrams(q)
     scores: dict[str, float] = {}
     why: dict[str, list[str]] = {}
@@ -8129,7 +8174,11 @@ def find_tool(query: Annotated[str, Field(description="찾는 계산을 평소 �
             ov = len(qb & db) / len(qb)
             if ov > 0:
                 scores[name] = scores.get(name, 0) + ov * 2.0
-    ranked = sorted((k for k in scores if k in tools), key=lambda k: -scores[k])[:n]
+    # 별칭·이름 일치가 없고 글자 겹침만 약하면(점수 < 1.0) 맞는 도구가 없는 것으로 본다
+    ranked = [k for k in sorted((k for k in scores if k in tools), key=lambda k: -scores[k]) if scores[k] >= 1.0][:n]
+    if not ranked:
+        return {"결과": {"후보": [], "안내": "맞는 계산 도구가 없습니다. 조문·기한·절차 질문이면 korean-tax-mcp(find_article·law_article)로 근거를 찾아 답하고, 계산 도구가 없다는 사실을 답에 밝히세요."},
+                "근거": "도구 목록 검색(세무 자문 아님)"}
     out = []
     for name in ranked:
         desc = tools[name]
