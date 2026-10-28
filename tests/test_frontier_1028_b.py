@@ -68,3 +68,55 @@ def test_estimated_history_year_then_deduct_later():
     assert res["종합소득금액"] == 0
     assert res["이월결손금_발생연도별"] == [{"year": 2021, "kind": "사업", "amount": 4_000_000}]
 
+
+# ── 영 제143조④: 단순경비율 대상의 해당 과세기간 수입금액 요건은 2019년 귀속부터(2018.2.13. 개정) ──
+
+_A = {"industry_group": "나", "prior_year_revenue": 30_000_000,
+      "revenues": [{"구분": "매출", "금액": 200_000_000}], "expenses": [{"구분": "매입", "금액": 50_000_000}],
+      "base_rate": 0.2, "simple_rate": 0.6}
+
+
+def test_simple_rate_eligibility_2018_continuing_business():
+    # 직전 3,000만 < 3,600만 → 2018년 귀속까지는 당해 수입(2억)과 무관하게 단순경비율: 2억 × 0.4 = 8,000만
+    r = c("estimated_business_income", {**_A, "year": 2018})
+    assert r["결과"]["사업소득금액"] == 80_000_000
+    assert r["계산"]["적용방법"] == "단순경비율"
+
+
+def test_simple_rate_eligibility_2024_needs_current_revenue():
+    # 2019년 귀속부터 당해 수입 2억 ≥ 1억5천만 → 기준경비율: 2억 − 5천만 − 2억×0.2 = 1억1천만(한도 8천만×2.8 = 2억2,400만)
+    r = c("estimated_business_income", {**_A, "year": 2024})
+    assert r["결과"]["사업소득금액"] == 110_000_000
+    assert r["계산"]["적용방법"] == "기준경비율"
+
+
+# ── 규칙 제67조: 배율 2.6/3.2(2020.3.12.까지), 2.8/3.4(2020.3.13.부터) ──
+
+_B = {"industry_group": "나", "prior_year_revenue": 40_000_000,
+      "revenues": [{"구분": "매출", "금액": 100_000_000}], "expenses": [],
+      "base_rate": 0.1, "simple_rate": 0.9}   # 기준경비율 소득 9,000만, 단순경비율 소득 1,000만
+
+
+def test_multiplier_by_year():
+    assert c("estimated_business_income", {**_B, "year": 2017})["결과"]["사업소득금액"] == 26_000_000   # × 2.6
+    assert c("estimated_business_income", {**_B, "year": 2020})["결과"]["사업소득금액"] == 28_000_000   # × 2.8
+    r = c("estimated_business_income", {**_B, "year": 2019})
+    assert "error" in r and "multiplier" in r["문제"][0]
+    assert c("estimated_business_income", {**_B, "year": 2019, "multiplier": 2.6})["결과"]["사업소득금액"] == 26_000_000
+
+
+# ── 법 제19조①20호: 복식부기의무자 사업용 유형자산 처분액은 2018년 귀속부터 수입금액 ──
+
+_C = {"industry_group": "나", "prior_year_revenue": 200_000_000,
+      "revenues": [{"구분": "매출", "금액": 100_000_000}, {"구분": "유형자산처분", "금액": 20_000_000}],
+      "expenses": [], "base_rate": 0.2, "simple_rate": 0.7}
+
+
+def test_asset_disposal_revenue_from_2018():
+    # 2017: 수입 1억, 1억 − 1억×0.1(복식 ½) = 9,000만, 한도 3,000만×3.2 = 9,600만 → 9,000만
+    r17 = c("estimated_business_income", {**_C, "year": 2017})
+    assert r17["계산"]["수입금액"] == 100_000_000 and r17["결과"]["사업소득금액"] == 90_000_000
+    # 2018: 수입 1억2천만, 1억2천만 − 1,200만 = 1억800만, 한도 3,600만×3.2 = 1억1,520만 → 1억800만
+    r18 = c("estimated_business_income", {**_C, "year": 2018})
+    assert r18["계산"]["수입금액"] == 120_000_000 and r18["결과"]["사업소득금액"] == 108_000_000
+
