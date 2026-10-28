@@ -367,6 +367,9 @@ WITHHOLDING_RATES = {
     "비실명": 0.45,                                                  # ②2호
 }
 
+# 도구 설명에 쓰인 짧은 이름 → 세율표 키
+WITHHOLDING_ALIASES = {"일용": "일용근로"}
+
 
 def withholding_rate(kind, year=2025):
     """원천징수세율 지급연도별(소득세법 제129조). 2016~2026 중 변경:
@@ -375,6 +378,9 @@ def withholding_rate(kind, year=2025):
     온투업이자 14%: 2020.1.1. 이후 지급분(2018.12.31. 신설, 부칙 제14조①; 그 전은 비영업대금 25%).
     이자·배당 14%, 비영업대금 25%, 사업 3%, 기타 20%, 봉사료 5%, 일용 6%는 변동 없음."""
     y = _y(year)
+    kind = WITHHOLDING_ALIASES.get(kind, kind)
+    if kind not in WITHHOLDING_RATES:
+        raise ValueError(f"입력 확인 필요 — 소득 종류 '{kind}'은(는) 지원하지 않음. 허용: {', '.join(list(WITHHOLDING_RATES) + list(WITHHOLDING_ALIASES))}")
     if kind == "비실명": return 0.38 if y <= 2017 else 0.40 if y == 2018 else 0.42 if y <= 2022 else 0.45
     if kind == "외국인직업운동가" and y <= 2018: return WITHHOLDING_RATES["사업"]
     if kind == "온투업이자" and y <= 2019: return WITHHOLDING_RATES["비영업대금"]
