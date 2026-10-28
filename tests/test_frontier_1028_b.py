@@ -120,3 +120,11 @@ def test_asset_disposal_revenue_from_2018():
     r18 = c("estimated_business_income", {**_C, "year": 2018})
     assert r18["계산"]["수입금액"] == 120_000_000 and r18["결과"]["사업소득금액"] == 108_000_000
 
+
+# ── 제129조①4호: 일용근로 6%, 도구 설명의 '일용'도 받음 ──
+
+def test_withholding_daily_alias():
+    r = c("withholding_tax", {"kind": "일용", "amount": 1_000_000, "year": 2025})
+    assert r["결과"]["원천징수세액"] == 60_000
+    assert c("withholding_tax", {"kind": "일용근로", "amount": 1_000_000})["결과"]["원천징수세액"] == 60_000
+    assert "error" in c("withholding_tax", {"kind": "없는종류", "amount": 1_000_000})
