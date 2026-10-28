@@ -80,3 +80,40 @@ def test_citations_point_to_right_articles():
     r = one(2025, {"kind": "복권당첨금", "amount": 3_000_000})
     b = json.dumps(r["항목별"][0]["근거"], ensure_ascii=False)
     assert '"2호"' in b and "8호라목" in b and "6호가목" in b
+
+
+# 직무발명보상금_퇴직후: 시행령 제18조② 신설 2017.2.3. 연 300만원 → 2019.2.12. 500만원 → 2024.2.29. 700만원.
+# 2016 시행본에는 제21조①22호의2가 없음(제12조5호라목이 한도 없이 비과세).
+def test_retired_invention_bonus_limit_2017_2018():
+    for y in (2017, 2018):
+        r = one(y, {"kind": "직무발명보상금_퇴직후", "amount": 4_000_000, "employment_exempt_used": 1_000_000})
+        h = r["항목별"][0]
+        # 한도 300만 − 재직 중 100만 = 200만 비과세, 소득 200만, 원천징수 40만
+        assert h["비과세"] == 2_000_000 and h["소득금액"] == 2_000_000 and h["원천징수세액"] == 400_000, y
+    r = one(2016, {"kind": "직무발명보상금_퇴직후", "amount": 4_000_000, "employment_exempt_used": 0})
+    assert "입력 확인 필요" in json.dumps(r, ensure_ascii=False)
+
+
+# 제14조③8호가목: 2019 시행본까지 "제1호부터 제20호까지, 제22호 및 제26호 … 원천징수된 소득",
+# 2020.1.1. 시행본부터 22호의2 추가·"제127조제1항제6호나목에 해당하여 원천징수되지 아니하는 경우를 포함".
+def test_optional_separation_invention_bonus_from_2020():
+    item = {"kind": "직무발명보상금_퇴직후", "amount": 5_000_000, "employment_exempt_used": 0}
+    r19 = one(2019, {**item, "amount": 7_000_000})   # 한도 500만 → 소득 200만
+    assert r19["결과"]["선택적_분리과세_가능"] is False
+    assert r19["결과"]["선택적_분리과세_적용시_종합합산_기타소득금액"] == 2_000_000
+    r20 = one(2020, {**item, "amount": 7_000_000})
+    assert r20["결과"]["선택적_분리과세_가능"] is True
+    assert r20["결과"]["선택적_분리과세_적용시_종합합산_기타소득금액"] == 0
+
+
+def test_optional_separation_deposit_penalty_from_2020():
+    items = [{"kind": "위약금·배상금", "amount": 2_500_000, "deposit_substituted": 2_000_000},
+             {"kind": "일시적인적용역", "amount": 1_000_000}]
+    # 2019: 계약금 대체 200만은 원천징수 안 된 소득 → 선택 불가, 나머지(위약금 50만 + 용역 40만 = 90만)만 선택 가능
+    r = c("other_income_aggregate", {"year": 2019, "items": items})
+    assert r["결과"]["선택적_분리과세_가능"] is True
+    assert r["결과"]["선택적_분리과세_적용시_종합합산_기타소득금액"] == 2_000_000
+    # 2020: 계약금 대체분도 포함 → 합계 290만 ≤ 300만, 전부 분리과세 선택 가능
+    r = c("other_income_aggregate", {"year": 2020, "items": items})
+    assert r["결과"]["선택적_분리과세_가능"] is True
+    assert r["결과"]["선택적_분리과세_적용시_종합합산_기타소득금액"] == 0
