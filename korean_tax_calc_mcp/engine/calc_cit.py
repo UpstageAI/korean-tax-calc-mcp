@@ -3,6 +3,7 @@
 플레이북: knowledge/07_법인세_신고안내_조사포인트.md
 """
 import math
+import re
 from datetime import date, timedelta
 
 from .calc import won
@@ -299,10 +300,87 @@ def _nb_advance(i, a, fs):
     return whole_out(f"{why} — 규칙 제44조 {ho} 해당, 제외(각 호의 기간 한정 — 회수일로 기간 입력)", rule)
 
 
+_NB_EMPLOYEE_ONLY = ("6호", "7호", "7의2호")      # 규칙 제44조 중 직원 여부가 결론을 바꾸는 호
+
+
+def _nb_related(i, a, company, case, fe):
+    """가지급금 상대방 ↔ 법인(company)의 법인세법 특수관계인 판정(법 제2조12호, 영 제2조⑧ — 2019.2.12. 전 영 제87조①,
+    2019.2.12.~2023.12.31. 영 제2조⑤; 법 제2조12호는 2019.1.1. 시행, 그 전 법 제52조①) → (대상, 판정 정보). 판정은 related.judge_pair(law="법인")를 그대로 쓴다.
+    기준일: advance.기준일, 없으면 사업연도 종료일. 대상과 판정이 어긋나면 ValueError(입력 확인 필요) — 덮어쓰지 않는다."""
+    from ..audit.agents import related as _rel
+    from ..audit.agents.related_intake import norm_name
+    label = f"가지급금[{i}]"
+    other = norm_name(a["상대방"])
+    if other not in case["people"]:
+        raise ValueError(f"{label}: 상대방 {other}이(가) relations.people에 없음 — 관계 자료에 넣거나 대상을 직접 입력")
+    if other == company:
+        raise ValueError(f"{label}: 상대방이 법인 자신({company})")
+    on = str(a.get("기준일") or fe.isoformat())[:10]
+    _nb_d(on, f"{label}.기준일")
+    case["_notes"] = []
+    hits = _rel.judge_pair(case, company, other, "법인", on)
+    name, jo, _ = _rel._cite_fixed("법인", on)
+    for h in hits:  # 기준일 시행 조문 위치로 표기(호 번호 유지)
+        h["근거"] = re.sub(r"법인세법 시행령 제2조⑧|법인세 특수관계인", f"{name} {jo}", h["근거"])
+    notes = list(case.get("_notes", []))
+    corp_other = case["people"][other].get("구분") == "법인"
+    roles = []
+    if hits:
+        if corp_other:
+            roles = ["특수관계법인"]
+        else:
+            if other in (case.get("officers") or {}).get(company, []): roles.append("임원")
+            if other in (case.get("employees") or {}).get(company, []): roles.append("직원")
+            if _rel.direct(case["stakes"], other, company) > 0: roles.append("주주")
+    if not hits:
+        derived = "비특수관계인"
+    elif corp_other:
+        derived = "특수관계법인"
+    elif not roles:
+        derived = "기타특수관계인"
+    else:
+        derived = roles[0]
+    info = {"상대방": other, "법인": company, "기준일": on, "특수관계": bool(hits),
+            "판정_대상": derived, "역할": roles, "호": [h["근거"] for h in hits], "내용": [h["내용"] for h in hits],
+            **({"참고": notes} if notes else {})}
+    ho = _NB_REASONS.get(a.get("사유", "업무무관대여"))
+    given = a.get("대상")
+    if given is None:
+        if "직원" in roles and len(roles) > 1 and ho in _NB_EMPLOYEE_ONLY:
+            raise ValueError(f"{label}: 상대방 {other}의 역할이 {'·'.join(roles)}로 여럿이고 사유({a.get('사유')})는 직원 여부로 결론이 갈림 — 대상 직접 입력")
+        target = derived
+    else:
+        if given not in _NB_TARGETS:
+            raise ValueError(f"{label}: 대상은 {', '.join(_NB_TARGETS)} 중 하나")
+        g_rel = _NB_TARGETS[given] != "비특수관계인"
+        if g_rel != bool(hits):
+            why = "; ".join(f"{h['근거']}: {h['내용']}" for h in hits) or "주어진 관계 자료로는 특수관계 해당 없음"
+            raise ValueError(f"{label}: 대상={given}인데 {company}↔{other} 법인세법 특수관계 판정은 "
+                             f"{'해당' if hits else '해당 없음'}({why}) — 대상 또는 relations 확인 필요")
+        if hits and ho in _NB_EMPLOYEE_ONLY and (_NB_TARGETS[given] == "직원") != ("직원" in roles):
+            raise ValueError(f"{label}: 대상={given}인데 relations.employees[{company}]의 {other} 직원 여부와 다름 — "
+                             f"규칙 제44조 {ho}는 직원 여부로 결론이 갈려 확인 필요")
+        if hits and _NB_TARGETS[given] != _NB_TARGETS.get(derived) and not (derived == "기타특수관계인"):
+            info["경고"] = f"대상={given}, 관계 자료로 본 역할={derived} — 결론(특수관계·직원 여부)은 같아 대상 그대로 씀"
+        target = given
+    law_ref = "법인세법 제2조제12호" if on >= "2019-01-01" else "법인세법 제52조①"
+    if hits:
+        msg = (f"{company}↔{other} 법인세법 특수관계인(기준일 {on}): " +
+               "; ".join(f"{h['근거']} — {h['내용']}" for h in hits) + f" → 대상 {target}")
+        basis = ", ".join([law_ref, *dict.fromkeys(re.sub(r"\(.*", "", h["근거"]) for h in hits)])
+    else:
+        msg = f"{company}↔{other} 법인세법 특수관계 해당 없음(기준일 {on}, 주어진 관계 자료 기준 — {name} {jo} 각 호 미해당) → 대상 {target}"
+        basis = f"{law_ref}, {name} {jo}"
+    if info.get("경고"):
+        msg += f" [경고: {info['경고']}]"
+    info["판단"], info["근거"] = msg, basis
+    return target, info
+
+
 def nonbusiness_interest_judge(loans, advances=None, deposits=None, nonbusiness_jeoksu=0, year=None,
-                               fiscal_start=None, fiscal_end=None):
+                               fiscal_start=None, fiscal_end=None, company=None, relations=None):
     """법 제28조① 각 호 지급이자 손금불산입 판정 — 영 제55조 순위, 영 제53조 가지급금 적수·가수금 상계·차입금 제외."""
-    advances, deposits = advances or [], deposits or []
+    advances, deposits = list(advances or []), deposits or []
     if (advances or deposits) and year is None and fiscal_start is None:
         raise ValueError("가지급금·가수금을 넣으면 year(사업연도, 개시일이 속하는 연도) 또는 fiscal_start 필요")
     if fiscal_start:
@@ -366,11 +444,24 @@ def nonbusiness_interest_judge(loans, advances=None, deposits=None, nonbusiness_
         rows.append({"차입금": i, "구분": "일반", "지급이자": it, "적수": j, "적수_계산": how,
                      **({"이자율": float(l["rate"])} if l.get("rate") else {})})
 
-    # 2) 가지급금 등 적수(동일인별)
+    # 2) 가지급금 등 적수(동일인별) — 상대방이 있으면 법인세법 특수관계인 판정으로 대상을 정하거나 대조
+    rels = {}
+    if any(a.get("상대방") for a in advances):
+        if not company or not relations:
+            raise ValueError("가지급금에 상대방을 넣으면 company(법인 이름)와 relations(related_judge 관계 자료) 필요")
+        if company not in relations["people"] or relations["people"][company].get("구분") != "법인":
+            raise ValueError(f"company {company}이(가) relations.people에 법인으로 없음")
+        for i, a in enumerate(advances):
+            if a.get("상대방"):
+                t, info = _nb_related(i, a, company, relations, fe)
+                advances[i] = {**a, "대상": t}
+                rels[i] = info
     adv_rows, persons, di_moves = [], {}, {}
     for i, a in enumerate(advances):
         incl, excl, msg, basis = _nb_advance(i, a, fs)
-        who = a.get("이름") or a.get("대상")
+        if i in rels:
+            msg, basis = f"{rels[i]['판단']} / {msg}", f"{rels[i]['근거']}, {basis}"
+        who = a.get("이름") or (rels[i]["상대방"] if i in rels else None) or a.get("대상")
         if incl is None or (a.get("movements") and incl and not excl):
             # movements가 있고 전액 포함(제외액 0)이면 입력한 일자별 증감 그대로 — 금액으로 덮어쓰지 않는다
             mv = _nb_moves(a, None, fs, fe, f"가지급금[{i}]")
@@ -384,7 +475,8 @@ def nonbusiness_interest_judge(loans, advances=None, deposits=None, nonbusiness_
         adv_rows.append({"가지급금": i, "대상": a.get("대상"), "이름": who, "사유": a.get("사유", "업무무관대여"),
                          **({"금액": a["금액"]} if "금액" in a else {}), "제외액": "전액" if excl is None else excl,
                          "포함액": "movements 전액" if incl is None else incl,
-                         "적수": j, "판단": msg, "근거": basis})
+                         "적수": j, "판단": msg, "근거": basis,
+                         **({"특수관계_판정": rels[i]} if i in rels else {})})
     dep_moves = {}
     for i, dpo in enumerate(deposits):
         who = dpo.get("이름") or dpo.get("대상")
@@ -405,6 +497,10 @@ def nonbusiness_interest_judge(loans, advances=None, deposits=None, nonbusiness_
     if deposits:
         judge.append("동일인 가지급금 등과 가수금은 적수로 상계(영 제53조③ 후단), 가수금이 더 크면 0. "
                      "발생 시 상환기간·이자율 약정이 있어 상계할 수 없는 가수금은 상계하지 않음(규칙 제28조②).")
+    if rels:
+        judge.append("특수관계인 판정(법인세법 기준, 주어진 relations 자료 기준): " + "; ".join(
+            f"{v['상대방']} → {v['판정_대상'] if v['특수관계'] else '비특수관계인'}"
+            f"({', '.join(v['호']) if v['호'] else '각 호 미해당'}, 기준일 {v['기준일']})" for v in rels.values()))
     if advances:
         judge.append("적수: 영 제53조③은 '적수로 계산'만 정함 — 대여일 산입·회수일 불산입·사업연도 말일 산입으로 계산(실무 관행).")
 

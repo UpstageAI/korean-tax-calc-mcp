@@ -769,27 +769,38 @@ def nonbusiness_interest_disallowance(loans: Annotated[list[Loan], Field(descrip
                                       deposits: Annotated[list[dict] | None, Field(description="가수금 [{이름|대상, 금액, 일자, 반환일? | movements [{일자, 증감}], 상계불가?(상환기간·이자율 약정으로 상계 불가)}]")] = None,
                                       year: Annotated[int | None, Field(description="사업연도(개시일이 속하는 연도, 2016~2026). advances·deposits를 넣으면 필요", ge=2016, le=2026)] = None,
                                       fiscal_start: Annotated[str | None, Field(description="사업연도 개시일(YYYY-MM-DD). 생략 시 year-01-01")] = None,
-                                      fiscal_end: Annotated[str | None, Field(description="사업연도 종료일(YYYY-MM-DD). 생략 시 개시일 1년 뒤 전날")] = None) -> dict:
+                                      fiscal_end: Annotated[str | None, Field(description="사업연도 종료일(YYYY-MM-DD). 생략 시 개시일 1년 뒤 전날")] = None,
+                                      company: Annotated[str | None, Field(description="가지급금을 지급한 법인 이름(relations 안의 법인). advances[].상대방으로 특수관계인 판정할 때 필요")] = None,
+                                      relations: Annotated[dict | None, Field(description='특수관계 판정 자료 — related_judge와 같은 형식 {people, family, stakes, officers?, employees?, livelihood?, influence?, group?, group_exempt?}. 예: {"people": {"㈜가람": {"구분": "법인"}, "김대표": {"구분": "개인"}}, "family": [], "stakes": [["김대표", "㈜가람", 0.6]], "officers": {"㈜가람": ["김대표"]}}')] = None) -> dict:
     """업무무관자산·가지급금 관련 지급이자 손금불산입 — 가지급금 제외 판정·적수·가수금 상계·지급이자 손금불산입 순위까지. 언제: 업무무관자산이나 특수관계인 가지급금이 있을 때 지급이자 중 얼마를 손금불산입하는지, 어떤 대여금이 가지급금에서 빠지는지(시행규칙 제44조 각 호) 판정한다.
-입력: 차입금별 [{interest, jeoksu | principal·days | rate, kind?, withholding?}] → loans, 업무무관자산 적수(원·일) → nonbusiness_jeoksu, 가지급금 [{대상, 사유, 금액, 지급일, 회수일? | movements, 관련 정보}] → advances, 가수금 [{이름, 금액, 일자, 반환일?, 상계불가?}] → deposits, 사업연도(2016~2026) → year, 개시일·종료일 → fiscal_start·fiscal_end.
-판정: ①차입금 구분 — 채권자불분명(영 제51조①)·비실명(영 제51조②)·건설자금(영 제52조)은 영 제55조 순위로 먼저 손금불산입하고, 기업구매자금대출·금융회사 등 제외 차입금(영 제53조④)과 함께 업무무관 산식의 지급이자·차입금에서 뺀다. ②가지급금 — 비특수관계인 대여는 제외, 규칙 제44조 각 호(미지급소득 소득세 대납은 총결정세액×미지급소득÷종합소득금액 한도, 직원 급료 가불은 월정급여 범위, 우리사주는 해당 회사 주식만, 중소기업 직원 주택자금 7의2호는 2020.1.1. 이후 개시 사업연도부터) 제외. ③적수 — 대여일 산입·회수일 불산입·말일 산입, 동일인 가수금 적수 상계(영 제53조③, 약정으로 상계 불가면 안 함 — 규칙 제28조②). ④업무무관 = 지급이자 × min(자산 적수, 차입금 적수) ÷ 차입금 적수(원 미만 절사).
+입력: 차입금별 [{interest, jeoksu | principal·days | rate, kind?, withholding?}] → loans, 업무무관자산 적수(원·일) → nonbusiness_jeoksu, 가지급금 [{대상 | 상대방, 사유, 금액, 지급일, 회수일? | movements, 기준일?, 관련 정보}] → advances, 법인 이름 → company, 관계 자료(related_judge 형식) → relations, 가수금 [{이름, 금액, 일자, 반환일?, 상계불가?}] → deposits, 사업연도(2016~2026) → year, 개시일·종료일 → fiscal_start·fiscal_end.
+판정: ⓪특수관계인 — 가지급금에 상대방을 주면 company↔상대방을 법인세법 특수관계인(법 제2조12호, 영 제2조⑧ — 2019.2.12. 전 영 제87조①, 2019.2.12.~2023.12.31. 영 제2조⑤) 각 호로 판정해(기준일: 기준일 또는 사업연도 종료일) 대상을 정한다 — 해당 없으면 비특수관계인, 법인이면 특수관계법인, 개인이면 officers·employees·stakes로 임원·직원·주주, 그 밖은 기타특수관계인. 대상도 주면 대조만 하고 특수관계 여부(또는 규칙 제44조 6·7·7의2호에서 직원 여부)가 다르면 입력 확인 필요. ①차입금 구분 — 채권자불분명(영 제51조①)·비실명(영 제51조②)·건설자금(영 제52조)은 영 제55조 순위로 먼저 손금불산입하고, 기업구매자금대출·금융회사 등 제외 차입금(영 제53조④)과 함께 업무무관 산식의 지급이자·차입금에서 뺀다. ②가지급금 — 비특수관계인 대여는 제외, 규칙 제44조 각 호(미지급소득 소득세 대납은 총결정세액×미지급소득÷종합소득금액 한도, 직원 급료 가불은 월정급여 범위, 우리사주는 해당 회사 주식만, 중소기업 직원 주택자금 7의2호는 2020.1.1. 이후 개시 사업연도부터) 제외. ③적수 — 대여일 산입·회수일 불산입·말일 산입, 동일인 가수금 적수 상계(영 제53조③, 약정으로 상계 불가면 안 함 — 규칙 제28조②). ④업무무관 = 지급이자 × min(자산 적수, 차입금 적수) ÷ 차입금 적수(원 미만 절사).
 결과: 순위별 손금불산입·소득처분(채권자불분명·비실명 대표자 상여·원천세 기타사외유출, 건설자금 유보, 업무무관 기타사외유출), 가지급금별 제외 판단, 동일인별 적수, 인정이자는 deemed_interest로 이어 계산할 movements 안내. 지원 2016~2026 사업연도.
-지원 안 함: 일반차입금 건설자금이자 자본화 선택(법 제28조②), 업무무관자산 취득가액·적수 산정(영 제49조, 직접 적수 입력), 특수관계인 여부 판정(related_judge), 금융회사 주된 수익사업 판단 — 해당하면 입력 확인 필요 또는 직접 적수 입력. 근거(법인세법 제28조, 시행령 제51조~제53조·제55조·제106조, 시행규칙 제28조·제44조)."""
+지원 안 함: 일반차입금 건설자금이자 자본화 선택(법 제28조②), 업무무관자산 취득가액·적수 산정(영 제49조, 직접 적수 입력), 상대방 없이 대상만 준 가지급금의 특수관계 여부(입력 그대로 씀), 생계를 함께하는 친족(영 제2조⑧3호 후단)·대표이사 구분(officers에 대표 표시 없음 — 임원으로 봄), 금융회사 주된 수익사업 판단 — 해당하면 입력 확인 필요 또는 직접 적수 입력. 근거(법인세법 제28조, 시행령 제51조~제53조·제55조·제106조, 시행규칙 제28조·제44조)."""
     simple = not (advances or deposits or year or fiscal_start or fiscal_end) and all(
         l.jeoksu is not None and l.kind is None and l.rate is None and l.principal is None and l.withholding is None for l in loans)
     if simple:
         r = C.nonbusiness_interest([(int(l.interest), int(l.jeoksu)) for l in loans])(nonbusiness_jeoksu)
         return _ok(r, "법인세법 제28조①4호, 시행령 제53조", 산식="지급이자 × min(1, 업무무관 적수 ÷ 차입금 적수)")
     try:
+        case = None
+        if relations is not None:
+            from .audit.agents.related_intake import normalize, to_case
+            rj = dict(relations)
+            case = to_case(normalize(rj))
+            case["group_exempt"] = {norm_name(k): v for k, v in (rj.get("group_exempt") or {}).items()}
         r, calc, 판단, pointer = C.nonbusiness_interest_judge([l.model_dump() for l in loans], advances, deposits,
-                                                            nonbusiness_jeoksu, year, fiscal_start, fiscal_end)
+                                                            nonbusiness_jeoksu, year, fiscal_start, fiscal_end,
+                                                            company=norm_name(company) if company else None, relations=case)
     except (ValueError, KeyError, TypeError) as e:
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [str(e)]}
     extra = {"계산": calc, "판단": 판단}
     if pointer:
         extra["인정이자_연결"] = pointer
     return _ok(r, "법인세법 제28조①·" + ("⑤" if (r and calc["사업연도"][:4] <= "2018") else "③") +
-               ", 시행령 제51조·제53조·제55조·제106조, 시행규칙 제28조·제44조",
+               ", 시행령 제51조·제53조·제55조·제106조, 시행규칙 제28조·제44조" +
+               ("; 특수관계인: " + ", ".join(dict.fromkeys(x["특수관계_판정"]["근거"] for x in calc["가지급금"] if "특수관계_판정" in x))
+                if any("특수관계_판정" in x for x in calc["가지급금"]) else ""),
                산식="순위(영 제55조) 채권자불분명 → 비실명 → 건설자금 → 지급이자 × min(업무무관 적수, 차입금 적수) ÷ 차입금 적수", **extra)
 
 
