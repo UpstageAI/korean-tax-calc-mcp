@@ -1378,13 +1378,28 @@ def vat_supply_timing(
 # ───────── 0.2 추가: 근로·원천 ─────────
 @mcp.tool(annotations=CALC)
 @_guard
-def wage_income_tax(gross_pay: Annotated[int, Field(description="총급여(원, 비과세 제외)")], tax_base: Annotated[int, Field(description="종합소득 과세표준(원)")], year: YEAR) -> dict:
-    """근로소득공제·산출세액·근로소득세액공제. 언제: 근로소득만 있는 근로자의 연말정산에서 근로소득공제, 산출세액, 근로소득 세액공제를 계산한다.
-입력: 총급여(원, 비과세 제외) → gross_pay, 종합소득 과세표준(원) → tax_base, 귀속연도(2016~2026) → year.
-결과: 근로소득공제·산출세액·근로소득세액공제, 근거(소득세법 제47조①·제55조·제59조). Wage income: employment income deduction, computed tax and wage tax credit."""
+def wage_income_tax(gross_pay: Annotated[int, Field(description="총급여(원, 비과세 제외) — 연봉에서 비과세 수당을 뺀 금액")],
+                    year: YEAR,
+                    tax_base: Annotated[int | None, Field(description="종합소득 과세표준(원). 모르면 생략 — 근로소득금액에서 본인 기본공제 150만 원만 뺀 값으로 계산하고 그 사실을 판단에 적음")] = None) -> dict:
+    """근로소득공제·산출세액·근로소득세액공제·결정세액(참고). 언제: 근로소득만 있는 근로자의 연말정산에서, 또는 '연봉 얼마면 세금 얼마'를 어림할 때.
+입력: 총급여(원, 비과세 제외) → gross_pay, 귀속연도(2016~2026) → year, 종합소득 과세표준(원, 모르면 생략) → tax_base.
+결과: 근로소득공제·근로소득금액·과세표준·산출세액·근로소득세액공제·결정세액(참고: 표준세액공제 13만 원만 적용)·지방소득세, 근거(소득세법 제47조①·제55조·제59조·제59조의4⑨). Wage income: employment income deduction, computed tax and wage tax credit."""
+    ded = I.earned_deduction(gross_pay, year)
+    income_amt = max(0, gross_pay - ded)
+    assumed = tax_base is None
+    if assumed:
+        tax_base = max(0, income_amt - 1_500_000)
     t = I.income_tax(tax_base, year)
-    return _ok({"근로소득공제": I.earned_deduction(gross_pay, year), "산출세액": t, "근로소득세액공제": I.earned_tax_credit(t, gross_pay, year=year)},
-               "소득세법 제47조①·제55조·제59조", 주의="그 밖의 소득공제·세액공제는 별도")
+    credit = I.earned_tax_credit(t, gross_pay, year=year)
+    std = min(130_000, max(0, t - credit))
+    decided = max(0, t - credit - std)
+    판단 = [("과세표준을 주지 않아 근로소득금액 − 본인 기본공제 150만 원(소득세법 제50조①1호)으로 계산 — 부양가족·보험료·주택자금 등 다른 소득공제가 있으면 tax_base를 직접 주세요" if assumed
+             else "과세표준은 입력값 그대로"),
+          "결정세액(참고)은 특별소득공제·특별세액공제·월세액 세액공제를 신청하지 않은 근로자의 표준세액공제 13만 원(제59조의4⑨)만 뺀 값 — 자녀·연금계좌·의료비 등 세액공제가 있으면 그만큼 줄어듦",
+          "지방소득세는 소득세 결정세액의 10%(지방세법 제103조의3)를 참고로 붙임"]
+    return _ok({"근로소득공제": ded, "근로소득금액": income_amt, "과세표준": tax_base, "산출세액": t, "근로소득세액공제": credit,
+                "표준세액공제": std, "결정세액(참고)": decided, "지방소득세(참고)": decided // 10},
+               "소득세법 제47조①·제55조·제59조·제59조의4⑨", 판단=판단, 주의="그 밖의 소득공제·세액공제는 별도")
 
 
 @mcp.tool(annotations=CALC)
@@ -3065,11 +3080,16 @@ def financial_income_aggregate(year: YEAR,
     결과: 판단(항목별 이자/배당/제외·Gross-up 대상 여부)·결과(이자소득금액·배당소득금액·합산액)·계산(중간값). 금융소득 종합과세·배당가산."""
 
     # 어휘의 항목 이름과 다른 흔한 표기를 정식 이름으로 해결(예: 장내파생상품→장내파생상품이익)
-    _kind_별칭 = {"장내파생상품": "장내파생상품이익"}
+    _kind_별칭 = {"장내파생상품": "장내파생상품이익",
+                 # 평소 말(처음 쓰는 사람 점검 2026-10-30): 내국법인 현금배당은 상장·비상장 계산이 같아 상장으로 둠, 이자는 예금이자로
+                 "배당": "상장법인현금배당", "배당금": "상장법인현금배당", "현금배당": "상장법인현금배당", "배당소득": "상장법인현금배당", "주식배당금": "상장법인현금배당",
+                 "이자": "예금이자", "이자소득": "예금이자", "은행이자": "예금이자", "적금이자": "예금이자", "예금 이자": "예금이자"}
+    _해석 = []
     for it in items:
         k = it.get("kind", "")
         if k in _kind_별칭:
             it["kind"] = _kind_별칭[k]
+            _해석.append(f"kind '{k}' → '{it['kind']}'" + ("(내국법인 현금배당은 상장·비상장 계산이 같음)" if it["kind"] == "상장법인현금배당" else ""))
 
     _extra = [f"항목 {i+1}(저축성보험차익): 계약 {year - int(it.get('contract_year'))}년 유지 — 비과세 요건(시행령 제25조: 납입 한도·월적립식 등) 충족 여부를 'exempt_conditions_met'(true/false)로 입력 필요"
               for i, it in enumerate(items or []) if isinstance(it, dict) and it.get("kind") == "저축성보험차익" and it.get("contract_year")
@@ -3264,7 +3284,7 @@ def financial_income_aggregate(year: YEAR,
                판단=판단,
                산식="판정합계(이자+배당비대상+배당대상−출자공동사업자배당) ≤ 2천만 원이면 분리과세(배당소득금액=출자공동사업자배당, 합산액=출자공동사업자배당). 초과 시 이자 → 배당비대상(출자공동 제외) → 배당대상 순으로 2천만 원을 채우고, 2천만 원을 넘는 배당대상 × 가산율 = Gross-up. 출자공동사업자배당은 항상 합산액에 포함되고 2천만원 판정 합계에서는 제외.",
                계산식_입력=계산식_입력,
-               계산식=계산식)
+               계산식=계산식, **({"입력 해석": _해석} if _해석 else {}))
 
 
 # ── 배당세액공제(소득세법 제56조)와 비교과세(제62조) ─────────────────────────────
@@ -6302,7 +6322,7 @@ spouse.legal_share는 '3/5' 같은 분수 문자열 또는 0.6 같은 0 초과 1
 def gift_tax(
     gift_date: Annotated[str, Field(description="증여일(YYYY-MM-DD, 2016-01-01~2026-12-31)")],
     gift_value: WON,
-    relation: Annotated[Literal["배우자", "직계존속", "직계비속", "기타친족", "기타"], Field(description="수증자 기준 증여자와의 관계")],
+    relation: Annotated[str, Field(description="수증자 기준 증여자와의 관계 — 배우자|직계존속|직계비속|기타친족|기타. 평소 말(부모·자녀·남편·형제·장인 등)도 됨")],
     recipient_minor: Annotated[bool, Field(description="수증자가 미성년자")] = False,
     prior_gifts_same_donor: WON = 0,
     nontaxable: WON = 0,
@@ -6323,7 +6343,13 @@ def gift_tax(
 입력: 증여일 → gift_date, 증여재산가액 → gift_value, 증여자 관계 → relation, 10년 내 동일 증여자 증여 → prior_gifts_same_donor,
 부담부증여 인수채무 → assumed_debt, 사전증여 공제 사용량 → prior_deduction_used, 혼인·출산 공제 → marriage_birth.
 결과: 과세가액·증여재산공제·과세표준·산출세액·할증세액·신고세액공제·납부할세액, 근거. 증여세 과세가액·공제·세액 계산."""
-    return IG.gift_tax(
+    rel_in = relation
+    relation = _GIFT_RELATION_ALIAS.get(relation.replace(" ", ""), relation)
+    if relation not in ("배우자", "직계존속", "직계비속", "기타친족", "기타"):
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"relation='{rel_in}'은(는) 알 수 없는 관계"],
+                "허용값": {"배우자": "남편·아내", "직계존속": "부모·조부모(계부모 포함)", "직계비속": "자녀·손자녀", "기타친족": "6촌 이내 혈족·4촌 이내 인척(형제자매·장인장모·시부모·사위·며느리 등)", "기타": "친족 아닌 사람"},
+                "근거": "상속세 및 증여세법 제53조"}
+    r = IG.gift_tax(
         gift_date=gift_date, gift_value=gift_value, relation=relation,
         recipient_minor=recipient_minor, prior_gifts_same_donor=prior_gifts_same_donor,
         nontaxable=nontaxable, excluded=excluded, assumed_debt=assumed_debt,
@@ -6333,6 +6359,20 @@ def gift_tax(
         generation_skip=generation_skip, prior_gift_tax_paid=prior_gift_tax_paid,
         other_credits=other_credits, filed=filed,
     )
+    if isinstance(r, dict) and relation != rel_in:
+        r["입력 해석"] = f"relation '{rel_in}' → '{relation}'(상증법 제53조 증여재산공제 구분)"
+    return r
+
+
+# 증여자 관계 평소 말 → 상증법 제53조 구분(처음 쓰는 사람 점검 2026-10-30). 장인·장모·시부모는 배우자의 직계존속이라 기타친족
+_GIFT_RELATION_ALIAS = {
+    **{k: "직계존속" for k in ("부모", "부모님", "아버지", "어머니", "아빠", "엄마", "부친", "모친", "조부모", "할아버지", "할머니", "외할아버지", "외할머니", "조부", "조모", "계부", "계모", "직계존속")},
+    **{k: "직계비속" for k in ("자녀", "자식", "아들", "딸", "손자", "손녀", "손자녀", "증손", "증손자", "증손녀", "직계비속")},
+    **{k: "배우자" for k in ("배우자", "남편", "아내", "처", "부인", "와이프")},
+    **{k: "기타친족" for k in ("형제", "자매", "형제자매", "형", "누나", "오빠", "언니", "동생", "삼촌", "고모", "이모", "외삼촌", "큰아버지", "작은아버지", "조카",
+                              "사위", "며느리", "장인", "장모", "장인어른", "장모님", "시부모", "시아버지", "시어머니", "친족", "기타친족", "사촌", "친척")},
+    **{k: "기타" for k in ("기타", "타인", "남", "지인", "친구", "제3자", "법인")},
+}
 
 
 # ── 연금계좌 인출(연금수령한도·인출순서) ─────────────────────────────
@@ -9423,7 +9463,34 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "경매": ["tax_priority_distribution"], "공매": ["tax_priority_distribution"], "매각대금": ["tax_priority_distribution"],
     "압류선착": ["tax_priority_distribution"], "저당권": ["tax_priority_distribution"], "전세권": ["tax_priority_distribution"],
     "소액임차": ["tax_priority_distribution"], "최우선변제": ["tax_priority_distribution"], "임금채권": ["tax_priority_distribution"],
+    # 평소 말(처음 쓰는 사람 점검 2026-10-30): 연봉·월급·프리랜서·배당 같은 생활어
+    "연봉": ["wage_income_tax", "earned_income_gross_pay"], "월급": ["wage_income_tax", "earned_income_gross_pay"],
+    "직장인": ["wage_income_tax", "earned_income_gross_pay"], "근로자 세금": ["wage_income_tax"], "급여 세금": ["wage_income_tax"],
+    "근로소득": ["wage_income_tax", "earned_income_gross_pay"], "총급여": ["wage_income_tax", "earned_income_gross_pay"],
+    "프리랜서": ["estimated_business_income", "withholding_tax", "income_tax"], "3.3%": ["withholding_tax", "estimated_business_income"],
+    "3.3": ["withholding_tax", "estimated_business_income"], "사업소득": ["estimated_business_income", "income_loss_offset", "income_tax"],
+    "종합소득세": ["income_tax", "estimated_business_income", "financial_income_aggregate"], "종소세": ["income_tax", "estimated_business_income"],
+    "배당": ["financial_income_aggregate", "dividend_tax_credit"], "이자소득": ["financial_income_aggregate"], "예금이자": ["financial_income_aggregate"],
+    "종합과세": ["financial_income_aggregate", "dividend_tax_credit"], "2천만원 초과": ["financial_income_aggregate", "dividend_tax_credit"],
+    "2천만 원 초과": ["financial_income_aggregate", "dividend_tax_credit"], "금융소득종합과세": ["financial_income_aggregate", "dividend_tax_credit"],
+    "증여": ["gift_tax", "inheritance_gift_valuation"], "상속": ["inheritance_tax", "inheritance_gift_valuation"],
+    "법인세": ["corporate_tax", "income_adjustment_total"], "퇴직소득세": ["retirement_income_tax"],
+    "양도": ["capital_gains_income", "capital_gains_tax"], "필요경비": ["capital_gains_income", "estimated_business_income", "other_income_aggregate"],
 }
+
+# 계산 도구가 없는 흔한 질문 — 있는 척 엉뚱한 도구를 고르지 않도록 먼저 걸러 근거 조문만 안내(처음 쓰는 사람 점검 2026-10-30)
+_NOT_SUPPORTED: list[tuple[tuple[str, ...], str]] = [
+    (("월세", "세액공제"), "월세액 세액공제(조세특례제한법 제95조의2)"),
+    (("월세액",), "월세액 세액공제(조세특례제한법 제95조의2)"),
+    (("연금", "세액공제"), "연금계좌 세액공제(소득세법 제59조의3) — 연금저축·IRP 납입액 공제"),
+    (("주식", "양도"), "주식 양도소득(소득세법 제94조①3호·제104조①11호, 대주주 판정 시행령 제157조)"),
+    (("대주주",), "주식 양도소득(소득세법 제94조①3호·제104조①11호, 대주주 판정 시행령 제157조)"),
+    (("종합부동산세",), "종합부동산세(종합부동산세법)"), (("종부세",), "종합부동산세(종합부동산세법)"),
+    (("신용카드", "소득공제"), "신용카드 등 사용금액 소득공제(조세특례제한법 제126조의2)"),
+    (("근로장려금",), "근로장려금(조세특례제한법 제100조의2~)"), (("자녀장려금",), "자녀장려금(조세특례제한법 제100조의27~)"),
+    (("취득세",), "취득세(지방세법 — 국세 아님)"), (("재산세",), "재산세(지방세법 — 국세 아님)"), (("자동차세",), "자동차세(지방세법 — 국세 아님)"),
+]
+_NOT_SUPPORTED_EXEMPT = ("양도", "필요경비", "취득가액", "보유세")  # 양도 계산 질문에 섞인 '취득세·재산세'는 걸러내지 않음
 
 
 def _bigrams(text: str) -> set[str]:
@@ -9443,12 +9510,21 @@ def find_tool(query: Annotated[str, Field(description="찾는 계산을 평소 �
     q = (query or keyword).strip()
     if not q:
         return {"error": "입력 확인 필요 — query(찾는 계산)를 넣으세요"}
+    qn = q.replace(" ", "").lower()
+    for words, what in _NOT_SUPPORTED:
+        if all(w.replace(" ", "").lower() in qn for w in words) and not (words[0] in ("취득세", "재산세") and any(e in qn for e in _NOT_SUPPORTED_EXEMPT)):
+            return {"결과": {"후보": [], "없는 계산": what,
+                            "안내": f"{what}은(는) 이 서버에 계산 도구가 없습니다. korean-tax-mcp(law_article)로 조문을 확인해 직접 계산하고, 계산 도구가 없다는 사실을 답에 밝히세요."},
+                    "근거": "도구 목록 검색(세무 자문 아님)"}
     qb = _bigrams(q)
     scores: dict[str, float] = {}
     why: dict[str, list[str]] = {}
-    for alias, targets in _TOOL_ALIASES.items():
-        a = alias.replace(" ", "")
-        if a.lower() in q.replace(" ", "").lower():
+    matched = [alias for alias in _TOOL_ALIASES if alias.replace(" ", "").lower() in qn]
+    # 긴 별칭이 맞으면 그 안에 든 짧은 별칭은 세지 않음('수입배당금'이 맞으면 '배당'은 무시)
+    matched = [a for a in matched if not any(a != b and a.replace(" ", "").lower() in b.replace(" ", "").lower() for b in matched)]
+    for alias in matched:
+        targets = _TOOL_ALIASES[alias]
+        if True:
             for rank, name in enumerate(targets):
                 scores[name] = scores.get(name, 0) + 3.0 - rank * 0.5
                 why.setdefault(name, []).append(f"'{alias}'")
