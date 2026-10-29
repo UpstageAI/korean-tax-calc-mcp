@@ -26,7 +26,7 @@ flowchart LR
 3. **Calculation** — follows the statute order, e.g. tax base → that year's brackets → tax.
 4. **Result** — tax, intermediate amounts, item-level judgments, adjustments with income dispositions, and citations.
 
-The 73 calculation and judgment tools run on your PC without generative AI. Only the 3 PDF tools use Upstage, and only when `UPSTAGE_API_KEY` is set.
+The 82 calculation and judgment tools run on your PC without generative AI. Only the 3 PDF tools use Upstage, and only when `UPSTAGE_API_KEY` is set.
 
 ## Try asking
 
@@ -73,7 +73,7 @@ Pair with [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp) to go fr
 
 - **Disclaimer:** Results are a review aid, not tax advice. Verify statutes and rulings with a tax accountant, CPA or attorney before filing, during a tax audit, or in appeals. Check the statute text and case law in the original source.
 - **Not a tax agent service:** This tool does not perform **tax agent services under Article 2 of the Certified Tax Accountant Act** (preparing tax adjustment statements, filing on behalf of a taxpayer, tax consultation); only certified tax accountants and registered CPAs or attorneys may do so (Article 20). It is software that turns statutory formulas into code and shows the computation for the inputs given; please verify the facts and make the final judgment together with a tax professional (tax accountant, CPA or attorney).
-- **AI use notice:** The 73 computation/judgment tools run in code and do not use generative AI. The 3 PDF review tools (`extract_relations`, `tunnelling_from_pdf`, `return_precheck_pdf`) use generative AI (Upstage Solar Pro 4) when UPSTAGE_API_KEY is set, and mark that fact in their results. Without a key, they use pypdf for local text extraction (host_ai mode) and provide 정리 안내 (cleanup guidance) so the next tool input can be prepared manually.
+- **AI use notice:** The 82 computation/judgment tools run in code and do not use generative AI. The 3 PDF review tools (`extract_relations`, `tunnelling_from_pdf`, `return_precheck_pdf`) use generative AI (Upstage Solar Pro 4) when UPSTAGE_API_KEY is set, and mark that fact in their results. Without a key, they use pypdf for local text extraction (host_ai mode) and provide 정리 안내 (cleanup guidance) so the next tool input can be prepared manually.
 - **Data transmission:** Document content is sent to the Upstage API (api.upstage.ai) only when UPSTAGE_API_KEY is set and the PDF tools are used. Without a key (pypdf local extraction), no data is transmitted externally. Do not submit documents containing personal or sensitive information when using the API-based flow.
 
 ## License
