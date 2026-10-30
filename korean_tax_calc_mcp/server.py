@@ -25,6 +25,7 @@ from .engine import calc_stock_price as SP
 from .engine import calc_stock_val as SV
 from .engine import calc_official_price as OP
 from .engine import calc_building as BL
+from .engine import calc_donation_ind as DI
 from . import vocab
 from .forms_workbook import render_form_sheet, _load_form_templates, tool_value, nonbusiness_form_sources, nonbusiness_form_data
 
@@ -307,6 +308,7 @@ _도구별_필수필드 = {
         "인정배당": {"필요": ["amount"], "허용": ["withheld"]},
         "손해배상법정이자": {"필요": ["amount"], "허용": ["withheld"]},
         "공익신탁이익": {"필요": ["amount"], "허용": ["withheld"]},
+        "통합발행채권할인액": {"필요": ["amount"]},
         "외국법인배당": {"필요": ["amount"], "허용": ["withheld"]},
         "환매조건부매매차익": {"필요": ["amount"], "허용": ["withheld"]},
         "출자공동사업자배당": {"필요": ["amount"]},
@@ -3061,7 +3063,7 @@ def _직장공제회_원천(amt: int, 납입연수, year: int) -> str:
 def financial_income_aggregate(year: YEAR,
                                items: Annotated[list, Field(description="금융소득 항목 [{kind, amount, withheld?, ...}]. "
                                    "kind: 예금이자·비영업대금이익·소비대차전환이자·외상매출금지급기일연장이자·저축성보험차익·투자신탁환매이익·파생결합사채이익·장내파생상품이익·"
-                                   "상장법인현금배당·비상장법인현금배당·의제배당_잉여금자본전입·인정배당·출자공동사업자배당·외국법인배당·환매조건부매매차익·법원보증금이자·직장공제회초과반환금·손해배상법정이자·공익신탁이익. "
+                                   "상장법인현금배당·비상장법인현금배당·의제배당_잉여금자본전입·인정배당·출자공동사업자배당·외국법인배당·환매조건부매매차익·법원보증금이자·직장공제회초과반환금·통합발행채권할인액·손해배상법정이자·공익신탁이익. "
                                    "withheld=false: 국내에서 원천징수되지 않은 이자·배당(개인 간 대여 이자, 국외 배당)은 2천만원 이하여도 종합과세(제14조③6호), 기본 true. "
                                    "의제배당_잉여금자본전입은 source 필수 — 이익잉여금·자기주식처분이익·상환주식_주식발행초과금·자기주식소각이익_2년내(과세) / 주식발행초과금·자본준비금·재평가적립금·합병차익·분할차익·주식의포괄적교환차익·주식의포괄적이전차익·자기주식소각이익(과세 제외) / 재평가적립금_토지1%. "
                                    "투자신탁환매이익은 components 필수 — [{asset, gain}] 목록, asset이 '상장주식'인 손익만 빼고 나머지(채권·비상장주식·배당·이자 등 아무 이름)는 합산, 손실은 음수. "
@@ -3090,6 +3092,7 @@ def financial_income_aggregate(year: YEAR,
         · 직장공제회초과반환금 — 직장공제회 초과 반환금(분리과세, 합계·합산액 제외, 원천징수 연분연승 제63조 — 납입연수 contribution_years)
         · 손해배상법정이자 — 계약 위약·해약에 따른 손해배상금의 법정이자(이자소득 아님, 기타소득 소득세법 제21조①10호, 금융소득 합계 제외)
         · 공익신탁이익 — 공익신탁의 이익(비과세 소득세법 제12조1호, 금융소득 합계 제외)
+        · 통합발행채권할인액 — 국채·산업금융채권 등을 공개시장에서 통합발행할 때 매각가액과 액면가액의 차액(이자·할인액 아님, 소득세법 시행령 제22조의2②, 금융소득 합계 제외)
     결과: 판단(항목별 이자/배당/제외·Gross-up 대상 여부)·결과(이자소득금액·배당소득금액·합산액)·계산(중간값). 금융소득 종합과세·배당가산."""
 
     # 어휘의 항목 이름과 다른 흔한 표기를 정식 이름으로 해결(예: 장내파생상품→장내파생상품이익)
@@ -3222,6 +3225,8 @@ def financial_income_aggregate(year: YEAR,
             add(k, "제외", amt, "소득세법 제21조①10호, 제16조", "이자소득 아님 — 기타소득(소득세법 제21조①10호)")
         elif k == "공익신탁이익":
             add(k, "제외", amt, "소득세법 제12조1호", "비과세 — 공익신탁의 이익(소득세법 제12조1호)")
+        elif k == "통합발행채권할인액":
+            add(k, "제외", amt, "소득세법 시행령 제22조의2②, 제16조①1호·2호", "공개시장 통합발행 채권의 매각가액−액면가액 차액 — 이자·할인액에 포함되지 않음, 금융소득 합계 제외")
         else:
             판단.append({"항목": k, "결론": "확인 필요", "금액": amt, "근거": "", "이유": "지원하지 않는 항목 — 직접 판단 필요"})
 
@@ -9659,6 +9664,29 @@ def _link_income_calls(item: dict) -> tuple[dict, list[dict], list[str]]:
     it["가산"] = 가산; it["차감"] = 차감; it.pop("calls", None)
     return it, lines, problems
 
+
+@mcp.tool(annotations=CALC)
+@_guard
+def individual_donation_expense(year: YEAR,
+                                base_income: Annotated[int, Field(description="기준소득금액 — 기부금을 필요경비에 산입하기 전의 해당 과세기간 사업소득금액(원). 이자·배당 등 다른 종합소득은 넣지 않음", ge=0)],
+                                carried_loss: Annotated[int, Field(description="소득세법 제45조 이월결손금(원)", ge=0)] = 0,
+                                political: Annotated[int, Field(description="정치자금 기부금 총액(원) — 10만원까지 세액공제, 초과분 필요경비", ge=0)] = 0,
+                                hometown: Annotated[int, Field(description="고향사랑 기부금 총액(원) — 10만원까지 세액공제, 초과분 필요경비", ge=0)] = 0,
+                                special: Annotated[int, Field(description="특례기부금 금전 지출(원): 국가·지자체, 국방헌금, 이재민 구호금품, 사립학교·병원 시설비·교육비·장학금·연구비 등(법인세법 제24조②1호)", ge=0)] = 0,
+                                general: Annotated[int, Field(description="일반기부금 금전 지출(원, 종교단체 제외): 사회복지법인·의료법인·공익법인 고유목적사업비 등", ge=0)] = 0,
+                                religious: Annotated[int, Field(description="종교단체 일반기부금(원)", ge=0)] = 0,
+                                carried_special: Annotated[int, Field(description="이월된 특례기부금 한도초과액(원, 10년)", ge=0)] = 0,
+                                carried_general: Annotated[int, Field(description="이월된 일반기부금 한도초과액(원, 10년)", ge=0)] = 0,
+                                volunteer: Annotated[dict | None, Field(description="특별재난지역 자원봉사용역 {hours: 본인 봉사시간, fuel: 부수 유류비, transport_fuel: 그중 이동용 유류비(제외), materials: 재료비} — 특례기부금")] = None,
+                                in_kind: Annotated[list | None, Field(description="현물 기부 [{kind: 특례|일반|종교, book: 장부가액, market: 시가}] — 시가(시가가 장부가액보다 낮으면 장부가액)로 평가")] = None) -> dict:
+    """개인사업자 기부금 필요경비 산입 한도(소득세법 제34조). 언제: 사업소득자의 종합소득세 신고에서 정치자금·고향사랑·특례·일반(종교) 기부금을 어디까지 필요경비로 넣고, 얼마가 세액공제·이월로 넘어가는지 계산할 때.
+    순서(시행령 제81조④): 정치자금·고향사랑 10만원 초과분(이월결손금 뺀 소득금액 한도) → 특례(기준소득−이월결손금) → 일반(종교 있으면 10% + min(20%, 종교 외), 없으면 30%). 이월분은 같은 구분에서 먼저 산입(제79조④).
+    현물은 시가(시가<장부가액이면 장부가액)(제81조③), 자원봉사용역은 봉사일수(8시간 단위 올림)×8만원 + 부수 유류비(이동분 제외)·재료비(제81조⑤).
+    입력: 기준소득금액 → base_income(이자·배당 제외), 이월결손금 → carried_loss, 기부금 → political·hometown·special·general·religious, 이월 → carried_*, 자원봉사 → volunteer, 현물 → in_kind.
+    결과: 필요경비 산입 합계·구분별 산입·한도초과 이월·기부금 산입 후 사업소득금액·정치·고향 세액공제 대상(10만원 이하), 판단, 근거. 세액공제(제59조의4) 금액 자체는 계산하지 않음 — 종합소득 기준은 별도."""
+    return DI.individual_donation(year, base_income, carried_loss, political, hometown, special, general, religious, carried_special, carried_general, volunteer, in_kind)
+
+
 _TOOL_ALIASES: dict[str, list[str]] = {
     "양도세": ["capital_gains_income", "capital_gains_tax"], "양도소득세": ["capital_gains_income", "capital_gains_tax"],
     "단기 양도": ["capital_gains_tax"], "미등기": ["capital_gains_tax"], "비사업용 토지": ["capital_gains_tax", "capital_gains_income"],
@@ -9729,7 +9757,7 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "증여": ["gift_tax", "inheritance_gift_valuation"], "상속": ["inheritance_tax", "inheritance_gift_valuation"],
     "법인세": ["corporate_tax", "income_adjustment_total"], "퇴직소득세": ["retirement_income_tax"],
     "주식 양도": ["stock_capital_gains_tax", "stock_major_shareholder"], "주식 양도세": ["stock_capital_gains_tax", "stock_major_shareholder"], "주식 팔": ["stock_capital_gains_tax", "stock_major_shareholder"],
-    "대주주": ["stock_major_shareholder", "stock_capital_gains_tax"], "종가": ["stock_price_lookup"], "공시지가": ["official_property_price"], "건물 기준시가": ["building_standard_price"], "건물 평가": ["building_standard_price"], "상가 기준시가": ["building_standard_price"], "신축가격기준액": ["building_standard_price"], "공시가격": ["official_property_price"], "기준시가 조회": ["official_property_price"], "공동주택가격": ["official_property_price"], "개별주택가격": ["official_property_price"], "아파트 공시": ["official_property_price"], "비상장주식 평가": ["unlisted_stock_valuation", "stock_basis_income_tax"], "보충적 평가": ["unlisted_stock_valuation"], "순손익가치": ["unlisted_stock_valuation"], "순자산가치": ["unlisted_stock_valuation", "stock_basis_income_tax"], "최대주주 할증": ["unlisted_stock_valuation"], "기준시가 주식": ["stock_basis_income_tax"], "시세": ["stock_price_lookup"], "주가 조회": ["stock_price_lookup"], "시가총액": ["stock_price_lookup", "stock_major_shareholder"], "비상장주식": ["stock_capital_gains_tax", "stock_major_shareholder"], "장외 양도": ["stock_capital_gains_tax"], "소액주주": ["stock_major_shareholder", "stock_capital_gains_tax"],
+    "대주주": ["stock_major_shareholder", "stock_capital_gains_tax"], "종가": ["stock_price_lookup"], "공시지가": ["official_property_price"], "개인 기부금": ["individual_donation_expense"], "기부금 필요경비": ["individual_donation_expense"], "사업자 기부금 한도": ["individual_donation_expense"], "연금수령한도": ["pension_account_withdrawal"], "연금수령연차": ["pension_account_withdrawal"], "연금계좌 인출": ["pension_account_withdrawal"], "연금외수령": ["pension_account_withdrawal"], "건물 기준시가": ["building_standard_price"], "건물 평가": ["building_standard_price"], "상가 기준시가": ["building_standard_price"], "신축가격기준액": ["building_standard_price"], "공시가격": ["official_property_price"], "기준시가 조회": ["official_property_price"], "공동주택가격": ["official_property_price"], "개별주택가격": ["official_property_price"], "아파트 공시": ["official_property_price"], "비상장주식 평가": ["unlisted_stock_valuation", "stock_basis_income_tax"], "보충적 평가": ["unlisted_stock_valuation"], "순손익가치": ["unlisted_stock_valuation"], "순자산가치": ["unlisted_stock_valuation", "stock_basis_income_tax"], "최대주주 할증": ["unlisted_stock_valuation"], "기준시가 주식": ["stock_basis_income_tax"], "시세": ["stock_price_lookup"], "주가 조회": ["stock_price_lookup"], "시가총액": ["stock_price_lookup", "stock_major_shareholder"], "비상장주식": ["stock_capital_gains_tax", "stock_major_shareholder"], "장외 양도": ["stock_capital_gains_tax"], "소액주주": ["stock_major_shareholder", "stock_capital_gains_tax"],
     "양도": ["capital_gains_income", "capital_gains_tax"], "필요경비": ["capital_gains_income", "estimated_business_income", "other_income_aggregate"],
 }
 
