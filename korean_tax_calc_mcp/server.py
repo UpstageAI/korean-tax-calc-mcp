@@ -9494,16 +9494,22 @@ def unlisted_stock_valuation(valuation_date: Annotated[str, Field(description="�
                              ratio_over_50: Annotated[bool | None, Field(description="2019.12.31.까지: 최대주주등 지분이 50% 초과면 True(30%), 아니면 False(20%)")] = None,
                              sme: Annotated[bool | None, Field(description="중소기업 여부(할증 제외 판정) — 최대주주면 필수")] = None,
                              mid_sized: Annotated[bool, Field(description="중견기업(직전 3개 사업연도 매출액 평균 5천억 미만)이면 True — 2023.1.1.~ 할증 제외")] = False,
-                             premium_exclusion: Annotated[str | None, Field(description="할증 제외 사유가 있으면 적음(3년 연속 결손·전부 매각·사업개시 3년 내 영업이익 0 이하·청산 확정·명의신탁 등, 영 제53조⑧)")] = None) -> dict:
+                             premium_exclusion: Annotated[str | None, Field(description="할증 제외 사유가 있으면 적음(3년 연속 결손·전부 매각·사업개시 3년 내 영업이익 0 이하·청산 확정·명의신탁 등, 영 제53조⑧)")] = None,
+                             capital_changes: Annotated[list | None, Field(description="평가기준일 전 3년 내 유상증자·감자 [{일자, 구분:'증자'|'감자', 주식수, 1주당금액}] — 각 연도 순손익액 가산·차감(영 제56조⑤)과 환산주식수(규칙 제17조의3⑤)를 도구가 계산")] = None,
+                             estimated_profit: Annotated[dict | None, Field(description="추정이익으로 평가하려면 {1주당추정이익평균(둘 이상 평가기관 산출 평균), 사유(자산수증이익|합병|분할|업종 변경|휴업|처분손익|매출 3년 미만|고시), 신고기한, 신고일, 산정기준일, 평가서작성일} — 영 제56조② 요건 4개를 판정해 충족 시 3년 가중평균 대신 적용")] = None,
+                             assets: Annotated[list | None, Field(description="자산별 평가로 평가차액을 만들려면 [{종류(토지|건물|주택|상장주식|비상장주식|예금|채권|매출채권|기타), 명칭?, 장부가액, 시가?|기준시가?|평가액?, 하한 예외?}] — 평가액>시가>기준시가>장부가액 순으로 고르고, 장부가액보다 낮으면 장부가액(영 제55조①), 합계를 자산_평가차액에 더함")] = None,
+                             kind: Annotated[Literal["상속", "증여"], Field(description="상속·증여 구분(추정이익 요건 4호 연도 판정용)")] = "증여") -> dict:
     """비상장주식 상속·증여 평가(상증법 보충적 평가) — 순손익가치(3년 가중평균 3:2:1 ÷ 10%)와 순자산가치((순자산+영업권) ÷ 주식수)를 3:2(부동산 과다 2:3)로 가중평균, 하한 순자산가치×80%(2017.4~2018.3 70%), 순자산가치만 평가하는 사유(청산·개시 3년 미만·휴폐업·부동산 80%·주식 80%·존속 3년, 구간별), 최대주주 할증(2019까지 20/30%·중소 0, 2020~ 20%·중소 제외, 2023~ 중견 제외)까지 2016~2026 구간별로 계산한다.
     언제: 비상장주식을 상속·증여받았을 때 1주당 평가액, 또는 비상장법인 지분의 상증법 가액이 필요할 때. 양도세 대주주 시가총액·기준시가는 산식이 달라 stock_basis_income_tax를 쓴다.
     입력: 평가기준일 → valuation_date, 발행주식총수 → shares, 3년 순손익 → incomes, 순자산가액 → net_asset, 부동산 비율 → real_estate_ratio, 최대주주·중소기업 → is_max_shareholder·sme.
     재무제표 입력: incomes에 각사업연도소득+가산·차감 항목, net_asset에 자산·부채 장부가액+평가차액+가감 항목을 주면 순손익액·순자산가액을 도구가 만들고 줄별 근거를 보여준다.
-    지원하지 않음: 추정이익 평가(영 제56조②), 평가심의위원회, 자산별 상증법 평가(평가차액은 사용자 계산), 국외 비상장.
+    증감자(capital_changes)·추정이익(estimated_profit, 요건 판정)·자산별 평가(assets: 시가→기준시가→장부가액 선택, 장부가액 하한)까지 받는다.
+    지원하지 않음: 평가심의위원회, 자산별 시가의 평가기간(상속 전후 6개월·증여 전 6개월~후 3개월) 판정(사용자가 기간 안 가액만 넣음), 국외 비상장.
     결과: 1주당 평가액(할증 후·전), 순손익가치·순자산가치·가중평균, 평가방법, 할증률, 판단(사유·하한·확인 필요), 근거."""
     return SV.unlisted_valuation(valuation_date, shares, incomes=incomes, net_asset=net_asset, equity=equity, goodwill=goodwill, real_estate_ratio=real_estate_ratio,
                                  stock_asset_ratio=stock_asset_ratio, business_start=business_start, status=status, is_max_shareholder=is_max_shareholder,
-                                 ratio_over_50=ratio_over_50, sme=sme, mid_sized=mid_sized, premium_exclusion=premium_exclusion)
+                                 ratio_over_50=ratio_over_50, sme=sme, mid_sized=mid_sized, premium_exclusion=premium_exclusion,
+                                 capital_changes=capital_changes, estimated_profit=estimated_profit, assets=assets, kind=kind)
 
 
 @mcp.tool(annotations=CALC)
