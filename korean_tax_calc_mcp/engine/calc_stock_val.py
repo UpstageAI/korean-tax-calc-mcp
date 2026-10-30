@@ -203,31 +203,81 @@ _ASSET_RULES = {   # 종류 → (우선순위 설명, 근거)
     "비상장주식": ("보충적 평가(제63조①1호나목, unlisted_stock_valuation) — 10% 이하 출자는 취득가액 가능(영 제54조③)", "상증법 제63조①1호나목, 영 제54조③"),
     "예금": ("원본 + 평가기준일까지 미수이자 − 원천징수세액(영 제58조①)", "상증법 시행령 제58조①"),
     "채권": ("원본 + 미수이자(영 제58조①); 국채·공채 등은 제63조①2호", "상증법 제63조①2호, 영 제58조"),
-    "매출채권": ("원본 — 회수 불가능분은 제외(영 제58조②)", "상증법 시행령 제58조②"),
+    "매출채권": ("원본 − 회수 불가능 인정분(영 제58조②, 대손 사유로 판정), 5년 초과 장기채권은 현재가치(규칙 제18조의2)", "상증법 시행령 제58조②"),
+    "대여금": ("원본 − 회수 불가능 인정분(영 제58조②)", "상증법 시행령 제58조②"), "받을어음": ("원본 − 회수 불가능 인정분(영 제58조②)", "상증법 시행령 제58조②"),
     "기타": ("시가 → 없으면 장부가액·보충적 평가", "상증법 제60조③·제65조"),
 }
 
 
-def value_assets(assets: list[dict]) -> tuple[float, list[dict], list[str]]:
-    """자산 목록 → 평가차액 합계(평가액 − 장부가액). 각 자산은 {종류, 명칭?, 장부가액, 시가?, 기준시가?, 평가액?}.
+_BAD_DEBT_REASONS = [   # 회수 불가능(영 제58조② 단서) = 법인세법 시행령 제19조의2①의 대손 사유로 판정
+    (("파산", "파산선고"), "채무자 파산(법인세법 시행령 제19조의2①1호 — 소멸시효·파산 등 법적 소멸)"),
+    (("강제집행", "강제집행불능"), "강제집행 불능(제19조의2①)"),
+    (("사망", "실종", "행방불명"), "채무자 사망·실종·행방불명(제19조의2①)"),
+    (("소멸시효", "시효 완성", "시효완성"), "소멸시효 완성(제19조의2①1~4호)"),
+    (("회생", "면책", "화의", "정리계획"), "회생계획인가·면책 결정으로 회수불능 확정(제19조의2①5·6호)"),
+    (("부도", "어음", "수표"), "부도 발생 6개월 이상 경과 어음·수표·외상매출금(제19조의2①9호, 저당권 설정분 제외, 1천원 공제)"),
+    (("무재산", "재산 없음", "재산없음", "재산이 없"), "채무자 재산 없음 확인(제19조의2①8호)"),
+    (("무역보험", "국외", "수출채권"), "국외 채권 회수불능 확인(제19조의2①10·11호)"),
+    (("소액", "30만원"), "회수기일 6개월 경과 30만원 이하 소액채권(제19조의2①9호의2)"),
+]
+
+
+def _bad_debt_match(reason: str):
+    low = (reason or "").replace(" ", "")
+    for keys, basis in _BAD_DEBT_REASONS:
+        if any(k.replace(" ", "") in low for k in keys):
+            return basis
+    return None
+
+
+def value_assets(assets: list[dict], valuation_date: str | None = None) -> tuple[float, list[dict], list[str]]:
+    """자산 목록 → 평가차액 합계(평가액 − 장부가액). 각 자산은 {종류, 명칭?, 장부가액, 시가?, 기준시가?, 평가액?, 하한 예외?}.
+    예금·채권: {원본, 연이율, 이자기산일, 원천징수율?} → 원본 + 미수이자 − 원천징수세액(영 제58조①).
+    매출채권·대여금·받을어음: {원본, 회수불능:[{금액, 사유}]} → 회수 불가능 인정분 제외(영 제58조② 단서, 대손 사유로 판정).
     선택: 평가액 > 시가 > 기준시가 > 장부가액. 평가액이 장부가액보다 낮으면 장부가액(영 제55조① 후단, 정당한 사유 있으면 '하한 예외'=true)."""
     total = 0.0; lines = []; problems = []
+    vd = _d(valuation_date) if valuation_date else None
     for a in assets or []:
         kind = str(a.get("종류") or "기타"); rule = _match(_ASSET_RULES, kind) or _ASSET_RULES["기타"]
-        book = float(a.get("장부가액") or 0)
-        src = None; val = None
-        for key in ("평가액", "시가", "기준시가"):
-            if a.get(key) is not None:
-                src, val = key, float(a[key]); break
-        if val is None:
-            src, val = "장부가액", book
+        book = float(a.get("장부가액") if a.get("장부가액") is not None else (a.get("원본") or 0))
+        src = None; val = None; extra = ""
+        if any(k in kind for k in ("예금", "채권", "적금", "국채", "공채")) and "매출" not in kind and "대여" not in kind and a.get("평가액") is None and a.get("원본") is not None:
+            principal = float(a["원본"]); rate = float(a.get("연이율") or 0); wh = float(a.get("원천징수율") if a.get("원천징수율") is not None else 0.154)
+            days = 0
+            if a.get("이자기산일") and vd:
+                days = max(0, (vd - _d(a["이자기산일"])).days)
+            interest = principal * rate * days / 365
+            tax = interest * wh
+            val = principal + interest - tax; src = "원본+미수이자−원천징수(영 제58조①)"
+            extra = f" 미수이자 {interest:,.0f}({rate*100:g}%×{days}일/365) − 원천징수 {tax:,.0f}({wh*100:g}%)" + ("" if days else " — 이자기산일·valuation_date가 없어 미수이자 0")
+        elif any(k in kind for k in ("매출채권", "외상매출", "받을어음", "대여금", "미수금")) and a.get("평가액") is None and a.get("원본") is not None:
+            principal = float(a["원본"]); excl = 0.0; notes = []
+            for b in a.get("회수불능") or []:
+                amt = float(b.get("금액") or 0); basis = _bad_debt_match(str(b.get("사유") or ""))
+                if basis:
+                    excl += amt; notes.append(f"제외 {amt:,.0f}: {basis}")
+                else:
+                    notes.append(f"미인정 {amt:,.0f}: 사유 '{b.get('사유')}'가 대손 요건(법인세법 시행령 제19조의2①)에 안 맞음 — 산입 유지, 확인 필요")
+            val = principal - excl; src = "원본−회수불능 인정분(영 제58조②)"
+            if excl:
+                extra = " 회수불능 인정분은 장부가액 하한을 적용하지 않음(영 제58조② 단서)."
+            extra = (extra or "") + (" " + "; ".join(notes) if notes else " 회수불능 없음")
+            if a.get("회수기한") and vd and (_d(a["회수기한"]) - vd).days > 5 * 365:
+                extra += " — 회수기간 5년 초과 채권은 현재가치 평가(시행규칙 제18조의2) 확인 필요"
+        else:
+            for key in ("평가액", "시가", "기준시가"):
+                if a.get(key) is not None:
+                    src, val = key, float(a[key]); break
+            if val is None:
+                src, val = "장부가액", book
         floor_note = ""
-        if val < book and not a.get("하한 예외"):
+        skip_floor = a.get("하한 예외") or (src or "").startswith("원본−회수불능")   # 회수불능 인정분 제외는 영 제58조② 단서가 장부가액 하한(영 제55조① 후단)보다 구체적 규정
+        if val < book and not skip_floor:
             floor_note = f" → 평가액 {val:,.0f} < 장부가액 {book:,.0f}라 장부가액 적용(정당한 사유가 있으면 '하한 예외': true)"
             val = book
         diff = val - book; total += diff
-        lines.append({"자산": a.get("명칭") or kind, "종류": kind, "장부가액": book, "적용가액": val, "근거값": src, "평가차액": diff,
-                      "규칙": rule[0] + floor_note, "근거": rule[1] + ", 영 제55조①"})
+        lines.append({"자산": a.get("명칭") or kind, "종류": kind, "장부가액": book, "적용가액": round(val, 0), "근거값": src, "평가차액": round(diff, 0),
+                      "규칙": rule[0] + extra + floor_note, "근거": rule[1] + ", 영 제55조①"})
     return total, lines, problems
 
 
@@ -294,7 +344,7 @@ def unlisted_valuation(valuation_date: str, shares: int, incomes: list | None = 
     계산_상세: dict = {}
     # 자산별 평가 → 평가차액(net_asset이 항목형일 때 자산_평가차액에 더함)
     if assets:
-        diff_sum, asset_lines, a_probs = value_assets(assets)
+        diff_sum, asset_lines, a_probs = value_assets(assets, valuation_date)
         if a_probs:
             return {"error": "입력 확인 필요 — 계산하지 않음", "문제": a_probs}
         계산_상세["자산별 평가"] = asset_lines
