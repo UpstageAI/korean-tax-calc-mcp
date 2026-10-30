@@ -13,7 +13,7 @@ def fake(path, params):
         return {"indvdLandPrices": {"field": [{"pnu": PNU, "stdrYear": "2024", "pblntfPclnd": "15000000", "pblntfDe": "20240531", "mnnmSlno": "737", "ldCodeNm": "서울특별시 강남구 역삼동", "lndpclAr": "500"},
                                               {"pnu": PNU, "stdrYear": "2025", "pblntfPclnd": "16000000", "pblntfDe": "20250530", "mnnmSlno": "737", "ldCodeNm": "서울특별시 강남구 역삼동", "lndpclAr": "500"}]}}
     if path == "/ned/data/getApartHousingPriceAttr":
-        return {"apartHousingPrices": {"field": [{"pnu": PNU, "stdrYear": "2025", "aphusNm": "가상아파트", "dongNm": "101", "hoNm": "1203", "prvuseAr": "84.9", "pblntfPc": "1200000000", "pblntfDe": "20250430"},
+        return {"apartHousingPrices": {"totalCount": 2, "pageNo": params["pageNo"], "field": [] if params["pageNo"] != "1" else [{"pnu": PNU, "stdrYear": "2025", "aphusNm": "가상아파트", "dongNm": "101", "hoNm": "1203", "prvuseAr": "84.9", "pblntfPc": "1200000000", "pblntfDe": "20250430"},
                                                  {"pnu": PNU, "stdrYear": "2025", "aphusNm": "가상아파트", "dongNm": "101", "hoNm": "1204", "prvuseAr": "84.9", "pblntfPc": "1190000000", "pblntfDe": "20250430"}]}}
     if path == "/ned/data/getIndvdHousingPriceAttr":
         return {"indvdHousingPrices": {"field": [{"pnu": PNU, "stdrYear": "2025", "housePc": "900000000", "pblntfDe": "20250530", "lndpclAr": "200", "buldCalcAr": "150"}]}}
@@ -25,7 +25,7 @@ def test_land_from_address_with_area():
     assert r["결과"]["pnu"] == PNU and r["결과"]["기준연도"] == "2025" and r["결과"]["공시지가_원_㎡"] == 16_000_000 and r["결과"]["공시지가_총액_원"] == 8_000_000_000
     assert any("PNU" in x["결론"] for x in r["판단"])
     r24 = official_price(pnu=PNU, kind="땅", year=2024, fetch=fake)
-    assert r24["결과"]["기준연도"] == "2025"   # 가짜는 연도 필터를 안 하므로 최신이 옴 — 실제 API는 stdrYear로 거름
+    assert r24["결과"]["기준연도"] == "2025" and r24["결과"]["공시일"] == "20250530"   # 가짜는 연도 필터를 안 하므로 최신이 옴 — 실제 API는 stdrYear로 거름
 
 
 def test_apartment_dong_ho_filter():
@@ -33,6 +33,8 @@ def test_apartment_dong_ho_filter():
     assert r["결과"]["공동주택가격_원"] == 1_200_000_000 and r["결과"]["호"] == "1203"
     e = official_price(pnu=PNU, kind="아파트", dong="102", ho="1", fetch=fake)
     assert "error" in e
+    s = official_price(pnu=PNU, kind="아파트", fetch=fake)   # 동·호 없으면 단지 요약
+    assert s["결과"]["세대수(조회분)"] == 2 and s["결과"]["공시가격_최고_원"] == 1_200_000_000
 
 
 def test_house_and_bad_kind_and_no_key():
