@@ -86,3 +86,22 @@ def test_simplified_vat_card_fee_not_treated_as_card_sales():
 def test_simplified_vat_card_sales_word():
     r = c("simplified_vat_return", {"year": 2025, "business_type": "소매업", "ledger": {"공급": [{"항목": "카드매출", "금액": 60000000}], "매입": []}})
     assert "error" not in r and r["계산"]["신용카드매출전표등발급세액공제"] == 780000
+
+
+def test_business_car_plate_rule_only_for_80m_and_up():
+    # 6천만원 차량·번호판 미부착·운행기록 80%: 번호판 요건 대상 아님 → 손금산입 12,000,000 / 손금불산입 0.6+2.4+1.6 → 순 −7,400,000
+    r = c("business_car_expense", {"year": 2026, "upkeep": 3_000_000, "depreciation": 12_000_000, "booked_depreciation": 0, "log_kept": True, "business_ratio": 0.8, "months": 12, "plate_ok": False, "acquisition_cost": 60_000_000})
+    res = r["결과"]
+    assert res["업무사용비율"] == 0.8 and res["유지비 손금불산입(상여)"] == 600_000 and res["감가상각 한도초과(유보)"] == 1_600_000 and "번호판 요건" in res
+    r = c("business_car_expense", {"year": 2026, "upkeep": 3_000_000, "depreciation": 12_000_000, "booked_depreciation": 0, "log_kept": True, "business_ratio": 0.8, "months": 12, "plate_ok": False, "acquisition_cost": 90_000_000})
+    assert r["결과"]["업무사용비율"] == 0
+
+
+def test_entertainment_limit_exposes_market():
+    # 2024 사업연도: 전통시장 추가한도 10% → 7,840,000, 한도초과 17,760,000
+    r = c("entertainment_limit", {"year": 2024, "sme": True, "general_revenue": 16_000_000_000, "related_revenue": 2_000_000_000, "expensed": 110_000_000, "culture": 6_000_000, "market": 9_000_000})
+    res = r["결과"]
+    assert res["일반한도"] == 78_400_000 and res["문화한도"] == 6_000_000 and res["전통시장한도"] == 7_840_000 and res["한도초과(기타사외유출)"] == 17_760_000
+    # 2025 사업연도 신고분(2026.1.1. 이후 신고)은 법률 제21223호 부칙 제31조로 20% → 9,000,000, 한도초과 16,600,000
+    res = c("entertainment_limit", {"year": 2025, "sme": True, "general_revenue": 16_000_000_000, "related_revenue": 2_000_000_000, "expensed": 110_000_000, "culture": 6_000_000, "market": 9_000_000})["결과"]
+    assert res["전통시장한도"] == 9_000_000 and res["한도초과(기타사외유출)"] == 16_600_000
