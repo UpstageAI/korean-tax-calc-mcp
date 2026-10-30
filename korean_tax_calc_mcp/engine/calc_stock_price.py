@@ -28,7 +28,7 @@ def pykrx_fetcher(ticker: str, start: str, end: str) -> list[tuple[str, int]]:
         from pykrx import stock   # 선택 의존성
     except ImportError as e:
         raise RuntimeError("pykrx가 설치돼 있지 않음 — pip install 'korean-tax-calc-mcp[stock]' (또는 pip install pykrx) 뒤 다시, 아니면 종가를 직접 넣으세요") from e
-    df = stock.get_market_ohlcv(start, end, ticker)
+    df = stock.get_market_ohlcv(start, end, ticker)   # 종가는 KRX 로그인 없이 조회됨 — pykrx가 'KRX 로그인 실패(KRX_ID·KRX_PW 미설정)' 경고를 찍어도 무시
     out = []
     for idx, row in df.iterrows():
         out.append((idx.strftime("%Y-%m-%d"), int(row["종가"])))

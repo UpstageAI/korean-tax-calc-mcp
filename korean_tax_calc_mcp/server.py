@@ -9472,7 +9472,7 @@ def stock_price_lookup(ticker: Annotated[str, Field(description="6자리 종목�
     """상장주식 시세 조회 — KRX 정보데이터시스템(pykrx)에서 종가를 가져와 (1) 직전 사업연도 종료일 최종시세가액(소득세법 시행령 제157조④1호, 휴장이면 직전거래일) 또는 (2) 상속·증여 평가 시가(평가기준일 전후 2개월 종가 평균, 상증법 제63조①1호가목)를 돌려준다.
     언제: 대주주 판정(stock_major_shareholder의 price·own_mcap)이나 상속·증여 주식 평가에 넣을 가액이 필요할 때.
     입력: 종목코드 → ticker, 기준일 → day, 용도 → mode(close|avg_2m).
-    주의: 이 도구만 외부(KRX)로 조회하며 보내는 정보는 종목코드·날짜뿐. pykrx가 없으면 설치 안내를 돌려줌(pip install 'korean-tax-calc-mcp[stock]'). 비상장주식은 상증법 보충적 평가 도구로.
+    주의: 이 도구만 외부(KRX)로 조회하며 보내는 정보는 종목코드·날짜뿐. pykrx가 없으면 설치 안내를 돌려줌(pip install 'korean-tax-calc-mcp[stock]'). pykrx의 'KRX 로그인 실패' 경고는 종가 조회와 무관(로그인 불필요). 비상장주식은 상증법 보충적 평가 도구로.
     결과: 종가 또는 2개월 평균·거래일수·기간, 판단(직전거래일 사용 여부·기간 조정 확인 필요), 근거."""
     return SP.stock_price(ticker, day, mode=mode)
 
