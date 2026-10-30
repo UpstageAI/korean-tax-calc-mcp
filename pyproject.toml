@@ -12,6 +12,9 @@ license = "MIT"
 dependencies = ["mcp>=2.2", "pypdf>=5.0", "uvicorn>=0.30", "openpyxl>=3.1"]
 keywords = ["mcp", "mcp-server", "korea", "south-korea", "tax", "tax-calculator", "세금", "세법", "가산세"]
 
+[project.optional-dependencies]
+stock = ["pykrx>=1.0.45"]
+
 [project.urls]
 Repository = "https://github.com/UpstageAI/korean-tax-calc-mcp"
 
