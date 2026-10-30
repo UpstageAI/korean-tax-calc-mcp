@@ -17,7 +17,8 @@ def test_find_tool_everyday_words():
     assert top("프리랜서로 3.3% 떼고 3천만원 받았는데 종합소득세 얼마?")[0] == "estimated_business_income"
     assert top("배당 3천만원 받으면 종합과세 되나요?")[0] == "financial_income_aggregate"
     assert top("부모님한테 2억 받으면 증여세 얼마?")[0] == "gift_tax"
-    assert "law_article" in c("find_tool", {"query": "연봉 5천만원 세금"})["결과"]["근거 조회"]
+    r = c("find_tool", {"query": "연봉 5천만원 세금"})["결과"]
+    assert "law_article" in r["근거 조회"] and "github.com/UpstageAI/korean-tax-mcp" in r["근거 서버"]["레포"]
 
 
 def test_find_tool_longer_alias_wins():
@@ -32,6 +33,7 @@ def test_find_tool_names_missing_calculations():
         r = c("find_tool", {"query": q})["결과"]
         assert r["후보"] == [] and what in r["없는 계산"]
         assert r["근거 조회"][0]["도구"] == "law_article" and r["근거 조회"][0]["article"].startswith("제")
+        assert "uvx korean-tax-mcp" in r["근거 서버"]["설치"]
     # 양도 계산 질문에 섞인 취득세는 걸러내지 않음
     assert "없는 계산" not in c("find_tool", {"query": "양도할 때 취득세 필요경비 되나"})["결과"]
     assert top("양도할 때 취득세 필요경비 되나")[0] == "capital_gains_income"

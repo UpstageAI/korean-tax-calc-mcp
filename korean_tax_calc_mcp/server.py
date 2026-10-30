@@ -9495,6 +9495,13 @@ _NOT_SUPPORTED: list[tuple[tuple[str, ...], str, list[tuple[str, str]]]] = [
     (("재산세",), "재산세(지방세법 — 국세 아님)", [("지방세법", "제110조"), ("지방세법", "제111조")]),
     (("자동차세",), "자동차세(지방세법 — 국세 아님)", [("지방세법", "제127조")]),
 ]
+_LAW_MCP_HINT = {
+    "이름": "korean-tax-mcp(세법 근거 MCP — 조문·부칙·해석·판례)",
+    "레포": "https://github.com/UpstageAI/korean-tax-mcp",
+    "설치": "uvx korean-tax-mcp — Claude Desktop이면 mcpServers에 {\"korean-tax\": {\"command\": \"uvx\", \"args\": [\"korean-tax-mcp\"]}} 추가(조문 조회는 무료 법제처 키 LAW_OC)",
+    "안내": "이 서버가 연결돼 있지 않으면 사용자에게 위 설치를 권하고, 조문 원문 없이 답할 때는 그 사실을 밝히세요",
+}
+
 _NOT_SUPPORTED_EXEMPT = ("양도", "필요경비", "취득가액", "보유세")  # 양도 계산 질문에 섞인 '취득세·재산세'는 걸러내지 않음
 
 
@@ -9520,6 +9527,7 @@ def find_tool(query: Annotated[str, Field(description="찾는 계산을 평소 �
         if all(w.replace(" ", "").lower() in qn for w in words) and not (words[0] in ("취득세", "재산세", "자동차세") and any(e in qn for e in _NOT_SUPPORTED_EXEMPT)):
             return {"결과": {"후보": [], "없는 계산": what,
                             "근거 조회": [{"도구": "law_article", "law_name": ln, "article": ar} for ln, ar in arts],
+                            "근거 서버": _LAW_MCP_HINT,
                             "안내": f"{what}은(는) 이 서버에 계산 도구가 없습니다. 위 '근거 조회'대로 korean-tax-mcp law_article을 불러 조문 원문을 읽고 그에 따라 직접 계산하되, "
                                     "계산 도구 없이 계산했다는 사실을 답에 밝히세요. (지방세는 korean-tax-mcp에도 없을 수 있음 — 그러면 법제처 원문으로)"},
                     "근거": "도구 목록 검색(세무 자문 아님)"}
@@ -9564,7 +9572,8 @@ def find_tool(query: Annotated[str, Field(description="찾는 계산을 평소 �
                     "안내": "후보의 설명·입력 스키마를 확인한 뒤 호출하세요. 후보에 맞는 도구가 없으면 이 서버에 해당 계산이 없는 것이니 "
                             "조문 계산은 korean-tax-mcp(find_article·law_article)로 근거를 찾아 직접 계산하고 그 사실을 답에 밝히세요.",
                     "근거 조회": "계산 결과의 '근거'에 적힌 조문(예: 소득세법 제47조①)은 korean-tax-mcp law_article(law_name, article, as_of=귀속연도 말일)로 원문을 확인해 답에 함께 인용하세요. "
-                                "사실관계가 조문의 요건에 맞는지(비과세·공제 요건, 적용 시기)는 도구가 아니라 조문으로 판단합니다."},
+                                "사실관계가 조문의 요건에 맞는지(비과세·공제 요건, 적용 시기)는 도구가 아니라 조문으로 판단합니다.",
+                    "근거 서버": _LAW_MCP_HINT},
             "근거": "도구 목록 검색(세무 자문 아님)"}
 
 
