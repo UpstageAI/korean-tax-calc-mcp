@@ -242,8 +242,8 @@ def stock_gains_tax(transfer_date: str, market: str, major_shareholder: bool | N
         판단.append({"항목": "과세 대상", "결론": "비상장주식 — 과세", "근거": "소득세법 제94조①3호나목"})
         if major_shareholder is None:
             return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["비상장주식 세율은 대주주 여부로 갈림 — major_shareholder를 주세요(stock_major_shareholder로 판정)"], "필요 입력": {"major_shareholder": "bool"}}
-    if std != "국외" and sme is None:
-        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"sme(중소기업 여부)가 필요 — 판정 기준: {SM['기준']}"], "필요 입력": {"sme": "bool"}}
+    if sme is None:   # 국외주식도 중소기업 여부로 세율이 갈림(제104조①12호) — 기본값을 두지 않고 묻는다(리뷰 반영)
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"sme(중소기업 여부)가 필요 — 판정 기준: {SM['기준']}" + (" (국외주식도 중소기업 10%·그 밖 20%)" if std == "국외" else "")], "필요 입력": {"sme": "bool"}}
     # 2. 양도차익
     if gain is None:
         if transfer_price is None or acquisition_price is None:
