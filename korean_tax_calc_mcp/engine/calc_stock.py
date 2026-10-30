@@ -316,7 +316,7 @@ def holdings_to_inputs(P: dict, listed: bool, td: date, is_max: bool | None, tot
     if price is not None:
         p = float(price)
         out.update({"own_mcap": own_total * p, "related_mcap": rel_shares * p, "cond_mcap": cond_shares * p})
-        out["판단"].append({"항목": "시가총액", "결론": f"1주당 {p:,.0f}원 × 보유 주식 수 — " + ("직전 사업연도 종료일 최종시세가액(없으면 직전거래일)" if listed else "상증법 평가액(영 제165조④, inheritance_gift_valuation으로 산정)"), "근거": "소득세법 시행령 제157조④(구 ⑥·⑦)"})
+        out["판단"].append({"항목": "시가총액", "결론": f"1주당 {p:,.0f}원 × 보유 주식 수 — " + ("직전 사업연도 종료일 최종시세가액(없으면 직전거래일)" if listed else "소득세법 시행령 제165조④ 기준시가(stock_basis_income_tax로 산정 — 상증법 평가와 다른 산식, 할증 없음)"), "근거": "소득세법 시행령 제157조④(구 ⑥·⑦)"})
     else:
         out["판단"].append({"항목": "시가총액", "결론": "price(1주당 가액)를 주지 않아 시가총액 기준은 판정하지 않음 — 지분율 기준만", "근거": "소득세법 시행령 제157조④"})
     return out
