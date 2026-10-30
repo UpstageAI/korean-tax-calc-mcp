@@ -21,6 +21,7 @@ from .engine import calc_inhgift as IG
 from .engine import calc_gold_gaps6 as GG
 from .engine import calc_tax_priority as TP
 from .engine import calc_stock as ST
+from .engine import calc_stock_price as SP
 from . import vocab
 from .forms_workbook import render_form_sheet, _load_form_templates, tool_value, nonbusiness_form_sources, nonbusiness_form_data
 
@@ -9461,6 +9462,20 @@ def stock_capital_gains_tax(transfer_date: Annotated[str, Field(description="양
                               acquisition_date=acquisition_date, prior_basic_deduction=prior_basic_deduction)
 
 
+
+@mcp.tool(annotations=ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=True))
+@_guard
+def stock_price_lookup(ticker: Annotated[str, Field(description="6자리 종목코드(예: 005930). 종목명은 받지 않음")],
+                       day: Annotated[str, Field(description="기준일 YYYY-MM-DD — close면 그날(휴장이면 직전 거래일) 종가, avg_2m이면 평가기준일")],
+                       mode: Annotated[Literal["close", "avg_2m"], Field(description="close: 최종시세가액(양도세 대주주 시가총액용, 직전 사업연도 종료일) / avg_2m: 평가기준일 전후 각 2개월 종가 평균(상속·증여 시가)")] = "close") -> dict:
+    """상장주식 시세 조회 — KRX 정보데이터시스템(pykrx)에서 종가를 가져와 (1) 직전 사업연도 종료일 최종시세가액(소득세법 시행령 제157조④1호, 휴장이면 직전거래일) 또는 (2) 상속·증여 평가 시가(평가기준일 전후 2개월 종가 평균, 상증법 제63조①1호가목)를 돌려준다.
+    언제: 대주주 판정(stock_major_shareholder의 price·own_mcap)이나 상속·증여 주식 평가에 넣을 가액이 필요할 때.
+    입력: 종목코드 → ticker, 기준일 → day, 용도 → mode(close|avg_2m).
+    주의: 이 도구만 외부(KRX)로 조회하며 보내는 정보는 종목코드·날짜뿐. pykrx가 없으면 설치 안내를 돌려줌(pip install 'korean-tax-calc-mcp[stock]'). 비상장주식은 상증법 보충적 평가 도구로.
+    결과: 종가 또는 2개월 평균·거래일수·기간, 판단(직전거래일 사용 여부·기간 조정 확인 필요), 근거."""
+    return SP.stock_price(ticker, day, mode=mode)
+
+
 _TOOL_ALIASES: dict[str, list[str]] = {
     "양도세": ["capital_gains_income", "capital_gains_tax"], "양도소득세": ["capital_gains_income", "capital_gains_tax"],
     "단기 양도": ["capital_gains_tax"], "미등기": ["capital_gains_tax"], "비사업용 토지": ["capital_gains_tax", "capital_gains_income"],
@@ -9531,7 +9546,7 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "증여": ["gift_tax", "inheritance_gift_valuation"], "상속": ["inheritance_tax", "inheritance_gift_valuation"],
     "법인세": ["corporate_tax", "income_adjustment_total"], "퇴직소득세": ["retirement_income_tax"],
     "주식 양도": ["stock_capital_gains_tax", "stock_major_shareholder"], "주식 양도세": ["stock_capital_gains_tax", "stock_major_shareholder"], "주식 팔": ["stock_capital_gains_tax", "stock_major_shareholder"],
-    "대주주": ["stock_major_shareholder", "stock_capital_gains_tax"], "비상장주식": ["stock_capital_gains_tax", "stock_major_shareholder"], "장외 양도": ["stock_capital_gains_tax"], "소액주주": ["stock_major_shareholder", "stock_capital_gains_tax"],
+    "대주주": ["stock_major_shareholder", "stock_capital_gains_tax"], "종가": ["stock_price_lookup"], "시세": ["stock_price_lookup"], "주가 조회": ["stock_price_lookup"], "시가총액": ["stock_price_lookup", "stock_major_shareholder"], "비상장주식": ["stock_capital_gains_tax", "stock_major_shareholder"], "장외 양도": ["stock_capital_gains_tax"], "소액주주": ["stock_major_shareholder", "stock_capital_gains_tax"],
     "양도": ["capital_gains_income", "capital_gains_tax"], "필요경비": ["capital_gains_income", "estimated_business_income", "other_income_aggregate"],
 }
 
