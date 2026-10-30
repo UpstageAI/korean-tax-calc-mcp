@@ -258,8 +258,8 @@ def scope_decision(mode: str, listed: bool, is_max: bool | None, kind: str, chon
     kin_txt = f"{kind}" + (f" {chon}촌" if kind in ("혈족", "인척") else "")
     if kind == "경영지배":
         return "합산", "경영지배 관계 법인(국세기본법 시행령 제1조의2③1호, 사용자 진술) — 모든 구간 합산"
-    if mode == "all":
-        return ("합산", f"{kin_txt} — 친족 범위({blood}촌 혈족·{inlaw}촌 인척·배우자) 안, 2016.3.31. 이전은 전부 합산") if in_kin else ("제외", f"{kin_txt} — 친족 범위 밖")
+    if mode == "all":   # 2016.3.31.까지: 최대주주군 여부와 무관하게 합산하되, 범위는 국기령 제1조의2① 친족(6촌 혈족·4촌 인척·배우자)+③1호 — '전부'는 최대주주군 조건이 없다는 뜻이지 촌수 무제한이 아님
+        return ("합산", f"{kin_txt} — 친족 범위({blood}촌 혈족·{inlaw}촌 인척·배우자) 안, 2016.3.31. 이전은 최대주주군 여부와 관계없이 합산") if in_kin else ("제외", f"{kin_txt} — 친족 범위({blood}촌 혈족·{inlaw}촌 인척) 밖 — 2016.3.31. 이전도 국기령 제1조의2① 범위 안만 합산")
     narrow = kind == "배우자" or (kind == "혈족" and lineal)
     if mode == "max_group_split":
         if is_max is True:
