@@ -74,7 +74,8 @@ def _won(v: int | float) -> str:
 
 def major_shareholder(transfer_date: str, market: str, own_ratio=None, own_mcap=None, related_ratio=None, related_mcap=None,
                       is_max_group: bool | None = None, venture: bool = False, is_corporation: bool = False,
-                      post_acquisition_ratio=None) -> dict[str, Any]:
+                      post_acquisition_ratio=None, total_shares=None, own_shares=None, holders=None, price=None,
+                      lent_shares: int = 0, pef_shares: int = 0) -> dict[str, Any]:
     R = _rules()
     td = _d(transfer_date)
     해석: list[str] = []
@@ -93,6 +94,16 @@ def major_shareholder(transfer_date: str, market: str, own_ratio=None, own_mcap=
     if is_corporation and P.get("법인 제외"):
         return {"결과": {"판정": "대상 아님", "이유": "2025.2.28. 이후 양도분부터 주주 1인은 법인을 제외 — 법인 주주의 주식 양도차익은 법인세로 과세"},
                 "근거": "소득세법 시행령 제157조①1호(2025.2.28. 개정)", "판단": [{"항목": "주주 구분", "결론": "법인 주주 — 소득세법 대주주 판정 대상 아님", "근거": P["근거"]}]}
+    listed = std in ("코스피", "코스닥", "코넥스")
+    명부 = None
+    if total_shares is not None or own_shares is not None or holders:
+        if own_shares is None:
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["own_shares(직전 사업연도 종료일 현재 본인 보유 주식 수)가 필요"]}
+        명부 = holdings_to_inputs(P, listed, td, is_max_group, int(total_shares or 0), int(own_shares), holders, price, int(lent_shares or 0), int(pef_shares or 0))
+        if "error" in 명부:
+            return 명부
+        own_ratio, related_ratio, own_mcap, related_mcap = 명부["own_ratio"], 명부["related_ratio"], 명부["own_mcap"], 명부["related_mcap"]
+        해석.append("지분율·시가총액을 주주 명부(total_shares·own_shares·holders·price)에서 계산")
     own_r, n1 = _ratio(own_ratio); rel_r, n2 = _ratio(related_ratio)
     for n in (n1, n2):
         if n:
@@ -134,6 +145,14 @@ def major_shareholder(transfer_date: str, market: str, own_ratio=None, own_mcap=
             판정, 이유 = "대주주 아님", f"합산 지분율 {_pct(comb_r) if comb_r is not None else '미입력'}·시가총액 {_won(comb_m) if comb_m is not None else '미입력'} 모두 기준 미달"
             if not has_related:
                 판단.append({"항목": "특수관계인", "결론": "특수관계인 지분·시가총액을 주지 않아 0으로 봄 — 있으면 related_ratio·related_mcap에 넣어 다시(이 구간은 합산 판정)", "근거": P["근거"]})
+    elif 명부:   # self_unless_max + 명부: 합산 대상은 주주별 판정(scope_decision)에서 이미 걸러짐
+        판단.append({"항목": "합산 방식", "결론": P["합산 설명"], "근거": P["근거"]})
+        if own_hit:
+            판정, 이유 = "대주주", "본인 단독 기준 충족: " + ", ".join(own_hit)
+        elif comb_hit:
+            판정, 이유 = "대주주", "합산 대상 주주(주주별 참조)와 합해 기준 충족: " + ", ".join(comb_hit)
+        else:
+            판정, 이유 = "대주주 아님", f"본인 {_pct(own_r) if own_r is not None else '-'} + 합산 대상 {_pct(rel_r or 0)} = {_pct(comb_r) if comb_r is not None else '-'} — 기준 미달" + ("(최대주주군이면 합산될 주주는 아래 '확인 필요' 참조)" if 명부["조건부"] else "")
     else:  # self_unless_max
         판단.append({"항목": "합산 방식", "결론": P["합산 설명"], "근거": P["근거"]})
         if own_hit:
@@ -154,6 +173,12 @@ def major_shareholder(transfer_date: str, market: str, own_ratio=None, own_mcap=
                 판정, 이유 = "대주주 아님", "본인 단독 기준 미달(특수관계인 합산으로도 미달이거나 미입력)"
                 if not has_related:
                     판단.append({"항목": "특수관계인", "결론": "최대주주군이면 기타주주 지분을 합산 — 해당하면 is_max_group=True와 related_ratio·related_mcap을 넣어 다시", "근거": P["근거"]})
+    if 명부:
+        판단 = 명부["판단"] + 판단
+        if 명부["조건부"] and 판정 != "대주주":
+            cr = (comb_r or 0) + 명부["cond_ratio"]; cm = ((comb_m or 0) + (명부["cond_mcap"] or 0)) if comb_m is not None else None
+            if meets(cr, cm):
+                판정, 이유 = "확인 필요", f"최대주주군이면 합산되는 주주({'·'.join(명부['조건부'])})까지 합하면 기준 충족(지분율 {_pct(cr)}) — 주주 1인등의 지분 합계가 그 법인에서 최대인지(is_max_group) 확인 필요"
     if 판정 != "대주주" and post_acquisition_ratio is not None:
         pr, n3 = _ratio(post_acquisition_ratio)
         if n3:
@@ -169,8 +194,129 @@ def major_shareholder(transfer_date: str, market: str, own_ratio=None, own_mcap=
     out = {"결과": {"판정": 판정, "이유": 이유, "기준_지분율": thr_r, "기준_시가총액": thr_m, "합산_방식": mode, "시장": std},
            "계산": {"본인_지분율": own_r, "본인_시가총액": own_m, "특수관계인_지분율": rel_r, "특수관계인_시가총액": rel_m, "합산_지분율": comb_r, "합산_시가총액": comb_m, "최대주주군": is_max_group},
            "근거": P["근거"], "판단": 판단}
+    if 명부:
+        out["주주별"] = 명부["주주별"]
     if 해석:
         out["입력 해석"] = 해석
+    return out
+
+
+
+# ── 주주 명부(관계) → 합산 범위 ───────────────────────────────────────────────
+import re as _re
+
+_REL_TABLE: list[tuple[tuple[str, ...], str, int, bool]] = [   # (표현들, 종류, 촌수, 직계 여부)
+    (("배우자", "남편", "아내", "처", "부인", "와이프", "사실혼"), "배우자", 0, False),
+    (("직계존속", "직계비속", "부모", "부모님", "아버지", "어머니", "아빠", "엄마", "부친", "모친", "자녀", "자식", "아들", "딸", "친생자", "양자", "양녀"), "혈족", 1, True),
+    (("조부모", "할아버지", "할머니", "외할아버지", "외할머니", "조부", "조모", "손자", "손녀", "손자녀", "외손"), "혈족", 2, True),
+    (("증조", "증손"), "혈족", 3, True),
+    (("형제", "자매", "형제자매", "형", "누나", "오빠", "언니", "동생", "남매"), "혈족", 2, False),
+    (("삼촌", "고모", "이모", "외삼촌", "큰아버지", "작은아버지", "백부", "숙부", "조카", "질녀"), "혈족", 3, False),
+    (("사촌", "종형제", "종자매", "고종", "이종", "외사촌"), "혈족", 4, False),
+    (("오촌", "당숙", "당고모", "당이모"), "혈족", 5, False),
+    (("육촌", "재종"), "혈족", 6, False),
+    (("장인", "장모", "시부모", "시아버지", "시어머니", "사위", "며느리", "계부", "계모", "의붓"), "인척", 1, False),
+    (("처남", "처형", "처제", "시동생", "시누이", "시아주버니", "매형", "매제", "매부", "형수", "제수", "형부", "제부", "올케", "동서", "처남댁"), "인척", 2, False),
+    (("처조카", "조카사위", "조카며느리", "시조카", "처삼촌", "처고모", "처이모", "시삼촌", "시고모"), "인척", 3, False),
+    (("경영지배", "지배 법인", "지배법인", "지배하는 법인", "계열", "관계회사", "관계 회사", "특수관계법인", "법인"), "경영지배", 0, False),
+    (("본인", "나"), "본인", 0, False),
+]
+
+
+def parse_relation(text: str) -> tuple[str, int, bool, str] | None:
+    """관계 표현 → (종류, 촌수, 직계, 해석문). '혈족 4촌'·'3촌 인척' 같은 명시도 받는다."""
+    raw = (text or "").strip()
+    low = raw.replace(" ", "")
+    m = _re.search(r"(혈족|인척)(\d+)촌|(\d+)촌(혈족|인척)", low)
+    if m:
+        kind = m.group(1) or m.group(4); chon = int(m.group(2) or m.group(3))
+        return kind, chon, False, f"'{raw}' → {kind} {chon}촌"
+    best = None   # 가장 긴 표현이 이김('처남'은 '처'(배우자)가 아니라 '처남'(인척 2촌), '시어머니'는 '어머니'가 아님)
+    for keys, kind, chon, lineal in _REL_TABLE:
+        for k in keys:
+            if k in low and (best is None or len(k) > len(best[0])):
+                best = (k, kind, chon, lineal)
+    if best:
+        _, kind, chon, lineal = best
+        return kind, chon, lineal, (f"'{raw}' → {kind}" + (f" {chon}촌" if kind in ("혈족", "인척") else "") + (" (직계)" if lineal else ""))
+    return None
+
+
+def _kin_limits(td: date) -> tuple[int, int]:
+    """친족 범위 — 2023.1.1. 이후 양도분은 4촌 혈족·3촌 인척(영 제157조 2022.12.31. 개정이 직접 열거, 국기령은 2023.3.1.), 그 전 6촌·4촌."""
+    return (4, 3) if td >= date(2023, 1, 1) else (6, 4)
+
+
+def scope_decision(mode: str, listed: bool, is_max: bool | None, kind: str, chon: int, lineal: bool, td: date) -> tuple[str, str]:
+    """한 주주를 합산할지 → ('합산'|'제외'|'최대주주군이면 합산', 이유)."""
+    blood, inlaw = _kin_limits(td)
+    if kind == "본인":
+        return "제외", "본인 보유분은 본인 몫에 포함"
+    in_kin = kind == "배우자" or (kind == "혈족" and chon <= blood) or (kind == "인척" and chon <= inlaw)
+    kin_txt = f"{kind}" + (f" {chon}촌" if kind in ("혈족", "인척") else "")
+    if kind == "경영지배":
+        return "합산", "경영지배 관계 법인(국세기본법 시행령 제1조의2③1호, 사용자 진술) — 모든 구간 합산"
+    if mode == "all":
+        return ("합산", f"{kin_txt} — 친족 범위({blood}촌 혈족·{inlaw}촌 인척·배우자) 안, 2016.3.31. 이전은 전부 합산") if in_kin else ("제외", f"{kin_txt} — 친족 범위 밖")
+    narrow = kind == "배우자" or (kind == "혈족" and lineal)
+    if mode == "max_group_split":
+        if is_max is True:
+            return ("합산", f"{kin_txt} — 최대주주군, 친족 범위({blood}촌 혈족·{inlaw}촌 인척·배우자) 안") if in_kin else ("제외", f"{kin_txt} — 친족 범위 밖")
+        if is_max is False:
+            return ("합산", f"{kin_txt} — 최대주주군 아님, 직계존비속·배우자만 합산") if narrow else ("제외", f"{kin_txt} — 최대주주군이 아니면 직계존비속·배우자만 합산")
+        if narrow:
+            return "합산", f"{kin_txt} — 최대주주군 여부와 무관하게 합산(직계존비속·배우자)"
+        return ("최대주주군이면 합산", f"{kin_txt} — 최대주주군이면 합산, 아니면 제외") if in_kin else ("제외", f"{kin_txt} — 친족 범위 밖")
+    # self_unless_max (2023.1.1.~)
+    if listed:
+        if not in_kin:
+            return "제외", f"{kin_txt} — 친족 범위({blood}촌 혈족·{inlaw}촌 인척·배우자) 밖"
+        if is_max is True:
+            return "합산", f"{kin_txt} — 최대주주군이라 기타주주로 합산"
+        if is_max is False:
+            return "제외", f"{kin_txt} — 2023.1.1.~ 상장법인은 최대주주군이 아니면 본인 단독 판정"
+        return "최대주주군이면 합산", f"{kin_txt} — 최대주주군이면 합산, 아니면 본인 단독(2023.1.1.~)"
+    if is_max is True:
+        return ("합산", f"{kin_txt} — 최대주주군, 친족 범위 안") if in_kin else ("제외", f"{kin_txt} — 친족 범위 밖")
+    if is_max is False:
+        return ("합산", f"{kin_txt} — 비상장·최대주주군 아님: 직계존비속·배우자 합산(영 제157조③2호)") if narrow else ("제외", f"{kin_txt} — 비상장·최대주주군 아니면 직계존비속·배우자만")
+    if narrow:
+        return "합산", f"{kin_txt} — 비상장은 최대주주군 여부와 무관하게 직계존비속·배우자 합산"
+    return ("최대주주군이면 합산", f"{kin_txt} — 최대주주군이면 합산, 아니면 제외") if in_kin else ("제외", f"{kin_txt} — 친족 범위 밖")
+
+
+def holdings_to_inputs(P: dict, listed: bool, td: date, is_max: bool | None, total_shares: int, own_shares: int, holders: list | None,
+                       price, lent_shares: int = 0, pef_shares: int = 0) -> dict[str, Any]:
+    """주주 명부 → 본인·합산 지분율·시가총액과 주주별 판단."""
+    if not total_shares or total_shares <= 0:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["total_shares(해당 법인 주식등 합계 — 보통주·우선주·자기주식 포함, 신주인수권증권·출자지분 포함)가 필요"]}
+    own_total = int(own_shares or 0) + int(lent_shares or 0) + int(pef_shares or 0)
+    판단 = [{"항목": "본인 보유", "결론": f"본인 {int(own_shares or 0):,}주" + (f" + 대여 중 {int(lent_shares):,}주(영 제157조⑦ 대여자 소유로 봄)" if lent_shares else "") + (f" + 사모집합투자기구 간접 보유 안분 {int(pef_shares):,}주(영 제157조⑧)" if pef_shares else "") + f" = {own_total:,}주 / 합계 {int(total_shares):,}주 = {own_total / total_shares * 100:.4f}%", "근거": "소득세법 시행령 제157조①·⑦·⑧, 법 제88조2호(주식등: 주식·출자지분·신주인수권·증권예탁증권)"}]
+    rel_shares = 0; cond_shares = 0; 주주별 = []; 조건부 = []
+    for h in holders or []:
+        name = h.get("이름") or h.get("name") or ""
+        rel = h.get("관계") or h.get("relation") or ""
+        sh = int(h.get("주식수") or h.get("shares") or 0)
+        pr = parse_relation(rel)
+        if pr is None:
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"holders '{name or rel}'의 관계 '{rel}'을(를) 알 수 없음"],
+                    "허용값": "배우자·부모·자녀·조부모·손자녀·형제자매·삼촌·조카·사촌·장인·장모·사위·며느리·처남·시동생 등 평소 말, 또는 '혈족 4촌'·'인척 3촌', 경영지배 관계 법인은 '경영지배' 또는 '법인'"}
+        kind, chon, lineal, note = pr
+        dec, why = scope_decision(P["합산"], listed, is_max, kind, chon, lineal, td)
+        row = {"주주": name or rel, "관계": note, "주식수": sh, "지분율": round(sh / total_shares, 6), "판정": dec, "이유": why}
+        주주별.append(row)
+        if dec == "합산":
+            rel_shares += sh
+        elif dec == "최대주주군이면 합산":
+            cond_shares += sh; 조건부.append(row["주주"])
+    out = {"own_ratio": own_total / total_shares, "related_ratio": rel_shares / total_shares, "cond_ratio": cond_shares / total_shares,
+           "own_mcap": None, "related_mcap": None, "cond_mcap": None, "판단": 판단, "주주별": 주주별, "조건부": 조건부}
+    if price is not None:
+        p = float(price)
+        out.update({"own_mcap": own_total * p, "related_mcap": rel_shares * p, "cond_mcap": cond_shares * p})
+        out["판단"].append({"항목": "시가총액", "결론": f"1주당 {p:,.0f}원 × 보유 주식 수 — " + ("직전 사업연도 종료일 최종시세가액(없으면 직전거래일)" if listed else "상증법 평가액(영 제165조④, inheritance_gift_valuation으로 산정)"), "근거": "소득세법 시행령 제157조④(구 ⑥·⑦)"})
+    else:
+        out["판단"].append({"항목": "시가총액", "결론": "price(1주당 가액)를 주지 않아 시가총액 기준은 판정하지 않음 — 지분율 기준만", "근거": "소득세법 시행령 제157조④"})
     return out
 
 

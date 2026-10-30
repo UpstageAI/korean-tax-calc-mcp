@@ -9421,13 +9421,20 @@ def stock_major_shareholder(transfer_date: Annotated[str, Field(description="양
                             is_max_group: Annotated[bool | None, Field(description="주주 1인과 특수관계인의 지분 합계가 그 법인 주주 중 최대인지(최대주주군). 2023.1.1.~ 양도분은 이것이 True일 때만 합산. 모르면 비움")] = None,
                             venture: Annotated[bool, Field(description="비상장·K-OTC만: 벤처기업 주식이면 True(시가총액 기준 40억)")] = False,
                             is_corporation: Annotated[bool, Field(description="주주가 법인이면 True(2025.2.28.~ 대주주 판정 대상 아님)")] = False,
-                            post_acquisition_ratio: Annotated[float | None, Field(description="직전 사업연도 종료일 뒤 양도일 전에 주식을 더 취득했으면 취득 후 지분율(0~1 또는 %) — 지분율 기준에 이르면 취득일 이후 대주주(영 제157조⑨, 시가총액 기준은 적용 안 됨)", ge=0)] = None) -> dict:
-    """주식 양도소득세 대주주 판정 — 양도일·시장·직전 사업연도 종료일 현재 지분율·시가총액으로 대주주 여부(소득세법 시행령 제157조·제167조의8, 2016~2026 구간별 기준: 코스피 1%/25억→15억→10억→50억 등)와 특수관계인 합산 방식을 판정한다.
+                            post_acquisition_ratio: Annotated[float | None, Field(description="직전 사업연도 종료일 뒤 양도일 전에 주식을 더 취득했으면 취득 후 지분율(0~1 또는 %) — 지분율 기준에 이르면 취득일 이후 대주주(영 제157조⑨, 시가총액 기준은 적용 안 됨)", ge=0)] = None,
+                            total_shares: Annotated[int | None, Field(description="주주 명부로 계산할 때: 직전 사업연도 종료일 현재 해당 법인 주식등 합계(보통주·우선주·자기주식 포함, 신주인수권증권·출자지분 포함). 이걸 주면 own_ratio 대신 명부에서 지분율을 계산", ge=1)] = None,
+                            own_shares: Annotated[int | None, Field(description="명부: 본인 보유 주식 수(직전 사업연도 종료일 현재)", ge=0)] = None,
+                            holders: Annotated[list | None, Field(description="명부: 다른 주주 [{이름, 관계, 주식수}] — 관계는 평소 말(배우자·아들·형·사촌·처남·장인·사위 …, '혈족 4촌'·'인척 3촌', 경영지배 관계 법인은 '경영지배'). 합산 여부·범위는 양도일 구간·최대주주군 여부로 도구가 판단해 주주별로 보여줌")] = None,
+                            price: Annotated[float | None, Field(description="명부: 1주당 가액(원) — 상장은 직전 사업연도 종료일 최종시세가액, 비상장은 상증법 평가액(inheritance_gift_valuation). 없으면 시가총액 기준은 판정하지 않음", ge=0)] = None,
+                            lent_shares: Annotated[int, Field(description="명부: 본인이 대여 중인 주식 수(반환받는 조건) — 대여자 소유로 봄(영 제157조⑦)", ge=0)] = 0,
+                            pef_shares: Annotated[int, Field(description="명부: 사모집합투자기구를 통해 보유한 주식 중 본인 투자비율로 안분한 주식 수(영 제157조⑧)", ge=0)] = 0) -> dict:
+    """주식 양도소득세 대주주 판정 — 양도일·시장·직전 사업연도 종료일 현재 지분율·시가총액으로 대주주 여부(소득세법 시행령 제157조·제167조의8, 2016~2026 구간별 기준: 코스피 1%/25억→15억→10억→50억 등)와 특수관계인 합산 방식을 판정한다. 주주 명부(total_shares·own_shares·holders·price)를 주면 지분율·시가총액과 주주별 합산 여부("처남은 2023년부터 인척 2촌이라 최대주주군일 때만 합산" 등)까지 도구가 계산한다.
     언제: "나 대주주야?", 주식 양도세 세율·과세 여부를 정하기 전에. 결과의 판정(대주주/아님/확인 필요)을 stock_capital_gains_tax의 major_shareholder에 넣는다.
     입력: 양도일 → transfer_date, 시장 → market, 본인 지분율·시가총액 → own_ratio·own_mcap, 특수관계인 합계 → related_ratio·related_mcap, 최대주주군 여부 → is_max_group, 벤처 → venture.
     결과: 판정·이유·적용 기준(지분율·시가총액)·합산 방식, 판단(기준일·시가 산정·확인 필요), 근거(시행령 조항·개정령·시행일). 시가총액은 사용자가 계산해 넣는다(도구가 시세를 조회하지 않음)."""
     return ST.major_shareholder(transfer_date, market, own_ratio=own_ratio, own_mcap=own_mcap, related_ratio=related_ratio, related_mcap=related_mcap,
-                                is_max_group=is_max_group, venture=venture, is_corporation=is_corporation, post_acquisition_ratio=post_acquisition_ratio)
+                                is_max_group=is_max_group, venture=venture, is_corporation=is_corporation, post_acquisition_ratio=post_acquisition_ratio,
+                                total_shares=total_shares, own_shares=own_shares, holders=holders, price=price, lent_shares=lent_shares, pef_shares=pef_shares)
 
 
 @mcp.tool(annotations=CALC)
