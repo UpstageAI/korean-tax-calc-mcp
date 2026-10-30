@@ -147,3 +147,24 @@ def test_assets_deposit_interest_and_receivable_bad_debt():
     # 매출채권: 파산 1천만 제외(인정), '연락이 안 됨' 5백만은 미인정 → 평가액 4천만(회수불능 제외는 장부가액 하한보다 우선)
     assert lines["매출채권"]["적용가액"] == 40_000_000 and lines["매출채권"]["평가차액"] == -10_000_000
     assert "미인정" in lines["매출채권"]["규칙"] and "제외 10,000,000" in lines["매출채권"]["규칙"]
+
+
+def test_income_calls_link_to_adjustments():
+    calls = [{"tool": "income_adjustment_total", "args": {"net_income": 1_000_000_000, "items": [{"항목": "법인세", "종류": "법인세", "금액": 200_000_000}]}},
+             {"tool": "corporate_tax", "args": {"base": 1_200_000_000, "year": 2025}},
+             {"tool": "entertainment_adjustment", "args": {"year": 2025, "sme": False, "ledger": [{"항목": "거래처 접대", "금액": 60_000_000}], "revenue": {"매출액": 5_000_000_000}}},
+             {"tool": "donation_limit", "args": {"year": 2025, "base_income": 1_000_000_000, "special": 0, "general": 200_000_000}}]
+    inc = [{"사업연도": 2025, "calls": calls, "차감": {"지방소득세": 10_000_000}}, {"사업연도": 2024, "순손익액": 500_000_000}, {"사업연도": 2023, "순손익액": 400_000_000}]
+    r = c("unlisted_stock_valuation", {"valuation_date": "2026-05-01", "shares": 100_000, "incomes": inc, "net_asset": 800_000_000})
+    link = {x["구분"]: x["금액"] for x in r["계산"]["세무조정 연결"][0]["연결"]}
+    # 개별 호출값과 같은지
+    base = c("income_adjustment_total", calls[0]["args"])["결과"]["각사업연도소득금액"]
+    tax = c("corporate_tax", calls[1]["args"])["결과"]["산출세액"]
+    ent = c("entertainment_adjustment", calls[2]["args"])["결과"]["손금불산입_합계"]
+    don = c("donation_limit", calls[3]["args"])["결과"]["한도초과(기타사외유출)"]
+    assert link["각사업연도소득"] == base and link["− 법인세"] == tax and link["− 접대비 한도초과"] == ent and link["− 기부금 한도초과"] == don
+    expected = base - tax - ent - don - 10_000_000
+    assert r["계산"]["순손익액 산출"][0]["산출"][-1]["금액"] == expected
+    e = c("unlisted_stock_valuation", {"valuation_date": "2026-05-01", "shares": 100_000, "net_asset": 800_000_000,
+                                       "incomes": [{"사업연도": 2025, "calls": [{"tool": "vat_deemed_rent", "args": {}}]}, {"사업연도": 2024, "순손익액": 1}, {"사업연도": 2023, "순손익액": 1}]})
+    assert "연결 미지원" in e["문제"][0]
