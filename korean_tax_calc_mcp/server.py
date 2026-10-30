@@ -509,11 +509,12 @@ def entertainment_limit(year: YEAR, sme: Annotated[bool, Field(description="중�
                         expensed: WON,
                         related_revenue: WON = 0,
                         culture: WON = 0,
-                        months: Annotated[int, Field(description="사업연도 월수(1~12)")] = 12) -> dict:
+                        months: Annotated[int, Field(description="사업연도 월수(1~12)")] = 12,
+                        market: Annotated[int, Field(description="전통시장(및 조특법 제136조⑥의 대상)에서 지출한 기업업무추진비(원, 2023 사업연도부터) — 일반한도의 일정 비율 안에서 추가한도", ge=0)] = 0) -> dict:
     """기업업무추진비(접대비) 한도와 한도초과액. 언제: 법인세 세무조정에서 기업업무추진비 손금불산입액을 구할 때.
-입력: 수입금액(일반) → general_revenue, 특수관계인 수입 → related_revenue, 중소기업 여부 → sme, 지출액(접대비) → expensed, 문화비 → culture, 사업연도 월수 → months.
+입력: 수입금액(일반, 중단사업부문 매출 포함 기업회계 매출액) → general_revenue, 특수관계인 수입 → related_revenue, 중소기업 여부 → sme, 지출액(접대비) → expensed, 문화비 → culture, 전통시장 지출 → market(2023~), 사업연도 월수 → months.
 결과: 한도·한도초과액(손금불산입)·근거(법인세법 제25조, 시행령 제42조). 기업업무추진비 한도와 한도초과액 계산; 접대비가 한도를 넘는가 확인할 때 쓴다."""
-    return _ok(C.entertain(year, sme, general_revenue, related_revenue, expensed, culture=culture, months=months),
+    return _ok(C.entertain(year, sme, general_revenue, related_revenue, expensed, culture=culture, months=months, market=market),
                "법인세법 제25조, 시행령 제42조")
 
 
@@ -820,12 +821,18 @@ def business_car_expense(year: YEAR, upkeep: Annotated[int, Field(description="�
                          business_ratio: Annotated[float | None, Field(description="운행기록상 업무사용비율(소수, 작성 시, 0~1)")] = None,
                          months: Annotated[int, Field(description="보유 월수(1~12)")] = 12,
                          rental_corp: Annotated[bool, Field(description="부동산임대업 주업 등 특정법인")] = False,
-                         plate_ok: Annotated[bool, Field(description="법인 전용번호판 부착(2024년 이후 요건)")] = True) -> dict:
+                         plate_ok: Annotated[bool, Field(description="법인업무용 자동차등록번호판 부착 여부(2024.1.1. 이후 취득·임차 차량 중 취득가액(임차는 기준가액) 8천만원 이상인 차량만 대상 — acquisition_cost를 주면 기준 미만 차량엔 적용하지 않음)")] = True,
+                         acquisition_cost: Annotated[int | None, Field(description="차량 취득가액(원, 임차는 기준가액). 8천만원 미만이면 번호판 요건 대상이 아니므로 plate_ok=False여도 업무사용비율 그대로", ge=0)] = None) -> dict:
     """업무용승용차 관련비용 손금불산입(업무사용비율·사적사용·미작성 시 기준비율·감가상각 연 800만 원 한도). 언제: 임원·직원이 사용하는 승용차 관련비용을 어디까지 손금으로 인정할지 계산할 때.
 입력: 사업연도(2016~2026) → year, 유지비(유류·보험·수선 등, 원) → upkeep, 세법상 감가상각비(5년 정액, 원) → depreciation, 장부상 감가상각비(원) → booked_depreciation, 운행기록부 작성 여부 → log_kept, 업무사용비율(소수, 작성 시) → business_ratio, 보유 월수(1~12) → months, 부동산임대업 주업 등 특정법인 여부 → rental_corp, 법인 전용번호판 부착 여부 → plate_ok.
 결과: 업무사용비율·손금불산입·감가상각 한도 등, 근거(법인세법 제27조의2, 시행령 제50조의2)."""
-    return _ok(C.business_car(year, upkeep, depreciation, booked_depreciation, log_kept, business_ratio, months, rental_corp, plate_ok),
-               "법인세법 제27조의2, 시행령 제50조의2", 산식="미작성 시 업무사용비율 = min(1, 기준금액 ÷ 총비용), 감가상각 업무사용분 연 800만원 한도")
+    plate_applies = (acquisition_cost is None) or (acquisition_cost >= 80_000_000)
+    r = C.business_car(year, upkeep, depreciation, booked_depreciation, log_kept, business_ratio, months, rental_corp, plate_ok or not plate_applies)
+    if not plate_ok and not plate_applies:
+        r["번호판 요건"] = f"취득가액 {acquisition_cost:,}원 < 80,000,000원 → 법인업무용 번호판 부착 대상 아님(영 제50조의2④ 단서·규칙 기준) — 미부착이어도 업무사용비율 그대로 적용"
+    elif not plate_ok and acquisition_cost is None:
+        r["번호판 요건"] = "취득가액을 주지 않아 번호판 요건 대상으로 보고 업무사용금액 0원 적용 — 8천만원 미만 차량이면 acquisition_cost를 넣어 다시 계산"
+    return _ok(r, "법인세법 제27조의2, 시행령 제50조의2", 산식="미작성 시 업무사용비율 = min(1, 기준금액 ÷ 총비용), 감가상각 업무사용분 연 800만원 한도")
 
 
 @mcp.tool(annotations=CALC)
