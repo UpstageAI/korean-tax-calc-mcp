@@ -9482,8 +9482,8 @@ def stock_price_lookup(ticker: Annotated[str, Field(description="6자리 종목�
 @_guard
 def unlisted_stock_valuation(valuation_date: Annotated[str, Field(description="평가기준일(상속개시일·증여일) YYYY-MM-DD, 2016~2026")],
                              shares: Annotated[int, Field(description="평가기준일 현재 발행주식총수", ge=1)],
-                             incomes: Annotated[list | None, Field(description="최근 3개 사업연도 순손익액 [{사업연도, 순손익액(원, 각 사업연도소득에 영 제56조④ 가감을 끝낸 값), 주식수?(그 사업연도 말 발행주식총수, 증감자 환산 후)}] — 1년 전부터 순서대로. 사업 개시 3년 미만이면 생략 가능")] = None,
-                             net_asset: Annotated[int | None, Field(description="평가기준일 현재 순자산가액(원) = 상증법 평가 자산 − 부채(영 제55조·규칙 제17조의2 가감 반영, 영업권 제외)")] = None,
+                             incomes: Annotated[list | None, Field(description="최근 3개 사업연도 [{사업연도, 순손익액 | 각사업연도소득 + 가산:{이월익금, 수입배당금, 기부금이월, 외화평가이익…} + 차감:{법인세, 감면세액, 농특세, 지방소득세, 벌과금, 업무무관, 기부금 한도초과, 접대비 한도초과, 과다경비, 지급이자 손금불산입, 감가상각 시인부족, 외화평가손실…}, 주식수?}] — 1년 전부터. 순손익액을 바로 알면 숫자만, 세무조정계산서에서 뽑으면 각사업연도소득과 가감 항목으로(영 제56조④, 도구가 산출 과정을 보여줌). 사업 개시 3년 미만이면 생략 가능")] = None,
+                             net_asset: Annotated[int | dict | None, Field(description="평가기준일 현재 순자산가액(원), 또는 재무상태표 항목형 {자산_장부가액, 자산_평가차액?(상증법 평가액−장부가액), 부채_장부가액, 자산_가산:{지급받을 권리…}, 자산_차감:{선급비용, 영업권…}, 부채_가산:{미지급 법인세, 확정 배당, 퇴직급여추계액…}, 부채_차감:{충당금, 준비금…}} — 영 제55조·규칙 제17조의2 가감을 도구가 적용하고 산출 과정을 보여줌")] = None,
                              equity: Annotated[int | None, Field(description="영업권 계산용 평가기준일 자기자본(원). goodwill을 직접 주면 불필요")] = None,
                              goodwill: Annotated[int | None, Field(description="영업권 평가액(원)을 이미 알면 직접")] = None,
                              real_estate_ratio: Annotated[float | None, Field(description="자산총액 중 부동산·부동산권리 비율(0~1) — 0.5 이상이면 2:3 가중, 0.8 이상이면 순자산가치만(2018.2.13.~)")] = None,
@@ -9498,7 +9498,8 @@ def unlisted_stock_valuation(valuation_date: Annotated[str, Field(description="�
     """비상장주식 상속·증여 평가(상증법 보충적 평가) — 순손익가치(3년 가중평균 3:2:1 ÷ 10%)와 순자산가치((순자산+영업권) ÷ 주식수)를 3:2(부동산 과다 2:3)로 가중평균, 하한 순자산가치×80%(2017.4~2018.3 70%), 순자산가치만 평가하는 사유(청산·개시 3년 미만·휴폐업·부동산 80%·주식 80%·존속 3년, 구간별), 최대주주 할증(2019까지 20/30%·중소 0, 2020~ 20%·중소 제외, 2023~ 중견 제외)까지 2016~2026 구간별로 계산한다.
     언제: 비상장주식을 상속·증여받았을 때 1주당 평가액, 또는 비상장법인 지분의 상증법 가액이 필요할 때. 양도세 대주주 시가총액·기준시가는 산식이 달라 stock_basis_income_tax를 쓴다.
     입력: 평가기준일 → valuation_date, 발행주식총수 → shares, 3년 순손익 → incomes, 순자산가액 → net_asset, 부동산 비율 → real_estate_ratio, 최대주주·중소기업 → is_max_shareholder·sme.
-    지원하지 않음: 추정이익 평가(영 제56조②), 평가심의위원회, 순자산가액의 자산·부채 개별 평가(사용자가 끝낸 값을 넣음), 국외 비상장.
+    재무제표 입력: incomes에 각사업연도소득+가산·차감 항목, net_asset에 자산·부채 장부가액+평가차액+가감 항목을 주면 순손익액·순자산가액을 도구가 만들고 줄별 근거를 보여준다.
+    지원하지 않음: 추정이익 평가(영 제56조②), 평가심의위원회, 자산별 상증법 평가(평가차액은 사용자 계산), 국외 비상장.
     결과: 1주당 평가액(할증 후·전), 순손익가치·순자산가치·가중평균, 평가방법, 할증률, 판단(사유·하한·확인 필요), 근거."""
     return SV.unlisted_valuation(valuation_date, shares, incomes=incomes, net_asset=net_asset, equity=equity, goodwill=goodwill, real_estate_ratio=real_estate_ratio,
                                  stock_asset_ratio=stock_asset_ratio, business_start=business_start, status=status, is_max_shareholder=is_max_shareholder,
