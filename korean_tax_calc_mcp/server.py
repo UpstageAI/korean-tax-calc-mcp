@@ -20,6 +20,7 @@ from .engine import calc as K, calc_cit as C, calc_income as I, calc_vat as V, c
 from .engine import calc_inhgift as IG
 from .engine import calc_gold_gaps6 as GG
 from .engine import calc_tax_priority as TP
+from .engine import calc_stock as ST
 from . import vocab
 from .forms_workbook import render_form_sheet, _load_form_templates, tool_value, nonbusiness_form_sources, nonbusiness_form_data
 
@@ -9407,6 +9408,52 @@ def tax_priority_distribution(
 # ── 도구 찾기 ──────────────────────────────────────────────────────────────
 # 도구가 70개를 넘어 목록만 보고는 맞는 도구를 놓치기 쉽다(10/28 점검: 있는 도구를 "없다"고 판단한 사례 3건).
 # 사용자가 쓰는 말 → 도구. 별칭은 설명문에 없는 일상 표현·옛 용어·실무 용어를 잇는다.
+
+# ── 주식등 양도소득: 대주주 판정·세율 (소득세법 제94조①3호·제104조①11호·12호, 시행령 제157조·제167조의8) ─────────
+@mcp.tool(annotations=CALC)
+@_guard
+def stock_major_shareholder(transfer_date: Annotated[str, Field(description="양도일 YYYY-MM-DD(2016-01-01 ~ 2026-12-31) — 요건은 양도일 구간별로 다름")],
+                            market: Annotated[str, Field(description="시장 — 코스피|코스닥|코넥스|비상장|K-OTC. 평소 말(유가증권·KOSDAQ·장외 등)도 됨")],
+                            own_ratio: Annotated[float | None, Field(description="직전 사업연도 종료일 현재 본인 지분율 — 0~1 비율(0.015) 또는 %(1.5). 모르면 own_mcap만", ge=0)] = None,
+                            own_mcap: Annotated[int | None, Field(description="직전 사업연도 종료일 현재 본인 보유 주식 시가총액(원) — 상장은 그날 최종시세가액 × 주식 수, 비상장은 상증법 평가액", ge=0)] = None,
+                            related_ratio: Annotated[float | None, Field(description="특수관계인(기타주주) 지분율 합계 — 본인 제외. 구간에 따라 합산 여부·범위가 다르므로 아는 대로 넣으면 도구가 판단", ge=0)] = None,
+                            related_mcap: Annotated[int | None, Field(description="특수관계인 보유 시가총액 합계(원), 본인 제외", ge=0)] = None,
+                            is_max_group: Annotated[bool | None, Field(description="주주 1인과 특수관계인의 지분 합계가 그 법인 주주 중 최대인지(최대주주군). 2023.1.1.~ 양도분은 이것이 True일 때만 합산. 모르면 비움")] = None,
+                            venture: Annotated[bool, Field(description="비상장·K-OTC만: 벤처기업 주식이면 True(시가총액 기준 40억)")] = False,
+                            is_corporation: Annotated[bool, Field(description="주주가 법인이면 True(2025.2.28.~ 대주주 판정 대상 아님)")] = False,
+                            acquired_to_threshold: Annotated[bool, Field(description="직전 사업연도 종료일에는 미달이었으나 그 뒤 주식을 취득해 지분율 기준에 이르렀으면 True(취득일 이후 대주주, 영 제157조⑨)")] = False) -> dict:
+    """주식 양도소득세 대주주 판정 — 양도일·시장·직전 사업연도 종료일 현재 지분율·시가총액으로 대주주 여부(소득세법 시행령 제157조·제167조의8, 2016~2026 구간별 기준: 코스피 1%/25억→15억→10억→50억 등)와 특수관계인 합산 방식을 판정한다.
+    언제: "나 대주주야?", 주식 양도세 세율·과세 여부를 정하기 전에. 결과의 판정(대주주/아님/확인 필요)을 stock_capital_gains_tax의 major_shareholder에 넣는다.
+    입력: 양도일 → transfer_date, 시장 → market, 본인 지분율·시가총액 → own_ratio·own_mcap, 특수관계인 합계 → related_ratio·related_mcap, 최대주주군 여부 → is_max_group, 벤처 → venture.
+    결과: 판정·이유·적용 기준(지분율·시가총액)·합산 방식, 판단(기준일·시가 산정·확인 필요), 근거(시행령 조항·개정령·시행일). 시가총액은 사용자가 계산해 넣는다(도구가 시세를 조회하지 않음)."""
+    return ST.major_shareholder(transfer_date, market, own_ratio=own_ratio, own_mcap=own_mcap, related_ratio=related_ratio, related_mcap=related_mcap,
+                                is_max_group=is_max_group, venture=venture, is_corporation=is_corporation, acquired_to_threshold=acquired_to_threshold)
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def stock_capital_gains_tax(transfer_date: Annotated[str, Field(description="양도일 YYYY-MM-DD(2016-01-01 ~ 2026-12-31)")],
+                            market: Annotated[str, Field(description="시장 — 코스피|코스닥|코넥스|비상장|K-OTC|국외. 평소 말도 됨")],
+                            major_shareholder: Annotated[bool | None, Field(description="대주주 여부(stock_major_shareholder 판정값). 국외주식은 불필요")] = None,
+                            sme: Annotated[bool | None, Field(description="발행법인이 중소기업인지(중소기업기본법 제2조, 판정 기준일은 결과 판단에 표시)")] = None,
+                            mid_sized: Annotated[bool, Field(description="K-OTC만: 중견기업이면 True(소액주주 과세 제외 판정용)")] = False,
+                            otc_trade: Annotated[bool, Field(description="상장주식을 증권시장 밖(장외)에서 양도했으면 True — 대주주가 아니어도 과세")] = False,
+                            transfer_price: Annotated[int | None, Field(description="양도가액(원)", ge=0)] = None,
+                            acquisition_price: Annotated[int | None, Field(description="취득가액(원, 취득 수수료 포함)", ge=0)] = None,
+                            expenses: Annotated[int, Field(description="양도 시 필요경비(증권거래세·수수료 등, 원)", ge=0)] = 0,
+                            gain: Annotated[int | None, Field(description="양도차익(원)을 이미 알면 가액 대신 이것만")] = None,
+                            acquisition_date: Annotated[str, Field(description="취득일 YYYY-MM-DD — 대주주이고 중소기업이 아니면 필요(1년 미만 보유 30%)")] = "",
+                            prior_basic_deduction: Annotated[int, Field(description="같은 해 주식등 양도에서 이미 쓴 기본공제(원, 연 250만원 한도)", ge=0)] = 0) -> dict:
+    """주식등 양도소득세 — 과세 대상 여부(상장주식은 대주주 양도·장외 양도만, K-OTC 중소·중견 소액주주 제외), 양도차익 → 기본공제(연 250만원) → 과세표준 → 세율(대주주 20%·3억 초과 25%, 1년 미만 비중소 30%, 소액주주 중소 10%·그 밖 20%, 국외 10%/20%; 연도별) → 산출세액·지방소득세·예정신고기한(반기 말일+2개월).
+    언제: 주식을 팔았을 때 세금이 얼마인지, 과세 대상인지 물을 때. 대주주 여부는 먼저 stock_major_shareholder로 판정한다.
+    입력: 양도일 → transfer_date, 시장 → market, 대주주 → major_shareholder, 중소기업 → sme, 양도가액·취득가액·필요경비 → transfer_price·acquisition_price·expenses(또는 gain), 취득일 → acquisition_date.
+    지원하지 않음: 2019 이전 국외주식(제118조의2), 파생상품, 상장주식 장내 소액주주(과세 대상 아님으로 답함), 양도차손 통산 계산.
+    결과: 과세대상·양도차익·기본공제·과세표준·적용세율·산출세액·지방소득세·예정신고기한, 세율 후보(경합 시 큰 세액), 판단, 근거."""
+    return ST.stock_gains_tax(transfer_date, market, major_shareholder=major_shareholder, sme=sme, mid_sized=mid_sized, otc_trade=otc_trade,
+                              transfer_price=transfer_price, acquisition_price=acquisition_price, expenses=expenses, gain=gain,
+                              acquisition_date=acquisition_date, prior_basic_deduction=prior_basic_deduction)
+
+
 _TOOL_ALIASES: dict[str, list[str]] = {
     "양도세": ["capital_gains_income", "capital_gains_tax"], "양도소득세": ["capital_gains_income", "capital_gains_tax"],
     "단기 양도": ["capital_gains_tax"], "미등기": ["capital_gains_tax"], "비사업용 토지": ["capital_gains_tax", "capital_gains_income"],
@@ -9476,6 +9523,8 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "2천만 원 초과": ["financial_income_aggregate", "dividend_tax_credit"], "금융소득종합과세": ["financial_income_aggregate", "dividend_tax_credit"],
     "증여": ["gift_tax", "inheritance_gift_valuation"], "상속": ["inheritance_tax", "inheritance_gift_valuation"],
     "법인세": ["corporate_tax", "income_adjustment_total"], "퇴직소득세": ["retirement_income_tax"],
+    "주식 양도": ["stock_capital_gains_tax", "stock_major_shareholder"], "주식 양도세": ["stock_capital_gains_tax", "stock_major_shareholder"], "주식 팔": ["stock_capital_gains_tax", "stock_major_shareholder"],
+    "대주주": ["stock_major_shareholder", "stock_capital_gains_tax"], "비상장주식": ["stock_capital_gains_tax", "stock_major_shareholder"], "장외 양도": ["stock_capital_gains_tax"], "소액주주": ["stock_major_shareholder", "stock_capital_gains_tax"],
     "양도": ["capital_gains_income", "capital_gains_tax"], "필요경비": ["capital_gains_income", "estimated_business_income", "other_income_aggregate"],
 }
 
@@ -9484,8 +9533,6 @@ _NOT_SUPPORTED: list[tuple[tuple[str, ...], str, list[tuple[str, str]]]] = [
     (("월세", "세액공제"), "월세액 세액공제(조세특례제한법 제95조의2)", [("조세특례제한법", "제95조의2")]),
     (("월세액",), "월세액 세액공제(조세특례제한법 제95조의2)", [("조세특례제한법", "제95조의2")]),
     (("연금", "세액공제"), "연금계좌 세액공제(소득세법 제59조의3) — 연금저축·IRP 납입액 공제", [("소득세법", "제59조의3")]),
-    (("주식", "양도"), "주식 양도소득(소득세법 제94조①3호·제104조①11호, 대주주 판정 시행령 제157조)", [("소득세법", "제94조"), ("소득세법", "제104조"), ("소득세법 시행령", "제157조")]),
-    (("대주주",), "주식 양도소득(소득세법 제94조①3호·제104조①11호, 대주주 판정 시행령 제157조)", [("소득세법", "제94조"), ("소득세법", "제104조"), ("소득세법 시행령", "제157조")]),
     (("종합부동산세",), "종합부동산세(종합부동산세법)", [("종합부동산세법", "제7조"), ("종합부동산세법", "제9조")]),
     (("종부세",), "종합부동산세(종합부동산세법)", [("종합부동산세법", "제7조"), ("종합부동산세법", "제9조")]),
     (("신용카드", "소득공제"), "신용카드 등 사용금액 소득공제(조세특례제한법 제126조의2)", [("조세특례제한법", "제126조의2")]),

@@ -21,6 +21,11 @@ def test_find_tool_everyday_words():
     assert "law_article" in r["근거 조회"] and "github.com/UpstageAI/korean-tax-mcp" in r["근거 서버"]["레포"]
 
 
+def test_find_tool_stock_routes_to_new_tools():
+    assert top("삼성전자 주식 팔았는데 양도세")[0] == "stock_capital_gains_tax"
+    assert top("나 대주주야?")[0] == "stock_major_shareholder"
+
+
 def test_find_tool_longer_alias_wins():
     assert top("수입배당금 익금불산입")[0] == "dividend_received_deduction"
     assert top("의제배당 무상주")[0] == "deemed_dividend_bonus_shares"
@@ -29,7 +34,7 @@ def test_find_tool_longer_alias_wins():
 
 def test_find_tool_names_missing_calculations():
     for q, what in (("월세 100만원 내는데 세액공제 얼마 돼요?", "월세액 세액공제"), ("연금저축 400만원 넣으면 세액공제?", "연금계좌 세액공제"),
-                    ("삼성전자 주식 팔았는데 양도세", "주식 양도소득"), ("종부세 얼마", "종합부동산세")):
+                    ("종부세 얼마", "종합부동산세")):
         r = c("find_tool", {"query": q})["결과"]
         assert r["후보"] == [] and what in r["없는 계산"]
         assert r["근거 조회"][0]["도구"] == "law_article" and r["근거 조회"][0]["article"].startswith("제")
