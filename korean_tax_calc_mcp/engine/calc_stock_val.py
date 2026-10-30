@@ -114,6 +114,123 @@ def net_asset_from_statement(d: dict) -> tuple[float, list[dict], list[str]]:
     return net, lines, problems
 
 
+
+# ── 증감자 조정(영 제56조⑤·규칙 제17조의3⑤), 추정이익(영 제56조②), 자산별 평가(법 제60조~제66조) ────────
+
+def _months_in_year(fy_start: date, when: date) -> int:
+    """사업연도 개시일부터 증감자일까지 월수(1개월 미만은 1개월)."""
+    m = (when.year - fy_start.year) * 12 + (when.month - fy_start.month) + (1 if when.day >= fy_start.day else 0)
+    return max(1, m)
+
+
+def apply_capital_changes(items: list[dict], changes: list[dict], rate: float = 0.10) -> tuple[list[dict], list[dict], list[str]]:
+    """3년 내 유상증자·감자 → 각 연도 순손익액 가산·차감(영 제56조⑤)과 환산주식수(규칙 제17조의3⑤).
+    items: [{사업연도, 순손익액, 주식수(그 연도 말)}] 최근 연도부터. changes: [{일자, 구분:'증자'|'감자', 주식수, 1주당금액}]."""
+    out = [dict(it) for it in items]; lines = []; problems = []
+    by_year = {int(it.get("사업연도")): it for it in out if it.get("사업연도") is not None}
+    for ch in changes or []:
+        try:
+            when = _d(ch["일자"]); kind = ch.get("구분") or ch.get("kind"); n = int(ch.get("주식수") or ch.get("shares")); amt = float(ch.get("1주당금액") or ch.get("price") or 0)
+        except Exception as e:
+            problems.append(f"증감자 항목 형식 오류 {ch} — {{일자 YYYY-MM-DD, 구분 증자|감자, 주식수, 1주당금액}}"); continue
+        if kind not in ("증자", "감자"):
+            problems.append(f"증감자 구분 '{kind}' — 증자|감자"); continue
+        sign = 1 if kind == "증자" else -1
+        yr = when.year
+        total = n * amt
+        prev0 = by_year.get(yr - 1) or by_year.get(yr)   # 증자 직전 사업연도 말 주식수 — 다른 연도를 환산하기 전 값으로 고정
+        base = int((prev0 or {}).get("주식수") or 0)
+        for y, it in by_year.items():
+            if y > yr:
+                continue
+            fy_start = date(y, 1, 1)
+            months = _months_in_year(fy_start, when) if y == yr else 12
+            adj = sign * total * rate * months / 12
+            it["순손익액"] = float(it.get("순손익액") or 0) + adj
+            lines.append({"사업연도": y, "구분": f"{kind} {when.isoformat()} {n:,}주 × {amt:,.0f}원", "순손익액 조정": adj,
+                          "산식": f"{'+' if sign > 0 else '−'} {total:,.0f} × {rate*100:g}% × {months}/12", "근거": "상증법 시행령 제56조⑤, 시행규칙 제17조의3⑥"})
+            if y < yr and it.get("주식수"):
+                if base > 0:
+                    before = int(it["주식수"]); it["주식수"] = int(round(before * (base + sign * n) / base))
+                    lines.append({"사업연도": y, "구분": "환산주식수", "값": it["주식수"], "산식": f"{before:,} × ({base:,} {'+' if sign > 0 else '−'} {n:,}) ÷ {base:,}", "근거": "상증법 시행규칙 제17조의3⑤"})
+    return out, lines, problems
+
+
+_EST_REASONS = {
+    "자산수증이익": "자산수증이익·채무면제이익·보험차익·재해손실 합계의 3년 가중평균이 (세전손익−동 금액) 가중평균의 50% 초과(규칙 제17조의3①2호)",
+    "합병": "3년 내 합병·분할·주요 업종 변경(①3호)", "분할": "3년 내 합병·분할·주요 업종 변경(①3호)", "업종 변경": "3년 내 합병·분할·주요 업종 변경(①3호)",
+    "합병이익": "법 제38조 합병이익 산정(①4호)", "휴업": "3개 사업연도 중 1년 이상 휴업(①5호)",
+    "처분손익": "유가증권·유형자산 처분손익+자산수증이익등 가중평균이 세전손익 가중평균의 50% 초과(①6호)",
+    "매출 3년 미만": "주요 업종 정상 매출 발생 기간 3년 미만(①7호)", "고시": "기획재정부장관 고시 사유(①8호)",
+}
+
+
+def estimated_profit_check(est: dict, valuation_date: str, kind: str) -> tuple[float | None, list[dict], list[str]]:
+    """추정이익 평가 요건(영 제56조② 1~4호) 판정 → 통과하면 1주당 추정이익 평균가액."""
+    vd = _d(valuation_date); 판단 = []; problems = []
+    avg = est.get("1주당추정이익평균") or est.get("avg")
+    if avg is None:
+        return None, [], ["estimated_profit에 1주당추정이익평균(둘 이상 신용평가전문기관·회계법인·세무법인 산출 평균)이 필요"]
+    reason = str(est.get("사유") or "")
+    m = _match(_EST_REASONS, reason) if reason else None
+    if not m:
+        return None, [], [f"estimated_profit 사유 '{reason}' — 허용: {', '.join(_EST_REASONS)}"]
+    판단.append({"항목": "추정이익 사유(1호)", "결론": m, "근거": "상증법 시행규칙 제17조의3①"})
+    due = est.get("신고기한"); filed = est.get("신고일"); calc = est.get("산정기준일"); made = est.get("평가서작성일")
+    ok = True
+    if due and filed and _d(filed) > _d(due):
+        ok = False; 판단.append({"항목": "요건 2호", "결론": f"신고일 {filed}이 신고기한 {due} 뒤 — 요건 미충족", "근거": "영 제56조②2호"})
+    else:
+        판단.append({"항목": "요건 2호", "결론": "법정신고기한까지 신고" + ("(신고일·신고기한 미입력 — 확인)" if not (due and filed) else ""), "근거": "영 제56조②2호"})
+    if due and ((calc and _d(calc) > _d(due)) or (made and _d(made) > _d(due))):
+        ok = False; 판단.append({"항목": "요건 3호", "결론": "산정기준일·평가서작성일이 신고기한 뒤 — 요건 미충족", "근거": "영 제56조②3호"})
+    else:
+        판단.append({"항목": "요건 3호", "결론": "산정기준일·평가서작성일이 신고기한 이내" + ("(미입력 — 확인)" if not (calc and made) else ""), "근거": "영 제56조②3호"})
+    if calc and _d(calc).year != vd.year:
+        ok = False; 판단.append({"항목": "요건 4호", "결론": f"산정기준일 {calc}과 {kind} 기준일 {valuation_date}이 같은 연도가 아님 — 요건 미충족", "근거": "영 제56조②4호"})
+    else:
+        판단.append({"항목": "요건 4호", "결론": "산정기준일과 상속개시일·증여일이 같은 연도" + ("(산정기준일 미입력 — 확인)" if not calc else ""), "근거": "영 제56조②4호"})
+    if not ok:
+        return None, 판단, []
+    return float(avg), 판단, []
+
+
+_ASSET_RULES = {   # 종류 → (우선순위 설명, 근거)
+    "토지": ("시가(매매·감정·수용·경매·공매 사례가액, 평가기간 내) → 없으면 개별공시지가(제61조①1호)", "상증법 제60조·제61조①1호"),
+    "건물": ("시가 → 없으면 국세청 기준시가·건물기준시가(제61조①2~4호)", "상증법 제60조·제61조①"),
+    "주택": ("시가 → 없으면 개별·공동주택가격(제61조①4호)", "상증법 제60조·제61조①4호"),
+    "상장주식": ("평가기준일 전후 2개월 종가 평균(제63조①1호가목, stock_price_lookup avg_2m)", "상증법 제63조①1호가목"),
+    "비상장주식": ("보충적 평가(제63조①1호나목, unlisted_stock_valuation) — 10% 이하 출자는 취득가액 가능(영 제54조③)", "상증법 제63조①1호나목, 영 제54조③"),
+    "예금": ("원본 + 평가기준일까지 미수이자 − 원천징수세액(영 제58조①)", "상증법 시행령 제58조①"),
+    "채권": ("원본 + 미수이자(영 제58조①); 국채·공채 등은 제63조①2호", "상증법 제63조①2호, 영 제58조"),
+    "매출채권": ("원본 — 회수 불가능분은 제외(영 제58조②)", "상증법 시행령 제58조②"),
+    "기타": ("시가 → 없으면 장부가액·보충적 평가", "상증법 제60조③·제65조"),
+}
+
+
+def value_assets(assets: list[dict]) -> tuple[float, list[dict], list[str]]:
+    """자산 목록 → 평가차액 합계(평가액 − 장부가액). 각 자산은 {종류, 명칭?, 장부가액, 시가?, 기준시가?, 평가액?}.
+    선택: 평가액 > 시가 > 기준시가 > 장부가액. 평가액이 장부가액보다 낮으면 장부가액(영 제55조① 후단, 정당한 사유 있으면 '하한 예외'=true)."""
+    total = 0.0; lines = []; problems = []
+    for a in assets or []:
+        kind = str(a.get("종류") or "기타"); rule = _match(_ASSET_RULES, kind) or _ASSET_RULES["기타"]
+        book = float(a.get("장부가액") or 0)
+        src = None; val = None
+        for key in ("평가액", "시가", "기준시가"):
+            if a.get(key) is not None:
+                src, val = key, float(a[key]); break
+        if val is None:
+            src, val = "장부가액", book
+        floor_note = ""
+        if val < book and not a.get("하한 예외"):
+            floor_note = f" → 평가액 {val:,.0f} < 장부가액 {book:,.0f}라 장부가액 적용(정당한 사유가 있으면 '하한 예외': true)"
+            val = book
+        diff = val - book; total += diff
+        lines.append({"자산": a.get("명칭") or kind, "종류": kind, "장부가액": book, "적용가액": val, "근거값": src, "평가차액": diff,
+                      "규칙": rule[0] + floor_note, "근거": rule[1] + ", 영 제55조①"})
+    return total, lines, problems
+
+
 # ── (A) 상증법 보충적 평가 ────────────────────────────────────────────────────
 
 def _floor_ratio_inh(vd: date) -> tuple[float | None, str]:
@@ -167,13 +284,24 @@ def goodwill_value(avg_income_3y: float, equity: float, rate: float = 0.10, year
 def unlisted_valuation(valuation_date: str, shares: int, incomes: list | None = None, net_asset=None, equity=None,
                        goodwill=None, real_estate_ratio=None, stock_asset_ratio=None, business_start: str = "", status: str = "",
                        is_max_shareholder: bool = False, ratio_over_50: bool | None = None, sme: bool | None = None, mid_sized: bool = False,
-                       premium_exclusion: str | None = None, cap_rate: float = 0.10) -> dict[str, Any]:
+                       premium_exclusion: str | None = None, cap_rate: float = 0.10, capital_changes: list | None = None,
+                       estimated_profit: dict | None = None, assets: list | None = None, kind: str = "증여") -> dict[str, Any]:
     vd = _d(valuation_date)
     if shares is None or int(shares) <= 0:
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["shares(평가기준일 현재 발행주식총수)가 필요"]}
     shares = int(shares)
     판단: list[dict] = []
     계산_상세: dict = {}
+    # 자산별 평가 → 평가차액(net_asset이 항목형일 때 자산_평가차액에 더함)
+    if assets:
+        diff_sum, asset_lines, a_probs = value_assets(assets)
+        if a_probs:
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": a_probs}
+        계산_상세["자산별 평가"] = asset_lines
+        if isinstance(net_asset, dict):
+            net_asset = {**net_asset, "자산_평가차액": float(net_asset.get("자산_평가차액") or 0) + diff_sum}
+        elif net_asset is not None:
+            net_asset = float(net_asset) + diff_sum
     # 순자산가치 — 숫자 또는 재무제표 항목형
     if isinstance(net_asset, dict):
         net_asset, na_lines, na_problems = net_asset_from_statement(net_asset)
@@ -191,6 +319,19 @@ def unlisted_valuation(valuation_date: str, shares: int, incomes: list | None = 
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["incomes는 최근 3개 사업연도 [{사업연도, 순손익액, 주식수?}] 최근 연도부터"]}
     per_share = []
     inc_lines_all = []
+    if capital_changes and inc_items:
+        prepared = []
+        for it in inc_items:
+            if it.get("순손익액") is None and it.get("각사업연도소득") is not None:
+                n_calc, lines, probs = net_income_from_statement(it, vd)
+                if probs:
+                    return {"error": "입력 확인 필요 — 계산하지 않음", "문제": probs}
+                inc_lines_all.append({"사업연도": it.get("사업연도") or it.get("year"), "산출": lines}); it = {**it, "순손익액": n_calc}
+            prepared.append(it)
+        inc_items, cc_lines, cc_probs = apply_capital_changes(prepared, capital_changes, cap_rate)
+        if cc_probs:
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": cc_probs}
+        계산_상세["증감자 조정"] = cc_lines
     for it in inc_items:
         if it.get("순손익액") is None and it.get("각사업연도소득") is not None:
             n_calc, lines, probs = net_income_from_statement(it, vd)
@@ -226,6 +367,17 @@ def unlisted_valuation(valuation_date: str, shares: int, incomes: list | None = 
         avg0 = max(0.0, avg)
         ev_per = avg0 / cap_rate
         ev_calc = f"가중평균 1주당 순손익액 {avg:,.2f}(음수면 0) ÷ 환원율 {cap_rate*100:g}% = {ev_per:,.2f}"
+    if estimated_profit:
+        est_avg, est_판단, est_probs = estimated_profit_check(estimated_profit, valuation_date, kind)
+        if est_probs:
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": est_probs}
+        판단.extend(est_판단)
+        if est_avg is not None:
+            ev_per = max(0.0, est_avg) / cap_rate
+            ev_calc = f"1주당 추정이익 평균 {est_avg:,.2f} ÷ 환원율 {cap_rate*100:g}% = {ev_per:,.2f} (3년 가중평균 대신 적용)"
+            판단.append({"항목": "순손익가치", "결론": "추정이익 평가 요건 충족 — 1주당 추정이익 평균가액으로 순손익가치 계산", "근거": "상증법 시행령 제56조②"})
+        else:
+            판단.append({"항목": "순손익가치", "결론": "추정이익 요건 미충족 — 3년 가중평균으로 계산", "근거": "상증법 시행령 제56조②"})
         if avg < 0:
             판단.append({"항목": "순손익가치", "결론": "가중평균 순손익액이 음수 → 0", "근거": "상증법 시행령 제56조① 후단"})
     # 영업권
