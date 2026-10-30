@@ -91,6 +91,8 @@ def test_tax_foreign_and_prelim():
     assert e["error"].startswith("지원하지 않음")
     r = T(transfer_date="2026-05-01", market="미국 주식", sme=False, gain=10_000_000)
     assert r["결과"]["산출세액"] == 1_500_000 and r["결과"]["예정신고기한"] is None
+    e = T(transfer_date="2026-05-01", market="미국 주식", gain=10_000_000)
+    assert "sme" in e["필요 입력"]
     r = T(transfer_date="2017-05-01", market="비상장", major_shareholder=False, sme=False, gain=10_000_000)
     assert r["결과"]["예정신고기한"] == "2017-08-31"   # 분기(6/30)+2개월
     r = T(transfer_date="2026-11-20", market="비상장", major_shareholder=False, sme=False, gain=10_000_000)
