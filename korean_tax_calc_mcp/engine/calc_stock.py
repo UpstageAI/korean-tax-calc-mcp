@@ -233,10 +233,10 @@ def parse_relation(text: str) -> tuple[str, int, bool, str] | None:
     if m:
         kind = m.group(1) or m.group(4); chon = int(m.group(2) or m.group(3))
         return kind, chon, False, f"'{raw}' → {kind} {chon}촌"
-    best = None   # 가장 긴 표현이 이김('처남'은 '처'(배우자)가 아니라 '처남'(인척 2촌), '시어머니'는 '어머니'가 아님)
+    best = None   # 가장 긴 표현이 이김('처남'은 '처'(배우자)가 아니라 '처남'(인척 2촌), '시어머니'는 '어머니'가 아님); 길이가 같으면 먼 촌수('사촌 동생'은 동생(2촌)이 아니라 사촌(4촌))
     for keys, kind, chon, lineal in _REL_TABLE:
         for k in keys:
-            if k in low and (best is None or len(k) > len(best[0])):
+            if k in low and (best is None or len(k) > len(best[0]) or (len(k) == len(best[0]) and chon > best[2])):
                 best = (k, kind, chon, lineal)
     if best:
         _, kind, chon, lineal = best
