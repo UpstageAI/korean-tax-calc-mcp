@@ -17,6 +17,7 @@ def test_find_tool_everyday_words():
     assert top("프리랜서로 3.3% 떼고 3천만원 받았는데 종합소득세 얼마?")[0] == "estimated_business_income"
     assert top("배당 3천만원 받으면 종합과세 되나요?")[0] == "financial_income_aggregate"
     assert top("부모님한테 2억 받으면 증여세 얼마?")[0] == "gift_tax"
+    assert "law_article" in c("find_tool", {"query": "연봉 5천만원 세금"})["결과"]["근거 조회"]
 
 
 def test_find_tool_longer_alias_wins():
@@ -30,6 +31,7 @@ def test_find_tool_names_missing_calculations():
                     ("삼성전자 주식 팔았는데 양도세", "주식 양도소득"), ("종부세 얼마", "종합부동산세")):
         r = c("find_tool", {"query": q})["결과"]
         assert r["후보"] == [] and what in r["없는 계산"]
+        assert r["근거 조회"][0]["도구"] == "law_article" and r["근거 조회"][0]["article"].startswith("제")
     # 양도 계산 질문에 섞인 취득세는 걸러내지 않음
     assert "없는 계산" not in c("find_tool", {"query": "양도할 때 취득세 필요경비 되나"})["결과"]
     assert top("양도할 때 취득세 필요경비 되나")[0] == "capital_gains_income"
@@ -61,6 +63,17 @@ def test_wage_income_tax_without_tax_base():
     # 과세표준을 주면 그대로
     r2 = c("wage_income_tax", {"gross_pay": 50000000, "year": 2025, "tax_base": 30000000})
     assert r2["결과"]["과세표준"] == 30000000 and r2["판단"][0] == "과세표준은 입력값 그대로"
+    assert r2["결과"]["표준세액공제"] == 0 and r2["결과"]["결정세액(참고)"] == r2["결과"]["산출세액"] - r2["결과"]["근로소득세액공제"]
+
+
+def test_find_tool_local_tax_in_capital_gains_question_not_blocked():
+    r = c("find_tool", {"query": "자동차세 낸 것도 양도세 필요경비?"})["결과"]
+    assert "없는 계산" not in r and r["후보"][0]["도구"] == "capital_gains_income"
+
+
+def test_simplified_vat_card_fee_not_treated_as_card_sales():
+    e = c("simplified_vat_return", {"year": 2025, "business_type": "소매업", "ledger": {"공급": [{"항목": "카드수수료", "금액": 100000}], "매입": []}})
+    assert "error" in e
 
 
 def test_simplified_vat_card_sales_word():
