@@ -455,8 +455,6 @@ def income_tax_unlisted_basis(transfer_date: str, shares: int, prior_year_income
         사유 = status if not (status == "존속3년" and td < date(2023, 2, 28)) else None
     if business_start and (td - _d(business_start)).days < 365:
         사유 = 사유 or "개시1년미만"
-    if 사유 is None and td < date(2023, 2, 28) and prior_year_income is not None and False:
-        pass
     if 사유 is None and td >= date(2023, 2, 28) and stock_asset_ratio is not None and float(stock_asset_ratio) >= 0.8:
         사유 = "주식80"
     heavy = real_estate_ratio is not None and float(real_estate_ratio) >= 0.5
