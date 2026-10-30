@@ -74,7 +74,7 @@ def _won(v: int | float) -> str:
 
 def major_shareholder(transfer_date: str, market: str, own_ratio=None, own_mcap=None, related_ratio=None, related_mcap=None,
                       is_max_group: bool | None = None, venture: bool = False, is_corporation: bool = False,
-                      acquired_to_threshold: bool = False) -> dict[str, Any]:
+                      post_acquisition_ratio=None) -> dict[str, Any]:
     R = _rules()
     td = _d(transfer_date)
     해석: list[str] = []
@@ -154,9 +154,15 @@ def major_shareholder(transfer_date: str, market: str, own_ratio=None, own_mcap=
                 판정, 이유 = "대주주 아님", "본인 단독 기준 미달(특수관계인 합산으로도 미달이거나 미입력)"
                 if not has_related:
                     판단.append({"항목": "특수관계인", "결론": "최대주주군이면 기타주주 지분을 합산 — 해당하면 is_max_group=True와 related_ratio·related_mcap을 넣어 다시", "근거": P["근거"]})
-    if 판정 != "대주주" and acquired_to_threshold:
-        판정, 이유 = "대주주", "직전 사업연도 종료일에는 미달이었으나 그 뒤 주식 취득으로 지분율 기준에 이름 — 취득일 이후 양도분은 대주주"
-        판단.append({"항목": "사후 취득", "결론": 이유, "근거": "소득세법 시행령 제157조⑨(구 ⑫, 2016.4.1.~)"})
+    if 판정 != "대주주" and post_acquisition_ratio is not None:
+        pr, n3 = _ratio(post_acquisition_ratio)
+        if n3:
+            해석.append(n3.replace("지분율", "취득 후 지분율"))
+        if pr >= thr_r:
+            판정, 이유 = "대주주", f"직전 사업연도 종료일에는 미달이었으나 그 뒤 주식 취득으로 지분율 {_pct(pr)} ≥ {_pct(thr_r)} — 취득일 이후 양도분은 대주주(시가총액 기준은 사후 취득에 적용되지 않음)"
+            판단.append({"항목": "사후 취득", "결론": 이유, "근거": "소득세법 시행령 제157조⑨(구 ⑫, 2016.4.1.~) — 지분율 기준만"})
+        else:
+            판단.append({"항목": "사후 취득", "결론": f"취득 후 지분율 {_pct(pr)}도 {_pct(thr_r)} 미달 — 사후 취득으로 대주주가 되지 않음(시가총액 기준은 사후 취득에 적용되지 않음)", "근거": "소득세법 시행령 제157조⑨"})
     if P.get("확인 필요"):
         판단.append({"항목": "확인 필요", "결론": P["확인 필요"], "근거": P["근거"]})
     판단.append({"항목": "기준일·시가", "결론": R["판정 기준일"] + ". 시가총액은 " + (R["시가총액 기준"]["상장"] if std in ("코스피", "코스닥", "코넥스") else R["시가총액 기준"]["비상장"]), "근거": "소득세법 시행령 제157조"})

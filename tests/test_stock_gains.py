@@ -44,8 +44,10 @@ def test_major_thresholds_by_period():
 def test_major_corporation_and_after_acquisition():
     assert M(transfer_date="2026-03-10", market="코스피", own_ratio=0.02, is_corporation=True)["결과"]["판정"] == "대상 아님"
     assert M(transfer_date="2024-03-10", market="코스피", own_ratio=0.02, is_corporation=True)["결과"]["판정"] == "대주주"
-    r = M(transfer_date="2026-03-10", market="코스피", own_ratio=0.005, acquired_to_threshold=True)
+    r = M(transfer_date="2026-03-10", market="코스피", own_ratio=0.005, post_acquisition_ratio=1.2)
     assert r["결과"]["판정"] == "대주주" and any(x["항목"] == "사후 취득" for x in r["판단"])
+    r = M(transfer_date="2026-03-10", market="코스피", own_ratio=0.005, own_mcap=100_000_000, post_acquisition_ratio=0.008)
+    assert r["결과"]["판정"] == "대주주 아님"   # 사후 취득은 지분율 기준만, 시가총액으로는 안 됨
 
 
 def test_tax_major_non_sme_2026():
