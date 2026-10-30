@@ -46,7 +46,7 @@ def pykrx_name(ticker: str) -> str | None:
 def last_close_on_or_before(ticker: str, day: str, fetch: Fetcher) -> dict[str, Any]:
     """그날 최종시세가액, 없으면(휴장) 직전 거래일 — 영 제157조④1호 단서."""
     d = _d(day)
-    rows = fetch(ticker, (d - timedelta(days=14)).strftime("%Y%m%d"), d.strftime("%Y%m%d"))
+    rows = fetch(ticker, (d - timedelta(days=31)).strftime("%Y%m%d"), d.strftime("%Y%m%d"))   # 긴 연휴·거래정지를 넘길 수 있게 31일 창
     rows = [r for r in rows if r[0] <= day]
     if not rows:
         return {"error": f"{day} 전후 거래 자료 없음 — 종목코드·날짜 확인(상장 전이거나 거래정지일 수 있음)"}
