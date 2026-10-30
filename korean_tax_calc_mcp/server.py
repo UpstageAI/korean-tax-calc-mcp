@@ -1391,11 +1391,12 @@ def wage_income_tax(gross_pay: Annotated[int, Field(description="총급여(원, 
         tax_base = max(0, income_amt - 1_500_000)
     t = I.income_tax(tax_base, year)
     credit = I.earned_tax_credit(t, gross_pay, year=year)
-    std = min(130_000, max(0, t - credit))
+    std = min(130_000, max(0, t - credit)) if assumed else 0
     decided = max(0, t - credit - std)
     판단 = [("과세표준을 주지 않아 근로소득금액 − 본인 기본공제 150만 원(소득세법 제50조①1호)으로 계산 — 부양가족·보험료·주택자금 등 다른 소득공제가 있으면 tax_base를 직접 주세요" if assumed
              else "과세표준은 입력값 그대로"),
-          "결정세액(참고)은 특별소득공제·특별세액공제·월세액 세액공제를 신청하지 않은 근로자의 표준세액공제 13만 원(제59조의4⑨)만 뺀 값 — 자녀·연금계좌·의료비 등 세액공제가 있으면 그만큼 줄어듦",
+          ("결정세액(참고)은 특별소득공제·특별세액공제·월세액 세액공제를 신청하지 않은 근로자의 표준세액공제 13만 원(제59조의4⑨)만 뺀 값 — 자녀·연금계좌·의료비 등 세액공제가 있으면 그만큼 줄어듦" if assumed
+           else "과세표준을 직접 준 경우 표준세액공제는 적용하지 않음(특별소득공제·특별세액공제를 신청했는지 알 수 없음) — 결정세액(참고)은 산출세액 − 근로소득세액공제이며 표준세액공제 13만 원(제59조의4⑨) 또는 특별·자녀·연금계좌 세액공제는 별도로 빼세요"),
           "지방소득세는 소득세 결정세액의 10%(지방세법 제103조의3)를 참고로 붙임"]
     return _ok({"근로소득공제": ded, "근로소득금액": income_amt, "과세표준": tax_base, "산출세액": t, "근로소득세액공제": credit,
                 "표준세액공제": std, "결정세액(참고)": decided, "지방소득세(참고)": decided // 10},
@@ -9479,16 +9480,20 @@ _TOOL_ALIASES: dict[str, list[str]] = {
 }
 
 # 계산 도구가 없는 흔한 질문 — 있는 척 엉뚱한 도구를 고르지 않도록 먼저 걸러 근거 조문만 안내(처음 쓰는 사람 점검 2026-10-30)
-_NOT_SUPPORTED: list[tuple[tuple[str, ...], str]] = [
-    (("월세", "세액공제"), "월세액 세액공제(조세특례제한법 제95조의2)"),
-    (("월세액",), "월세액 세액공제(조세특례제한법 제95조의2)"),
-    (("연금", "세액공제"), "연금계좌 세액공제(소득세법 제59조의3) — 연금저축·IRP 납입액 공제"),
-    (("주식", "양도"), "주식 양도소득(소득세법 제94조①3호·제104조①11호, 대주주 판정 시행령 제157조)"),
-    (("대주주",), "주식 양도소득(소득세법 제94조①3호·제104조①11호, 대주주 판정 시행령 제157조)"),
-    (("종합부동산세",), "종합부동산세(종합부동산세법)"), (("종부세",), "종합부동산세(종합부동산세법)"),
-    (("신용카드", "소득공제"), "신용카드 등 사용금액 소득공제(조세특례제한법 제126조의2)"),
-    (("근로장려금",), "근로장려금(조세특례제한법 제100조의2~)"), (("자녀장려금",), "자녀장려금(조세특례제한법 제100조의27~)"),
-    (("취득세",), "취득세(지방세법 — 국세 아님)"), (("재산세",), "재산세(지방세법 — 국세 아님)"), (("자동차세",), "자동차세(지방세법 — 국세 아님)"),
+_NOT_SUPPORTED: list[tuple[tuple[str, ...], str, list[tuple[str, str]]]] = [
+    (("월세", "세액공제"), "월세액 세액공제(조세특례제한법 제95조의2)", [("조세특례제한법", "제95조의2")]),
+    (("월세액",), "월세액 세액공제(조세특례제한법 제95조의2)", [("조세특례제한법", "제95조의2")]),
+    (("연금", "세액공제"), "연금계좌 세액공제(소득세법 제59조의3) — 연금저축·IRP 납입액 공제", [("소득세법", "제59조의3")]),
+    (("주식", "양도"), "주식 양도소득(소득세법 제94조①3호·제104조①11호, 대주주 판정 시행령 제157조)", [("소득세법", "제94조"), ("소득세법", "제104조"), ("소득세법 시행령", "제157조")]),
+    (("대주주",), "주식 양도소득(소득세법 제94조①3호·제104조①11호, 대주주 판정 시행령 제157조)", [("소득세법", "제94조"), ("소득세법", "제104조"), ("소득세법 시행령", "제157조")]),
+    (("종합부동산세",), "종합부동산세(종합부동산세법)", [("종합부동산세법", "제7조"), ("종합부동산세법", "제9조")]),
+    (("종부세",), "종합부동산세(종합부동산세법)", [("종합부동산세법", "제7조"), ("종합부동산세법", "제9조")]),
+    (("신용카드", "소득공제"), "신용카드 등 사용금액 소득공제(조세특례제한법 제126조의2)", [("조세특례제한법", "제126조의2")]),
+    (("근로장려금",), "근로장려금(조세특례제한법 제100조의2~)", [("조세특례제한법", "제100조의2"), ("조세특례제한법", "제100조의5")]),
+    (("자녀장려금",), "자녀장려금(조세특례제한법 제100조의27~)", [("조세특례제한법", "제100조의27"), ("조세특례제한법", "제100조의29")]),
+    (("취득세",), "취득세(지방세법 — 국세 아님)", [("지방세법", "제10조"), ("지방세법", "제11조")]),
+    (("재산세",), "재산세(지방세법 — 국세 아님)", [("지방세법", "제110조"), ("지방세법", "제111조")]),
+    (("자동차세",), "자동차세(지방세법 — 국세 아님)", [("지방세법", "제127조")]),
 ]
 _NOT_SUPPORTED_EXEMPT = ("양도", "필요경비", "취득가액", "보유세")  # 양도 계산 질문에 섞인 '취득세·재산세'는 걸러내지 않음
 
@@ -9511,10 +9516,12 @@ def find_tool(query: Annotated[str, Field(description="찾는 계산을 평소 �
     if not q:
         return {"error": "입력 확인 필요 — query(찾는 계산)를 넣으세요"}
     qn = q.replace(" ", "").lower()
-    for words, what in _NOT_SUPPORTED:
-        if all(w.replace(" ", "").lower() in qn for w in words) and not (words[0] in ("취득세", "재산세") and any(e in qn for e in _NOT_SUPPORTED_EXEMPT)):
+    for words, what, arts in _NOT_SUPPORTED:
+        if all(w.replace(" ", "").lower() in qn for w in words) and not (words[0] in ("취득세", "재산세", "자동차세") and any(e in qn for e in _NOT_SUPPORTED_EXEMPT)):
             return {"결과": {"후보": [], "없는 계산": what,
-                            "안내": f"{what}은(는) 이 서버에 계산 도구가 없습니다. korean-tax-mcp(law_article)로 조문을 확인해 직접 계산하고, 계산 도구가 없다는 사실을 답에 밝히세요."},
+                            "근거 조회": [{"도구": "law_article", "law_name": ln, "article": ar} for ln, ar in arts],
+                            "안내": f"{what}은(는) 이 서버에 계산 도구가 없습니다. 위 '근거 조회'대로 korean-tax-mcp law_article을 불러 조문 원문을 읽고 그에 따라 직접 계산하되, "
+                                    "계산 도구 없이 계산했다는 사실을 답에 밝히세요. (지방세는 korean-tax-mcp에도 없을 수 있음 — 그러면 법제처 원문으로)"},
                     "근거": "도구 목록 검색(세무 자문 아님)"}
     qb = _bigrams(q)
     scores: dict[str, float] = {}
@@ -9523,11 +9530,9 @@ def find_tool(query: Annotated[str, Field(description="찾는 계산을 평소 �
     # 긴 별칭이 맞으면 그 안에 든 짧은 별칭은 세지 않음('수입배당금'이 맞으면 '배당'은 무시)
     matched = [a for a in matched if not any(a != b and a.replace(" ", "").lower() in b.replace(" ", "").lower() for b in matched)]
     for alias in matched:
-        targets = _TOOL_ALIASES[alias]
-        if True:
-            for rank, name in enumerate(targets):
-                scores[name] = scores.get(name, 0) + 3.0 - rank * 0.5
-                why.setdefault(name, []).append(f"'{alias}'")
+        for rank, name in enumerate(_TOOL_ALIASES[alias]):
+            scores[name] = scores.get(name, 0) + 3.0 - rank * 0.5
+            why.setdefault(name, []).append(f"'{alias}'")
     for name, desc in tools.items():
         if name.lower() in q.lower():
             scores[name] = scores.get(name, 0) + 5.0
@@ -9557,7 +9562,9 @@ def find_tool(query: Annotated[str, Field(description="찾는 계산을 평소 �
                     "일치": ", ".join(why.get(name, [])) or "설명문 낱말 겹침", "점수": round(scores[name], 2)})
     return {"결과": {"후보": out,
                     "안내": "후보의 설명·입력 스키마를 확인한 뒤 호출하세요. 후보에 맞는 도구가 없으면 이 서버에 해당 계산이 없는 것이니 "
-                            "조문 계산은 korean-tax-mcp(find_article·law_article)로 근거를 찾아 직접 계산하고 그 사실을 답에 밝히세요."},
+                            "조문 계산은 korean-tax-mcp(find_article·law_article)로 근거를 찾아 직접 계산하고 그 사실을 답에 밝히세요.",
+                    "근거 조회": "계산 결과의 '근거'에 적힌 조문(예: 소득세법 제47조①)은 korean-tax-mcp law_article(law_name, article, as_of=귀속연도 말일)로 원문을 확인해 답에 함께 인용하세요. "
+                                "사실관계가 조문의 요건에 맞는지(비과세·공제 요건, 적용 시기)는 도구가 아니라 조문으로 판단합니다."},
             "근거": "도구 목록 검색(세무 자문 아님)"}
 
 
