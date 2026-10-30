@@ -64,3 +64,5 @@ def test_unknown_relation_and_missing_total():
     assert e["error"].startswith("입력 확인 필요") and "허용값" in e
     e = M(transfer_date="2026-03-10", market="코스피", own_shares=10)
     assert "total_shares" in e["문제"][0]
+    e = M(transfer_date="2026-03-10", market="코스피", total_shares=1000, own_shares=10, own_ratio=0.5)
+    assert "함께 주지" in e["문제"][0]
