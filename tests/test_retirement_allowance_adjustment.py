@@ -655,3 +655,17 @@ def test_exam_style_pension_payout_split_between_book_allowances():
     assert adj[("퇴직연금충당금(지급 상계)", "익금산입", "유보")] == 100_000_000
     assert adj[("퇴직급여충당금(퇴직연금 지급 대체)", "손금산입", "△유보")] == 100_000_000
     assert r["계산"]["세무상_퇴직급여충당금_기말"] == 80_000_000 and r["계산"]["이미_손금산입한_부담금"] == 350_000_000
+
+
+def test_pension_setoff_when_payout_exceeds_tax_pension_allowance():
+    """운용자산 지급 250M(장부 연금충당금 상계 150M + 퇴직급여충당금 상계 100M)인데 세무상 연금충당금 기초가 200M뿐이면,
+    세무상 연금충당금 감소는 200M(장부 상계 150M 몫 + 퇴직급여충당금 몫 50M)이고 나머지 50M은 퇴직급여충당금 지급으로 본다.
+    세무상 퇴직급여충당금 기초 80M(100M − 유보 20M) → 과세 지급 50M은 잔액 안 → 부인액 추인 0, 세무상 설정전 잔액 30M."""
+    r = c("retirement_allowance_adjustment", {"year": 2025, "allowance": {"opening": 100_000_000, "closing": 0, "paid_pension": 100_000_000}, "prior_disallowed": 20_000_000,
+                                              "estimate": {"lump_sum": 990_000_000},
+                                              "pension": {"asset_closing": 930_000_000, "prior_deducted": 200_000_000, "book_provision": 0, "book_paid": 150_000_000}})
+    assert r["계산"]["퇴직연금충당금_상계"] == 50_000_000
+    assert r["계산"]["이미_손금산입한_부담금"] == 0 and r["계산"]["부인액_추인"] == 0
+    assert r["계산"]["세무상_설정전잔액"] == 30_000_000
+    adj = {(x["구분"], x["조정"], x["소득처분"]): x["금액"] for x in r["결과"]["세무조정"]}
+    assert adj[("퇴직연금충당금(지급 상계)", "익금산입", "유보")] == 50_000_000

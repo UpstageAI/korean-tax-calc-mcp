@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.16.3 (2026-10-30)
+
+보완 Claude(CodeSolar 리뷰 지적 반영). 뼈대는 Solar Pro 4.
+
+### 수정
+- `retirement_allowance_adjustment`: 0.16.2에서 세무상 잔액 사용액은 새 식(book_paid 반영)으로 바꿨으나 부인액 추인에 쓰는 연금충당금 상계액은 옛 식(`min(paid_pension, prior_deducted)`)으로 남아 있었음. 운용자산 지급 합계가 세무상 퇴직연금충당금 기초를 넘는 경우 과세 지급액이 적게 잡혀 부인액 추인이 틀릴 수 있었음 → 같은 식으로 통일, 그 경계 사례 테스트 추가
+
 ## 0.16.2 (2026-10-30)
 
 보완 Claude(실제 사용 점검에서 발견). 뼈대는 Solar Pro 4.
