@@ -9484,7 +9484,7 @@ def stock_price_lookup(ticker: Annotated[str, Field(description="6자리 종목�
 @_guard
 def unlisted_stock_valuation(valuation_date: Annotated[str, Field(description="평가기준일(상속개시일·증여일) YYYY-MM-DD, 2016~2026")],
                              shares: Annotated[int, Field(description="평가기준일 현재 발행주식총수", ge=1)],
-                             incomes: Annotated[list | None, Field(description="최근 3개 사업연도 [{사업연도, 순손익액 | 각사업연도소득 + 가산:{이월익금, 수입배당금, 기부금이월, 외화평가이익…} + 차감:{법인세, 감면세액, 농특세, 지방소득세, 벌과금, 업무무관, 기부금 한도초과, 접대비 한도초과, 과다경비, 지급이자 손금불산입, 감가상각 시인부족, 외화평가손실…}, 주식수?}] — 1년 전부터. 순손익액을 바로 알면 숫자만, 세무조정계산서에서 뽑으면 각사업연도소득과 가감 항목으로(영 제56조④, 도구가 산출 과정을 보여줌). 사업 개시 3년 미만이면 생략 가능")] = None,
+                             incomes: Annotated[list | None, Field(description="최근 3개 사업연도 [{사업연도, 순손익액 | 각사업연도소득 + 가산:{…} + 차감:{…} | calls:[{tool, args}](세무조정 계산기 호출을 주면 서버가 실행해 각사업연도소득·가산·차감을 채움), 주식수?}] — 1년 전부터. 순손익액을 바로 알면 숫자만, 세무조정계산서에서 뽑으면 각사업연도소득과 가감 항목으로(영 제56조④, 도구가 산출 과정을 보여줌). 사업 개시 3년 미만이면 생략 가능")] = None,
                              net_asset: Annotated[int | dict | None, Field(description="평가기준일 현재 순자산가액(원), 또는 재무상태표 항목형 {자산_장부가액, 자산_평가차액?(상증법 평가액−장부가액), 부채_장부가액, 자산_가산:{지급받을 권리…}, 자산_차감:{선급비용, 영업권…}, 부채_가산:{미지급 법인세, 확정 배당, 퇴직급여추계액…}, 부채_차감:{충당금, 준비금…}} — 영 제55조·규칙 제17조의2 가감을 도구가 적용하고 산출 과정을 보여줌")] = None,
                              equity: Annotated[int | None, Field(description="영업권 계산용 평가기준일 자기자본(원). goodwill을 직접 주면 불필요")] = None,
                              goodwill: Annotated[int | None, Field(description="영업권 평가액(원)을 이미 알면 직접")] = None,
@@ -9505,13 +9505,28 @@ def unlisted_stock_valuation(valuation_date: Annotated[str, Field(description="�
     언제: 비상장주식을 상속·증여받았을 때 1주당 평가액, 또는 비상장법인 지분의 상증법 가액이 필요할 때. 양도세 대주주 시가총액·기준시가는 산식이 달라 stock_basis_income_tax를 쓴다.
     입력: 평가기준일 → valuation_date, 발행주식총수 → shares, 3년 순손익 → incomes, 순자산가액 → net_asset, 부동산 비율 → real_estate_ratio, 최대주주·중소기업 → is_max_shareholder·sme.
     재무제표 입력: incomes에 각사업연도소득+가산·차감 항목, net_asset에 자산·부채 장부가액+평가차액+가감 항목을 주면 순손익액·순자산가액을 도구가 만들고 줄별 근거를 보여준다.
+    세무조정 연결: incomes 항목에 calls=[{tool, args}]를 주면 서버가 세무조정 계산기(income_adjustment_total·corporate_tax·entertainment_adjustment·donation_limit·dividend_received_deduction·business_car_expense·nonbusiness_interest_disallowance·depreciation_adjustment)를 실행해 각사업연도소득·가산·차감에 자동으로 넣는다(영 제56조④ 항목만).
     증감자(capital_changes)·추정이익(estimated_profit, 요건 판정)·자산별 평가(assets: 시가→기준시가→장부가액 선택, 장부가액 하한)까지 받는다.
     지원하지 않음: 평가심의위원회, 자산별 시가의 평가기간(상속 전후 6개월·증여 전 6개월~후 3개월) 판정(사용자가 기간 안 가액만 넣음), 국외 비상장.
     결과: 1주당 평가액(할증 후·전), 순손익가치·순자산가치·가중평균, 평가방법, 할증률, 판단(사유·하한·확인 필요), 근거."""
-    return SV.unlisted_valuation(valuation_date, shares, incomes=incomes, net_asset=net_asset, equity=equity, goodwill=goodwill, real_estate_ratio=real_estate_ratio,
+    연결 = []
+    if incomes:
+        new_items = []
+        for it in incomes:
+            if isinstance(it, dict) and it.get("calls"):
+                it2, lines, probs = _link_income_calls(it)
+                if probs:
+                    return {"error": "입력 확인 필요 — 계산하지 않음", "문제": probs}
+                연결.append({"사업연도": it2.get("사업연도") or it2.get("year"), "연결": lines}); it = it2
+            new_items.append(it)
+        incomes = new_items
+    out = SV.unlisted_valuation(valuation_date, shares, incomes=incomes, net_asset=net_asset, equity=equity, goodwill=goodwill, real_estate_ratio=real_estate_ratio,
                                  stock_asset_ratio=stock_asset_ratio, business_start=business_start, status=status, is_max_shareholder=is_max_shareholder,
                                  ratio_over_50=ratio_over_50, sme=sme, mid_sized=mid_sized, premium_exclusion=premium_exclusion,
                                  capital_changes=capital_changes, estimated_profit=estimated_profit, assets=assets, kind=kind)
+    if 연결 and isinstance(out, dict) and "계산" in out:
+        out["계산"]["세무조정 연결"] = 연결
+    return out
 
 
 @mcp.tool(annotations=CALC)
@@ -9574,6 +9589,55 @@ def building_standard_price(year: Annotated[int, Field(description="적용연도
     return BL.building_standard_price(year, area_m2, structure, use, land_price_per_m2, built_year, purpose=purpose, floors=floors, total_area_m2=total_area_m2,
                                       roof=roof, floor_use=floor_use, safety_grade=safety_grade, remodel_count=remodel_count)
 
+
+
+# ── 세무조정 계산기 결과 → 비상장주식 평가 순손익액 입력 연결(영 제56조④) ────────────────────────
+_VAL_LINK = {   # 도구 → [(구분, 항목, 결과 키 또는 키 목록)]; 구분 '각사업연도소득'은 기준값
+    "income_adjustment_total": [("각사업연도소득", "", "각사업연도소득금액")],
+    "corporate_tax": [("차감", "법인세", "산출세액")],
+    "entertainment_adjustment": [("차감", "접대비 한도초과", "손금불산입_합계")],
+    "donation_limit": [("차감", "기부금 한도초과", "한도초과(기타사외유출)"), ("가산", "기부금이월", "이월분 손금산입")],
+    "dividend_received_deduction": [("가산", "수입배당금", "익금불산입액")],
+    "business_car_expense": [("차감", "업무용승용차 한도초과", ["유지비 손금불산입(상여)", "감가상각 사적사용 손금불산입(상여)", "감가상각 한도초과(유보)"]), ("가산", "27조의2 손금산입", "감가상각 미계상 손금산입(유보)")],
+    "nonbusiness_interest_disallowance": [("차감", "지급이자 손금불산입", "손금불산입(기타사외유출)")],
+    "depreciation_adjustment": [("차감", "감가상각 시인부족", "전기부인액_추인")],
+}
+
+
+def _link_income_calls(item: dict) -> tuple[dict, list[dict], list[str]]:
+    """incomes 항목의 calls=[{tool, args}]를 서버가 실행해 각사업연도소득·가산·차감에 넣는다. (항목, 연결 줄, 문제)"""
+    import json as _json
+    it = dict(item); 가산 = dict(it.get("가산") or {}); 차감 = dict(it.get("차감") or {}); lines = []; problems = []
+    for call in it.get("calls") or []:
+        tool = call.get("tool", ""); args = call.get("args", {})
+        if isinstance(args, str):
+            try: args = _json.loads(args)
+            except Exception: problems.append(f"{tool}: args가 JSON이 아님"); continue
+        if tool not in _VAL_LINK:
+            problems.append(f"{tool}: 순손익액 연결 미지원 도구 — 결과 숫자를 가산·차감에 직접 넣으세요(연결 지원: {', '.join(_VAL_LINK)})"); continue
+        try:
+            r = asyncio.run(mcp.call_tool(tool, args)); data = _json.loads(r.content[0].text if hasattr(r, "content") else r[0][0].text)
+        except Exception as e:
+            problems.append(f"{tool}: 호출 오류 {e}"); continue
+        if "error" in data:
+            problems.append(f"{tool}: {data['error']} {('— ' + ' / '.join(data.get('문제', []))) if data.get('문제') else ''}"); continue
+        res = data.get("결과", {})
+        for 구분, 항목, keys in _VAL_LINK[tool]:
+            ks = keys if isinstance(keys, list) else [keys]
+            vals = [res.get(k) for k in ks if isinstance(res.get(k), (int, float))]
+            if not vals:
+                problems.append(f"{tool}: 결과에 {ks} 없음"); continue
+            amt = float(sum(vals))
+            if 구분 == "각사업연도소득":
+                it["각사업연도소득"] = amt; lines.append({"도구": tool, "구분": "각사업연도소득", "금액": amt, "근거": "법인세법 제14조"})
+            elif 구분 == "가산":
+                가산[항목] = 가산.get(항목, 0) + amt; lines.append({"도구": tool, "구분": "+ " + 항목, "금액": amt, "근거": "영 제56조④1호"})
+            else:
+                차감[항목] = 차감.get(항목, 0) + amt; lines.append({"도구": tool, "구분": "− " + 항목, "금액": amt, "근거": "영 제56조④2호"})
+    if it.get("각사업연도소득") is None and it.get("순손익액") is None and it.get("calls"):
+        problems.append("각사업연도소득이 없음 — income_adjustment_total call을 넣거나 각사업연도소득을 직접 주세요")
+    it["가산"] = 가산; it["차감"] = 차감; it.pop("calls", None)
+    return it, lines, problems
 
 _TOOL_ALIASES: dict[str, list[str]] = {
     "양도세": ["capital_gains_income", "capital_gains_tax"], "양도소득세": ["capital_gains_income", "capital_gains_tax"],
