@@ -14,6 +14,106 @@ def _won(v) -> str:
     return f"{v:,.0f}원"
 
 
+
+# ── 재무제표 → 순손익액·순자산가액 (영 제56조④, 제55조·규칙 제17조의2) ──────────────────
+
+_INC_ADD = {   # 가산(각 사업연도소득에 더함): 키워드 → (표준명, 근거, 적용 시작일)
+    "이월익금": ("이월익금", "법인세법 제18조4호 — 영 제56조④1호가목", None),
+    "수입배당금": ("수입배당금 익금불산입액", "법인세법 제18조의2·제18조의3(2023~ 제18조의4) — 영 제56조④1호", None),
+    "기부금이월": ("기부금 한도초과 이월액 손금산입", "법인세법 제24조④(→⑤) — 영 제56조④1호", None),
+    "기부금 이월": ("기부금 한도초과 이월액 손금산입", "법인세법 제24조④(→⑤) — 영 제56조④1호", None),
+    "외화평가이익": ("화폐성외화자산등 평가이익(미평가분)", "영 제56조④1호(2019.2.12.~, 부칙 제10조 시행 이후 상속·증여분)", "2019-02-12"),
+    "외화 평가이익": ("화폐성외화자산등 평가이익(미평가분)", "영 제56조④1호(2019.2.12.~)", "2019-02-12"),
+    "27조의2 손금산입": ("업무용승용차 관련비용 손금산입액(제27조의2③④)", "영 제56조④1호(2020.2.11.~)", "2020-02-11"),
+    "기타가산": ("기획재정부령으로 정하는 가산액", "영 제56조④1호 — 규칙 제17조의3", None),
+}
+_INC_SUB = {   # 차감
+    "법인세": ("법인세액(외국납부세액 포함)", "영 제56조④2호가목", None),
+    "감면세액": ("법인세 감면세액", "영 제56조④2호가목", None),
+    "농특세": ("농어촌특별세", "영 제56조④2호가목", None),
+    "지방소득세": ("법인지방소득세", "영 제56조④2호가목", None),
+    "벌과금": ("벌금·과료·과태료·가산금 손금불산입(제21조3·4호)", "영 제56조④2호나목", None),
+    "업무무관": ("업무무관 비용 손금불산입(제27조)", "영 제56조④2호나목", None),
+    "업무용승용차 한도초과": ("업무용승용차 관련비용 손금불산입(제27조의2)", "영 제56조④2호다목(2020.2.11.~)", "2020-02-11"),
+    "징수불이행": ("징수불이행 세액", "영 제56조④2호나목", None),
+    "기부금 한도초과": ("기부금 한도초과액 손금불산입(제24조)", "영 제56조④2호다목", None),
+    "기부금한도초과": ("기부금 한도초과액 손금불산입(제24조)", "영 제56조④2호다목", None),
+    "접대비 한도초과": ("기업업무추진비 한도초과액(제25조)", "영 제56조④2호다목", None),
+    "기업업무추진비 한도초과": ("기업업무추진비 한도초과액(제25조)", "영 제56조④2호다목", None),
+    "과다경비": ("과다경비 등 손금불산입(제26조)", "영 제56조④2호다목", None),
+    "지급이자 손금불산입": ("업무무관자산 등 지급이자 손금불산입(제28조)", "영 제56조④2호다목", None),
+    "감가상각 시인부족": ("감가상각 시인부족액 중 상각부인액 추인액(시인부족액−상각부인액 손금산입분)", "영 제56조④2호라목", None),
+    "외화평가손실": ("화폐성외화자산등 평가손실", "영 제56조④2호마목(2019.2.12.~)", "2019-02-12"),
+    "외화 평가손실": ("화폐성외화자산등 평가손실", "영 제56조④2호마목(2019.2.12.~)", "2019-02-12"),
+    "기타차감": ("기획재정부령으로 정하는 차감액", "영 제56조④2호 — 규칙 제17조의3", None),
+}
+
+
+def _match(table: dict, name: str):
+    low = name.replace(" ", "")
+    best = None
+    for k, v in table.items():
+        kk = k.replace(" ", "")
+        if kk in low and (best is None or len(kk) > len(best[0])):
+            best = (kk, v)
+    return best[1] if best else None
+
+
+def net_income_from_statement(item: dict, vd: date) -> tuple[float | None, list[dict], list[str]]:
+    """{각사업연도소득, 가산:{항목:금액}, 차감:{항목:금액}} → 순손익액. (값, 계산 줄, 문제)"""
+    base = item.get("각사업연도소득")
+    if base is None:
+        return None, [], []
+    lines = [{"구분": "각 사업연도 소득금액", "금액": float(base), "근거": "법인세법 제14조 — 영 제56조④ 본문"}]
+    total = float(base); problems: list[str] = []
+    for key, table, sign in (("가산", _INC_ADD, 1), ("차감", _INC_SUB, -1)):
+        for name, amt in (item.get(key) or {}).items():
+            m = _match(table, str(name))
+            if m is None:
+                problems.append(f"{key} 항목 '{name}'을(를) 알 수 없음 — 허용: {', '.join(table)}")
+                continue
+            std, basis, start = m
+            if start and vd < _d(start):
+                problems.append(f"{key} '{name}'({std})은 {start} 이후 평가분부터 — 평가기준일 {vd.isoformat()}에는 반영하지 않음")
+                continue
+            total += sign * float(amt)
+            lines.append({"구분": ("+ " if sign > 0 else "− ") + std, "금액": float(amt), "근거": basis})
+    lines.append({"구분": "= 순손익액", "금액": total, "근거": "영 제56조④"})
+    return total, lines, problems
+
+
+_NA_ADD_ASSET = {"지급받을 권리": ("평가기준일 현재 지급받을 권리가 확정된 가액", "규칙 제17조의2 1호"), "미수": ("평가기준일 현재 지급받을 권리가 확정된 가액", "규칙 제17조의2 1호"), "확정 채권": ("평가기준일 현재 지급받을 권리가 확정된 가액", "규칙 제17조의2 1호")}
+_NA_SUB_ASSET = {"선급비용": ("선급비용(비용 확정분)", "규칙 제17조의2 2호"), "영업권": ("무형자산(영업권 — 별도 평가해 합산, 영 제55조③)", "규칙 제17조의2 2호·법인세령 제24조①2호바목"), "무형자산": ("무형자산(영업권)", "규칙 제17조의2 2호"), "이연법인세자산": ("이연법인세자산(확인 필요 — 조문 명시 없음, 실무상 제외)", "확인 필요")}
+_NA_ADD_LIAB = {"미지급 법인세": ("평가기준일까지 발생한 소득에 대한 법인세·감면세액·농특세·지방소득세", "규칙 제17조의2 3호가목"), "법인세": ("평가기준일까지 발생한 소득에 대한 법인세 등", "규칙 제17조의2 3호가목"), "확정 배당": ("이익처분으로 확정된 배당금·상여금 등", "규칙 제17조의2 3호나목"), "배당금": ("이익처분으로 확정된 배당금", "규칙 제17조의2 3호나목"), "상여금": ("이익처분으로 확정된 상여금", "규칙 제17조의2 3호나목"), "퇴직급여추계액": ("전원 퇴직 시 퇴직급여 추계액", "규칙 제17조의2 3호다목"), "퇴직금 추계": ("전원 퇴직 시 퇴직급여 추계액", "규칙 제17조의2 3호다목")}
+_NA_SUB_LIAB = {"충당금": ("제충당금(비용으로 확정된 것 제외)", "규칙 제17조의2 4호"), "준비금": ("조특법·기타 법률 제준비금(보험 책임·비상위험·해약환급금준비금 제외)", "규칙 제17조의2 4호"), "이연법인세부채": ("이연법인세부채(확인 필요 — 조문 명시 없음)", "확인 필요")}
+
+
+def net_asset_from_statement(d: dict) -> tuple[float, list[dict], list[str]]:
+    """{자산_장부가액, 자산_평가차액?, 부채_장부가액, 자산_가산:{}, 자산_차감:{}, 부채_가산:{}, 부채_차감:{}} → 순자산가액."""
+    problems: list[str] = []
+    assets = float(d.get("자산_장부가액") or 0); liab = float(d.get("부채_장부가액") or 0)
+    lines = [{"구분": "자산 장부가액", "금액": assets, "근거": "영 제55조①"}]
+    if d.get("자산_평가차액") is not None:
+        diff = float(d["자산_평가차액"]); assets += diff
+        lines.append({"구분": "+ 자산 평가차액(상증법 평가액 − 장부가액; 평가액이 장부가액보다 낮으면 장부가액 유지 — 정당한 사유 예외)", "금액": diff, "근거": "영 제55조① 후단, 법 제60조~제66조"})
+    for key, table, sign, label in (("자산_가산", _NA_ADD_ASSET, 1, "자산"), ("자산_차감", _NA_SUB_ASSET, -1, "자산"), ("부채_가산", _NA_ADD_LIAB, 1, "부채"), ("부채_차감", _NA_SUB_LIAB, -1, "부채")):
+        for name, amt in (d.get(key) or {}).items():
+            m = _match(table, str(name))
+            if m is None:
+                problems.append(f"{key} 항목 '{name}'을(를) 알 수 없음 — 허용: {', '.join(table)}")
+                continue
+            std, basis = m
+            if label == "자산":
+                assets += sign * float(amt)
+            else:
+                liab += sign * float(amt)
+            lines.append({"구분": f"{label} {'+' if sign > 0 else '−'} {std}", "금액": float(amt), "근거": basis})
+    lines.append({"구분": "부채 장부가액(가감 후)", "금액": liab, "근거": "영 제55조①, 규칙 제17조의2 3·4호"})
+    net = assets - liab
+    lines.append({"구분": "= 순자산가액(자산 − 부채)", "금액": net, "근거": "영 제55조①"})
+    return net, lines, problems
+
+
 # ── (A) 상증법 보충적 평가 ────────────────────────────────────────────────────
 
 def _floor_ratio_inh(vd: date) -> tuple[float | None, str]:
@@ -73,9 +173,15 @@ def unlisted_valuation(valuation_date: str, shares: int, incomes: list | None = 
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["shares(평가기준일 현재 발행주식총수)가 필요"]}
     shares = int(shares)
     판단: list[dict] = []
-    # 순자산가치
+    계산_상세: dict = {}
+    # 순자산가치 — 숫자 또는 재무제표 항목형
+    if isinstance(net_asset, dict):
+        net_asset, na_lines, na_problems = net_asset_from_statement(net_asset)
+        if na_problems:
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": na_problems}
+        계산_상세["순자산가액 산출"] = na_lines
     if net_asset is None:
-        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["net_asset(평가기준일 현재 순자산가액 = 상증법 평가 자산 − 부채, 영 제55조·규칙 제17조의2 가감 반영)이 필요"]}
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["net_asset(평가기준일 현재 순자산가액, 또는 {자산_장부가액, 자산_평가차액, 부채_장부가액, 자산_가산, 자산_차감, 부채_가산, 부채_차감})이 필요"]}
     na = max(0.0, float(net_asset))
     if float(net_asset) < 0:
         판단.append({"항목": "순자산가액", "결론": "0보다 작아 0으로 봄", "근거": "상증법 시행령 제55조①"})
@@ -84,7 +190,14 @@ def unlisted_valuation(valuation_date: str, shares: int, incomes: list | None = 
     if inc_items and len(inc_items) not in (1, 2, 3):
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["incomes는 최근 3개 사업연도 [{사업연도, 순손익액, 주식수?}] 최근 연도부터"]}
     per_share = []
+    inc_lines_all = []
     for it in inc_items:
+        if it.get("순손익액") is None and it.get("각사업연도소득") is not None:
+            n_calc, lines, probs = net_income_from_statement(it, vd)
+            if probs:
+                return {"error": "입력 확인 필요 — 계산하지 않음", "문제": probs}
+            it = {**it, "순손익액": n_calc}
+            inc_lines_all.append({"사업연도": it.get("사업연도") or it.get("year"), "산출": lines})
         n = float(it.get("순손익액") if it.get("순손익액") is not None else it.get("net_income", 0))
         sh = int(it.get("주식수") or it.get("shares") or shares)
         per_share.append((it.get("사업연도") or it.get("year"), n / sh))
@@ -165,7 +278,8 @@ def unlisted_valuation(valuation_date: str, shares: int, incomes: list | None = 
     판단.append({"항목": "확인 필요", "결론": "순자산가액은 상증법 평가액 기준으로 사용자가 가감(지급 확정 권리 +, 선급비용·무형자산 −, 미지급 법인세·확정 배당·퇴직급여추계액 +, 충당금·준비금 −)을 끝낸 값을 넣어야 함. 발행주식총수의 자기주식 포함 여부는 조문에 명시 없음(통칙 확인)", "근거": "상증법 시행령 제55조, 시행규칙 제17조의2"})
     return {"결과": {"1주당_평가액": round(final, 2), "1주당_할증전": round(value, 2), "순손익가치": round(ev_per, 2) if ev_per is not None else None, "순자산가치": round(nav_per, 2), "가중평균": round(weighted, 2) if weighted is not None else None,
                    "평가방법": method, "할증률": prem, "총평가액(보유주식×)": None},
-            "계산": {"순손익가치 산식": ev_calc, "연도별 1주당 순손익액": [{"사업연도": y, "1주당": round(v, 2)} for y, v in per_share], "가중치": f"{w_e}:{w_n}", "하한율": floor_r, "영업권": round(gw, 0), "환원율": cap_rate},
+            "계산": {"순손익가치 산식": ev_calc, "연도별 1주당 순손익액": [{"사업연도": y, "1주당": round(v, 2)} for y, v in per_share], "가중치": f"{w_e}:{w_n}", "하한율": floor_r, "영업권": round(gw, 0), "환원율": cap_rate,
+                   **({"순손익액 산출": inc_lines_all} if inc_lines_all else {}), **계산_상세},
             "근거": "상속세 및 증여세법 제63조①1호나목·③, 시행령 제53조·제54조·제55조·제56조·제59조②, 시행규칙 제17조·제17조의2·제17조의3·제19조", "판단": 판단,
             "산식": "순손익가치 = (1년전×3+2년전×2+3년전×1)/6 ÷ 10% / 순자산가치 = (순자산가액+영업권) ÷ 발행주식총수 / 가중평균 3:2(부동산 과다 2:3), 하한 순자산가치×80%(2017.4~2018.3은 70%), 순자산가치만 평가 사유 있으면 순자산가치 / 최대주주 할증 20%(2019까지 50% 초과 30%, 중소 제외·2023~ 중견 제외)"}
 
