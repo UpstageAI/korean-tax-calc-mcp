@@ -97,6 +97,8 @@ def major_shareholder(transfer_date: str, market: str, own_ratio=None, own_mcap=
     listed = std in ("코스피", "코스닥", "코넥스")
     명부 = None
     if total_shares is not None or own_shares is not None or holders:
+        if any(v is not None for v in (own_ratio, own_mcap, related_ratio, related_mcap)):   # 리뷰 반영: 명부와 직접 입력이 섞이면 조용히 덮어쓰지 않음
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["주주 명부(total_shares·own_shares·holders)와 직접 입력(own_ratio·own_mcap·related_ratio·related_mcap)을 함께 주지 마세요 — 명부를 주면 지분율·시가총액은 도구가 계산합니다. 둘 중 하나만"]}
         if own_shares is None:
             return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["own_shares(직전 사업연도 종료일 현재 본인 보유 주식 수)가 필요"]}
         명부 = holdings_to_inputs(P, listed, td, is_max_group, int(total_shares or 0), int(own_shares), holders, price, int(lent_shares or 0), int(pef_shares or 0))
@@ -131,8 +133,8 @@ def major_shareholder(transfer_date: str, market: str, own_ratio=None, own_mcap=
         return hit
 
     own_hit = meets(own_r, own_m)
-    comb_r = (own_r or 0.0) + (rel_r or 0.0) if (own_r is not None or rel_r is not None) else None
-    comb_m = (own_m or 0.0) + (rel_m or 0.0) if (own_m is not None or rel_m is not None) else None
+    comb_r = ((own_r if own_r is not None else 0.0) + (rel_r if rel_r is not None else 0.0)) if (own_r is not None or rel_r is not None) else None
+    comb_m = ((own_m if own_m is not None else 0.0) + (rel_m if rel_m is not None else 0.0)) if (own_m is not None or rel_m is not None) else None
     comb_hit = meets(comb_r, comb_m)
     has_related = (rel_r or 0) > 0 or (rel_m or 0) > 0
 
@@ -176,7 +178,7 @@ def major_shareholder(transfer_date: str, market: str, own_ratio=None, own_mcap=
     if 명부:
         판단 = 명부["판단"] + 판단
         if 명부["조건부"] and 판정 != "대주주":
-            cr = (comb_r or 0) + 명부["cond_ratio"]; cm = ((comb_m or 0) + (명부["cond_mcap"] or 0)) if comb_m is not None else None
+            cr = (comb_r if comb_r is not None else 0.0) + 명부["cond_ratio"]; cm = (comb_m + (명부["cond_mcap"] if 명부["cond_mcap"] is not None else 0.0)) if comb_m is not None else None
             if meets(cr, cm):
                 판정, 이유 = "확인 필요", f"최대주주군이면 합산되는 주주({'·'.join(명부['조건부'])})까지 합하면 기준 충족(지분율 {_pct(cr)}) — 주주 1인등의 지분 합계가 그 법인에서 최대인지(is_max_group) 확인 필요"
     if 판정 != "대주주" and post_acquisition_ratio is not None:
