@@ -24,6 +24,7 @@ from .engine import calc_stock as ST
 from .engine import calc_stock_price as SP
 from .engine import calc_stock_val as SV
 from .engine import calc_official_price as OP
+from .engine import calc_building as BL
 from . import vocab
 from .forms_workbook import render_form_sheet, _load_form_templates, tool_value, nonbusiness_form_sources, nonbusiness_form_data
 
@@ -9549,6 +9550,31 @@ def official_property_price(address: Annotated[str, Field(description="지번 �
     return OP.official_price(address=address, pnu=pnu, kind=kind, year=year, area_m2=area_m2, dong=dong, ho=ho)
 
 
+
+@mcp.tool(annotations=CALC)
+@_guard
+def building_standard_price(year: Annotated[int, Field(description="적용연도(양도·상속·증여일이 속한 해, 2007~2026). 새 고시 전이면 직전 연도", ge=2007, le=2026)],
+                            area_m2: Annotated[float, Field(description="평가대상 건물 연면적(㎡, 집합건물은 전용+공용)", gt=0)],
+                            structure: Annotated[str, Field(description="구조 — 철근콘크리트·철골·경량철골·연와(벽돌)·블록·목조·조립식패널·컨테이너 등 평소 말(건축물대장 표기)")],
+                            use: Annotated[str, Field(description="용도 — 사무실·근린생활시설(상가)·공장·창고·병원·호텔·학원 등 평소 말(건축물대장 주용도). 주택·아파트·오피스텔은 이 고시 대상 아님(공시가격·고시가격)")],
+                            land_price_per_m2: Annotated[float | None, Field(description="부속토지 ㎡당 개별공시지가(원) — official_property_price(토지)로 조회", ge=0)] = None,
+                            built_year: Annotated[int | None, Field(description="신축연도(사용승인일 기준; 가사용·사실상 사용이 앞서면 그 해; 증축은 증축연도)", ge=1900, le=2026)] = None,
+                            purpose: Annotated[Literal["양도세", "상증세"], Field(description="양도세 기준시가(조정률 미적용) / 상증세 보충적 평가(개별건물 특성 조정률 적용)")] = "양도세",
+                            floors: Annotated[int | None, Field(description="상증세만: 최고층수(지하·옥탑 제외) — 규모 조정률", ge=1)] = None,
+                            total_area_m2: Annotated[float | None, Field(description="상증세만: 건물 전체 연면적(㎡) — 규모 조정률(비우면 area_m2)", gt=0)] = None,
+                            roof: Annotated[str, Field(description="상증세만, 구조지수 100 미만 건물: 지붕재료(슬래브·기와|패널·유리·슬레이트|함석·천막·초가)")] = "",
+                            floor_use: Annotated[str, Field(description="상증세만: 평가 부분이 상가 1층·2층·지하1층·지하2층·부속주차장·기계실·옥탑이면 적음")] = "",
+                            safety_grade: Annotated[str, Field(description="상증세만: 안전진단 등급 B|C|D|E(납세자 입증)")] = "",
+                            remodel_count: Annotated[int, Field(description="상증세만: 일부개축 횟수(개축 부분만 해당)", ge=0)] = 0) -> dict:
+    """건물 기준시가 — 국세청 「건물 기준시가 계산방법 고시」 산식(신축가격기준액 × 구조지수 × 용도지수 × 위치지수 × 경과연수별 잔가율 × (상증세만) 개별건물 특성 조정률, ㎡당 1,000원 미만 버림 × 면적). 양도세 기준시가(소득세법 제99조①1호나목)와 상속·증여 보충적 평가(상증법 제61조①2호)에 쓴다.
+    언제: 일반 건물(상가·사무실·공장·창고 등)의 기준시가가 필요할 때 — 비상장주식 평가(unlisted_stock_valuation의 assets 기준시가), 상속·증여 신고, 양도세 환산취득가액. 주택·아파트는 공시가격(official_property_price), 오피스텔·일괄고시 상업용은 국세청 고시가격을 쓴다.
+    입력: 적용연도 → year, 면적 → area_m2, 구조·용도 → structure·use, 부속토지 공시지가 → land_price_per_m2, 신축연도 → built_year, 상증세면 purpose='상증세'와 층수·연면적·지붕·층별·안전등급.
+    지수표는 2026년 고시(제2025-39호) 원문. 2007~2025년은 그 해 신축가격기준액에 2026 지수표를 적용한 근사(결과에 표시).
+    결과: 기준시가·㎡당 금액·지수·잔가율·조정률, 판단(산식·시가 우선·국세청 감정평가 가능성·범위), 근거."""
+    return BL.building_standard_price(year, area_m2, structure, use, land_price_per_m2, built_year, purpose=purpose, floors=floors, total_area_m2=total_area_m2,
+                                      roof=roof, floor_use=floor_use, safety_grade=safety_grade, remodel_count=remodel_count)
+
+
 _TOOL_ALIASES: dict[str, list[str]] = {
     "양도세": ["capital_gains_income", "capital_gains_tax"], "양도소득세": ["capital_gains_income", "capital_gains_tax"],
     "단기 양도": ["capital_gains_tax"], "미등기": ["capital_gains_tax"], "비사업용 토지": ["capital_gains_tax", "capital_gains_income"],
@@ -9619,7 +9645,7 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "증여": ["gift_tax", "inheritance_gift_valuation"], "상속": ["inheritance_tax", "inheritance_gift_valuation"],
     "법인세": ["corporate_tax", "income_adjustment_total"], "퇴직소득세": ["retirement_income_tax"],
     "주식 양도": ["stock_capital_gains_tax", "stock_major_shareholder"], "주식 양도세": ["stock_capital_gains_tax", "stock_major_shareholder"], "주식 팔": ["stock_capital_gains_tax", "stock_major_shareholder"],
-    "대주주": ["stock_major_shareholder", "stock_capital_gains_tax"], "종가": ["stock_price_lookup"], "공시지가": ["official_property_price"], "공시가격": ["official_property_price"], "기준시가 조회": ["official_property_price"], "공동주택가격": ["official_property_price"], "개별주택가격": ["official_property_price"], "아파트 공시": ["official_property_price"], "비상장주식 평가": ["unlisted_stock_valuation", "stock_basis_income_tax"], "보충적 평가": ["unlisted_stock_valuation"], "순손익가치": ["unlisted_stock_valuation"], "순자산가치": ["unlisted_stock_valuation", "stock_basis_income_tax"], "최대주주 할증": ["unlisted_stock_valuation"], "기준시가 주식": ["stock_basis_income_tax"], "시세": ["stock_price_lookup"], "주가 조회": ["stock_price_lookup"], "시가총액": ["stock_price_lookup", "stock_major_shareholder"], "비상장주식": ["stock_capital_gains_tax", "stock_major_shareholder"], "장외 양도": ["stock_capital_gains_tax"], "소액주주": ["stock_major_shareholder", "stock_capital_gains_tax"],
+    "대주주": ["stock_major_shareholder", "stock_capital_gains_tax"], "종가": ["stock_price_lookup"], "공시지가": ["official_property_price"], "건물 기준시가": ["building_standard_price"], "건물 평가": ["building_standard_price"], "상가 기준시가": ["building_standard_price"], "신축가격기준액": ["building_standard_price"], "공시가격": ["official_property_price"], "기준시가 조회": ["official_property_price"], "공동주택가격": ["official_property_price"], "개별주택가격": ["official_property_price"], "아파트 공시": ["official_property_price"], "비상장주식 평가": ["unlisted_stock_valuation", "stock_basis_income_tax"], "보충적 평가": ["unlisted_stock_valuation"], "순손익가치": ["unlisted_stock_valuation"], "순자산가치": ["unlisted_stock_valuation", "stock_basis_income_tax"], "최대주주 할증": ["unlisted_stock_valuation"], "기준시가 주식": ["stock_basis_income_tax"], "시세": ["stock_price_lookup"], "주가 조회": ["stock_price_lookup"], "시가총액": ["stock_price_lookup", "stock_major_shareholder"], "비상장주식": ["stock_capital_gains_tax", "stock_major_shareholder"], "장외 양도": ["stock_capital_gains_tax"], "소액주주": ["stock_major_shareholder", "stock_capital_gains_tax"],
     "양도": ["capital_gains_income", "capital_gains_tax"], "필요경비": ["capital_gains_income", "estimated_business_income", "other_income_aggregate"],
 }
 
