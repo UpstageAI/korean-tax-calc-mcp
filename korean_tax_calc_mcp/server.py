@@ -23,6 +23,7 @@ from .engine import calc_tax_priority as TP
 from .engine import calc_stock as ST
 from .engine import calc_stock_price as SP
 from .engine import calc_stock_val as SV
+from .engine import calc_official_price as OP
 from . import vocab
 from .forms_workbook import render_form_sheet, _load_form_templates, tool_value, nonbusiness_form_sources, nonbusiness_form_data
 
@@ -9530,6 +9531,24 @@ def stock_basis_income_tax(transfer_date: Annotated[str, Field(description="양�
                                         business_start=business_start, status=status, stock_asset_ratio=stock_asset_ratio)
 
 
+
+@mcp.tool(annotations=ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=True))
+@_guard
+def official_property_price(address: Annotated[str, Field(description="지번 주소 또는 도로명 주소(예: '서울특별시 강남구 역삼동 737', '서울 강남구 테헤란로 7길 22'). pnu를 알면 생략")] = "",
+                            pnu: Annotated[str, Field(description="필지번호 19자리(법정동코드 10 + 산 여부 1 + 본번 4 + 부번 4)를 알면 직접")] = "",
+                            kind: Annotated[str, Field(description="토지|아파트(공동주택)|단독주택 — 평소 말(땅·대지·연립·다세대·다가구)도 됨")] = "토지",
+                            year: Annotated[int | None, Field(description="공시 기준연도(1월 1일 기준). 비우면 조회되는 최신 연도. 평가기준일이 그 해 공시 전이면 전년도를 넣음", ge=1990, le=2030)] = None,
+                            area_m2: Annotated[float | None, Field(description="토지만: 면적(㎡) — 주면 공시지가 × 면적 총액을 계산", ge=0)] = None,
+                            dong: Annotated[str, Field(description="아파트만: 동(예: '101')")] = "",
+                            ho: Annotated[str, Field(description="아파트만: 호(예: '1203')")] = "") -> dict:
+    """부동산 공시가격 조회 — 주소(또는 PNU)로 개별공시지가(토지, 원/㎡)·공동주택가격(아파트, 세대별)·개별주택가격(단독)을 국토교통부 국가공간정보(브이월드)에서 가져온다. 상속·증여 보충적 평가(상증법 제61조①)와 양도세 기준시가(소득세법 제99조①1호)에 쓰는 값.
+    언제: 비상장주식 평가(unlisted_stock_valuation의 assets 기준시가), 상속·증여재산 평가(inheritance_gift_valuation의 supplementary_value), 양도세 기준시가가 필요할 때. 시가(매매·감정 사례)가 있으면 시가가 우선(법 제60조) — 이 도구는 공시가격만.
+    입력: 주소 → address(또는 pnu), 종류 → kind, 기준연도 → year, 토지 면적 → area_m2, 아파트 동·호 → dong·ho.
+    주의: 이 도구는 외부(브이월드)로 주소·PNU·연도를 보냄. 인증키 VWORLD_KEY가 필요(vworld.kr 오픈API 인증키, 국가중점API 포함) — 없으면 안내와 직접 입력 대안을 돌려줌.
+    결과: 기준연도·공시가격(토지는 ㎡당과 총액), 연도별 목록, 판단(필지 확인·평가 사용법·기준일), 근거."""
+    return OP.official_price(address=address, pnu=pnu, kind=kind, year=year, area_m2=area_m2, dong=dong, ho=ho)
+
+
 _TOOL_ALIASES: dict[str, list[str]] = {
     "양도세": ["capital_gains_income", "capital_gains_tax"], "양도소득세": ["capital_gains_income", "capital_gains_tax"],
     "단기 양도": ["capital_gains_tax"], "미등기": ["capital_gains_tax"], "비사업용 토지": ["capital_gains_tax", "capital_gains_income"],
@@ -9600,7 +9619,7 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "증여": ["gift_tax", "inheritance_gift_valuation"], "상속": ["inheritance_tax", "inheritance_gift_valuation"],
     "법인세": ["corporate_tax", "income_adjustment_total"], "퇴직소득세": ["retirement_income_tax"],
     "주식 양도": ["stock_capital_gains_tax", "stock_major_shareholder"], "주식 양도세": ["stock_capital_gains_tax", "stock_major_shareholder"], "주식 팔": ["stock_capital_gains_tax", "stock_major_shareholder"],
-    "대주주": ["stock_major_shareholder", "stock_capital_gains_tax"], "종가": ["stock_price_lookup"], "비상장주식 평가": ["unlisted_stock_valuation", "stock_basis_income_tax"], "보충적 평가": ["unlisted_stock_valuation"], "순손익가치": ["unlisted_stock_valuation"], "순자산가치": ["unlisted_stock_valuation", "stock_basis_income_tax"], "최대주주 할증": ["unlisted_stock_valuation"], "기준시가 주식": ["stock_basis_income_tax"], "시세": ["stock_price_lookup"], "주가 조회": ["stock_price_lookup"], "시가총액": ["stock_price_lookup", "stock_major_shareholder"], "비상장주식": ["stock_capital_gains_tax", "stock_major_shareholder"], "장외 양도": ["stock_capital_gains_tax"], "소액주주": ["stock_major_shareholder", "stock_capital_gains_tax"],
+    "대주주": ["stock_major_shareholder", "stock_capital_gains_tax"], "종가": ["stock_price_lookup"], "공시지가": ["official_property_price"], "공시가격": ["official_property_price"], "기준시가 조회": ["official_property_price"], "공동주택가격": ["official_property_price"], "개별주택가격": ["official_property_price"], "아파트 공시": ["official_property_price"], "비상장주식 평가": ["unlisted_stock_valuation", "stock_basis_income_tax"], "보충적 평가": ["unlisted_stock_valuation"], "순손익가치": ["unlisted_stock_valuation"], "순자산가치": ["unlisted_stock_valuation", "stock_basis_income_tax"], "최대주주 할증": ["unlisted_stock_valuation"], "기준시가 주식": ["stock_basis_income_tax"], "시세": ["stock_price_lookup"], "주가 조회": ["stock_price_lookup"], "시가총액": ["stock_price_lookup", "stock_major_shareholder"], "비상장주식": ["stock_capital_gains_tax", "stock_major_shareholder"], "장외 양도": ["stock_capital_gains_tax"], "소액주주": ["stock_major_shareholder", "stock_capital_gains_tax"],
     "양도": ["capital_gains_income", "capital_gains_tax"], "필요경비": ["capital_gains_income", "estimated_business_income", "other_income_aggregate"],
 }
 
