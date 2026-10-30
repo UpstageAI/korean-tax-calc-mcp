@@ -5149,7 +5149,7 @@ def retirement_allowance_adjustment(
     salary: Annotated[dict | None, Field(description="당기 총급여액(원) {total: 전체 임원·직원 총급여, dc_members?: 확정기여형 퇴직연금 설정자분, not_eligible?: 퇴직급여 지급대상 아닌 자(예: 규정상 1년 미만 근속자)분} — 당기 설정액이 있으면 필수")] = None,
     succeeded_disallowed: Annotated[int, Field(description="other_increase 중 합병 등으로 승계한 부인누계(유보, 원)", ge=0)] = 0,
     conversion_fund: Annotated[int, Field(description="국민연금 퇴직금전환금 기말잔액(원)", ge=0)] = 0,
-    pension: Annotated[dict | None, Field(description="확정급여형 퇴직연금(원) {asset_closing: 퇴직연금운용자산 기말잔액, prior_deducted: 세무상 퇴직연금충당금 기초잔액(이미 손금산입한 부담금 누계, △유보), book_provision?: 결산에 계상한 퇴직연금충당금(신고조정이면 0), dc_transferred_allowance?: 확정기여형 전환자의 설정 전 기계상 퇴직급여충당금} — 없으면 퇴직연금 조정 생략")] = None,
+    pension: Annotated[dict | None, Field(description="확정급여형 퇴직연금(원) {asset_closing: 퇴직연금운용자산 기말잔액, prior_deducted: 세무상 퇴직연금충당금 기초잔액(이미 손금산입한 부담금 누계, △유보), book_provision?: 결산에 계상한 퇴직연금충당금(신고조정이면 0), book_paid?: 당기 퇴직연금운용자산에서 지급하고 장부 퇴직연금충당금과 상계한 금액(퇴직급여충당금과 상계한 몫은 allowance.paid_pension), dc_transferred_allowance?: 확정기여형 전환자의 설정 전 기계상 퇴직급여충당금} — 없으면 퇴직연금 조정 생략")] = None,
 ) -> dict:
     """퇴직급여충당금·확정급여형 퇴직연금충당금 세무조정(법인세법 제33조, 시행령 제44조의2·제60조, 시행규칙 제24조).
     언제: 법인세 세무조정에서 퇴직급여충당금 한도초과, 퇴직금 지급 시 상계·부인액 추인, 퇴직연금 부담금 손금산입 한도를 함께 계산할 때.
@@ -5160,7 +5160,8 @@ def retirement_allowance_adjustment(
       estimate — 기말 추계액 {lump_sum, actuarial?}, 큰 금액을 씀.
       salary — 총급여 {total, dc_members?, not_eligible?}: 확정기여형 설정자·지급대상 아닌 자 제외.
       conversion_fund — 퇴직금전환금 기말잔액.
-      pension — 확정급여형 {asset_closing, prior_deducted, book_provision?, dc_transferred_allowance?}.
+      pension — 확정급여형 {asset_closing, prior_deducted, book_provision?, book_paid?(운용자산 지급 중 장부 퇴직연금충당금 상계분), dc_transferred_allowance?}.
+      운용자산에서 퇴직금을 지급한 해에는 장부 퇴직연금충당금 상계분(book_paid)과 퇴직급여충당금 상계분(paid_pension)을 나눠 넣어야 세무상 연금충당금 잔액이 맞는다.
     결과: 세무조정(과목·조정 익금산입/손금불산입/손금산입·금액·소득처분 유보/△유보), 소득금액_순영향, 계산(세무상 잔액·한도). 입력이 모자라거나 장부 증감이 맞지 않으면 error."""
 
     # ── 입력 정리 ──
@@ -5233,8 +5234,13 @@ def retirement_allowance_adjustment(
     세무_기초_잔액 = opening - prior_disallowed
 
     # 지급액이 세무상 잔액 초과 여부
+    # 운용자산 지급분 중 세무상 퇴직연금충당금과 상계되는 몫은 퇴직급여충당금을 쓰지 않는다(2026-10-30 수정: 종전엔 지급총액 전부를 세무상 잔액에서 뺐음)
+    _pd_early = int(pension.get("prior_deducted", 0) or 0) if (pension is not None) else 0
+    _book_paid_early = int(pension.get("book_paid", 0) or 0) if (pension is not None) else 0
+    _연금감소총_early = min(_book_paid_early + paid_pension, _pd_early) if pension is not None else 0
+    _연금상계_early = max(0, _연금감소총_early - min(_book_paid_early, _pd_early)) if pension is not None else 0
     지급총액 = paid_cash + paid_pension
-    세무상_잔액_사용액 = min(지급총액, max(0, 세무_기초_잔액))
+    세무상_잔액_사용액 = min(paid_cash + (paid_pension - _연금상계_early), max(0, 세무_기초_잔액))
 
     # 세무상 설정전 잔액 (당기 설정 전)
     세무상_설정전잔액 = 세무_기초_잔액 - 세무상_잔액_사용액 + other_increase - succeeded_disallowed
@@ -5287,13 +5293,17 @@ def retirement_allowance_adjustment(
         book_provision = int(pension.get("book_provision", 0) or 0)
         dc_transferred = int(pension.get("dc_transferred_allowance", 0) or 0)
 
-        # 운용자산 지급분 처리: 연금충당금 상계액 = min(paid_pension, prior_deducted)
-        연금충당금_상계액 = min(paid_pension, prior_deducted)
+        # 운용자산 지급분 처리(2026-10-30 수정): 운용자산에서 지급된 금액은 장부에서 퇴직연금충당금과 상계한 몫(book_paid)과
+        # 퇴직급여충당금과 상계한 몫(paid_pension)으로 나뉘지만, 세무상으로는 둘 다 먼저 세무상 퇴직연금충당금(prior_deducted)에서 빠진다.
+        # book_paid 몫은 장부·세무가 같아 조정 없음, paid_pension 몫은 익금산입(연금충당금)·손금산입(퇴직급여충당금)으로 바꾼다.
+        book_paid = int(pension.get("book_paid", 0) or 0)
+        세무_연금_감소총 = min(book_paid + paid_pension, prior_deducted)
+        연금충당금_상계액 = max(0, 세무_연금_감소총 - min(book_paid, prior_deducted))
         연금초과 = max(0, paid_pension - 연금충당금_상계액)
 
-        # 이미 손금산입한 부담금 = prior_deducted − 연금충당금 상계액
+        # 이미 손금산입한 부담금 = prior_deducted − 당기 세무상 감소 총액(장부 상계분 + 퇴직급여충당금 상계분)
         # (시행규칙 제24조②: 이미 손금산입한 부담금 = 누계 − 당기 수령·상계액)
-        이미_손금산입한_부담금 = prior_deducted - 연금충당금_상계액
+        이미_손금산입한_부담금 = prior_deducted - 세무_연금_감소총
 
         # 기말 세무상 퇴직급여충당금(퇴직연금 반영 전)
         # 설정 후 세무상 잔액 = 세무상_설정전잔액 + (provision − 한도초과액) = 세무_설정전잔액_하한 + min(provision, 한도)
@@ -5321,6 +5331,8 @@ def retirement_allowance_adjustment(
 
         퇴직연금_결과 = {
             "연금충당금_상계액": 연금충당금_상계액,
+            "장부_연금충당금_상계(book_paid)": book_paid,
+            "세무상_연금충당금_당기감소": 세무_연금_감소총,
             "이미_손금산입한_부담금": 이미_손금산입한_부담금,
             "추계액기준_연금한도": 추계액기준_연금한도,
             "운용자산기준_연금한도": 운용자산기준_연금한도,
