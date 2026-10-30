@@ -5268,7 +5268,8 @@ def retirement_allowance_adjustment(
     세무상_충당금_기초 = max(0, 세무_기초_잔액)
     # 2. 연금상계분을 뺀 과세 지급액만 세무상 충당금과 상계
     #    연금상계 = min(paid_pension, prior_deducted) (pension 있으면), 없으면 0
-    연금상계 = min(paid_pension, _prior_deducted) if has_pension else 0
+    # 2026-10-30: 위 _연금상계_early와 같은 식(장부 퇴직연금충당금 상계분 book_paid를 먼저 세무상 연금충당금에서 뺀 뒤 남는 몫) — CodeSolar 지적 반영
+    연금상계 = _연금상계_early if has_pension else 0
     과세_지급액 = paid_cash + (paid_pension - 연금상계)
     # 3. 과세 지급액이 세무상 잔액을 초과하는 부분 = 부인액과 상계 → 손금산입△유보
     초과지급액 = max(0, 과세_지급액 - 세무상_충당금_기초)
