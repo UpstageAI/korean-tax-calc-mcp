@@ -22,6 +22,7 @@ from .engine import calc_gold_gaps6 as GG
 from .engine import calc_tax_priority as TP
 from .engine import calc_stock as ST
 from .engine import calc_stock_price as SP
+from .engine import calc_stock_val as SV
 from . import vocab
 from .forms_workbook import render_form_sheet, _load_form_templates, tool_value, nonbusiness_form_sources, nonbusiness_form_data
 
@@ -9426,7 +9427,7 @@ def stock_major_shareholder(transfer_date: Annotated[str, Field(description="양
                             total_shares: Annotated[int | None, Field(description="주주 명부로 계산할 때: 직전 사업연도 종료일 현재 해당 법인 주식등 합계(보통주·우선주·자기주식 포함, 신주인수권증권·출자지분 포함). 이걸 주면 own_ratio 대신 명부에서 지분율을 계산", ge=1)] = None,
                             own_shares: Annotated[int | None, Field(description="명부: 본인 보유 주식 수(직전 사업연도 종료일 현재)", ge=0)] = None,
                             holders: Annotated[list | None, Field(description="명부: 다른 주주 [{이름, 관계, 주식수}] — 관계는 평소 말(배우자·아들·형·사촌·처남·장인·사위 …, '혈족 4촌'·'인척 3촌', 경영지배 관계 법인은 '경영지배'). 합산 여부·범위는 양도일 구간·최대주주군 여부로 도구가 판단해 주주별로 보여줌")] = None,
-                            price: Annotated[float | None, Field(description="명부: 1주당 가액(원) — 상장은 직전 사업연도 종료일 최종시세가액, 비상장은 상증법 평가액(inheritance_gift_valuation). 없으면 시가총액 기준은 판정하지 않음", ge=0)] = None,
+                            price: Annotated[float | None, Field(description="명부: 1주당 가액(원) — 상장은 직전 사업연도 종료일 최종시세가액, 비상장은 소득세법 시행령 제165조④ 기준시가(stock_basis_income_tax). 없으면 시가총액 기준은 판정하지 않음", ge=0)] = None,
                             lent_shares: Annotated[int, Field(description="명부: 본인이 대여 중인 주식 수(반환받는 조건) — 대여자 소유로 봄(영 제157조⑦)", ge=0)] = 0,
                             pef_shares: Annotated[int, Field(description="명부: 사모집합투자기구를 통해 보유한 주식 중 본인 투자비율로 안분한 주식 수(영 제157조⑧)", ge=0)] = 0) -> dict:
     """주식 양도소득세 대주주 판정 — 양도일·시장·직전 사업연도 종료일 현재 지분율·시가총액으로 대주주 여부(소득세법 시행령 제157조·제167조의8, 2016~2026 구간별 기준: 코스피 1%/25억→15억→10억→50억 등)와 특수관계인 합산 방식을 판정한다. 주주 명부(total_shares·own_shares·holders·price)를 주면 지분율·시가총액과 주주별 합산 여부("처남은 2023년부터 인척 2촌이라 최대주주군일 때만 합산" 등)까지 도구가 계산한다.
@@ -9474,6 +9475,52 @@ def stock_price_lookup(ticker: Annotated[str, Field(description="6자리 종목�
     주의: 이 도구만 외부(KRX)로 조회하며 보내는 정보는 종목코드·날짜뿐. pykrx가 없으면 설치 안내를 돌려줌(pip install 'korean-tax-calc-mcp[stock]'). 비상장주식은 상증법 보충적 평가 도구로.
     결과: 종가 또는 2개월 평균·거래일수·기간, 판단(직전거래일 사용 여부·기간 조정 확인 필요), 근거."""
     return SP.stock_price(ticker, day, mode=mode)
+
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def unlisted_stock_valuation(valuation_date: Annotated[str, Field(description="평가기준일(상속개시일·증여일) YYYY-MM-DD, 2016~2026")],
+                             shares: Annotated[int, Field(description="평가기준일 현재 발행주식총수", ge=1)],
+                             incomes: Annotated[list | None, Field(description="최근 3개 사업연도 순손익액 [{사업연도, 순손익액(원, 각 사업연도소득에 영 제56조④ 가감을 끝낸 값), 주식수?(그 사업연도 말 발행주식총수, 증감자 환산 후)}] — 1년 전부터 순서대로. 사업 개시 3년 미만이면 생략 가능")] = None,
+                             net_asset: Annotated[int | None, Field(description="평가기준일 현재 순자산가액(원) = 상증법 평가 자산 − 부채(영 제55조·규칙 제17조의2 가감 반영, 영업권 제외)")] = None,
+                             equity: Annotated[int | None, Field(description="영업권 계산용 평가기준일 자기자본(원). goodwill을 직접 주면 불필요")] = None,
+                             goodwill: Annotated[int | None, Field(description="영업권 평가액(원)을 이미 알면 직접")] = None,
+                             real_estate_ratio: Annotated[float | None, Field(description="자산총액 중 부동산·부동산권리 비율(0~1) — 0.5 이상이면 2:3 가중, 0.8 이상이면 순자산가치만(2018.2.13.~)")] = None,
+                             stock_asset_ratio: Annotated[float | None, Field(description="자산총액 중 주식등 비율(0~1) — 0.8 이상이면 순자산가치만(2017.2.7.~)")] = None,
+                             business_start: Annotated[str, Field(description="사업개시일 YYYY-MM-DD(개시 후 3년 미만 판정용)")] = "",
+                             status: Annotated[str, Field(description="청산|휴폐업|존속3년(정관 존속기한 3년 이내) 해당 시")] = "",
+                             is_max_shareholder: Annotated[bool, Field(description="평가 대상 주식이 최대주주등 보유분이면 True(할증)")] = False,
+                             ratio_over_50: Annotated[bool | None, Field(description="2019.12.31.까지: 최대주주등 지분이 50% 초과면 True(30%), 아니면 False(20%)")] = None,
+                             sme: Annotated[bool | None, Field(description="중소기업 여부(할증 제외 판정) — 최대주주면 필수")] = None,
+                             mid_sized: Annotated[bool, Field(description="중견기업(직전 3개 사업연도 매출액 평균 5천억 미만)이면 True — 2023.1.1.~ 할증 제외")] = False,
+                             premium_exclusion: Annotated[str | None, Field(description="할증 제외 사유가 있으면 적음(3년 연속 결손·전부 매각·사업개시 3년 내 영업이익 0 이하·청산 확정·명의신탁 등, 영 제53조⑧)")] = None) -> dict:
+    """비상장주식 상속·증여 평가(상증법 보충적 평가) — 순손익가치(3년 가중평균 3:2:1 ÷ 10%)와 순자산가치((순자산+영업권) ÷ 주식수)를 3:2(부동산 과다 2:3)로 가중평균, 하한 순자산가치×80%(2017.4~2018.3 70%), 순자산가치만 평가하는 사유(청산·개시 3년 미만·휴폐업·부동산 80%·주식 80%·존속 3년, 구간별), 최대주주 할증(2019까지 20/30%·중소 0, 2020~ 20%·중소 제외, 2023~ 중견 제외)까지 2016~2026 구간별로 계산한다.
+    언제: 비상장주식을 상속·증여받았을 때 1주당 평가액, 또는 비상장법인 지분의 상증법 가액이 필요할 때. 양도세 대주주 시가총액·기준시가는 산식이 달라 stock_basis_income_tax를 쓴다.
+    입력: 평가기준일 → valuation_date, 발행주식총수 → shares, 3년 순손익 → incomes, 순자산가액 → net_asset, 부동산 비율 → real_estate_ratio, 최대주주·중소기업 → is_max_shareholder·sme.
+    지원하지 않음: 추정이익 평가(영 제56조②), 평가심의위원회, 순자산가액의 자산·부채 개별 평가(사용자가 끝낸 값을 넣음), 국외 비상장.
+    결과: 1주당 평가액(할증 후·전), 순손익가치·순자산가치·가중평균, 평가방법, 할증률, 판단(사유·하한·확인 필요), 근거."""
+    return SV.unlisted_valuation(valuation_date, shares, incomes=incomes, net_asset=net_asset, equity=equity, goodwill=goodwill, real_estate_ratio=real_estate_ratio,
+                                 stock_asset_ratio=stock_asset_ratio, business_start=business_start, status=status, is_max_shareholder=is_max_shareholder,
+                                 ratio_over_50=ratio_over_50, sme=sme, mid_sized=mid_sized, premium_exclusion=premium_exclusion)
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def stock_basis_income_tax(transfer_date: Annotated[str, Field(description="양도일(또는 대주주 판정 시 양도일) YYYY-MM-DD")],
+                           shares: Annotated[int, Field(description="직전 사업연도 종료일 현재 발행주식총수", ge=1)],
+                           prior_year_income: Annotated[int | None, Field(description="양도일이 속하는 사업연도의 직전 사업연도 순손익액(원)")] = None,
+                           book_net_asset: Annotated[int | None, Field(description="직전 사업연도 종료일 현재 장부가액 순자산(원, 토지는 기준시가로 바꿔 계산한 값)")] = None,
+                           real_estate_ratio: Annotated[float | None, Field(description="자산총액 중 부동산 비율(0~1), 0.5 이상이면 2:3")] = None,
+                           stock_asset_ratio: Annotated[float | None, Field(description="자산총액 중 주식등 비율(0~1) — 2023.2.28.~ 0.8 이상이면 순자산가치만")] = None,
+                           business_start: Annotated[str, Field(description="사업개시일 YYYY-MM-DD(개시 후 1년 미만이면 순자산가치만)")] = "",
+                           status: Annotated[str, Field(description="청산|휴폐업|존속3년 해당 시")] = "") -> dict:
+    """비상장주식 소득세법 기준시가(영 제165조④) — 양도세 기준시가와 대주주 시가총액 판정(영 제157조④2호)에 쓰는 1주당 가액. 상속·증여 평가와 달리 직전 사업연도 순손익만(÷10%), 순자산은 장부가액, 할증 없음, 하한 순자산가치×80%(2018.4.1.~).
+    언제: 비상장주식 양도세에서 기준시가가 필요하거나, stock_major_shareholder의 price(1주당 가액)에 넣을 값이 필요할 때.
+    입력: 양도일 → transfer_date, 발행주식총수 → shares, 직전 사업연도 순손익액 → prior_year_income, 장부 순자산 → book_net_asset.
+    결과: 1주당 기준시가, 순손익가치·순자산가치, 평가방법, 판단(할증 없음·이자율 확인 필요), 근거."""
+    return SV.income_tax_unlisted_basis(transfer_date, shares, prior_year_income=prior_year_income, book_net_asset=book_net_asset, real_estate_ratio=real_estate_ratio,
+                                        business_start=business_start, status=status, stock_asset_ratio=stock_asset_ratio)
 
 
 _TOOL_ALIASES: dict[str, list[str]] = {
@@ -9546,7 +9593,7 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "증여": ["gift_tax", "inheritance_gift_valuation"], "상속": ["inheritance_tax", "inheritance_gift_valuation"],
     "법인세": ["corporate_tax", "income_adjustment_total"], "퇴직소득세": ["retirement_income_tax"],
     "주식 양도": ["stock_capital_gains_tax", "stock_major_shareholder"], "주식 양도세": ["stock_capital_gains_tax", "stock_major_shareholder"], "주식 팔": ["stock_capital_gains_tax", "stock_major_shareholder"],
-    "대주주": ["stock_major_shareholder", "stock_capital_gains_tax"], "종가": ["stock_price_lookup"], "시세": ["stock_price_lookup"], "주가 조회": ["stock_price_lookup"], "시가총액": ["stock_price_lookup", "stock_major_shareholder"], "비상장주식": ["stock_capital_gains_tax", "stock_major_shareholder"], "장외 양도": ["stock_capital_gains_tax"], "소액주주": ["stock_major_shareholder", "stock_capital_gains_tax"],
+    "대주주": ["stock_major_shareholder", "stock_capital_gains_tax"], "종가": ["stock_price_lookup"], "비상장주식 평가": ["unlisted_stock_valuation", "stock_basis_income_tax"], "보충적 평가": ["unlisted_stock_valuation"], "순손익가치": ["unlisted_stock_valuation"], "순자산가치": ["unlisted_stock_valuation", "stock_basis_income_tax"], "최대주주 할증": ["unlisted_stock_valuation"], "기준시가 주식": ["stock_basis_income_tax"], "시세": ["stock_price_lookup"], "주가 조회": ["stock_price_lookup"], "시가총액": ["stock_price_lookup", "stock_major_shareholder"], "비상장주식": ["stock_capital_gains_tax", "stock_major_shareholder"], "장외 양도": ["stock_capital_gains_tax"], "소액주주": ["stock_major_shareholder", "stock_capital_gains_tax"],
     "양도": ["capital_gains_income", "capital_gains_tax"], "필요경비": ["capital_gains_income", "estimated_business_income", "other_income_aggregate"],
 }
 
