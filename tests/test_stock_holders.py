@@ -13,6 +13,8 @@ def test_parse_relation_words():
     assert parse_relation("아들")[:3] == ("혈족", 1, True)
     assert parse_relation("처남")[:3] == ("인척", 2, False)
     assert parse_relation("사촌 형")[:3] == ("혈족", 4, False)
+    assert parse_relation("사촌 동생")[:3] == ("혈족", 4, False)
+    assert parse_relation("외삼촌")[:3] == ("혈족", 3, False)
     assert parse_relation("5촌 당숙")[:3] == ("혈족", 5, False)
     assert parse_relation("혈족 6촌")[:3] == ("혈족", 6, False)
     assert parse_relation("내가 60% 가진 법인")[0] == "경영지배"

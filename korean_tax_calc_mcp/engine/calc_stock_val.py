@@ -388,9 +388,10 @@ def unlisted_valuation(valuation_date: str, shares: int, incomes: list | None = 
         avg_total = sum(v * sh_ * k for (_, v), sh_, k in zip(per_share, [int(it.get('주식수') or it.get('shares') or shares) for it in inc_items], [3, 2, 1])) / 6
         gw, gw_note = goodwill_value(avg_total, float(equity), cap_rate)
         gw_note = f"영업권 {gw:,.0f}원 — {gw_note}"
-    excl_gw = 사유 in ("청산", "휴폐업", "부동산80", "주식80", "3년연속결손") or (사유 == "개시3년미만")
+    loss3 = len(per_share) == 3 and all(x < 0 for _, x in per_share)
+    excl_gw = 사유 in ("청산", "휴폐업", "부동산80", "주식80", "3년연속결손") or (사유 == "개시3년미만") or (loss3 and vd >= date(2018, 2, 13))   # 2018.2.13.~ 직전 3년 연속 결손 법인은 영업권 합산 제외(영 제55조③ 3호)
     if excl_gw and gw:
-        gw_note += " → 순자산가치만 평가하는 법인이라 영업권 합산 제외(영 제55조③ 단서)"; gw = 0.0
+        gw_note += (" → 직전 3년 연속 결손 법인이라 영업권 합산 제외(영 제55조③3호, 2018.2.13.~)" if loss3 and not 사유 else " → 순자산가치만 평가하는 법인이라 영업권 합산 제외(영 제55조③ 단서)"); gw = 0.0
     nav_per = (na + gw) / shares
     판단.append({"항목": "순자산가치", "결론": f"({_won(na)} + 영업권 {_won(gw)}) ÷ {shares:,}주 = {nav_per:,.2f}원/주. {gw_note}", "근거": "상증법 시행령 제54조②·제55조·제59조②"})
     # 가중평균
@@ -427,7 +428,8 @@ def unlisted_valuation(valuation_date: str, shares: int, incomes: list | None = 
     판단.append({"항목": "최대주주 할증", "결론": f"{prem*100:g}% → 1주당 {final:,.2f}원. {prem_basis}", "근거": "상속세 및 증여세법 제63조③, 시행령 제53조"})
     for n in notes:
         판단.append({"항목": "확인 필요", "결론": n, "근거": "상속세 및 증여세법 제63조③"})
-    판단.append({"항목": "확인 필요", "결론": "순자산가액은 상증법 평가액 기준으로 사용자가 가감(지급 확정 권리 +, 선급비용·무형자산 −, 미지급 법인세·확정 배당·퇴직급여추계액 +, 충당금·준비금 −)을 끝낸 값을 넣어야 함. 발행주식총수의 자기주식 포함 여부는 조문에 명시 없음(통칙 확인)", "근거": "상증법 시행령 제55조, 시행규칙 제17조의2"})
+    판단.append({"항목": "확인 필요", "결론": ("순자산가액 가감(영 제55조·규칙 제17조의2)은 입력한 항목만 반영 — 지급 확정 권리·선급비용·무형자산·미지급 법인세·확정 배당·퇴직급여추계액·충당금·준비금 중 빠진 것이 없는지, 자산별 상증법 평가차액(assets)을 넣었는지 확인" if "순자산가액 산출" in 계산_상세
+                                         else "순자산가액은 상증법 평가액 기준으로 사용자가 가감(지급 확정 권리 +, 선급비용·무형자산 −, 미지급 법인세·확정 배당·퇴직급여추계액 +, 충당금·준비금 −)을 끝낸 값을 넣어야 함(항목형으로 주면 도구가 적용)") + ". 발행주식총수의 자기주식 포함 여부는 조문에 명시 없음(통칙 확인)", "근거": "상증법 시행령 제55조, 시행규칙 제17조의2"})
     return {"결과": {"1주당_평가액": round(final, 2), "1주당_할증전": round(value, 2), "순손익가치": round(ev_per, 2) if ev_per is not None else None, "순자산가치": round(nav_per, 2), "가중평균": round(weighted, 2) if weighted is not None else None,
                    "평가방법": method, "할증률": prem, "총평가액(보유주식×)": None},
             "계산": {"순손익가치 산식": ev_calc, "연도별 1주당 순손익액": [{"사업연도": y, "1주당": round(v, 2)} for y, v in per_share], "가중치": f"{w_e}:{w_n}", "하한율": floor_r, "영업권": round(gw, 0), "환원율": cap_rate,

@@ -129,3 +129,9 @@ def test_assets_valuation_layer():
     lines = {x["자산"]: x for x in r["계산"]["자산별 평가"]}
     assert lines["본사 부지"]["평가차액"] == 200_000_000 and lines["상장주식"]["평가차액"] == 0 and lines["손상"]["평가차액"] == -10_000_000
     assert r["결과"]["순자산가치"] == (800_000_000 + 190_000_000) / 100_000
+
+
+def test_goodwill_excluded_for_three_year_loss_company():
+    neg = [{"사업연도": 2025, "순손익액": -50_000_000}, {"사업연도": 2024, "순손익액": -10_000_000}, {"사업연도": 2023, "순손익액": -5_000_000}]
+    r = c("unlisted_stock_valuation", {"valuation_date": "2026-05-01", "shares": 100_000, "incomes": neg, "net_asset": 800_000_000, "equity": 100_000_000})
+    assert r["계산"]["영업권"] == 0 and r["결과"]["순자산가치"] == 8000
