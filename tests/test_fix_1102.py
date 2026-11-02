@@ -163,4 +163,4 @@ def test_form_sheet_not_used_for_new_inputs(tmp_path):
     wb = openpyxl.load_workbook(build(tmp_path, [{"tool": "bundled_supply_split", "args": {"total_price": 240_000_000, "vat_included": False,
           "book_value": {"building": 10_000_000, "land": 40_000_000}, "standard_value": {"building": 15_000_000, "land": 85_000_000},
           "other_assets": [{"name": "기계장치", "book_value": 10_000_000}]}}]))
-    assert not [n for n in wb.sheetnames if "64" in n]
+    assert not [n for n in wb.sheetnames if "일괄양도" in n]

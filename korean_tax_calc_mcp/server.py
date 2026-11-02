@@ -4898,6 +4898,69 @@ def input_tax_recalculation(asset_type: Annotated[str, Field(description="자산
 # ── 끝에서 끝까지: 토지·건물 일괄공급 안분 ──
 
 
+def _bundled_supply_general(total_price, vat_included, appraisal, standard_value, book_value, other_assets, taxable_ratio, 시점_판단):
+    """다른 자산이 있거나 건물 일부가 면세일 때의 안분(영 제64조①). 자산별 비율을 정확한 분수로 구하고, 끝수는 토지에서 맞춘다."""
+    from fractions import Fraction as Fr
+    if not isinstance(other_assets, list):
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["other_assets는 목록 [{name, book_value?, standard_value?, appraisal?}]"]}
+    자산 = [{"name": "건물", "감정": (appraisal or {}).get("building"), "기준": (standard_value or {}).get("building"), "장부": (book_value or {}).get("building")},
+            {"name": "토지", "감정": (appraisal or {}).get("land"), "기준": (standard_value or {}).get("land"), "장부": (book_value or {}).get("land")}]
+    for a in other_assets:
+        모름 = set(a) - {"name", "book_value", "standard_value", "appraisal"} if isinstance(a, dict) else {"형식"}
+        if 모름 or not a.get("name"):
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"other_assets 항목은 name 필수, 허용 키 name·book_value·standard_value·appraisal (입력 {a})"]}
+        자산.append({"name": a["name"], "감정": a.get("appraisal"), "기준": a.get("standard_value"), "장부": a.get("book_value")})
+
+    def 비율(키, 대상):
+        합 = sum(Fr(str(x[키])) for x in 대상)
+        return {x["name"]: Fr(str(x[키])) / 합 for x in 대상}
+
+    if all(a["감정"] for a in 자산):
+        몫 = 비율("감정", 자산)
+        호 = "제64조①1호" if all(a["기준"] for a in 자산) else "제64조①2호"
+        기준_문구 = "모든 자산의 감정평가가액 비례"
+    elif all(a["기준"] for a in 자산):
+        몫 = 비율("기준", 자산)
+        호, 기준_문구 = "제64조①1호", "모든 자산의 기준시가 비례"
+    else:
+        없음 = [a["name"] for a in 자산 if not a["장부"]]
+        if 없음:
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"감정가액·기준시가가 모든 자산에 있지 않아 장부가액이 필요함: {', '.join(없음)}"]}
+        몫 = 비율("장부", 자산)
+        있음 = [a for a in 자산 if a["기준"]]
+        if 있음:
+            합계_몫 = sum(몫[a["name"]] for a in 있음)
+            for 이름, r in 비율("기준", 있음).items():
+                몫[이름] = 합계_몫 * r
+        호, 기준_문구 = "제64조①2호", "장부가액 비례 후 기준시가가 있는 자산은 합계액을 기준시가로 재안분"
+
+    r = Fr(str(taxable_ratio))
+    기타 = [a["name"] for a in 자산[2:]]
+    과세_몫 = 몫["건물"] * r + sum(몫[n] for n in 기타)
+    총공급 = Fr(total_price) / (1 + 과세_몫 / 10) if vat_included else Fr(total_price)
+    건물_과세 = int(총공급 * 몫["건물"] * r)
+    건물_면세 = int(총공급 * 몫["건물"] * (1 - r))
+    기타_목록 = [{"name": n, "공급가액": int(총공급 * 몫[n])} for n in 기타]
+    과세표준 = 건물_과세 + sum(x["공급가액"] for x in 기타_목록)
+    부가세 = 과세표준 // 10
+    토지 = total_price - 건물_면세 - 과세표준 - (부가세 if vat_included else 0)
+
+    결과 = {"건물_공급가액": 건물_과세, "토지_가액": 토지, "부가가치세": 부가세, "과세표준_합계": 과세표준}
+    if 기타_목록:
+        결과["기타자산"] = 기타_목록
+    if r < 1:
+        결과["건물_면세분"] = 건물_면세
+    return {"결과": 결과,
+            "판단": list(시점_판단) + [
+                {"항목": "안분 기준", "결론": 기준_문구, "근거": f"부가가치세법 시행령 {호}"},
+                {"항목": "건물 공급가액(안분)", "결론": f"과세분 {건물_과세:,}원" + (f", 면세분 {건물_면세:,}원" if r < 1 else "") + f" (총 {total_price:,}원, 부가세 {'포함' if vat_included else '별도'})", "근거": "부가가치세법 시행령 제64조①"}],
+            "산식": [f"자산별 비율: " + ", ".join(f"{n} {float(v):.4f}" for n, v in 몫.items()),
+                     f"공급가액 합계 = {int(총공급):,}원" + (f" (총액 {total_price:,} ÷ (1 + 과세비율 {float(과세_몫):.4f} × 10%))" if vat_included else ""),
+                     f"과세표준 = {과세표준:,}원, 부가가치세 = {부가세:,}원, 토지 가액 = {토지:,}원(끝수 조정)"],
+            "근거": [["부가가치세법", "제29조", "⑨", "구분 불분명하거나 30% 이상 차이 → 안분"],
+                     ["부가가치세법 시행령", "제64조", "①", "1호 기준시가 비례, 다만 감정평가가액이 있으면 그 가액 비례; 2호 기준시가 없는 자산이 있으면 감정가액 비례, 감정가액이 없으면 장부가액 비례 후 기준시가 재안분"]]}
+
+
 @mcp.tool(annotations=CALC)
 @_guard
 def bundled_supply_split(total_price: WON,
@@ -4905,96 +4968,53 @@ def bundled_supply_split(total_price: WON,
                          appraisal: Annotated[dict | None, Field(description="{building, land} — 감정평가가액(선택)")] = None,
                          standard_value: Annotated[dict | None, Field(description="{building, land} — 기준시가(선택)")] = None,
                          book_value: Annotated[dict | None, Field(description="{building, land} — 장부가액(선택)")] = None,
-                         other_assets: Annotated[list | None, Field(description="기계장치 등 함께 공급하는 과세 자산 목록 [{name, book_value?, standard_value?, appraisal?}]")] = None,
-                         appraisal_date: Annotated[str | None, Field(description="감정평가일자 YYYY-MM-DD — 공급시기와 과세기간 안이면 감정가액 사용")] = None,
-                         supply_date: Annotated[str | None, Field(description="공급일자 YYYY-MM-DD — 과세기간 판정용")] = None,
-                         building_taxable_ratio: Annotated[float, Field(description="건물 중 과세 비율(0~1, 기본 1=전부 과세). 1 미만이면 건물 면세분 분리")] = 1) -> dict:
+                         other_assets: Annotated[list | None, Field(description="함께 공급하는 다른 과세 자산(기계장치 등) [{name, book_value?, standard_value?, appraisal?}]")] = None,
+                         appraisal_date: Annotated[str | None, Field(description="감정평가일 YYYY-MM-DD — supply_date와 함께 주면 감정가액을 쓸 수 있는 기간인지 판정")] = None,
+                         supply_date: Annotated[str | None, Field(description="공급시기 YYYY-MM-DD(중간지급조건부·장기할부는 최초 공급시기)")] = None,
+                         building_taxable_ratio: Annotated[float, Field(description="건물 중 과세사업 비율(0~1, 기본 1). 부가가치세는 과세분에만 붙음")] = 1) -> dict:
     """토지·건물 일괄공급 안분(부가법 제29조⑨, 영 제64조①).
-    언제: 토지와 건물, 기계장치 등 다른 과세 자산을 함께 공급하며 가액 구분이 불분명할 때 안분한다.
-      감정평가가액이 있으면 그 가액 비례(공급시기가 속하는 과세기간의 직전 과세기간 개시일부터 공급시기 과세기간 종료일까지의 감정만 인정),
-      없으면 기준시가 비례, 기준시가도 없으면 장부가액 비례로 건물 공급가액을 안분한다.
-      다른 자산이 함께 있으면: 모든 자산에 감정가액이 있으면 감정가액 비례, 하나라도 없으면 장부가액 비례로 나눈 뒤
-      기준시가가 있는 자산(토지·건물)은 그 합계액을 기준시가로 다시 안분한다(영 제64조①2호 단서).
+    언제: 토지와 건물(기계장치 등 다른 자산 포함)을 함께 공급하며 가액 구분이 불분명할 때 공급가액을 안분한다.
+    안분 순서: 감정가액이 모든 자산에 있으면 감정가액 비례(공급시기가 속하는 과세기간의 직전 과세기간 개시일 ~ 공급시기 과세기간 종료일의 감정만) →
+      모든 자산에 기준시가가 있으면 기준시가 비례(제1호) → 그 밖에는 장부가액 비례 후 기준시가가 있는 자산은 그 합계액을 기준시가로 재안분(제2호 단서).
     입력: 일괄 거래가액(원) → total_price, 부가세 포함 여부 → vat_included,
       감정평가가액 {building, land} → appraisal, 기준시가 {building, land} → standard_value,
-      장부가액 {building, land} → book_value,
-      기타 자산 목록 → other_assets([{name, book_value?, standard_value?, appraisal?}]),
-      감정평가일자 → appraisal_date(YYYY-MM-DD), 공급일자 → supply_date(YYYY-MM-DD),
-      건물 과세 비율 → building_taxable_ratio(0~1, 기본 1).
-    결과: 판단·결과(건물_공급가액·토지_가액·부가가치세·과세용역_합계·건물_면세분·기타자산)·산식·근거."""
+      장부가액 {building, land} → book_value, 다른 자산 → other_assets,
+      감정평가일·공급시기 → appraisal_date·supply_date, 건물 과세 비율 → building_taxable_ratio.
+    결과: 판단·결과(건물_공급가액(과세분)·토지_가액·부가가치세, 해당 시 기타자산·과세표준_합계·건물_면세분)·산식·근거."""
 
-    판단_목록 = []
+    if not 0 <= building_taxable_ratio <= 1:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"building_taxable_ratio는 0~1 (입력 {building_taxable_ratio})"]}
+    시점_판단 = []
+    if appraisal:
+        if appraisal_date and supply_date:
+            공급일, 감정일 = date.fromisoformat(supply_date), date.fromisoformat(appraisal_date)
+            전기_개시 = date(공급일.year - 1, 7, 1) if 공급일.month <= 6 else date(공급일.year, 1, 1)
+            당기_종료 = date(공급일.year, 6, 30) if 공급일.month <= 6 else date(공급일.year, 12, 31)
+            if not 전기_개시 <= 감정일 <= 당기_종료:
+                appraisal = None
+                시점_판단.append({"항목": "감정가액 시점", "결론": f"감정평가일 {appraisal_date}는 {전기_개시.isoformat()}~{당기_종료.isoformat()} 밖이라 감정가액을 쓰지 않음",
+                                  "근거": "부가가치세법 시행령 제64조①1호"})
+        else:
+            시점_판단.append({"항목": "감정가액 시점", "결론": "감정평가일을 확인하지 않고 감정가액을 사용함 — appraisal_date·supply_date를 주면 쓸 수 있는 기간인지 판정(직전 과세기간 개시일~공급시기 과세기간 종료일)",
+                              "근거": "부가가치세법 시행령 제64조①1호"})
+    if other_assets or building_taxable_ratio != 1:
+        return _bundled_supply_general(total_price, vat_included, appraisal, standard_value, book_value, other_assets or [], building_taxable_ratio, 시점_판단)
+
+    안분_규칙 = vocab.rule("토지건물_일괄공급_안분", 2026)  # 적용 블록 없음 → 기본 판단 반환
+
+    우선순위 = 안분_규칙["우선순위"]
+
+    판단_목록 = list(시점_판단)
     산식_목록 = []
 
-    # ── 기타 자산 유무 및 감정 유무 사전 확인 ───────────────────────────────
-    has_other = bool(other_assets)
-    기타_목록 = []
-    if has_other:
-        for a in other_assets:
-            이름 = a.get("name")
-            if not 이름:
-                return {"error": "입력 확인 필요 — 계산하지 않음",
-                        "문제": ["other_assets 각 항목에 name 필요"]}
-            기타_목록.append({"name": 이름,
-                              "book_value": a.get("book_value"),
-                              "standard_value": a.get("standard_value"),
-                              "appraisal": a.get("appraisal")})
-
-    기타_전부_감정 = True
-    for g in 기타_목록:
-        if g["appraisal"] is None:
-            기타_전부_감정 = False
-            break
-
-    # ── 감정가액 과세기간 윈도우 판정 ──────────────────────────────────────
-    # appraisal_date/supply_date가 있으면 윈도우 판정, 없으면 감정가액이 있으면 그대로 사용
-    감정_유효 = None  # 최종 사용할 감정가액 dict 또는 None
-    감정_제외_사유 = None
-    if appraisal_date and supply_date and appraisal:
-        sup_dt = date.fromisoformat(supply_date)
-        app_dt = date.fromisoformat(appraisal_date)
-        if sup_dt.month <= 6:
-            period_start = date(sup_dt.year, 1, 1)
-            period_end = date(sup_dt.year, 6, 30)
-        else:
-            period_start = date(sup_dt.year, 7, 1)
-            period_end = date(sup_dt.year, 12, 31)
-        if period_start.month == 1 and period_start.day == 1:
-            prev_start = date(sup_dt.year - 1, 7, 1)
-        else:
-            prev_start = date(sup_dt.year, 1, 1)
-        window_start = prev_start
-        window_end = period_end
-        if window_start <= app_dt <= window_end:
-            감정_유효 = appraisal
-        else:
-            감정_제외_사유 = (f"감정평가일자 {appraisal_date}가 과세기간 윈도우 "
-                              f"{window_start.isoformat()}~{window_end.isoformat()} 밖 → 감정가액 사용 안 함")
-    elif (not appraisal_date or not supply_date) and appraisal and appraisal.get("building") and appraisal.get("land"):
-        감정_유효 = appraisal
-
-    # ── 기준가액 선택 (토지·건물) ───────────────────────────────────────────
-    # 기타 자산이 있고 그 중 감정이 없는 자산이 있으면, 기준가액은 book_value 우선.
-    #   (감정가액으로 기준가액을 잡아도 이후 장부 비례 단계에서 장부값은 book_value를 쓰므로
-    #    기준가액을 book_value로 맞추는 것이 일관됨.)
+    # 기준 선택: 우선순위 따라
     기준_건물 = 0
     기준_토지 = 0
     기준_명칭 = ""
 
-    if has_other and not 기타_전부_감정:
-        # 기타 자산에 감정이 없는 게 있으면 토지·건물 기준가액도 book_value 사용
-        if book_value and book_value.get("building") and book_value.get("land"):
-            기준_건물 = float(book_value["building"])
-            기준_토지 = float(book_value["land"])
-            기준_명칭 = "장부가액"
-            판단_목록.append({"항목": "안분 기준", "결론": f"장부가액(건물 {기준_건물:,.0f}원, 토지 {기준_토지:,.0f}원) — 기타 자산 감정 없음, 영 제64조①2호",
-                              "근거": "부가가치세법 시행령 제64조①2호"})
-            산식_목록.append(f"안분 기준: 장부가액 (건물 {기준_건물:,.0f}원, 토지 {기준_토지:,.0f}원) — 영 제64조①2호")
-        else:
-            return {"error": "안분 기준 없음 — 기타 자산에 감정이 없어 장부가액 필요하나 book_value 없음"}
-    elif 감정_유효 and 감정_유효.get("building") and 감정_유효.get("land"):
-        기준_건물 = float(감정_유효["building"])
-        기준_토지 = float(감정_유효["land"])
+    if appraisal and appraisal.get("building") and appraisal.get("land"):
+        기준_건물 = float(appraisal["building"])
+        기준_토지 = float(appraisal["land"])
         기준_명칭 = "감정평가가액"
         판단_목록.append({"항목": "안분 기준", "결론": f"감정평가가액(건물 {기준_건물:,.0f}원, 토지 {기준_토지:,.0f}원) — 우선순위 1순위",
                           "근거": "부가가치세법 시행령 제64조①1호"})
@@ -5016,235 +5036,83 @@ def bundled_supply_split(total_price: WON,
     else:
         return {"error": "안분 기준 없음 — 감정평가가액·기준시가·장부가액 중 하나를 입력하세요"}
 
-    if 감정_제외_사유:
-        판단_목록.append({"항목": "감정가액 과세기간 윈도우", "결론": 감정_제외_사유,
-                          "근거": "부가가치세법 시행령 제64조①1호 괄호"})
+    기준_총계 = 기준_건물 + 기준_토지
+    건물비율 = 기준_건물 / 기준_총계
 
-    # ── 안분 방식 결정: 기타 자산 유무 ─────────────────────────────────────
-    has_other = bool(기타_목록)
-
-    if not has_other:
-        # 기존 동작: 토지·건물만 안분
-        기준_총계 = 기준_건물 + 기준_토지
-        건물비율 = 기준_건물 / 기준_총계
-
-        if vat_included:
-            L_B비 = 기준_토지 / 기준_건물 if 기준_건물 > 0 else 0
-            B = int(total_price / (1 + L_B비 + 0.1 * building_taxable_ratio))
-            부가가치세 = int(B * building_taxable_ratio * 0.1)
-            건물_면세분 = int(B * (1 - building_taxable_ratio)) if building_taxable_ratio < 1 else None
-            토지_가액 = total_price - B - 부가가치세
-            판단_목록.append({"항목": "건물 공급가액(안분)", "결론": f"{B:,}원 (부가세 포함 총 {total_price:,}원, 건물·토지 비율 {건물비율:.4f}, 부가세 별도)",
-                              "근거": "부가가치세법 시행령 제64조①"})
-            산식_목록.append(f"부가세 포함: B + L + 0.1×B×건물과세비율 = {total_price:,}, B:L = {기준_건물:,.0f}:{기준_토지:,.0f}, 건물과세비율 {building_taxable_ratio}")
-            산식_목록.append(f"B = {total_price:,} ÷ (1 + {L_B비:.4f} + 0.1×{building_taxable_ratio}) = {B:,}원")
-        else:
-            B = int(total_price * 건물비율)
-            부가가치세 = int(B * building_taxable_ratio * 0.1)
-            건물_면세분 = int(B * (1 - building_taxable_ratio)) if building_taxable_ratio < 1 else None
-            토지_가액 = total_price - B
-            판단_목록.append({"항목": "건물 공급가액(안분)", "결론": f"{B:,}원 (총 {total_price:,}원 × 건물비율 {건물비율:.4f})",
-                              "근거": "부가가치세법 시행령 제64조①"})
-            산식_목록.append(f"부가세 별도: B = {total_price:,} × {건물비율:.4f} = {B:,}원")
-
-        산식_목록.append(f"부가가치세 = {B:,} × {building_taxable_ratio} × 10% = {부가가치세:,}원")
-        산식_목록.append(f"토지 가액 = {total_price:,} − {B:,} − {부가가치세:,} = {토지_가액:,}원" if vat_included else
-                         f"토지 가액 = {total_price:,} − {B:,} = {토지_가액:,}원")
-
-        건물_전체공급가액 = B  # 계산식 설명용 (전체 건물 공급가액)
-        결과_빌딩 = int(B * building_taxable_ratio)
-        결과_토지 = 토지_가액
-        결과_부가세 = 부가가치세
-        결과_기타 = []
-        결과_과세표준합계 = 결과_빌딩
-        결과_건물면세분 = 건물_면세분
-
-    else:
-        # 기타 자산이 있을 때: 모든 자산(토지·건물·기타)에 감정가액이 있으면 감정가액 비례,
-        # 하나라도 없으면 장부가액 비례로 나눈 뒤 기준시가가 있는 자산은 합계액 기준시가로 재안분
-        all_have_appraisal = bool(감정_유효) and 기타_전부_감정  # 토지·건물 + 기타 전 자산 감정 유효
-        # 기타_전부_감정과 감정_유효를 이미 확인했으므로 루프 불필요하나 명시적으로 남김
-        for g in 기타_목록:
-            if g["appraisal"] is None:
-                all_have_appraisal = False
-                break
-
-        if all_have_appraisal:
-            # 모든 자산 감정가액 비례
-            총감정 = 기준_건물 + 기준_토지
-            for g in 기타_목록:
-                총감정 += float(g["appraisal"])
-            건물비율 = 기준_건물 / 총감정
-            토지비율 = 기준_토지 / 총감정
-            판단_목록.append({"항목": "안분 기준", "결론": "모든 자산에 감정평가가액이 있어 감정평가가액 비례 안분 — 영 제64조①1호",
-                              "근거": "부가가치세법 시행령 제64조①1호"})
-            산식_목록.append(f"안분 기준: 감정평가가액 비례 (건물 {기준_건물:,.0f} + 토지 {기준_토지:,.0f} + 기타자산 감정가액 합)")
-
-            건물_공급가액_전부 = int(total_price * 건물비율)
-            토지_가액_전부 = int(total_price * 토지비율)
-            기타_배분 = []
-            for g in 기타_목록:
-                g비율 = float(g["appraisal"]) / 총감정
-                기타_배분.append({"name": g["name"], "공급가액": int(total_price * g비율)})
-
-            if vat_included:
-                # 건물 과세분 + 기타 자산에 부가세
-                과세기준합계 = 건물_공급가액_전부 * building_taxable_ratio + sum(x["공급가액"] for x in 기타_배분)
-                # total = 토지 + 건물全部 + 기타 + 부가세, 부가세 = 0.1 × 과세기준합계
-                # total = 토지 + 건물全部 + 기타 + 0.1 × (건물全部×비율 + 기타)
-                # 토지 = total − 건물全部 − 기타 − 0.1×(건물全部×비율 + 기타)
-                토지_가액 = total_price - 건물_공급가액_전부 - sum(x["공급가액"] for x in 기타_배분) - int(과세기준합계 * 0.1)
-                부가가치세 = int(과세기준합계 * 0.1)
-                건물_면세분 = int(건물_공급가액_전부 * (1 - building_taxable_ratio))
-                건물_공급가액 = int(건물_공급가액_전부 * building_taxable_ratio)
-            else:
-                토지_가액 = total_price - 건물_공급가액_전부 - sum(x["공급가액"] for x in 기타_배분)
-                부가가치세 = int((건물_공급가액_전부 * building_taxable_ratio + sum(x["공급가액"] for x in 기타_배분)) * 0.1)
-                건물_면세분 = int(건물_공급가액_전부 * (1 - building_taxable_ratio))
-                건물_공급가액 = int(건물_공급가액_전부 * building_taxable_ratio)
-                # VAT 별도: 총액에서 이미 부가세 제외됨, 부가세는 과세표준 기준
-        else:
-            # 장부가액 비례로 나눈 뒤, 기준시가가 있는 자산(토지·건물)은 합계액 기준시가로 재안분 (영 제64조①2호 단서)
-            판단_목록.append({"항목": "안분 기준", "결론": "기타자산 포함 — 장부가액 비례 안분 후 기준시가 있는 자산(토지·건물) 합계액 기준시가 재안분 — 영 제64조①2호 단서",
-                              "근거": "부가가치세법 시행령 제64조①2호 단서"})
-            산식_목록.append(f"안분 기준: 장부가액 비례 → 기준시가 재안분 (영 제64조①2호 단서)")
-
-            # 장부가액 수집
-            장부_건물 = 기준_건물  # book_value에서 이미 가져옴
-            장부_토지 = 기준_토지
-            장부_기타 = []
-            for g in 기타_목록:
-                if g["book_value"] is None:
-                    return {"error": "입력 확인 필요 — 계산하지 않음",
-                            "문제": [f"other_assets '{g['name']}'에 book_value 필요 — 장부가액 안분 사용"]}
-                장부_기타.append(float(g["book_value"]))
-
-            총장부 = 장부_건물 + 장부_토지 + sum(장부_기타)
-            # 1차: 장부가액 비례
-            건물_1차 = total_price * 장부_건물 / 총장부
-            토지_1차 = total_price * 장부_토지 / 총장부
-            기타_1차 = []
-            for i, g in enumerate(기타_목록):
-                기타_1차.append(total_price * 장부_기타[i] / 총장부)
-
-            # 2차: 기준시가 있는 자산(토지·건물) 합계액을 기준시가로 재안분
-            기준시가_건물 = float(standard_value["building"]) if standard_value and standard_value.get("building") else 0
-            기준시가_토지 = float(standard_value["land"]) if standard_value and standard_value.get("land") else 0
-            기준시가_합계 = 기준시가_건물 + 기준시가_토지
-
-            if 기준시가_합계 > 0:
-                토지_건물_합계 = 건물_1차 + 토지_1차
-                건물_공급가액_전부 = 토지_건물_합계 * 기준시가_건물 / 기준시가_합계
-                토지_가액_전부 = 토지_건물_합계 * 기준시가_토지 / 기준시가_합계
-            else:
-                건물_공급가액_전부 = 건물_1차
-                토지_가액_전부 = 토지_1차
-
-            기타_배분 = []
-            for i, g in enumerate(기타_목록):
-                기타_배분.append({"name": g["name"], "공급가액": int(기타_1차[i])})
-
-            if vat_included:
-                과세기준합계 = 건물_공급가액_전부 * building_taxable_ratio + sum(x["공급가액"] for x in 기타_배분)
-                부가가치세 = int(과세기준합계 * 0.1)
-                토지_가액 = total_price - 건물_공급가액_전부 - sum(x["공급가액"] for x in 기타_배분) - 부가가치세
-                건물_면세분 = int(건물_공급가액_전부 * (1 - building_taxable_ratio))
-                건물_공급가액 = int(건물_공급가액_전부 * building_taxable_ratio)
-            else:
-                부가가치세 = int((건물_공급가액_전부 * building_taxable_ratio + sum(x["공급가액"] for x in 기타_배분)) * 0.1)
-                토지_가액 = total_price - 건물_공급가액_전부 - sum(x["공급가액"] for x in 기타_배분)
-                건물_면세분 = int(건물_공급가액_전부 * (1 - building_taxable_ratio))
-                건물_공급가액 = int(건물_공급가액_전부 * building_taxable_ratio)
-
-        결과_빌딩 = 건물_공급가액
-        결과_토지 = int(토지_가액)
-        결과_부가세 = 부가가치세
-        결과_기타 = 기타_배분
-        결과_과세표준합계 = int(건물_공급가액 + sum(x["공급가액"] for x in 기타_배분))
-        결과_건물면세분 = 건물_면세분 if building_taxable_ratio < 1 else None
-
-    # ── 판단 문구 추가 ──────────────────────────────────────────────────────
-    if has_other:
-        판단_목록.append({"항목": "건물 공급가액(안분)", "결론": f"{결과_빌딩:,}원 (부가세 포함 총 {total_price:,}원, 기타 자산 {len(기타_목록)}개 포함 안분)",
+    if vat_included:
+        # B + L + 0.1B = total, B:L = 기준 비율
+        # B = total ÷ (1 + L/B비 + 0.1)
+        L_B비 = 기준_토지 / 기준_건물
+        B = int(total_price / (1 + L_B비 + 0.1))
+        부가가치세 = int(B * 0.1)
+        토지_가액 = total_price - B - 부가가치세
+        판단_목록.append({"항목": "건물 공급가액(안분)", "결론": f"{B:,}원 (부가세 포함 총 {total_price:,}원, 건물·토지 비율 {건물비율:.4f}, 부가세 별도)",
                           "근거": "부가가치세법 시행령 제64조①"})
-        산식_목록.append(f"건물 공급가액(안분) = {결과_빌딩:,}원")
+        산식_목록.append(f"부가세 포함: B + L + 0.1B = {total_price:,}, B:L = {기준_건물:,.0f}:{기준_토지:,.0f}")
+        산식_목록.append(f"B = {total_price:,} ÷ (1 + {L_B비:.4f} + 0.1) = {B:,}원")
     else:
-        판단_목록.append({"항목": "건물 공급가액(안분)", "결론": f"{결과_빌딩:,}원 (총 {total_price:,}원, 건물·토지 비율 {기준_건물/(기준_건물+기준_토지):.4f})",
+        B = int(total_price * 건물비율)
+        부가가치세 = int(B * 0.1)
+        토지_가액 = total_price - B
+        판단_목록.append({"항목": "건물 공급가액(안분)", "결론": f"{B:,}원 (총 {total_price:,}원 × 건물비율 {건물비율:.4f})",
                           "근거": "부가가치세법 시행령 제64조①"})
-        산식_목록.append(f"건물 공급가액(안분) = {결과_빌딩:,}원")
+        산식_목록.append(f"부가세 별도: B = {total_price:,} × {건물비율:.4f} = {B:,}원")
 
-    산식_목록.append(f"부가가치세 = {결과_부가세:,}원")
-    산식_목록.append(f"토지 가액 = {결과_토지:,}원")
+    산식_목록.append(f"부가가치세 = {B:,} × 10% = {부가가치세:,}원")
+    산식_목록.append(f"토지 가액 = {total_price:,} − {B:,} − {부가가치세:,} = {토지_가액:,}원" if vat_included else
+                     f"토지 가액 = {total_price:,} − {B:,} = {토지_가액:,}원")
 
-    # ── 계산식 단계 ─────────────────────────────────────────────────────────
+    # ── 계산식 단계 (SPEC_export_workbook_f · h) ─────────────────────────
+    # 기준총계·건물비율·토지건물비율은 입력이 아니라 단계에서 계산한다.
+    토지건물비율 = 기준_토지 / 기준_건물 if 기준_건물 > 0 else 0
+
     계산식_입력 = [
         {"이름": "총거래가액", "값": total_price, "설명": f"일괄 거래가액 = {total_price:,}원"},
         {"이름": "부가세포함여부", "값": vat_included, "설명": f"부가세 포함 여부 = {vat_included}"},
         {"이름": "기준건물", "값": int(기준_건물), "설명": f"건물 기준가액({기준_명칭}) = {기준_건물:,.0f}원"},
         {"이름": "기준토지", "값": int(기준_토지), "설명": f"토지 기준가액({기준_명칭}) = {기준_토지:,.0f}원"},
     ]
-    if building_taxable_ratio < 1:
-        계산식_입력.append({"이름": "건물과세비율", "값": building_taxable_ratio,
-                             "설명": f"건물 과세 비율 = {building_taxable_ratio}"})
-        계산식_입력.append({"이름": "건물_면세분", "값": 건물_면세분,
-                             "설명": f"건물 면세분 = {건물_면세분:,}원 (건물 전체 공급가액 × (1 − 건물과세비율))"})
-    if has_other:
-        for g in 기타_목록:
-            계산식_입력.append({"이름": f"기타_{g['name']}_장부가액", "값": int(g.get("book_value") or 0),
-                                 "설명": f"기타 자산({g['name']}) 장부가액 = {g.get('book_value') or 0:,}원"})
 
     계산식 = [
         {
             "이름": "기준총계",
             "식": "기준건물 + 기준토지",
-            "값": int(기준_건물 + 기준_토지),
-            "설명": f"기준가액 합계 = 기준건물 + 기준토지 = {기준_건물:,.0f} + {기준_토지:,.0f} = {기준_건물+기준_토지:,.0f}원",
+            "값": int(기준_총계),
+            "설명": f"기준가액 합계 = 기준건물 + 기준토지 = {기준_건물:,.0f} + {기준_토지:,.0f} = {기준_총계:,.0f}원",
         },
         {
             "이름": "건물비율",
             "식": "기준건물 / 기준총계",
-            "값": 기준_건물 / (기준_건물 + 기준_토지) if (기준_건물 + 기준_토지) > 0 else 0,
-            "설명": f"건물비율 = 기준건물 / 기준총계 = {기준_건물:,.0f} / {기준_건물+기준_토지:,.0f} = {기준_건물/(기준_건물+기준_토지):.4f}" if (기준_건물+기준_토지) > 0 else "건물비율 = 0 (기준총계 0)",
+            "값": 건물비율,
+            "설명": f"건물비율 = 기준건물 / 기준총계 = {기준_건물:,.0f} / {기준_총계:,.0f} = {건물비율:.4f}",
         },
         {
             "이름": "건물_공급가액",
-            "식": (f"IF(부가세포함여부, ROUNDDOWN(총거래가액*기준건물*건물과세비율/(기준건물+기준토지+기준건물*0.1*건물과세비율),0), ROUNDDOWN(총거래가액*건물비율,0))"
-                    if building_taxable_ratio < 1 else
-                    f"IF(부가세포함여부, ROUNDDOWN(총거래가액*기준건물/(기준건물+기준토지+기준건물*0.1),0), ROUNDDOWN(총거래가액*건물비율,0))"),
-            "값": 결과_빌딩,
-            "설명": f"부가세 포함: 건물_공급가액 = 총거래가액 × 기준건물 × {'건물과세비율' if building_taxable_ratio < 1 else ''} ÷ (기준건물 + 기준토지 + 기준건물×0.1×{'건물과세비율' if building_taxable_ratio < 1 else '1'}) = {결과_빌딩:,}원, 부가세 별도: 건물_공급가액 = 총거래가액 × 건물비율 = {결과_빌딩:,}원 (영 제64조①)",
+            "식": f"IF(부가세포함여부,ROUNDDOWN(총거래가액*기준건물/(기준건물*1.1+기준토지),0),ROUNDDOWN(총거래가액*건물비율,0))",
+            "값": B,
+            "설명": f"부가세 포함: B = 총거래가액 × 기준건물 / (기준건물×1.1 + 기준토지) = {B:,}원, 부가세 별도: B = 총거래가액 × 건물비율 = {B:,}원 (영 제64조①)",
         },
         {
             "이름": "부가가치세",
-            "식": "ROUNDDOWN(건물_공급가액*0.1,0)" if building_taxable_ratio == 1 else f"ROUNDDOWN(건물_공급가액*0.1*{building_taxable_ratio},0)",
-            "값": 결과_부가세,
-            "설명": f"부가가치세 = 건물_공급가액 × 10%{' × 건물과세비율' if building_taxable_ratio < 1 else ''} = {결과_부가세:,}원",
+            "식": "ROUNDDOWN(건물_공급가액*0.1,0)",
+            "값": 부가가치세,
+            "설명": f"부가가치세 = 건물_공급가액 × 10% = {B:,} × 0.1 = {부가가치세:,}원",
         },
         {
             "이름": "토지_가액",
-            "식": (f"IF(부가세포함여부,총거래가액-건물_공급가액-부가가치세,총거래가액-건물_공급가액-건물_면세분)"
-                    if building_taxable_ratio < 1 else
-                    f"IF(부가세포함여부,총거래가액-건물_공급가액-부가가치세,총거래가액-건물_공급가액)"),
-            "값": 결과_토지,
-            "설명": f"토지 가액 = 총거래가액 − 건물공급가액(전체) {'− 부가가치세' if vat_included else ''} = {결과_토지:,}원 (건물과세비율 {building_taxable_ratio})",
+            "식": "IF(부가세포함여부,총거래가액-건물_공급가액-부가가치세,총거래가액-건물_공급가액)",
+            "값": 토지_가액,
+            "설명": f"토지 가액 = 총거래가액 − 건물_공급가액{' − 부가가치세' if vat_included else ''} = {토지_가액:,}원",
         },
     ]
 
-    # ── 결과 조립 ───────────────────────────────────────────────────────────
-    결과 = {
-        "건물_공급가액": 결과_빌딩,
-        "토지_가액": 결과_토지,
-        "부가가치세": 결과_부가세,
-    }
-    if 결과_기타:
-        결과["기타자산"] = 결과_기타
-    결과["과세표준_합계"] = 결과_과세표준합계
-    if 결과_건물면세분 is not None:
-        결과["건물_면세분"] = 결과_건물면세분
-
     return {
         "판단": 판단_목록,
-        "결과": 결과,
+        "결과": {
+            "건물_공급가액": B,
+            "토지_가액": 토지_가액,
+            "부가가치세": 부가가치세,
+        },
         "산식": 산식_목록,
         "근거": vocab.basis("토지건물_일괄공급_안분", 2026),
         "계산식_입력": 계산식_입력,
