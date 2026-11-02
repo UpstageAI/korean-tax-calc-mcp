@@ -50,6 +50,13 @@ def _scan_schema(node, path, problems):
         for i, it in enumerate(pitems):
             if isinstance(it, dict):
                 _scan_schema(it, f"{path}.prefixItems[{i}]", problems)
+    # anyOf / oneOf / allOf 내부 검사
+    for comb in ("anyOf", "oneOf", "allOf"):
+        coll = node.get(comb)
+        if isinstance(coll, list):
+            for i, sub in enumerate(coll):
+                if isinstance(sub, dict):
+                    _scan_schema(sub, f"{path}.{comb}[{i}]", problems)
 
 
 def _walk(d, path, problems):
