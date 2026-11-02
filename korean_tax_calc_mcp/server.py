@@ -9,6 +9,7 @@ import functools
 import math
 import os
 import re
+from fractions import Fraction
 from datetime import date
 from typing import Annotated, Any, Literal
 
@@ -4442,10 +4443,45 @@ def simplified_vat_return(year: YEAR,
 
 
 
+def _settlement_row(s):
+    """정산 1건(영 제82조, 별지 제22호 ⑮~⑲). 반환 (행, 문제). 금액은 분수로 계산해 끝수를 버림."""
+    허용 = {"항목", "총공통매입세액", "면적", "공급가액", "면세비율", "기불공제", "이미공제세액"}
+    if not isinstance(s, dict):
+        return None, "항목은 객체여야 함"
+    모름 = sorted(set(s) - 허용)
+    if 모름:
+        return None, f"모르는 키 {모름} — 허용 키: {sorted(허용)}"
+    if s.get("총공통매입세액") is None:
+        return None, "총공통매입세액 필요"
+    총 = int(s["총공통매입세액"])
+    기준 = [k for k in ("면적", "공급가액", "면세비율") if s.get(k) is not None]
+    if len(기준) != 1:
+        return None, "확정 비율은 면적·공급가액·면세비율 중 하나만 입력"
+    if 기준[0] == "면세비율":
+        비율 = Fraction(str(s["면세비율"]))
+        근거 = "제82조"
+    else:
+        값 = s[기준[0]]
+        if not isinstance(값, dict) or 값.get("과세") is None or 값.get("면세") is None:
+            return None, f"{기준[0]}은 {{과세, 면세}}로 입력"
+        면세, 과세 = Fraction(str(값["면세"])), Fraction(str(값["과세"]))
+        if 면세 < 0 or 과세 < 0 or 면세 + 과세 == 0:
+            return None, f"{기준[0]} 합계가 0이거나 음수"
+        비율 = 면세 / (면세 + 과세)
+        근거 = "제82조 2호" if 기준[0] == "면적" else "제82조 1호"
+    if not 0 <= 비율 <= 1:
+        return None, "면세비율은 0~1"
+    if (s.get("기불공제") is None) == (s.get("이미공제세액") is None):
+        return None, "기불공제(⑱)와 이미공제세액 중 하나만 입력"
+    기불공제 = int(s["기불공제"]) if s.get("기불공제") is not None else 총 - int(s["이미공제세액"])
+    총액 = int(총 * 비율)
+    return {"항목": s.get("항목") or "공통매입세액", "총공통매입세액": 총, "확정비율": float(비율), "불공제총액": 총액,
+            "기불공제": 기불공제, "가산또는공제": 총액 - 기불공제, "근거": 근거}, None
+
+
 @mcp.tool(annotations=CALC)
 @_guard
-def common_input_tax(year: YEAR,
-                     period: Annotated[str, Field(description="과세기간('1기'|'2기')")],
+def common_input_tax(year: YEAR,                     period: Annotated[str, Field(description="과세기간('1기'|'2기')")],
                      filing: Annotated[str, Field(description="신고 구분('예정'|'확정')")],
                      supplies: Annotated[dict, Field(description="공급가액 {예정:{taxable,exempt}, 확정:{taxable,exempt}} — 부가세 제외 금액, 확정신고는 전체 비율 사용. 둘 다 null이면 error")],
                      new_business: Annotated[bool, Field(description="신규 사업 여부(기본 False)")] = False,
@@ -4453,7 +4489,8 @@ def common_input_tax(year: YEAR,
                      prior_period_supplies: Annotated[dict | None, Field(description="직전 과세기간 {taxable, exempt} — 공통사용재화 공급 과세표준용")] = None,
                      common_asset_sales: Annotated[list | None, Field(description="공통사용재화 공급 목록 [{sale_price(공급가액), input_tax(그 재화의 매입세액 — ledger에 넣지 말고 여기만 입력, 신규 사업 아니면 직전 과세기간 비율로 안분 공제)}]")] = None,
                      ledger: Annotated[list, Field(description="원장형 입력 당기 매입 항목 [{항목, 매입세액 | 매입가액(×10%, 둘 중 하나), 사용처:'과세'|'면세'|'공통'|'실지귀속'|'불공제', 과세비율(0~1) | 횟수:{과세,면세} | 면적:{과세,면세} | 신축건물(bool, 기본 False) — 둘 중 하나: 매입세액 또는 매입가액. 공통+신축건물+면적 있으면 예정사용면적비율 우선 적용")] = ...,
-                     prior_common_input_tax: Annotated[int | None, Field(description="ledger로 확정신고할 때 예정신고 기간의 공통매입세액")] = None) -> dict:
+                     prior_common_input_tax: Annotated[int | None, Field(description="ledger로 확정신고할 때 예정신고 기간의 공통매입세액")] = None,
+                     settlements: Annotated[list | None, Field(description="영 제82조 정산(제81조④로 안분한 뒤 공급가액·사용면적이 확정된 과세기간, 확정신고만) [{항목?, 총공통매입세액, 면적:{과세,면세} | 공급가액:{과세,면세} | 면세비율(0~1), 기불공제 | 이미공제세액}]. 예: 신축 건물. 이 매입세액은 ledger에 다시 넣지 않음. 있으면 ledger는 빈 목록 가능")] = None) -> dict:
     """겸영사업자 공통매입세액 안분·정산 + 공통사용재화 공급(부가법 제40조, 영 제81조~제83조·제63조).
     언제: 과세·면세 겸영 사업자의 예정·확정신고에서 공통매입세액 공제액과 공통사용재화 공급 시 추가 매출세액을 계산한다.
     입력:
@@ -4462,14 +4499,27 @@ def common_input_tax(year: YEAR,
         과세비율(0~1) | 횟수:{과세,면세} | 면적:{과세,면세}}].
         사용처별 처리는 어휘 공통매입세액_귀속.판단.사용처별에서 읽음.
         prior_common_input_tax: 확정신고에서 ledger 사용 시 예정신고 기간의 공통매입세액. 기존 prior_nondeductible는 그대로.
-    결과: 판단·계산·결과(공제매입세액·추가_매출세액)·산식·근거. 계산의 실지귀속_공제는 기존 계산 키 유지."""
+      · 정산: settlements=[{항목?, 총공통매입세액, 면적|공급가액|면세비율, 기불공제|이미공제세액}] — 제81조④로 안분한 매입세액을
+        사용면적·공급가액이 확정된 과세기간 확정신고 때 정산(영 제82조, 별지 제22호 ⑮~⑲).
+    결과: 판단·계산·결과(공제매입세액·추가_매출세액)·산식·근거. 계산의 실지귀속_공제는 기존 계산 키 유지.
+      settlements가 있으면 결과.정산_가산또는공제(⑲ 합계, +면 납부세액 가산·공제매입세액 감소)와 서식_표."""
 
     # 기간 유효성 검사
     if period not in ("1기", "2기"):
         return {"error": f"period='{period}' 은(는) 지원하지 않음 — '1기' 또는 '2기'여야 함"}
 
+    # 정산(영 제82조): 입력을 먼저 검증한다
+    if settlements and filing != "확정":
+        return {"error": "입력 확인 필요 — 공통매입세액 정산은 확정신고 때 함(부가가치세법 시행령 제82조). filing='확정'으로 입력하세요"}
+    정산_행 = []
+    for s in settlements or []:
+        행, 문제 = _settlement_row(s)
+        if 문제:
+            return {"error": f"입력 확인 필요 — 정산 항목: {문제}"}
+        정산_행.append(행)
+
     # 빈 원장 거부
-    if not ledger:
+    if not ledger and not 정산_행:
         return {"error": "입력 확인 필요 — 원장 항목이 없음",
                 "허용값": {"사용처": ["과세", "면세", "공통", "실지귀속", "불공제"]}}
 
@@ -4477,7 +4527,7 @@ def common_input_tax(year: YEAR,
     예정 = supplies.get("예정")
     확정 = supplies.get("확정")
     if (예정 is None or 예정.get("taxable") is None or 예정.get("exempt") is None) and \
-       (확정 is None or 확정.get("taxable") is None or 확정.get("exempt") is None):
+       (확정 is None or 확정.get("taxable") is None or 확정.get("exempt") is None) and not 정산_행:
         return {"error": "공급가액 입력 필요 — 예정·확정 중 하나는 과세·면세 공급가액을 모두 입력해야 함"}
 
     # 어휘에서 기준값 읽기
@@ -4603,9 +4653,9 @@ def common_input_tax(year: YEAR,
         총예정 = 예정_과세 + 예정_면세
         총확정 = 확정_과세 + 확정_면세
         총과세기간 = 총예정 + 총확정
-        if 총과세기간 == 0:
+        if 총과세기간 == 0 and (not 정산_행 or common_예정 + common_확정 > 0):
             return {"error": "확정신고 과세기간 전체 공급가액이 없음 — 안분 불가"}
-        면세비율_과세기간 = (예정_면세 + 확정_면세) / 총과세기간
+        면세비율_과세기간 = (예정_면세 + 확정_면세) / 총과세기간 if 총과세기간 else 0.0
         if 총예정 > 0:
             면세비율_예정 = 예정_면세 / 총예정
         else:
@@ -4629,7 +4679,9 @@ def common_input_tax(year: YEAR,
         불공제_확정 = 0
 
         # 전액 공제 예외 판단 (영 제81조②) — new_business는 공통사용재화 매입세액에 적용, 공통매입세액은 정산 대상
-        if 공통매입세액_합계 < 공통매입세액_전액기준:
+        if 공통매입세액_합계 == 0 and 정산_행:
+            공통매입세액_공제 = 0  # 정산만 하는 신고
+        elif 공통매입세액_합계 < 공통매입세액_전액기준:
             공통매입세액_공제 = 공통매입세액_합계
             판단_목록.append({"항목": "공통매입세액 확정 공제", "결론": f"전액 공제(공통매입세액 합계 {공통매입세액_합계:,}원 < {공통매입세액_전액기준:,}원, 영 제81조②2호)",
                               "근거": "부가가치세법 시행령 제81조②2호"})
@@ -4741,6 +4793,17 @@ def common_input_tax(year: YEAR,
 
     # ── 5. 공제매입세액 합계 ──
     공제매입세액 = (taxable_only - taxable_only_nondeductible) + 실지귀속_공제 + 공통매입세액_공제 + 공통사용재화_매입세액_공제
+
+    # ── 정산(영 제82조, 별지 제22호 ⑮~⑲): ⑲ = ⑰ − ⑱, +면 불공제가 늘어 납부세액에 가산 ──
+    정산_합계 = sum(행["가산또는공제"] for 행 in 정산_행)
+    공제매입세액 -= 정산_합계
+    for 행 in 정산_행:
+        방향 = "납부세액에 가산(공제매입세액 감소)" if 행["가산또는공제"] > 0 else ("공제(공제매입세액 증가)" if 행["가산또는공제"] < 0 else "조정 없음")
+        판단_목록.append({"항목": f"공통매입세액 정산({행['항목']})", "결론": (
+            f"불공제 총액 {행['불공제총액']:,}원({행['총공통매입세액']:,} × 확정 면세비율 {행['확정비율']:.4f}) − "
+            f"기불공제 {행['기불공제']:,}원 = {행['가산또는공제']:,}원 → {방향}"),
+            "근거": f"부가가치세법 시행령 {행['근거']}"})
+        산식_목록.append(f"정산({행['항목']}) = {행['총공통매입세액']:,} × {행['확정비율']:.4f} − {행['기불공제']:,} = {행['가산또는공제']:,}원 (영 {행['근거']}, 별지 제22호 ⑮~⑲)")
 
     # 판단 추가
     판단_목록.append({"항목": "공제매입세액 합계", "결론": (
@@ -4858,8 +4921,11 @@ def common_input_tax(year: YEAR,
         "이름": "공제매입세액",
         "식": f"ROUNDDOWN((과세전용매입세액-불공제매입세액)+실지귀속공제+공통매입세액공제+공통사용재화매입세액공제,0)",
         "값": 공제매입세액,
-        "설명": f"공제매입세액 = (과세전용 − 불공제) + 실지귀속 + 공통매입세액 + 공통사용재화매입세액 = {공제매입세액:,}원 (법 제40조, 영 제81조)",
+        "설명": f"공제매입세액 = (과세전용 − 불공제) + 실지귀속 + 공통매입세액 + 공통사용재화매입세액{' − 정산' if 정산_행 else ''} = {공제매입세액:,}원 (법 제40조, 영 제81조)",
     })
+    if 정산_행:
+        계산식[-1]["식"] = "ROUNDDOWN((과세전용매입세액-불공제매입세액)+실지귀속공제+공통매입세액공제+공통사용재화매입세액공제-정산가산또는공제,0)"
+        계산식_입력.append({"이름": "정산가산또는공제", "값": 정산_합계, "설명": f"공통매입세액 정산 ⑲ 합계 = {정산_합계:,}원 (영 제82조)"})
 
     계산식_입력.extend([
         {"이름": "과세전용매입세액", "값": taxable_only - taxable_only_nondeductible, "설명": f"과세전용 매입세액 = {taxable_only:,} − 불공제 {taxable_only_nondeductible:,} = {taxable_only - taxable_only_nondeductible:,}원"},
@@ -4869,7 +4935,7 @@ def common_input_tax(year: YEAR,
         {"이름": "공통사용재화매입세액공제", "값": 공통사용재화_매입세액_공제, "설명": f"공통사용재화 매입세액 공제 = {공통사용재화_매입세액_공제:,}원"},
     ])
 
-    return {
+    공통_결과 = {
         "판단": 판단_목록,
         "계산": {
             "면세비율_예정": 면세비율_예정,
@@ -4892,6 +4958,11 @@ def common_input_tax(year: YEAR,
         "계산식_입력": 계산식_입력,
         "계산식": 계산식,
     }
+    if 정산_행:
+        공통_결과["계산"]["정산_명세"] = 정산_행
+        공통_결과["결과"]["정산_가산또는공제"] = 정산_합계
+        공통_결과["서식_표"] = {"22_정산": 정산_행}
+    return 공통_결과
 
 
 # ── 끝에서 끝까지: 감가상각자산 공통매입세액 재계산 ──
@@ -9317,8 +9388,8 @@ def export_workbook(
             if tinfo["tool"] == "nonbusiness_interest_disallowance":
                 form_res = nonbusiness_form_data(form_res, (calls[tinfo["call_idx"]] or {}).get("args", {}))
                 call_sources = {**source_data, **nonbusiness_form_sources(form_res)}
-            if tinfo["tool"] == "bad_debt_adjustment":
-                # 서식_표를 table source로 사용 (34_대손금, 34_채권잔액)
+            if tinfo["tool"] in ("bad_debt_adjustment", "common_input_tax"):
+                # 서식_표를 table source로 사용 (34_대손금, 34_채권잔액, 22_정산)
                 서식_표 = form_res.get("서식_표", {}) if isinstance(form_res, dict) else {}
                 if 서식_표:
                     call_sources = {**call_sources, **서식_표}
@@ -9328,11 +9399,16 @@ def export_workbook(
                 same = next((t for t in 템플릿_목록 if t["key"] == ref_key and t["call_idx"] == tinfo["call_idx"]), None)
                 if same is not None:
                     cross_this[(ref_key, ref_id)] = (same["sheet"], all_slots[ref_key][ref_id][1])
-            render_form_sheet(ws, tpl, form_res, input_map,
-                               sheet_name_map, slot_map_all, cross_this, tkey,
-                               call_idx=tinfo["call_idx"], company=company, period=period, biz_no=biz_no,
-                               source_data=call_sources, all_slots=all_slots,
-                               label=cd.get("label", ""), 과세기간=과세기간)
+            try:
+                render_form_sheet(ws, tpl, form_res, input_map,
+                                   sheet_name_map, slot_map_all, cross_this, tkey,
+                                   call_idx=tinfo["call_idx"], company=company, period=period, biz_no=biz_no,
+                                   source_data=call_sources, all_slots=all_slots,
+                                   label=cd.get("label", ""), 과세기간=과세기간)
+            except ValueError as e:
+                if "max_rows" not in str(e):
+                    raise
+                return {"error": f"입력 확인 필요 — {tpl.get('form', tkey)}의 칸보다 행이 많아 엑셀을 만들지 않음: {e}. 서식 칸에 맞게 묶거나 나눠서 호출하세요"}
             시트이름들.append(tinfo["sheet"])
 
         # ── 3b. 계산 N 시트들 (틀 없는 도구들, call 순서대로) ──

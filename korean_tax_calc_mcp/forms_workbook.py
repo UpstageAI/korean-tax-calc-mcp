@@ -546,7 +546,9 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
     # slot별 check_col: slot에 check_col이 있으면 그 열, 없으면 틀의 check_col.
     # 각 check_col 위치마다 "도구 값"/"확인" 헤더와 검증 수식을 작성.
     tpl_check_col = tpl.get("check_col", "")
-    check_rows = [s for s in tpl["slots"] if s.get("check")]
+    # check_optional: 입력이 있을 때만 생기는 값(별지22 정산)은 도구 값이 없으면 검증 칸을 만들지 않는다
+    check_rows = [s for s in tpl["slots"] if s.get("check")
+                  and not (s.get("check_optional") and tool_value(res, s["check"]) is None)]
     if check_rows and (tpl_check_col or any(s.get("check_col") for s in check_rows)):
         # slot별 check_col 수집 (중복 제거, 정렬)
         check_col_positions: list[str] = []
