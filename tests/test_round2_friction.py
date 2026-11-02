@@ -14,7 +14,7 @@ def test_find_tool_says_none_when_nothing_fits_and_accepts_keyword():
 
 
 def test_entertainment_in_kind_amount_only():
-    r = c("entertainment_adjustment", {"year": 2026, "sme": True, "부가세별도": False,
+    r = c("entertainment_adjustment", {"year": 2026, "sme": True, "include_vat": False,
                                        "ledger": [{"항목": "현물접대", "금액": 15000000, "성격": "현물"}]})
     assert "error" not in r and r["결과"]["시부인_대상"] == 15000000
 
