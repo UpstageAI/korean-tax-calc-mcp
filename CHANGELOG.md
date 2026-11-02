@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.17.1 (2026-11-02)
+
+### 호환 깨짐
+- `entertainment_adjustment`: 입력 `부가세별도`를 `include_vat`로 변경. 한글 입력 이름 때문에 Anthropic Messages API가 도구 목록 전체를 400으로 거부했음(`Property keys should match pattern '^[a-zA-Z0-9_.-]{1,64}$'`). 타입·기본값(True)·계산은 그대로.
+
+### 수정
+- `__version__`을 패키지 버전과 맞춤(0.15.1로 뒤처져 있었음).
+
+### 테스트
+- 모든 도구 입력 스키마의 property 키 형식 검사 추가(`tests/test_tool_schema_keys.py`).
+
 ## 0.17.0 (2026-10-30)
 
 보완 Claude(실제 2차 수준 자료형 문제로 점검 — 소득세 종합문제에서 세 모델이 같이 틀린 자리). 뼈대는 Solar Pro 4.
