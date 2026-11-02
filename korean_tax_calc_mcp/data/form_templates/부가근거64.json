@@ -3,6 +3,7 @@
  "sheet": "부가 계산근거 일괄양도",
  "form": "서식 없음 — 부가가치세법 시행령 제64조①1호",
  "tool": "bundled_supply_split",
+ "when": "'총거래가액' in 입력_값",
  "widths": {
   "A": 14,
   "B": 14,
