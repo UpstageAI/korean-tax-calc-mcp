@@ -24,6 +24,7 @@ def test_other_asset_without_values_uses_book_then_standard():
     assert R["기타자산"] == [{"name": "기계장치", "공급가액": 40_000_000}]
     assert R["과세표준_합계"] == 70_000_000 and R["부가가치세"] == 7_000_000
     assert "제64조①2호" in str(r["판단"])
+    assert any(x["항목"] == "감정가액 미사용" and "기계장치" in x["결론"] for x in r["판단"])
 
 
 def test_other_asset_with_appraisal_uses_appraisal():

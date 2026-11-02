@@ -4933,6 +4933,9 @@ def _bundled_supply_general(total_price, vat_included, appraisal, standard_value
             for 이름, r in 비율("기준", 있음).items():
                 몫[이름] = 합계_몫 * r
         호, 기준_문구 = "제64조①2호", "장부가액 비례 후 기준시가가 있는 자산은 합계액을 기준시가로 재안분"
+        감정_없는_자산 = [a["name"] for a in 자산 if not a["감정"]]
+        if len(감정_없는_자산) < len(자산):
+            시점_판단 = list(시점_판단) + [{"항목": "감정가액 미사용", "결론": f"{', '.join(감정_없는_자산)}에 감정가액이 없어 일부 자산의 감정가액은 재안분에도 쓰지 않음 — 2차 안분은 기준시가", "근거": "부가가치세법 시행령 제64조①2호 단서"}]
 
     r = Fr(str(taxable_ratio))
     기타 = [a["name"] for a in 자산[2:]]
