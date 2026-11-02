@@ -316,10 +316,10 @@ _도구별_필수필드 = {
         "직장공제회초과반환금": {"필요": ["amount"], "허용": ["contribution_years"]},
     },
     "bad_debt_adjustment": {
-        "소멸시효완성": {"필요": ["amount", "arose_in"]},
-        "화해·확정판결": {"필요": ["amount", "arose_in"]},
-        "부도6개월": {"필요": ["amount", "arose_in", "instrument", "months_since_default"], "허용": ["mortgage"]},
-        "회수불능": {"필요": ["amount", "arose_in"]},
+        "소멸시효완성": {"필요": ["amount", "arose_in"], "허용": ["date", "account", "detail", "booked", "memo_excluded"]},
+        "화해·확정판결": {"필요": ["amount", "arose_in"], "허용": ["date", "account", "detail", "booked", "memo_excluded"]},
+        "부도6개월": {"필요": ["amount", "arose_in", "instrument", "months_since_default"], "허용": ["mortgage", "date", "account", "detail", "booked", "memo_excluded"]},
+        "회수불능": {"필요": ["amount", "arose_in"], "허용": ["date", "account", "detail", "booked", "memo_excluded"]},
     },
     "entertainment_adjustment": {
         "없음": {"필요": ["amount"]},
@@ -2336,20 +2336,20 @@ def _loss_rate_floor(rate: float, digits: int = 3) -> float:
 @mcp.tool(annotations=CALC)
 @_guard
 def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중소기업 여부")],
-                        book: Annotated[dict, Field(description='장부상 대손충당금 {opening: 기초, offset: 당기상계, provision: 당기설정, closing: 기말}(원)')],
+                        book: Annotated[dict, Field(description='장부상 대손충당금 {opening: 기초, offset: 당기상계, provision: 당기설정, closing: 기말, reversal?: 회사 환입액}(원)')],
                         receivables_prev_end_book: WON,
                         receivables_end_book: WON,
-                        writeoffs: Annotated[list, Field(description="대손금 목록 [{kind, amount, arose_in:'전기'|'당기', instrument?:'외상매출금'|'받을어음'|'기타', months_since_default?, mortgage?:bool}]")],
+                        writeoffs: Annotated[list, Field(description="대손금 목록 [{kind, amount, arose_in:'전기'|'당기', instrument?:'외상매출금'|'받을어음'|'기타', months_since_default?, mortgage?, date?, account?, detail?, booked?:'상계'|'손비', memo_excluded?:bool}]")],
                         prior_excess: Annotated[int, Field(description="전기 대손충당금 한도초과액(원)")] = 0,
                         loss_rate_digits: Annotated[int, Field(description="대손실적률 소수 자릿수(기본 3 — 넷째 자리 이하 절사)")] = 3) -> dict:
     """대손금·대손충당금 세무조정(법인세법 제19조의2·제34조, 시행령 제19조의2·제61조).
     언제: 법인세 세무조정에서 대손금 인정 여부와 대손충당금 한도·국회초과를 함께 계산할 때.
     입력: 사업연도(2016~2026) → year, 중소기업 여부 → sme, 전기 대손충당금 한도초과액(원) → prior_excess,
-    장부상 대손충당금 {opening, offset, provision, closing}(원) → book,
+    장부상 대손충당금 {opening, offset, provision, closing, reversal?}(원) → book,
     장부상 설정대상 채권 전기말·당기말(원) → receivables_prev_end_book·receivables_end_book,
-    대손금 목록 [{kind, amount, arose_in, instrument?, months_since_default?, mortgage?}] → writeoffs,
+    대손금 목록 [{kind, amount, arose_in, instrument?, months_since_default?, mortgage?, date?, account?, detail?, booked?, memo_excluded?}] → writeoffs,
     대손실적률 소수 자릿수(기본 3) → loss_rate_digits.
-    결과: 판단(항목별·근거)·계산(세법상 당기 대손금·전기말·당기말 채권·실적률)·결과(한도·한도초과)·세무조정. 대손금·대손충당금 세무조정."""
+    결과: 판단(항목별·근거)·계산(세법상 당기 대손금·전기말·당기말 채권·실적률)·결과(한도·한도초과)·세무조정·서식_표·계산식_입력. 대손금·대손충당금 세무조정."""
 
     _v = _validate_items(writeoffs, "kind", _specs_from_vocab("bad_debt_adjustment", "kind"))
     if _v: return _v
@@ -2364,6 +2364,8 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
     for w in writeoffs:
         kind = w["kind"]; amount = int(w["amount"]); arose_in = w["arose_in"]
         instrument = w.get("instrument"); months = w.get("months_since_default"); mortgage = w.get("mortgage", False)
+        booked = w.get("booked")  # '상계'|'손비'|None
+        memo_excluded = w.get("memo_excluded", False)  # bool
 
         if kind == "화해·확정판결":
             # 영 제19조의2①10호(재판상 화해 등 확정판결과 같은 효력)는 ③1호 열거 밖 → 결산조정: 손비로 계상한 사업연도 손금 (Claude 10-13 정정)
@@ -2414,21 +2416,29 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
                 current_disallowed_entries.append({"구분": "부인 대손(저당권)", "금액": amount, "소득처분": "유보"})
             elif instrument == "받을어음":
                 # 받을어음: 중소기업·일반 모두 인정 (비망 1,000원 공제)
-                recognized = max(0, amount - 1000); memo_total += min(amount, 1000)
+                if memo_excluded:
+                    recognized = amount; memo = 0
+                else:
+                    recognized = max(0, amount - 1000); memo = min(amount, 1000)
                 tax_bad_debt_recognized += recognized
+                memo_total += memo
                 judgments.append({"항목": f"부도6개월 받을어음 {amount:,}원",
-                                  "결론": f"인정(대손금, 비망 1,000원 공제 → {recognized:,}원)",
+                                  "결론": f"인정(대손금, 비망 1,000원 공제 → {recognized:,}원)" if not memo_excluded else f"인정(대손금, 비망가액 제외 전액 시인 → {recognized:,}원)",
                                   "금액": recognized, "근거": "법인세법 제19조의2·시행령 제19조의2(부도발생 후 6개월 경과 받을어음)",
-                                  "이유": "받을어음 부도6개월분 인정, 비망 1,000원 공제"})
+                                  "이유": "받을어음 부도6개월분 인정, 비망 1,000원 공제" if not memo_excluded else "받을어음 부도6개월분 인정, 비망가액 제외"})
             elif instrument == "외상매출금":
                 if sme:
                     # 중소기업: 부도 이전 발생 외상매출금 인정 (비망 1,000원 공제)
-                    recognized = max(0, amount - 1000); memo_total += min(amount, 1000)
+                    if memo_excluded:
+                        recognized = amount; memo = 0
+                    else:
+                        recognized = max(0, amount - 1000); memo = min(amount, 1000)
                     tax_bad_debt_recognized += recognized
+                    memo_total += memo
                     judgments.append({"항목": f"부도6개월 외상매출금 {amount:,}원(중소기업)",
-                                      "결론": f"인정(대손금, 비망 1,000원 공제 → {recognized:,}원)",
+                                      "결론": f"인정(대손금, 비망 1,000원 공제 → {recognized:,}원)" if not memo_excluded else f"인정(대손금, 비망가액 제외 전액 시인 → {recognized:,}원)",
                                       "금액": recognized, "근거": "법인세법 제19조의2·시행령 제19조의2(중소기업 외상매출금 부도6개월분)",
-                                      "이유": "중소기업 외상매출금 부도6개월분 인정, 비망 1,000원 공제"})
+                                      "이유": "중소기업 외상매출금 부도6개월분 인정, 비망 1,000원 공제" if not memo_excluded else "중소기업 외상매출금 부도6개월분 인정, 비망가액 제외"})
                 else:
                     # 일반법인: 외상매출금 부도6개월분 불인정
                     denied_bad_debt += amount
@@ -2440,9 +2450,13 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
             else:
                 # instrument 미지정 기타
                 if sme:
-                    recognized = max(0, amount - 1000); memo_total += min(amount, 1000)
+                    if memo_excluded:
+                        recognized = amount; memo = 0
+                    else:
+                        recognized = max(0, amount - 1000); memo = min(amount, 1000)
                     tax_bad_debt_recognized += recognized
-                    judgments.append({"항목": f"부도6개월 기타 {amount:,}원(중소기업)", "결론": f"인정(비망 1,000원 공제 → {recognized:,}원)",
+                    memo_total += memo
+                    judgments.append({"항목": f"부도6개월 기타 {amount:,}원(중소기업)", "결론": f"인정(비망 1,000원 공제 → {recognized:,}원)" if not memo_excluded else f"인정(비망가액 제외 전액 시인 → {recognized:,}원)",
                                       "금액": recognized, "근거": "법인세법 제19조의2·시행령 제19조의2"})
                 else:
                     denied_bad_debt += amount
@@ -2491,6 +2505,18 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
     # 4. 전기 한도초과(손금산입·△유보)
     if prior_excess > 0:
         settlements.append({"구분": "전기 한도초과", "금액": prior_excess, "소득처분": "△유보"})
+    # 5. 비망가액 세무조정(대손금 부인(비망가액), 유보) — memo_excluded가 아닌 부도6개월 항목에만
+    if memo_total > 0:
+        settlements.append({"구분": "대손금 부인(비망가액)", "금액": memo_total, "소득처분": "유보"})
+
+    # 회사 환입액(기본 0)
+    company_reversal = int(book.get("reversal", 0))
+    # 과소환입·과다환입 = 장부기초 − 기중환입(0) − 전기 한도초과 − ㉗계 − (장부 기말 − 당기 설정) − 회사 환입
+    book_opening = int(book["opening"])
+    book_offset = int(book["offset"])
+    book_provision = int(book["provision"])
+    current_offset_sum = book_offset  # ㉗계(상계 합계) — 서식 표로 채워진 후 검증
+    under_over_reversal = book_opening - 0 - prior_excess - current_offset_sum - (book_closing - book_provision) - company_reversal
 
     result = {
         "한도": limit,
@@ -2498,6 +2524,7 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
         "전기한도초과_손금산입": prior_excess,
         "세법상_당기_대손금_인정합계": tax_bad_debt_recognized,
         "비망가액_합계": reservation_total,
+        "과소환입_과다환입": under_over_reversal,
     }
     calc_dict = {
         "세법상 당기 대손금": tax_bad_debt_recognized,
@@ -2509,10 +2536,131 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
         "비망가액 합계": reservation_total,
         "장부 당기말": book_closing,
     }
+
+    # ── 서식_표 구성 ──
+    # 34_대손금 행 구성
+    rows_34 = []
+    offset_remaining = book_offset  # booked가 없는 항목에 Sequential 배당용
+
+    for w in writeoffs:
+        kind = w["kind"]; amount = int(w["amount"]); arose_in = w["arose_in"]
+        instrument = w.get("instrument"); months = w.get("months_since_default"); mortgage = w.get("mortgage", False)
+        booked = w.get("booked")
+        memo_excluded = w.get("memo_excluded", False)
+        date_val = w.get("date", "")
+        account_val = w.get("account", "")
+        detail_val = w.get("detail", "")
+
+        # 항목별 인정·부인 금액 (위 판단 루프와 동일 로직)
+        if kind == "부도6개월" and months is not None and int(months) >= 6 and not mortgage:
+            if instrument == "받을어음":
+                if memo_excluded:
+                    recognized = amount; memo = 0
+                else:
+                    recognized = max(0, amount - 1000); memo = min(amount, 1000)
+            elif instrument == "외상매출금":
+                if sme:
+                    if memo_excluded:
+                        recognized = amount; memo = 0
+                    else:
+                        recognized = max(0, amount - 1000); memo = min(amount, 1000)
+                else:
+                    recognized = 0; memo = 0  # 일반법인 부인
+            else:  # 기타
+                if sme:
+                    if memo_excluded:
+                        recognized = amount; memo = 0
+                    else:
+                        recognized = max(0, amount - 1000); memo = min(amount, 1000)
+                else:
+                    recognized = 0; memo = 0  # 일반법인 부인
+        elif kind == "부도6개월" and months is not None and int(months) < 6:
+            recognized = 0; memo = 0  # 부인
+        elif kind == "부도6개월" and mortgage:
+            recognized = 0; memo = 0  # 부인
+        elif kind == "소멸시효완성":
+            if arose_in == "당기":
+                recognized = amount; memo = 0
+            else:
+                recognized = 0; memo = 0  # 전기 → 부인
+        elif kind == "회수불능":
+            recognized = amount; memo = 0
+        elif kind == "화해·확정판결":
+            recognized = amount; memo = 0
+        else:
+            recognized = 0; memo = 0
+
+        # 금액을 상계분·손비분으로 나눈 뒤 시인은 상계분부터 채운다 — 네 칸의 합은 항상 금액
+        if booked == "상계":
+            상계분 = amount
+        elif booked == "손비":
+            상계분 = 0
+        else:
+            상계분 = min(offset_remaining, amount)
+        offset_remaining = max(0, offset_remaining - 상계분)
+        손비분 = amount - 상계분
+        상계_시인 = min(상계분, recognized)
+        상계_부인 = 상계분 - 상계_시인
+        손비_시인 = recognized - 상계_시인
+        손비_부인 = 손비분 - 손비_시인
+        if memo > 0:
+            비고 = "1천원 비망"
+        elif recognized < amount:
+            비고 = "전기 사유분" if arose_in == "전기" else "대손 요건 미충족"
+        else:
+            비고 = ""
+
+        행 = {
+            "일자": date_val or "",
+            "계정과목": account_val or "",
+            "채권명세": detail_val or "",
+            "사유": kind,
+            "금액": amount,
+            "상계_시인": 상계_시인,
+            "상계_부인": 상계_부인,
+            "손비_시인": 손비_시인,
+            "손비_부인": 손비_부인,
+            "비고": 비고,
+        }
+        rows_34.append(행)
+
+    # 상계 합계 ≠ book_offset 이면 판단에 '상계' 문구 추가
+    actual_offset_sum = sum(r["상계_시인"] + r["상계_부인"] for r in rows_34)
+    if actual_offset_sum != book_offset:
+        judgments.append({"항목": "대손충당금 상계 합계",
+                          "결론": f"상계 합계 {actual_offset_sum:,}원 ≠ 장부 상계(offset) {book_offset:,}원",
+                          "금액": actual_offset_sum - book_offset,
+                          "근거": "법인세법 시행규칙 별지 제34호서식 2. 대손금조정",
+                          "이유": f"서식 2.표의 대손충당금상계액(㉗) 합계 {actual_offset_sum:,}원이 장부상 충당금 상계(offset) {book_offset:,}원과 다름 — 장부상 상계 금액과 서식 상계 금액의 차이를 확인하세요"})
+
+    # 34_채권잔액 행
+    부인누계 = tax_receivables_end - receivables_end_book
+    rows_채권 = [{
+        "계정과목": "설정대상 채권",
+        "장부가액": receivables_end_book,
+        "부인누계": 부인누계,
+        "설정제외": 0,
+    }]
+
+    서식_표 = {
+        "34_대손금": rows_34,
+        "34_채권잔액": rows_채권,
+    }
+
+    # ── 계산식_입력 ──
+    계산식_입력 = [
+        {"이름": "장부기초", "값": book_opening, "설명": "장부상 대손충당금 기초잔액(원)"},
+        {"이름": "당기설정", "값": book_provision, "설명": "당기 대손충당금 설정액(원)"},
+        {"이름": "장부기말", "값": book_closing, "설명": "장부상 대손충당금기말잔액(원)"},
+        {"이름": "전기한도초과", "값": prior_excess, "설명": f"전기 대손충당금 한도초과액(원) — {'0원' if prior_excess == 0 else f'{prior_excess:,}원'}"},
+        {"이름": "회사환입", "값": company_reversal, "설명": "회사 환입액(원) — 장부상 기중 충당금 환입액(book.reversal), 기본 0원"},
+    ]
+
     unified = _build_tax_adjustment_result(settlements, result, calc_dict)
     return _ok(unified, "법인세법 제19조의2·제34조, 시행령 제19조의2·제61조",
                세무조정=settlements, 판단=judgments, 계산=calc_dict,
-               산식="세법상 당기 대손금 = 인정 대손금 합계, 세법상 전기말 채권 = 장부 전기말 − 전기 신고조정 대손, 세법상 당기말 채권 = 장부 당기말 + 부인 채권 + 비망가액, 실적률 = 당기 대손금 ÷ 전기말 채권(절사), 한도 = 당기말 채권 × max(1%, 실적률), 한도초과 = 장부 기말잔액 − 한도")
+               산식="세법상 당기 대손금 = 인정 대손금 합계, 세법상 전기말 채권 = 장부 전기말 − 전기 신고조정 대손, 세법상 당기말 채권 = 장부 당기말 + 부인 채권 + 비망가액, 실적률 = 당기 대손금 ÷ 전기말 채권(절사), 한도 = 당기말 채권 × max(1%, 실적률), 한도초과 = 장부 기말잔액 − 한도",
+               서식_표=서식_표, 계산식_입력=계산식_입력)
 
 
 @mcp.tool(annotations=CALC)
@@ -8739,6 +8887,7 @@ def export_workbook(
         # 템플릿_목록을 spec 순서(별지3, 별지15, 별지23갑, 별지23을, 별지20정률, 별지16의2, 별지50을,
         # 부가22, 부가근거63, 부가근거64, 종소배당, 종소근로)로 정렬
         _tpl_render_order = {"별지3": 1, "별지15": 2, "별지23갑": 3, "별지23을": 4,
+                             "별지34": 4.5,
                              "별지20정률": 5, "별지16의2": 6, "별지26갑": 6.1, "별지26을": 6.2, "별지50을": 7,
                              "부가22": 8, "부가근거63": 9, "부가근거64": 10, "종소배당": 11, "종소근로": 12,
                              "별지84": 13, "별지84세액": 14, "별지84부표1": 15}
@@ -9168,6 +9317,11 @@ def export_workbook(
             if tinfo["tool"] == "nonbusiness_interest_disallowance":
                 form_res = nonbusiness_form_data(form_res, (calls[tinfo["call_idx"]] or {}).get("args", {}))
                 call_sources = {**source_data, **nonbusiness_form_sources(form_res)}
+            if tinfo["tool"] == "bad_debt_adjustment":
+                # 서식_표를 table source로 사용 (34_대손금, 34_채권잔액)
+                서식_표 = form_res.get("서식_표", {}) if isinstance(form_res, dict) else {}
+                if 서식_표:
+                    call_sources = {**call_sources, **서식_표}
             # 교차 참조는 같은 call에서 만든 시트를 가리킨다(같은 도구 call이 둘 이상이면 ' (2)' 시트끼리)
             cross_this = dict(slot_map_cross)
             for (ref_key, ref_id) in slot_map_cross:

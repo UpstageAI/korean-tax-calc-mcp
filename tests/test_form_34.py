@@ -56,6 +56,48 @@ def test_offset_mismatch_is_flagged():
     assert "상계" in str(c("bad_debt_adjustment", a)["판단"])
 
 
+BASE = dict(year=2025, sme=False, prior_excess=0, book={"opening": 30_000_000, "offset": 10_000_000, "provision": 0, "closing": 20_000_000},
+            receivables_prev_end_book=1_000_000_000, receivables_end_book=1_000_000_000)
+
+
+def _rows(writeoffs):
+    return c("bad_debt_adjustment", dict(BASE, writeoffs=writeoffs))["서식_표"]["34_대손금"]
+
+
+def test_denied_offset_item_shows_in_offset_denied():
+    rows = _rows([{"kind": "부도6개월", "amount": 4_000_000, "arose_in": "당기", "instrument": "받을어음", "months_since_default": 3, "booked": "상계"},
+                  {"kind": "소멸시효완성", "amount": 6_000_000, "arose_in": "당기", "booked": "상계"}])
+    assert rows[0]["상계_부인"] == 4_000_000 and rows[0]["상계_시인"] == 0 and rows[0]["비고"]
+    assert rows[1]["상계_시인"] == 6_000_000
+
+
+def test_prior_year_item_is_denied_in_full():
+    rows = _rows([{"kind": "소멸시효완성", "amount": 10_000_000, "arose_in": "전기", "booked": "상계"}])
+    assert rows[0]["상계_부인"] == 10_000_000 and rows[0]["비고"] == "전기 사유분"
+
+
+def test_amount_is_split_between_offset_and_expense():
+    rows = _rows([{"kind": "소멸시효완성", "amount": 15_000_000, "arose_in": "당기"}])
+    assert rows[0]["상계_시인"] == 10_000_000 and rows[0]["손비_시인"] == 5_000_000
+
+
+def test_memo_follows_where_it_was_booked():
+    rows = _rows([{"kind": "부도6개월", "amount": 3_000_000, "arose_in": "당기", "instrument": "받을어음", "months_since_default": 7, "booked": "상계"}])
+    assert rows[0]["상계_시인"] == 2_999_000 and rows[0]["상계_부인"] == 1_000 and rows[0]["손비_부인"] == 0
+
+
+def test_every_row_adds_up_and_recognized_matches_tool():
+    w = [{"kind": "부도6개월", "amount": 3_000_000, "arose_in": "당기", "instrument": "외상매출금", "months_since_default": 7},
+         {"kind": "부도6개월", "amount": 2_000_000, "arose_in": "당기", "instrument": "받을어음", "months_since_default": 8, "mortgage": True},
+         {"kind": "소멸시효완성", "amount": 8_000_000, "arose_in": "당기"}, {"kind": "회수불능", "amount": 1_000_000, "arose_in": "당기"}]
+    r = c("bad_debt_adjustment", dict(BASE, sme=True, writeoffs=w))
+    rows = r["서식_표"]["34_대손금"]
+    for x in rows:
+        assert x["상계_시인"] + x["상계_부인"] + x["손비_시인"] + x["손비_부인"] == x["금액"]
+    assert sum(x["상계_시인"] + x["손비_시인"] for x in rows) == r["계산"]["세법상 당기 대손금"]
+    assert sum(x["상계_부인"] + x["손비_부인"] for x in rows) == r["결과"]["비망가액_합계"] + 2_000_000
+
+
 @pytest.mark.skipif(not shutil.which("soffice"), reason="LibreOffice 없음")
 def test_form_sheet_values_and_checks(tmp_path):
     path = build(tmp_path, [{"tool": "bad_debt_adjustment", "args": ARGS}])
@@ -78,3 +120,5 @@ def test_form_sheet_layout(tmp_path):
     ws = wb[SHEET]
     assert ws.print_area and ws["D2"].value == "대손충당금 및 대손금조정명세서"
     assert ws["J7"].value.startswith("=") and ws["G9"].value.startswith("=")
+    merged = {str(r) for r in ws.merged_cells.ranges}
+    assert {"J7:L7", "I9:L9", "H11:L11", "A26:D26"} <= merged
