@@ -57,6 +57,19 @@ To pick up a new release right away: `uvx --refresh korean-tax-calc-mcp` (uvx ca
 
 No key needed. Optional: `LAW_OC` (law.go.kr lookups in two audit tools), `UPSTAGE_API_KEY` (PDF table extraction).
 
+## Recommended system prompt
+
+Five rules that tell the AI when to call the tools and when to trust their answers. The server instructions carry the same rules, but some clients weight them lightly or ignore them. Adding the block below to your system prompt (Claude Desktop project instructions, Claude Code `CLAUDE.md`, or other custom instructions) makes the AI follow them more closely.
+
+```text
+When answering Korean tax questions, use korean-tax-mcp and korean-tax-calc-mcp as follows.
+1. For every amount and every judgment, first check whether a tool exists. If you do not know the name, use find_tool; for timing of income or supply, check timing_rules first.
+2. If a tool exists, call it before calculating by hand.
+3. If the tool result differs from your own calculation, do not pick one right away. Recheck the inputs, open the deciding provision with law_article, and match its requirements to the facts one by one.
+4. If no provision shows the tool is wrong, use the tool result. If you use a different value, state the reason (input error or article number) in one line.
+5. If two values come out (before/after apportionment, total vs. taxable part, etc.), answer only the one the question asks for.
+```
+
 ## Tools (85)
 
 | Group | Tools |
