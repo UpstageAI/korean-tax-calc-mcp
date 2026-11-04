@@ -8542,6 +8542,8 @@ def export_workbook(
   company — 법인명(서식 머리에 표시, 기본 '').
   period — 사업연도 표기(예 '2025.01.01 ~ 2025.12.31', 기본 '').
   biz_no — 사업자등록번호(서식 머리에 표시, 기본 '').
+  시트 규칙: '계산 N'은 N번째 call(오류 call 포함, call마다 한 장). 같은 도구를 여러 번 부르면 신고서 한 부에 한 장인
+    서식(별지3·15·34 등)은 마지막 call이 본 시트, 앞선 call은 '(호출 N)' 시트. 서식 칸은 그 값을 만든 call에서 채운다.
 
 결과:
   결과.파일 — 절대경로.
@@ -8700,15 +8702,22 @@ def export_workbook(
 
         시트이름들.append("요약")
 
-        # ── 2. 계산 시트들 (steps 모드, 기존 동작) ──
+        # ── 2. 계산 시트들 (steps 모드) — call마다 한 장, N은 calls 안 순번(오류 call은 오류 내용만) ──
         calc_idx = 0
-        for cd in 결과들:
-            if cd["error"] or not cd["result"]:
-                continue
-            calc_idx += 1
+        for _ci, cd in enumerate(결과들):
+            calc_idx = _ci + 1
             sh_name = f"계산 {calc_idx}"
             ws = wb.create_sheet(sh_name)
             시트이름들.append(sh_name)
+            if cd["error"] or not cd["result"]:
+                for rr, (k, v) in enumerate((("label", cd.get("label", "")), ("도구", cd.get("tool", "")),
+                                              ("오류", cd.get("error") or "결과 없음"),
+                                              ("안내", _cell_value(cd.get("basis")) if cd.get("basis") else "")), 1):
+                    ws.cell(rr, 1, k).font = bold
+                    ws.cell(rr, 2, v)
+                ws.column_dimensions["A"].width = 16
+                ws.column_dimensions["B"].width = 60
+                continue
             res = cd["result"] or {}
             calc_dict = (cd.get("data") or {}).get("계산") if isinstance(cd.get("data"), dict) else None
             formula = (cd.get("data") or {}).get("계산식") if isinstance(cd.get("data"), dict) else None
@@ -8942,20 +8951,45 @@ def export_workbook(
                     if not eval(when_py, {"__builtins__": {}}, {"입력_값": 입력_값, "결과_값": 결과_값}):
                         _skipped_tpl.add(tkey)
                         continue
-                sheet_name = tpl["sheet"]
-                _tpl_seen[tkey] = _tpl_seen.get(tkey, 0) + 1
-                if _tpl_seen[tkey] > 1:
-                    sheet_name = f"{tpl['sheet']} ({_tpl_seen[tkey]})"
-                템플릿_목록.append({"key": tkey, "sheet": sheet_name, "form": tpl["form"], "tool": tool, "call_idx": i})
+                # requires_args: 그 입력이 있는 call에서만 만든다(예: 공통사용재화 공급이 없으면 부가근거63 없음)
+                req = tpl.get("requires_args")
+                if req and not ((calls[i] or {}).get("args") or {}).get(req):
+                    _skipped_tpl.add(tkey)
+                    continue
+                템플릿_목록.append({"key": tkey, "sheet": tpl["sheet"], "form": tpl["form"], "tool": tool,
+                                   "call_idx": i, "per_return": bool(tpl.get("per_return"))})
+
+        # 같은 틀을 여러 call이 채울 때 시트 이름 규칙:
+        #  - 신고서 한 부에 한 장인 서식(틀 per_return — 별지3·별지15·별지34 등): 마지막 call이 이름 그대로인 본 시트,
+        #    앞선 call은 '<시트> (호출 N)'(N = calls 안 순번)으로 따로 남긴다. 본 시트끼리 교차 참조한다.
+        #  - 자산·거래마다 한 장인 서식(별지20·별지84 등): 첫 call이 본 시트, 다음은 '<시트> (2)'…
+        _tpl_groups: dict[str, list[dict]] = {}
+        for tinfo in 템플릿_목록:
+            _tpl_groups.setdefault(tinfo["key"], []).append(tinfo)
+        for _lst in _tpl_groups.values():
+            if _lst[0]["per_return"]:
+                for tinfo in _lst:
+                    tinfo["main"] = tinfo is _lst[-1]
+                    if not tinfo["main"]:
+                        tinfo["sheet"] = f"{tinfo['sheet']} (호출 {tinfo['call_idx'] + 1})"
+            else:
+                for n, tinfo in enumerate(_lst, 1):
+                    tinfo["main"] = n == 1
+                    if n > 1:
+                        tinfo["sheet"] = f"{tinfo['sheet']} ({n})"
+        _tpl_seen = {k: len(v) for k, v in _tpl_groups.items()}
 
         # 템플릿_목록을 spec 순서(별지3, 별지15, 별지23갑, 별지23을, 별지20정률, 별지16의2, 별지50을,
-        # 부가22, 부가근거63, 부가근거64, 종소배당, 종소근로)로 정렬
+        # 부가22, 부가근거63, 부가근거64, 종소배당, 종소근로)로 정렬 — 같은 틀은 본 시트 먼저, 그다음 call 순
         _tpl_render_order = {"별지3": 1, "별지15": 2, "별지23갑": 3, "별지23을": 4,
                              "별지34": 4.5,
-                             "별지20정률": 5, "별지16의2": 6, "별지26갑": 6.1, "별지26을": 6.2, "별지50을": 7,
+                             "별지20정률": 5, "별지20정액": 5.5, "별지16의2": 6, "별지26갑": 6.1, "별지26을": 6.2, "별지50을": 7,
                              "부가22": 8, "부가근거63": 9, "부가근거64": 10, "종소배당": 11, "종소근로": 12,
                              "별지84": 13, "별지84세액": 14, "별지84부표1": 15}
-        템플릿_목록.sort(key=lambda t: _tpl_render_order.get(t["key"], 99))
+
+        def _tpl_sort_key(t):
+            return (_tpl_render_order.get(t["key"], 99), not t.get("main", True), t["call_idx"])
+        템플릿_목록.sort(key=_tpl_sort_key)
 
         # ── 1. 목록 시트 ──
         ws_list = wb.active
@@ -9001,10 +9035,11 @@ def export_workbook(
                 ws_list.cell(행, 2, 설명)
                 행 += 1
 
-        # when 조건으로 만들지 않은 틀에 `목록_생략` 문구가 있으면 그 줄
+        # when 조건으로 만들지 않은 틀에 `목록_생략` 문구가 있으면 그 줄(다른 call에서 만들었으면 쓰지 않음)
         for _tool_tpls in _FORM_TEMPLATES.values():
             for _t in _tool_tpls:
-                if _t["key"] in _skipped_tpl and _t.get("목록_생략") and _t["sheet"] not in _목록_본:
+                if (_t["key"] in _skipped_tpl and _t["key"] not in _tpl_groups and _t.get("목록_생략")
+                        and _t["sheet"] not in _목록_본):
                     _목록_본.add(_t["sheet"])
                     ws_list.cell(행, 1, _t["sheet"])
                     ws_list.cell(행, 2, _t["목록_생략"])
@@ -9015,11 +9050,7 @@ def export_workbook(
             ws_list.cell(행, 1, "종소 배당·이자소득명세서")
             ws_list.cell(행, 2, "❻ 배당소득명세서·❺ 이자소득명세서 — 해당 없음(금융소득 2천만원 이하 분리과세)")
             행 += 1
-
-        ws_list.cell(행, 1,
-                    "이 파일은 계산 도구의 결과를 정리한 참고 자료이며 세무 자문이 아닙니다. 판단과 신고는 세무 전문가와 확인하세요.")
-        ws_list.cell(행, 1).font = Font(italic=True, color="C00000")
-        ws_list.merge_cells(start_row=행, start_column=1, end_row=행, end_column=8)
+        _목록_행 = 행  # 확인 메모·call 대응표·고지문은 서식을 다 그린 뒤 이 행부터
 
         ws_list.column_dimensions["A"].width = 30
         ws_list.column_dimensions["B"].width = 55
@@ -9116,7 +9147,8 @@ def export_workbook(
         slot_map_all: dict[str, str] = {}
         _tpl_by_key: dict[str, dict] = {}
         for tinfo in 템플릿_목록:
-            sheet_name_map[tinfo["key"]] = tinfo["sheet"]
+            if tinfo.get("main", True):
+                sheet_name_map[tinfo["key"]] = tinfo["sheet"]
             if tinfo["key"] not in _tpl_by_key:
                 for _tpl in _FORM_TEMPLATES.get(tinfo["tool"], []):
                     if _tpl["key"] == tinfo["key"]:
@@ -9132,8 +9164,11 @@ def export_workbook(
 
         # slot_map_cross: {(ref_key, ref_id): (sheet, cell)} — cross 참조 lookup용
         # 1단계: 모든 템플릿의 slots 수집 (tkey → {sid: (sheet, cell)})
+        # (같은 틀이 여러 시트면 본 시트 — 다른 틀에서 {틀key!id}로 가리키는 시트)
         all_slots: dict[str, dict[str, tuple[str, str]]] = {}
         for tinfo in 템플릿_목록:
+            if not tinfo.get("main", True):
+                continue
             tpl = _tpl_by_key[tinfo["key"]]
             all_slots[tinfo["key"]] = {}
             for s in tpl.get("slots", []):
@@ -9141,19 +9176,40 @@ def export_workbook(
 
         # tool: "*" (별지50을)는 유보 행이 1개 이상일 때 추가
         # (income_adjustment_total의 세무조정에서 유보 + depreciation 유보 행 포함)
-        _has_유보 = any(
-            s.get("소득처분") == "유보"
-            for cd in 결과들 if not cd.get("error")
-            for s in (cd.get("result") or {}).get("세무조정", [])
-        ) or ("별지20정률" in all_slots)
+        # 도구별 성공 call 순번(calls 순서). 서식 칸에 들어갈 값은 그 값을 만든 call에서만 가져온다
+        # (예전처럼 calls의 몇 번째 자리로 가정하지 않음).
+        _ok_calls: dict[str, list[int]] = {}
+        for i, cd in enumerate(결과들):
+            if not cd.get("error") and cd.get("result"):
+                _ok_calls.setdefault(cd.get("tool", ""), []).append(i)
+
+        def _last_call(tool_name: str) -> int | None:
+            lst = _ok_calls.get(tool_name) or []
+            return lst[-1] if lst else None
+
+        def _세무조정(i: int | None) -> list[dict]:
+            if i is None:
+                return []
+            return [s for s in ((결과들[i].get("result") or {}).get("세무조정") or []) if isinstance(s, dict)]
+
+        # 별지50(을)은 income_adjustment_total 중 유보·△유보가 있는 마지막 call(없으면 마지막 call)로 만든다
+        _adj_calls = _ok_calls.get("income_adjustment_total", [])
+        _유보_call = next((i for i in reversed(_adj_calls)
+                          if any(str(s.get("소득처분", "")).lstrip("△") == "유보" for s in _세무조정(i))),
+                         _adj_calls[-1] if _adj_calls else None)
+        _dep_keys = ("별지20정률", "별지20정액")
+
+        # tool: "*" (별지50을)는 유보 행이 1개 이상일 때 추가
+        # (income_adjustment_total의 세무조정에서 유보 + depreciation 유보 행 포함)
+        _has_유보 = any(s.get("소득처분") == "유보" for i in range(len(결과들)) for s in _세무조정(i)) \
+            or any(k in all_slots for k in _dep_keys)
         if _FORM_TEMPLATES.get("*", []) and _has_유보 and "별지50을" not in _tpl_seen:
             _tpl_seen["별지50을"] = 1
             별지50_tpl = _FORM_TEMPLATES["*"][0]
             sheet_name = 별지50_tpl["sheet"]
-            adj_call_idx = next((i for i, cd in enumerate(결과들)
-                                if cd.get("tool") == "income_adjustment_total" and not cd.get("error")), 0)
+            adj_call_idx = _유보_call if _유보_call is not None else 0
             tinfo_50 = {"key": "별지50을", "sheet": sheet_name, "form": 별지50_tpl["form"],
-                       "tool": "*", "call_idx": adj_call_idx}
+                       "tool": "*", "call_idx": adj_call_idx, "main": True, "per_return": True}
             템플릿_목록.append(tinfo_50)
             sheet_name_map["별지50을"] = sheet_name
             _tpl_by_key["별지50을"] = 별지50_tpl
@@ -9161,20 +9217,17 @@ def export_workbook(
             for s in 별지50_tpl.get("slots", []):
                 all_slots["별지50을"][s["id"]] = (sheet_name, s["cell"])
             # 별지50을 추가 후 다시 정렬하여 올바른 순서 유지
-            템플릿_목록.sort(key=lambda t: _tpl_render_order.get(t["key"], 99))
+            템플릿_목록.sort(key=_tpl_sort_key)
 
-        # adj_slots 구축: adjustment → [(시트명, 셀, check_path, call_idx)]
+        # adj_slots 구축: adjustment → [(시트명, 셀, check_path, call_idx)] — 시트마다(같은 틀 여러 장이면 각각)
         adj_slots: dict[str, list[tuple[str, str, str, int]]] = {}
-        for tkey, slots in all_slots.items():
-            tpl = _tpl_by_key[tkey]
+        for tinfo in 템플릿_목록:
+            tpl = _tpl_by_key[tinfo["key"]]
             for s in tpl.get("slots", []):
                 adj = s.get("adjustment")
                 if adj:
-                    sid = s["id"]
-                    시트명, 셀 = all_slots[tkey][sid]
-                    # call_idx 찾기: 템플릿_목록에서 해당 tinfo의 call_idx
-                    call_idx = next((ti["call_idx"] for ti in 템플릿_목록 if ti["key"] == tkey), 0)
-                    adj_slots.setdefault(adj, []).append((시트명, 셀, s.get("check", ""), call_idx))
+                    adj_slots.setdefault(adj, []).append((tinfo["sheet"], s["cell"], s.get("check", ""),
+                                                          tinfo["call_idx"]))
 
         # 2단계: {틀key!id} cross 참조 파싱 (slot 수식 + table 열 수식)
         cross_refs: set[tuple[str, str]] = set()
@@ -9204,149 +9257,260 @@ def export_workbook(
             # 대상이 없으면 제외 (render_form_sheet에서 fallback 값 사용)
 
         # ── source_data 구축 (테이블 소스 + cross fallback용) ──
+        # 표 source는 그 값을 만든 call에서 만든다. _call_src[call_idx]는 그 call의 시트에만 쓰는 source,
+        # source_data는 본 시트(같은 도구를 여러 번 부르면 마지막 call) 기준 기본값.
         source_data: dict[str, list[dict]] = {}
-        # adjustment 소스: income_adjustment_total의 세무조정에서 가산·차감 분리
-        adj_result = 결과들[3].get("result") if len(결과들) > 3 else {}
-        adj_items = (adj_result or {}).get("세무조정", [])
-        _adj_src_add: list[dict] = []
-        _adj_src_sub: list[dict] = []
-        for s in adj_items:
-            조정 = s.get("조정", "")
-            금액 = s.get("금액", 0)
-            if isinstance(금액, (int, float)):
+        _call_src: dict[int, dict[str, list[dict]]] = {}
+
+        def _조정_rows(i: int | None) -> tuple[list[dict], list[dict]]:
+            """income_adjustment_total 세무조정 → 별지15 가산·차감 행. 기부금 한도초과(차가감 뒤 가산, 별지3 105)는 빼다."""
+            add: list[dict] = []
+            sub: list[dict] = []
+            for s in _세무조정(i):
+                if s.get("구분") == "기부금 한도초과" and "조정구분" not in s:
+                    continue
+                조정 = s.get("조정", "")
+                금액 = s.get("금액", 0)
+                if not isinstance(금액, (int, float)):
+                    continue
+                처분 = s.get("소득처분", "")
                 if 조정 in ("익금산입", "손금불산입"):
-                    처분 = s.get("소득처분", "")
                     코드 = "400" if 처분 == "유보" else ("100" if 처분 == "△유보" else "500")
-                    _adj_src_add.append({"과목": s.get("구분", ""), "금액": 금액, "처분": 처분, "코드": 코드,
-                                         "종류": s.get("종류", s.get("구분", ""))})
+                    add.append({"과목": s.get("구분", ""), "금액": 금액, "처분": 처분, "코드": 코드,
+                                "종류": s.get("종류", s.get("구분", ""))})
                 elif 조정 in ("손금산입", "익금불산입"):
-                    처분 = s.get("소득처분", "")
                     코드 = "100" if 처분 == "△유보" else "200"
-                    _adj_src_sub.append({"과목": s.get("구분", ""), "금액": 금액, "처분": 처분, "코드": 코드,
-                                         "종류": s.get("종류", s.get("구분", ""))})
-        source_data["조정_가산"] = _adj_src_add
-        source_data["조정_차감"] = _adj_src_sub
+                    sub.append({"과목": s.get("구분", ""), "금액": 금액, "처분": 처분, "코드": 코드,
+                                "종류": s.get("종류", s.get("구분", ""))})
+            return add, sub
+
+        for i in _adj_calls:
+            a, b = _조정_rows(i)
+            _call_src.setdefault(i, {}).update({"조정_가산": a, "조정_차감": b})
+        source_data["조정_가산"], source_data["조정_차감"] = _조정_rows(_last_call("income_adjustment_total"))
+
         # 피출자법인 소스: dividend_received_deduction 결과 → SPEC대로 {이름, 지분율(%)=출자비율×100}
-        div_result = 결과들[2].get("result") if len(결과들) > 2 else {}
-        _피출자 = []
-        for inv in (div_result or {}).get("피출자법인별", []):
-            _피출자.append({
-                "이름": inv.get("이름", ""),
-                "지분율(%)": inv.get("출자비율", 0) * 100,
-            })
-        source_data["피출자법인"] = _피출자
-        # 유보 소스: depreciation_adjustment (별지20정률로 렌더된 경우) + income_adjustment_total 유보
+        def _피출자_rows(i: int | None) -> list[dict]:
+            if i is None:
+                return []
+            return [{"이름": inv.get("이름", ""), "지분율(%)": inv.get("출자비율", 0) * 100}
+                    for inv in (결과들[i].get("result") or {}).get("피출자법인별", [])]
+        for i in _ok_calls.get("dividend_received_deduction", []):
+            _call_src.setdefault(i, {})["피출자법인"] = _피출자_rows(i)
+        source_data["피출자법인"] = _피출자_rows(_last_call("dividend_received_deduction"))
+
+        # 유보 소스(별지50을): 감가상각 서식 시트마다 한 행(그 시트 칸을 가리킴) + income_adjustment_total 유보·△유보
+        # (income_adjustment_total이 없으면 각 도구 call의 세무조정 유보)
         _유보_rows: list[dict] = []
-        dep_result = 결과들[1].get("result") if len(결과들) > 1 else {}
-        if "별지20정률" in all_slots:
+        _dep_cols = {"별지20정률": ("⑪", "㉗", "㉖"), "별지20정액": ("㉕", "㉔", "㉓")}
+        _dep_vals: set = set()
+        for tinfo in 템플릿_목록:
+            if tinfo["key"] not in _dep_cols:
+                continue
+            ids = _dep_cols[tinfo["key"]]
+            cells = {s["id"]: s["cell"] for s in _tpl_by_key[tinfo["key"]].get("slots", [])}
+            sh = tinfo["sheet"]
             _유보_rows.append({
-                "과목": "감가상각비 한도초과(기계장치)",
-                "기초": "={별지20정률!⑪}",
-                "감소": "={별지20정률!㉗}",
-                "증가": "={별지20정률!㉖}",
+                "과목": f"감가상각비 한도초과({결과들[tinfo['call_idx']].get('label') or '감가상각자산'})",
+                "기초": f"='{sh}'!{cells[ids[0]]}",
+                "감소": f"='{sh}'!{cells[ids[1]]}",
+                "증가": f"='{sh}'!{cells[ids[2]]}",
                 "비고": "",
             })
-        for s in adj_items:
-            처분 = s.get("소득처분", "")
-            if 처분 == "유보":
+            dres = 결과들[tinfo["call_idx"]].get("result") or {}
+            for k in ("상각부인액", "전기부인액_추인"):
+                if isinstance(dres.get(k), (int, float)) and dres.get(k):
+                    _dep_vals.add(dres[k])
+        _유보_src = [_유보_call] if _유보_call is not None else [
+            i for i, cd in enumerate(결과들) if cd.get("tool") != "depreciation_adjustment"]
+        for i in _유보_src:
+            for s in _세무조정(i):
+                처분 = s.get("소득처분", "")
+                if 처분 not in ("유보", "△유보"):
+                    continue
+                금액 = s.get("금액", 0)
                 adj_key = s.get("종류", s.get("구분", ""))
-                is_손금_유보 = s.get("조정") == "손금산입"
-                if adj_key == "감가상각비 한도초과":
-                    continue  # 위 depreciation 행에서 처리됨
+                이름 = s.get("구분", "") or adj_key
+                if any(t["key"] in _dep_cols for t in 템플릿_목록):
+                    # 감가상각 서식 시트 행과 같은 금액(상각부인액·전기부인액 추인)이면 그 행에서 처리됨
+                    if adj_key == "감가상각비 한도초과" or ("상각" in f"{이름}{adj_key}" and 금액 in _dep_vals):
+                        continue
+                감소 = 처분 == "△유보" or s.get("조정") in ("손금산입", "익금불산입")
                 _유보_rows.append({
-                    "과목": adj_key,
+                    "과목": 이름 if i == _유보_call else adj_key,
                     "기초": 0,
-                    "감소": 0 if not is_손금_유보 else s.get("금액", 0),
-                    "증가": s.get("금액", 0) if not is_손금_유보 else 0,
+                    "감소": 금액 if 감소 else 0,
+                    "증가": 0 if 감소 else 금액,
                     "비고": "",
                 })
         source_data["유보"] = _유보_rows
-        # 공통사용재화 소스: common_input_tax args common_asset_sales → {순번: 1..}
-        for i, cd in enumerate(결과들):
-            if cd.get("tool") == "common_input_tax" and not cd.get("error"):
-                args = calls[i].get("args", {})
-                common_asset_sales = args.get("common_asset_sales", [])
-                _재화_rows = []
-                for idx, sale in enumerate(common_asset_sales, 1):
-                    _재화_rows.append({
-                        "순번": idx,
-                        "공급가액": int(sale.get("sale_price", 0)),
-                    })
-                source_data["공통사용재화"] = _재화_rows
-                break
 
-        # 배당명세·이자명세 소스: financial_income_aggregate 계산.항목별 → {코드, 일련번호, 항목, 금액}
-        for i, cd in enumerate(결과들):
-            if cd.get("tool") == "financial_income_aggregate" and not cd.get("error"):
-                calc_dict = (cd.get("data") or {}).get("계산", {})
-                항목별 = calc_dict.get("항목별", [])
-                판단목록 = (cd.get("data") or {}).get("판단", [])
-                # 판단목록에서 입력 순서 복구 (계산.항목별은 dict라 순서 없음)
-                순서맵 = {h["항목"]: idx for idx, h in enumerate(판단목록)}
-                _배당_rows: list[dict] = []
-                _이자_rows: list[dict] = []
-                # 코드 매핑: 배당 GU대상=21, GU비대상=22, 출자공동=28, 이자=13, 제외는 제외
-                코드맵 = {"GU대상": "21", "GU비대상": "22", "출자공동": "28", "이자": "13", "제외": None}
-                for item in 항목별:
-                    구분 = item.get("구분", "")
-                    코드 = 코드맵.get(구분)
-                    if 코드 is None:
-                        continue  # 제외는 넣지 않음
-                    항목명 = item.get("항목", "").replace("_", " ")
-                    금액 = item.get("금액", 0)
-                    if 구분 in ("GU대상", "GU비대상", "출자공동"):
-                        _배당_rows.append({"코드": 코드, "일련번호": 0, "항목": 항목명, "금액": 금액,
-                                           "_순서": 순서맵.get(item.get("항목", ""), 999)})
-                    elif 구분 == "이자":
-                        _이자_rows.append({"코드": 코드, "일련번호": 0, "항목": 항목명, "금액": 금액,
-                                            "_순서": 순서맵.get(item.get("항목", ""), 999)})
-                # 코드 오름차순, 같은 코드 안에서는 입력 순서(_순서)로 정렬
-                _배당_rows.sort(key=lambda r: (r["코드"], r["_순서"]))
-                _이자_rows.sort(key=lambda r: (r["코드"], r["_순서"]))
-                # 일련번호는 코드별 1부터
-                last_code = None
-                seq = 0
-                for r in _배당_rows:
-                    if r["코드"] != last_code:
-                        last_code = r["코드"]
-                        seq = 1
-                    else:
-                        seq += 1
+        # 공통사용재화 소스: common_input_tax args common_asset_sales → {순번: 1..} (call마다)
+        for i in _ok_calls.get("common_input_tax", []):
+            args = (calls[i] or {}).get("args", {}) or {}
+            _재화_rows = [{"순번": idx, "공급가액": int(sale.get("sale_price", 0))}
+                          for idx, sale in enumerate(args.get("common_asset_sales") or [], 1)]
+            _call_src.setdefault(i, {})["공통사용재화"] = _재화_rows
+            source_data.setdefault("공통사용재화", _재화_rows)
+
+        # 부가 별지22 2.(불공제 사유별): vat_input_tax_deduction 마지막 call — 세금계산서 수취분을 사유(①~⑧)별로 묶음
+        _vid = _last_call("vat_input_tax_deduction")
+        if _vid is not None:
+            _사유행 = {k: {"매수": 0, "공급가액": 0, "매입세액": 0, "항목": []} for k in range(1, 9)}
+            _성격행 = {"사업무관": 2, "비영업용승용차": 3, "접대": 4, "면세사업": 5, "토지관련": 6}
+            _v_items = ((calls[_vid] or {}).get("args") or {}).get("items") or []
+            _v_calc = ((결과들[_vid].get("data") or {}).get("계산") or {}).get("항목별") or []
+            for n, row in enumerate(_v_calc):
+                it = _v_items[n] if n < len(_v_items) and isinstance(_v_items[n], dict) else {}
+                불공제 = (row.get("세액") or 0) - (row.get("공제세액") or 0)
+                사유 = row.get("불공제사유") or ""
+                if not 사유 or 불공제 <= 0 or it.get("증빙", "세금계산서") != "세금계산서":
+                    continue
+                k = _성격행.get(it.get("성격", ""))
+                if k is None:
+                    k = 7 if "①8호" in 사유 else (1 if "①2호" in 사유 or "①1호" in 사유 else None)
+                if k is None:
+                    continue
+                공급가액 = it.get("실제공급가액") or it.get("공급가액")
+                if 공급가액 is None and it.get("공급대가") is not None:
+                    공급가액 = int(it["공급대가"] * 100 / 110)
+                d = _사유행[k]
+                d["매수"] += 1
+                d["공급가액"] += int(공급가액 or 0)
+                d["매입세액"] += int(불공제)
+                d["항목"].append(str(row.get("항목", "")))
+            _불공제_rows = [{"매수": d["매수"] or None, "공급가액": d["공급가액"] or None,
+                            "매입세액": d["매입세액"] or None, "비고": ", ".join(d["항목"])}
+                           for d in (_사유행[k] for k in range(1, 9))]
+            _불공제_rows.append({"매수": "=SUM(D12:D19)", "공급가액": "=SUM(E12:E19)",
+                                "매입세액": "=SUM(F12:F19)", "비고": ""})
+            source_data["22_불공제"] = _불공제_rows
+
+        # 부가 별지22 5.(재계산): input_tax_recalculation call마다 당기(마지막 이력) 재계산 한 행
+        _재계산_rows: list[dict] = []
+        _재계산_calls: list[int] = []
+        for i in _ok_calls.get("input_tax_recalculation", []):
+            dat = 결과들[i].get("data") or {}
+            이력 = dat.get("이력") or []
+            last = 이력[-1] if 이력 and isinstance(이력[-1], dict) else None
+            if not last or not last.get("재계산"):
+                continue
+            args = (calls[i] or {}).get("args") or {}
+            체감 = 0.05 if args.get("asset_type") == "건물·구축물" else 0.25
+            _재계산_calls.append(i)
+            _재계산_rows.append({
+                "매입세액": (dat.get("결과") or {}).get("매입세액", args.get("input_tax")),
+                "경감률": round(max(0.0, 1 - 체감 * int(last.get("경과과세기간수") or 0)), 6),
+                "비율": last.get("변동"),
+            })
+        if _재계산_rows:
+            source_data["22_재계산"] = _재계산_rows
+        # 배당명세·이자명세 소스: financial_income_aggregate 계산.항목별 → {코드, 일련번호, 항목, 금액} (call마다)
+        def _금융_rows(cd: dict) -> tuple[list[dict], list[dict]]:
+            calc_dict = (cd.get("data") or {}).get("계산", {})
+            항목별 = calc_dict.get("항목별", [])
+            판단목록 = (cd.get("data") or {}).get("판단", [])
+            # 판단목록에서 입력 순서 복구 (계산.항목별은 dict라 순서 없음)
+            순서맵 = {h["항목"]: idx for idx, h in enumerate(판단목록)}
+            _배당_rows: list[dict] = []
+            _이자_rows: list[dict] = []
+            # 코드 매핑: 배당 GU대상=21, GU비대상=22, 출자공동=28, 이자=13, 제외는 제외
+            코드맵 = {"GU대상": "21", "GU비대상": "22", "출자공동": "28", "이자": "13", "제외": None}
+            for item in 항목별:
+                구분 = item.get("구분", "")
+                코드 = 코드맵.get(구분)
+                if 코드 is None:
+                    continue  # 제외는 넣지 않음
+                항목명 = item.get("항목", "").replace("_", " ")
+                금액 = item.get("금액", 0)
+                row = {"코드": 코드, "일련번호": 0, "항목": 항목명, "금액": 금액,
+                       "_순서": 순서맵.get(item.get("항목", ""), 999)}
+                if 구분 in ("GU대상", "GU비대상", "출자공동"):
+                    _배당_rows.append(row)
+                elif 구분 == "이자":
+                    _이자_rows.append(row)
+            # 코드 오름차순, 같은 코드 안에서는 입력 순서(_순서)로 정렬, 일련번호는 코드별 1부터
+            for rows in (_배당_rows, _이자_rows):
+                rows.sort(key=lambda r: (r["코드"], r["_순서"]))
+                last_code, seq = None, 0
+                for r in rows:
+                    seq = 1 if r["코드"] != last_code else seq + 1
+                    last_code = r["코드"]
                     r["일련번호"] = seq
-                last_code = None
-                seq = 0
-                for r in _이자_rows:
-                    if r["코드"] != last_code:
-                        last_code = r["코드"]
-                        seq = 1
-                    else:
-                        seq += 1
-                    r["일련번호"] = seq
-                # _순서 필드 제거
-                for r in _배당_rows:
                     del r["_순서"]
-                for r in _이자_rows:
-                    del r["_순서"]
-                source_data["배당명세"] = _배당_rows
-                source_data["이자명세"] = _이자_rows
-                break
+            return _배당_rows, _이자_rows
 
-        # connection: adjustment 소스 행의 금액을 렌더된 서식 slot 참조로 치환
-        for src_name in ("조정_가산", "조정_차감"):
-            rows = source_data.get(src_name, [])
-            for row in rows:
-                kind = row.get("종류", row.get("과목", ""))
-                amount = row.get("금액", 0)
-                if isinstance(amount, (int, float)) and kind in adj_slots:
-                    for 시트명, 셀, check_path, call_idx in adj_slots[kind]:
-                        cd = 결과들[call_idx]
-                        # cd["data"]에는 nested "결과"가 있음 (템플릿 [결과.경로] 참조용)
-                        res = cd.get("data") or {}
-                        tv = tool_value(res, check_path)
-                        if tv == amount:
-                            row["금액"] = f"='{시트명}'!{셀}"
-                            break
+        for i in _ok_calls.get("financial_income_aggregate", []):
+            b_rows, i_rows = _금융_rows(결과들[i])
+            _call_src.setdefault(i, {}).update({"배당명세": b_rows, "이자명세": i_rows})
+        _fid = _last_call("financial_income_aggregate")
+        if _fid is not None:
+            source_data["배당명세"] = _call_src[_fid]["배당명세"]
+            source_data["이자명세"] = _call_src[_fid]["이자명세"]
 
+        # connection: adjustment 소스 행의 금액을 렌더된 서식 slot 참조로 치환(도구 값이 같은 시트만)
+        _조정_소스들 = [source_data] + [v for v in _call_src.values() if "조정_가산" in v]
+        for src in _조정_소스들:
+            for src_name in ("조정_가산", "조정_차감"):
+                for row in src.get(src_name, []):
+                    kind = row.get("종류", row.get("과목", ""))
+                    amount = row.get("금액", 0)
+                    if isinstance(amount, (int, float)) and kind in adj_slots:
+                        for 시트명, 셀, check_path, call_idx in adj_slots[kind]:
+                            cd = 결과들[call_idx]
+                            # cd["data"]에는 nested "결과"가 있음 (템플릿 [결과.경로] 참조용)
+                            res = cd.get("data") or {}
+                            tv = tool_value(res, check_path)
+                            if tv == amount:
+                                row["금액"] = f"='{시트명}'!{셀}"
+                                break
+
+        # 서식 머리 개정일: 그 과세기간 신고기한보다 뒤에 개정된 서식이면 개정일 표기를 뺀다
+        import datetime as _dt
+
+        def _period_end(i: int) -> "_dt.date | None":
+            m = _re.search(r"~\s*(\d{4})[.\-/]\s*(\d{1,2})[.\-/]\s*(\d{1,2})", period or "")
+            if m:
+                try:
+                    return _dt.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+                except ValueError:
+                    return None
+            a = (calls[i] or {}).get("args") or {}
+            vp = str(a.get("period", ""))
+            m = _re.match(r"^(\d{4})-([12])$", vp)
+            if m:
+                return _dt.date(int(m.group(1)), 6, 30) if m.group(2) == "1" else _dt.date(int(m.group(1)), 12, 31)
+            y = a.get("year")
+            if isinstance(y, int) and 1900 < y < 2100:
+                if vp == "1기":
+                    return _dt.date(y, 6, 30)
+                return _dt.date(y, 12, 31)
+            return None
+
+        def _deadline(form: str, end: "_dt.date | None") -> "_dt.date | None":
+            if end is None:
+                return None
+            if form.startswith("부가가치세법"):
+                return end + _dt.timedelta(days=25)
+            if form.startswith("법인세법"):
+                y, mth = end.year, end.month + 3
+                if mth > 12:
+                    y, mth = y + 1, mth - 12
+                nxt = _dt.date(y + (mth == 12), 1 if mth == 12 else mth + 1, 1)
+                return nxt - _dt.timedelta(days=1)
+            if form.startswith("소득세법"):
+                return _dt.date(end.year + 1, 5, 31)
+            return None
+
+        # 본 별지3에 채울 다른 도구 call(과세표준·산출세액): 마지막 corporate_tax call
+        _other_calls: dict[str, tuple[int, dict]] = {}
+        for _t in ("corporate_tax",):
+            _ci = _last_call(_t)
+            if _ci is not None:
+                _other_calls[_t] = (_ci, 결과들[_ci].get("data") or {})
+
+        _개정일_생략: list[tuple[str, str]] = []
+        _시트별_메모: dict[str, list[str]] = {}
         for tinfo in 템플릿_목록:
             cd = 결과들[tinfo["call_idx"]]
             tkey = tinfo["key"]
@@ -9361,64 +9525,110 @@ def export_workbook(
             for s in (cd.get("data") or {}).get("계산식", []) or []:
                 input_map[s["이름"]] = s["값"]
 
-            # {{과세기간}} 구성 (부가22 템플릿용): year·period args로 "{year}년 제N기 ( ... )"
+            # {{과세기간}} 구성 (부가 틀): 이 시트를 만든 common_input_tax call의 year·period로 "{year}년 제N기 ( ... )"
             과세기간 = ""
-            if tkey == "부가22":
-                for i, c in enumerate(calls):
-                    if c.get("tool") == "common_input_tax" and not 결과들[i].get("error"):
-                        args = c.get("args", {})
-                        year = args.get("year", "")
-                        period = args.get("period", "")
-                        if period == "1기":
-                            과세기간 = f"{year}년 제1기 ( 1월 1일 ~ 6월 30일 )"
-                        elif period == "2기":
-                            과세기간 = f"{year}년 제2기 ( 7월 1일 ~ 12월 31일 )"
-                        break
+            _args = (calls[tinfo["call_idx"]] or {}).get("args") or {}
+            if tinfo["tool"] == "common_input_tax":
+                _y, _p = _args.get("year", ""), _args.get("period", "")
+                if _p == "1기":
+                    과세기간 = f"{_y}년 제1기 ( 1월 1일 ~ 6월 30일 )"
+                elif _p == "2기":
+                    과세기간 = f"{_y}년 제2기 ( 7월 1일 ~ 12월 31일 )"
+            _귀속연도 = _args.get("year") if isinstance(_args.get("year"), int) else None
 
-            # 별지26 (갑)·(을): 표 source는 그 call 결과로(같은 도구 call이 여럿이면 call마다 따로)
-            call_sources = source_data
+            # 표 source: 본 시트 기준 기본값 + 이 call의 source(별지15·별지16의2·종소배당·부가 등은 그 call 값)
+            call_sources = {**source_data, **_call_src.get(tinfo["call_idx"], {})}
             form_res = cd.get("data", cd.get("result", {}))
+            # 별지26 (갑)·(을): 표 source는 그 call 결과로(같은 도구 call이 여럿이면 call마다 따로)
             if tinfo["tool"] == "nonbusiness_interest_disallowance":
                 form_res = nonbusiness_form_data(form_res, (calls[tinfo["call_idx"]] or {}).get("args", {}))
-                call_sources = {**source_data, **nonbusiness_form_sources(form_res)}
+                call_sources = {**call_sources, **nonbusiness_form_sources(form_res)}
             if tinfo["tool"] in ("bad_debt_adjustment", "common_input_tax"):
                 # 서식_표를 table source로 사용 (34_대손금, 34_채권잔액, 22_정산)
                 서식_표 = form_res.get("서식_표", {}) if isinstance(form_res, dict) else {}
                 if 서식_표:
                     call_sources = {**call_sources, **서식_표}
-            # 교차 참조는 같은 call에서 만든 시트를 가리킨다(같은 도구 call이 둘 이상이면 ' (2)' 시트끼리)
+            # 교차 참조는 같은 call에서 만든 시트를 가리킨다(같은 도구 call이 둘 이상이면 같은 call 시트끼리)
             cross_this = dict(slot_map_cross)
             for (ref_key, ref_id) in slot_map_cross:
                 same = next((t for t in 템플릿_목록 if t["key"] == ref_key and t["call_idx"] == tinfo["call_idx"]), None)
                 if same is not None:
                     cross_this[(ref_key, ref_id)] = (same["sheet"], all_slots[ref_key][ref_id][1])
             try:
-                render_form_sheet(ws, tpl, form_res, input_map,
-                                   sheet_name_map, slot_map_all, cross_this, tkey,
-                                   call_idx=tinfo["call_idx"], company=company, period=period, biz_no=biz_no,
-                                   source_data=call_sources, all_slots=all_slots,
-                                   label=cd.get("label", ""), 과세기간=과세기간)
+                _info = render_form_sheet(ws, tpl, form_res, input_map,
+                                          sheet_name_map, slot_map_all, cross_this, tkey,
+                                          call_idx=tinfo["call_idx"], company=company, period=period, biz_no=biz_no,
+                                          source_data=call_sources, all_slots=all_slots,
+                                          label=cd.get("label", ""), 과세기간=과세기간,
+                                          other_calls=_other_calls if tinfo.get("main", True) else {},
+                                          form_deadline=_deadline(tinfo.get("form", ""), _period_end(tinfo["call_idx"])),
+                                          귀속연도=_귀속연도)
             except ValueError as e:
                 if "max_rows" not in str(e):
                     raise
                 return {"error": f"입력 확인 필요 — {tpl.get('form', tkey)}의 칸보다 행이 많아 엑셀을 만들지 않음: {e}. 서식 칸에 맞게 묶거나 나눠서 호출하세요"}
+            if (_info or {}).get("개정일_생략"):
+                _개정일_생략.append((tinfo["sheet"], _info["개정일_생략"]))
             시트이름들.append(tinfo["sheet"])
 
-        # ── 3b. 계산 N 시트들 (틀 없는 도구들, call 순서대로) ──
-        calc_idx = 0
-        for cd in 결과들:
-            if cd["error"] or not cd["result"]:
+        # 같은 금액을 두 도구가 따로 계산했는데 값이 다르면(입력이 서로 다름) 서식 시트와 목록에 알린다
+        # (서식 도구, 그 결과 키, 같은 금액을 내는 다른 도구, 그 결과 키, 서식 틀, 이름)
+        _대조 = [("bad_debt_adjustment", "한도초과", "bad_debt_allowance", "한도초과(유보)", "별지34", "대손충당금 한도초과")]
+        for t_form, f_key, t_other, o_key, form_key, 이름 in _대조:
+            fi = next((t["call_idx"] for t in 템플릿_목록 if t["key"] == form_key and t.get("main")), None)
+            if fi is None:
                 continue
-            tool = cd.get("tool", "")
-            if tool in _FORM_TEMPLATES:
-                continue  # 틀 있는 도구는 이미 처리됨
-            tpl_list = _FORM_TEMPLATES.get(tool, [])
-            if tpl_list:
-                continue  # 틀 있는 도구
-            calc_idx += 1
+            fv = (결과들[fi].get("result") or {}).get(f_key)
+            for j in _ok_calls.get(t_other, []):
+                ov = (결과들[j].get("result") or {}).get(o_key)
+                if isinstance(fv, (int, float)) and isinstance(ov, (int, float)) and fv != ov:
+                    sh = sheet_name_map.get(form_key, "")
+                    _시트별_메모.setdefault(sh, []).append(
+                        f"확인 필요 — 이 서식은 호출 {fi + 1} '{결과들[fi].get('label', '')}' 결과로 채움: "
+                        f"{이름} {fv:,}원. 같은 파일의 호출 {j + 1} '{결과들[j].get('label', '')}'는 "
+                        f"{ov:,}원 — 두 호출의 입력(채권잔액·설정률 등)이 서로 다름")
+        # 부가 별지22 4.절은 영 제81조④ 정산만 적는다(작성방법 3) — 예정→확정 정산은 그 절에 넣지 않고 서식 아래 메모로
+        _안내_메모: dict[str, list[str]] = {}
+        for tinfo in 템플릿_목록:
+            if tinfo["key"] != "부가22":
+                continue
+            dat = 결과들[tinfo["call_idx"]].get("data") or {}
+            k = dat.get("계산") or {}
+            if (dat.get("서식_표") or {}).get("22_정산") or not k.get("불공제_확정"):
+                continue
+            _안내_메모.setdefault(tinfo["sheet"], []).append(
+                f"참고 — 예정신고분 확정 정산(영 제81조①·제82조): 과세기간 공통매입세액 {k.get('공통매입세액_과세기간합계', 0):,}원 × "
+                f"면세비율 {k.get('면세비율_과세기간', 0):.2%} = {k.get('불공제_과세기간합계', 0):,}원 − 예정신고 불공제 "
+                f"{k.get('불공제_예정반영', 0):,}원 = 확정 불공제 {k.get('불공제_확정', 0):,}원. "
+                f"4.절(⑮~⑲)은 영 제81조④로 안분한 매입세액의 정산만 적으므로 빈칸")
+        for memo, color in ((_시트별_메모, "C00000"), (_안내_메모, "595959")):
+            for sh, notes in memo.items():
+                if sh not in wb.sheetnames:
+                    continue
+                _ws = wb[sh]
+                _r = (_ws.max_row or 0) + 2
+                for n in notes:
+                    _ws.cell(_r, 1, n).font = Font(color=color, size=9)
+                    _r += 1
+        # ── 3b. 계산 N 시트들 — call마다 한 장, N은 calls 안 순번(1부터) ──
+        # 서식 틀로 간 call·오류 난 call도 시트를 만든다: 계산 시트 수 = call 수, '계산 N' = N번째 call.
+        calc_idx = 0
+        _calc_sheets: dict[int, str] = {}
+        for _ci, cd in enumerate(결과들):
+            calc_idx = _ci + 1
             sh_name = f"계산 {calc_idx}"
             ws = wb.create_sheet(sh_name)
             시트이름들.append(sh_name)
+            _calc_sheets[_ci] = sh_name
+            if cd["error"] or not cd["result"]:
+                for rr, (k, v) in enumerate((("label", cd.get("label", "")), ("도구", cd.get("tool", "")),
+                                              ("오류", cd.get("error") or "결과 없음"),
+                                              ("안내", _cell_value(cd.get("basis")) if cd.get("basis") else "")), 1):
+                    ws.cell(rr, 1, k).font = bold
+                    ws.cell(rr, 2, v)
+                ws.column_dimensions["A"].width = 16
+                ws.column_dimensions["B"].width = 60
+                continue
             res = cd.get("result", {}) or {}
             calc_dict = (cd.get("data") or {}).get("계산") if isinstance(cd.get("data"), dict) else None
             formula = (cd.get("data") or {}).get("계산식") if isinstance(cd.get("data"), dict) else None
@@ -9618,6 +9828,50 @@ def export_workbook(
             ws.column_dimensions["B"].width = 20
             ws.column_dimensions["C"].width = 16
             ws.freeze_panes = "A2"
+
+        # ── 목록 뒷부분: 확인 메모 → call ↔ 시트 대응표 → 고지문 ──
+        행 = _목록_행
+        for sh, rev in _개정일_생략:
+            ws_list.cell(행, 1, sh)
+            ws_list.cell(행, 2, f"서식 머리 개정일 표기 생략 — {rev}은 이 과세기간 신고기한 뒤 개정(서식 모양은 현행)")
+            행 += 1
+        for sh, notes in _시트별_메모.items():
+            for n in notes:
+                ws_list.cell(행, 1, sh)
+                ws_list.cell(행, 2, n).font = Font(color="C00000")
+                행 += 1
+        if any(len(v) > 1 and v[0]["per_return"] for v in _tpl_groups.values()):
+            ws_list.cell(행, 1, "같은 서식 여러 call")
+            ws_list.cell(행, 2, "신고서 한 부에 한 장인 서식은 마지막 call이 본 시트(이름 그대로), "
+                                       "앞선 call은 '(호출 N)' 시트로 따로 둠")
+            행 += 1
+        행 += 1
+        # call ↔ 시트 대응표('계산 N' = N번째 call)
+        for cc, h in enumerate(["call", "label", "계산 시트", "서식 시트"], 1):
+            c = ws_list.cell(행, cc, h); c.font = bold; c.fill = header_fill
+        행 += 1
+        # 다른 도구 시트의 칸·표로 들어간 call(별지3 112·115, 부가 별지22 2.·5.절)
+        _들어간_곳: dict[int, list[str]] = {}
+        if "corporate_tax" in _other_calls and "별지3" in sheet_name_map:
+            _들어간_곳.setdefault(_other_calls["corporate_tax"][0], []).append(sheet_name_map["별지3"] + " 112·115")
+        if "부가22" in sheet_name_map:
+            if source_data.get("22_불공제") and _vid is not None:
+                _들어간_곳.setdefault(_vid, []).append(sheet_name_map["부가22"] + " 2.절")
+            if source_data.get("22_재계산"):
+                for _i in _재계산_calls:
+                    _들어간_곳.setdefault(_i, []).append(sheet_name_map["부가22"] + " 5.절")
+        for _ci, cd in enumerate(결과들):
+            ws_list.cell(행, 1, _ci + 1)
+            ws_list.cell(행, 2, cd.get("label", ""))
+            ws_list.cell(행, 3, _calc_sheets.get(_ci, ""))
+            _곳 = [t["sheet"] for t in 템플릿_목록 if t["call_idx"] == _ci and t["tool"] != "*"] + _들어간_곳.get(_ci, [])
+            ws_list.cell(행, 4, ", ".join(_곳) or ("오류" if cd["error"] else ""))
+            행 += 1
+        행 += 1
+        ws_list.cell(행, 1,
+                    "이 파일은 계산 도구의 결과를 정리한 참고 자료이며 세무 자문이 아닙니다. 판단과 신고는 세무 전문가와 확인하세요.")
+        ws_list.cell(행, 1).font = Font(italic=True, color="C00000")
+        ws_list.merge_cells(start_row=행, start_column=1, end_row=행, end_column=8)
 
         # ── 4. 시트 순서 조정 (forms 모드: 입력·가정 시트를 틀+계산N 시트들 뒤로) ──
         if layout == "forms":

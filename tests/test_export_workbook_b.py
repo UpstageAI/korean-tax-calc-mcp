@@ -63,7 +63,8 @@ def test_unknown_tool_is_recorded_and_others_continue(tmp_path):
                              {"label": "차가감", "tool": "income_adjustment_total", "args": ADJ}])
     assert r["결과"]["오류_call"] == ["없는도구"]
     assert any(s.startswith("계산") for s in wb.sheetnames)
-    assert 106000000 in cells(wb["계산 1"])  # 100 + 8 − 2
+    assert "no_such_tool" in cells(wb["계산 1"])   # 계산 N = N번째 call — 오류 call도 시트(오류 내용)
+    assert 106000000 in cells(wb["계산 2"])  # 100 + 8 − 2
     assert any(isinstance(v, str) and "no_such_tool" in v for v in cells(wb["요약"]))
 
 

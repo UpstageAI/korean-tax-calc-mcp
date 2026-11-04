@@ -72,7 +72,7 @@ def test_sheets_and_formulas(wb):
     raw, _ = wb
     n = raw.sheetnames
     assert [x for x in n if x.startswith("별지84")] == [S84, S84_2, S84T, B1, B1_2]
-    assert not any(x.startswith("계산 ") for x in n)
+    assert [x for x in n if x.startswith("계산 ")] == [f"계산 {i}" for i in range(1, len(CALLS) + 1)]   # call마다 한 장
     w = raw[S84]
     assert w["E7"].value == f"='{B1}'!E30"              # ④ = 부표1 ⑱
     assert raw[S84_2]["E7"].value == f"='{B1_2}'!E30"   # 둘째 call은 자기 부표1을 가리킴

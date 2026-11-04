@@ -278,5 +278,6 @@
    "check": "결과.익금불산입액",
    "adjustment": "수입배당금 익금불산입"
   }
- ]
+ ],
+ "per_return": true
 }
