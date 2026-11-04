@@ -432,8 +432,12 @@ def gift_tax(
     prior_gift_tax_paid: int = 0,
     other_credits: int = 0,
     filed: bool = True,
+    prior_deduction_same_donor: int | None = None,
 ):
-    """증여세 과세가액·증여재산공제·과세표준·산출세액·납부할세액 계산."""
+    """증여세 과세가액·증여재산공제·과세표준·산출세액·납부할세액 계산.
+    공제 입력 계약(상증법 제47조②·제53조): prior_deduction_used = 10년 안에 '이번에 합산하지 않는' 증여(다른 증여자, 예: 조부모)에서 받은 증여재산공제.
+    prior_deduction_same_donor = 합산하는 같은 증여자 사전증여에서 받은 공제 — 합산 과세가액에서 공제를 한 번 다시 계산하므로 빼지 않는다
+    (합산하지 않을 때만 사용분으로 뺌). 합산하면서 prior_deduction_used만 들어오면 어느 쪽인지 몰라 계산하지 않는다."""
     gift_date_dt = date.fromisoformat(gift_date)
     연도 = gift_date_dt.year
     연도_int = 연도 * 10000 + gift_date_dt.month * 100 + gift_date_dt.day
@@ -454,7 +458,14 @@ def gift_tax(
                 "문제": ["인수채무가 증여재산가액보다 큼"]}
 
     # 1. 합산 여부
-    합산여부 = (gift_value + prior_gifts_same_donor) >= 10 * M
+    합산여부 = prior_gifts_same_donor > 0 and (gift_value + prior_gifts_same_donor) >= 10 * M
+    if 합산여부 and prior_deduction_used > 0 and prior_deduction_same_donor is None:
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"prior_gifts_same_donor {prior_gifts_same_donor:,}원을 합산하는데 prior_deduction_used {prior_deduction_used:,}원도 들어옴 — "
+                       "합산하는 같은 증여자 사전증여에서 받은 공제면 prior_deduction_same_donor로 넣고 prior_deduction_used=0(합산 과세가액에서 공제를 한 번만 계산, 다시 빼지 않음), "
+                       "합산하지 않는 다른 증여자(예: 조부모) 증여에서 받은 공제면 prior_deduction_same_donor도 함께(없으면 0) 넣으세요"],
+                "근거": "상속세 및 증여세법 제47조②·제53조"}
+    같은증여자_기공제 = prior_deduction_same_donor or 0
 
     # 2. 과세가액
     과세가액 = max(0, gift_value - nontaxable - excluded - assumed_debt)
@@ -467,7 +478,9 @@ def gift_tax(
         한도 = voc.get("직계존속_미성년", 0)
     else:
         한도 = voc.get(relation, 0)
-    증여공제 = min(max(0, 한도 - prior_deduction_used), 과세가액)
+    # 합산하는 같은 증여자분의 기공제액은 합산 과세가액에서 공제를 다시 계산하므로 빼지 않음(이중 차감 방지), 합산 안 하면 사용분
+    기사용 = prior_deduction_used + (0 if 합산여부 else 같은증여자_기공제)
+    증여공제 = min(max(0, 한도 - 기사용), 과세가액)
 
     # 4. 혼인·출산 공제
     혼인출산공제 = 0
@@ -513,7 +526,7 @@ def gift_tax(
     납부할세액 = max(0, 산출세액 + 할증세액 - prior_gift_tax_paid - other_credits - 신고공제)
 
     # 남은 공제한도
-    남은한도 = 한도 - prior_deduction_used - 증여공제
+    남은한도 = 한도 - 기사용 - 증여공제
     if 남은한도 < 0:
         남은한도 = 0
 
@@ -569,7 +582,9 @@ def gift_tax(
         "관계": {"결론": relation, "근거": "상속세 및 증여세법 제53조"},
         "합산여부": 합산여부,
         "증여재산공제_한도": {"결론": f"{한도:,}원", "근거": "상속세 및 증여세법 제53조"},
-        "기공제액": {"결론": f"{prior_deduction_used:,}원", "근거": "상속세 및 증여세법 제53조(10년 합산)"},
+        "기공제액": {"결론": f"{기사용:,}원" + (f"(합산한 같은 증여자분 기공제 {같은증여자_기공제:,}원은 합산 과세가액에서 공제를 다시 계산하므로 빼지 않음)"
+                                              if 합산여부 and 같은증여자_기공제 else ""),
+                    "근거": "상속세 및 증여세법 제47조②·제53조(10년 합산)"},
         "남은_공제한도": 남은한도,
         "혼인출산_남은_한도": 혼인출산_남은한도,
         "과세최저한": 과세최저한,
