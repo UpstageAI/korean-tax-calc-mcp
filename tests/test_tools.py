@@ -23,7 +23,7 @@ def test_tools_and_values():
     assert c("deemed_interest", {"movements": [{"date": "2025-01-01", "amount": 240_000_000}], "year_end": "2025-12-31"})["결과"]["익금산입"] == 11_040_000
     assert c("invoice_penalty", {"supply_amount": 40_000_000, "kind": "가공", "supplied_on": "2025-12-15"})["결과"]["가산세"] == 1_200_000
     r = c("assessment_limitation", {"due_date": "2024-03-31", "case": "부정행위", "offshore": True})["결과"]
-    assert r["제척기간(년)"] == 15 and r["만료일"] == "2039-03-31"
+    assert r["제척기간(년)"] == 15 and r["만료일"] == "2039-04-01"   # 2024-03-31(일) → 기한 2024-04-01(국세기본법 제5조제1항)
     assert c("assessment_limitation", {"due_date": "2024-03-31", "case": "무신고"})["결과"]["제척기간(년)"] == 7
     assert c("underreporting_penalty", {"additional_tax": 10_000_000, "fraud": True})["결과"]["가산세"] == 4_000_000
 
