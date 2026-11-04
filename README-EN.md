@@ -6,7 +6,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/korean-tax-calc-mcp)](https://pypi.org/project/korean-tax-calc-mcp/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-korean--tax--calc--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=korean-tax-calc-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Built with Upstage Solar Pro 4](https://img.shields.io/badge/Built%20with-Upstage%20Solar%20Pro%204-7A3FF2)](https://www.upstage.ai/) · [한국어](README.md)
 
-> **Authorship notice:** Versions 0.3.0–0.12.2 (2026-10-10 to 10-26) were written by **Solar Pro 4** (Solar Work CLI), reviewed by CodeSolar and cross-checked with tests by Claude (parts of 0.8.0 and all of 0.9.2 were fixed/written by Claude). **From 0.13.0 (2026-10-28) on, the existing calculator skeleton remains Solar Pro 4's, while new tools, year-by-year statute checks and bug fixes are written by Claude (Anthropic)** and reviewed by CodeSolar. Each [CHANGELOG](CHANGELOG.md) section states who wrote it. 93 tools.
+> **Authorship notice:** Versions 0.3.0–0.12.2 (2026-10-10 to 10-26) were written by **Solar Pro 4** (Solar Work CLI), reviewed by CodeSolar and cross-checked with tests by Claude (parts of 0.8.0 and all of 0.9.2 were fixed/written by Claude). **From 0.13.0 (2026-10-28) on, the existing calculator skeleton remains Solar Pro 4's, while new tools, year-by-year statute checks and bug fixes are written by Claude (Anthropic)** and reviewed by CodeSolar. Each [CHANGELOG](CHANGELOG.md) section states who wrote it. 94 tools.
 
 **Korean tax calculations for AI agents — code, not guesses.** [한국어](README.md)
 
@@ -26,7 +26,7 @@ flowchart LR
 3. **Calculation** — follows the statute order, e.g. tax base → that year's brackets → tax.
 4. **Result** — tax, intermediate amounts, item-level judgments, adjustments with income dispositions, and citations.
 
-90 of the 93 tools run in code without generative AI (the 2 price lookups only fetch public data from KRX and VWORLD). Only the 3 PDF tools use Upstage, and only when `UPSTAGE_API_KEY` is set.
+91 of the 94 tools run in code without generative AI (the 2 price lookups only fetch public data from KRX and VWORLD). Only the 3 PDF tools use Upstage, and only when `UPSTAGE_API_KEY` is set.
 
 ### How corporate tax adjustments chain
 
@@ -87,7 +87,7 @@ When answering Korean tax questions, use korean-tax-mcp and korean-tax-calc-mcp 
 5. If two values come out (before/after apportionment, total vs. taxable part, etc.), answer only the one the question asks for.
 ```
 
-## Tools (93)
+## Tools (94)
 
 Click a group to expand its tools.
 
@@ -148,7 +148,7 @@ Click a group to expand its tools.
 
 </details>
 <details>
-<summary><b>VAT, penalties, limitation</b> (14)</summary>
+<summary><b>VAT, penalties, limitation</b> (15)</summary>
 
 | Tool | What it does |
 |---|---|
@@ -160,6 +160,7 @@ Click a group to expand its tools.
 | `vat_bad_debt_credit` | bad debt credit |
 | `underreporting_penalty` | under-reporting penalty |
 | `late_payment_penalty` | late payment penalty |
+| `withholding_late_payment_penalty` | withholding tax late-payment penalty (Framework Act Art. 47-5: 3% + daily, capped) |
 | `invoice_penalty` | invoice penalty |
 | `assessment_limitation` | assessment period |
 | `vat_exempt_use_deemed_supply` | exempt-use deemed supply |
@@ -264,7 +265,7 @@ Click a group to expand its tools.
 
 - **Disclaimer:** Results are a review aid, not tax advice. Verify statutes and rulings with a tax accountant, CPA or attorney before filing, during a tax audit, or in appeals. Check the statute text and case law in the original source.
 - **Not a tax agent service:** This tool does not perform **tax agent services under Article 2 of the Certified Tax Accountant Act** (preparing tax adjustment statements, filing on behalf of a taxpayer, tax consultation); only certified tax accountants and registered CPAs or attorneys may do so (Article 20). It is software that turns statutory formulas into code and shows the computation for the inputs given; please verify the facts and make the final judgment together with a tax professional (tax accountant, CPA or attorney).
-- **AI use notice:** The 90 computation, judgment and lookup tools run in code and do not use generative AI. The 3 PDF review tools (`extract_relations`, `tunnelling_from_pdf`, `return_precheck_pdf`) use generative AI (Upstage Solar Pro 4) when UPSTAGE_API_KEY is set, and mark that fact in their results. Without a key, they use pypdf for local text extraction (host_ai mode) and provide 정리 안내 (cleanup guidance) so the next tool input can be prepared manually.
+- **AI use notice:** The 91 computation, judgment and lookup tools run in code and do not use generative AI. The 3 PDF review tools (`extract_relations`, `tunnelling_from_pdf`, `return_precheck_pdf`) use generative AI (Upstage Solar Pro 4) when UPSTAGE_API_KEY is set, and mark that fact in their results. Without a key, they use pypdf for local text extraction (host_ai mode) and provide 정리 안내 (cleanup guidance) so the next tool input can be prepared manually.
 - **Data transmission:** Document content is sent to the Upstage API (api.upstage.ai) only when UPSTAGE_API_KEY is set and the PDF tools are used. The price lookups send only a ticker and date to KRX (`stock_price_lookup`) or an address, parcel number and year to VWORLD (`official_property_price`, needs VWORLD_KEY). Without a key (pypdf local extraction), no data is transmitted externally. Do not submit documents containing personal or sensitive information when using the API-based flow.
 
 ## License
