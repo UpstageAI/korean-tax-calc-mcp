@@ -327,5 +327,6 @@
       "cell": "I38",
       "f": "=SUM(I36:I37)"
     }
-  ]
+  ],
+  "per_return": true
 }

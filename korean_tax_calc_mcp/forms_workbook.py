@@ -287,6 +287,16 @@ def fill_text(t: str | None, *, res: dict | None, meta: dict[str, Any]) -> str:
 
     out = t
 
+    # 기간(period)을 받지 못하면 '{{기간_시작}} ~ {{기간_끝}}'을 빈 물결로 두지 않는다:
+    # 귀속 표기는 call의 연도(귀속연도)로 'YYYY년 귀속', 부가 과세기간은 call의 과세기간, 그 밖은 '사업연도 미입력'
+    if not meta.get("기간_시작") and not meta.get("기간_끝"):
+        def _no_period(m: _re.Match) -> str:
+            if m.group(1):
+                y = meta.get("귀속연도")
+                return f"{y}년 귀속" if y else "귀속연도 미입력"
+            return str(meta.get("과세기간") or "사업연도 미입력")
+        out = _re.sub(r"\{\{기간_시작\}\}\s*~\s*\{\{기간_끝\}\}( 귀속)?", _no_period, out)
+
     # {{법인명}}·{{사업자등록번호}}·{{기간_시작}}·{{기간_끝}}·{{과세기간}}·{{label}} → meta 값
     for key in ("법인명", "사업자등록번호", "기간_시작", "기간_끝", "과세기간", "label"):
         out = out.replace(f"{{{{{key}}}}}", str(meta.get(key, "")))
@@ -320,7 +330,32 @@ def fill_text(t: str | None, *, res: dict | None, meta: dict[str, Any]) -> str:
 
     out = _re.sub(r"\{\{(\w+)\}\}", _replace_meta, out)
 
+    # 법인명 등이 비어 끝에 남은 구분점(' · ') 제거
+    out = _re.sub(r"\s*·\s*$", "", out)
+
     return out
+
+
+_REV_RE = _re.compile(r"\s*<개정\s*(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})\.?\s*>")
+
+
+def strip_late_revision(txt: str, deadline) -> tuple[str, str | None]:
+    """서식 머리의 '<개정 YYYY. M. D.>'가 신고기한(deadline, datetime.date)보다 뒤면 그 표기를 뺀다.
+
+    그 과세기간 신고 때 쓰던 서식 판이 아니므로 개정일을 찍지 않는다(서식 모양은 현행). 뺀 개정일 문자열을 함께 돌려준다."""
+    if not txt or deadline is None:
+        return txt, None
+    m = _REV_RE.search(txt)
+    if not m:
+        return txt, None
+    import datetime as _dt
+    try:
+        rev = _dt.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    except ValueError:
+        return txt, None
+    if rev <= deadline:
+        return txt, None
+    return txt.replace(m.group(0), "", 1), m.group(0).strip()
 
 
 # ── 메인 렌더러 ──
@@ -338,14 +373,40 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
                       label: str = "",
                       과세기간: str = "",
                       templates: dict[str, dict] | None = None,
-                      results: dict[str, Any] | None = None) -> None:
+                      results: dict[str, Any] | None = None,
+                      other_calls: dict[str, tuple[int, dict]] | None = None,
+                      form_deadline: Any = None,
+                      귀속연도: Any = None) -> dict:
     """폼 템플릿 JSON을 엑셀 시트로 렌더링한다. (SPEC_form_templates 3절)
 
     렌더러의 slot 수식·table 열 수식·문구·검증 값은 모두 tool_value·resolve_formula·fill_text
     세 함수만 써서 처리한다. (SPEC_form_resolver)
+
+    - slot `from_tool`: 그 칸은 이 틀의 call이 아니라 other_calls[도구] = (call_idx, 결과)로 푼다(없으면 빈칸).
+    - slot `needs`: 나열한 도구가 other_calls에 모두 있을 때만 쓴다. `needs_source`: 그 표 source에 행이 있을 때만.
+    - 틀 `check_block_row`: 도구 값·확인을 오른쪽 열 대신 서식 아래(그 행부터) 표로 쓴다 — 오른쪽 서식 줄과 겹쳐 보이지 않게.
+    - form_deadline(신고기한)보다 뒤에 개정된 서식이면 머리의 '<개정 …>' 표기를 뺀다.
+    돌려주는 값: {"개정일_생략": 뺀 개정일 표기 또는 None}.
     """
+    info: dict[str, Any] = {"개정일_생략": None}
+    other_calls = other_calls or {}
     tkey = tpl["key"] if tkey_override is None else tkey_override
     local_slot_map = {s["id"]: s["cell"] for s in tpl.get("slots", [])}
+
+    def _slot_on(s: dict) -> bool:
+        if s.get("from_tool") and s["from_tool"] not in other_calls:
+            return False
+        if any(t not in other_calls for t in s.get("needs", [])):
+            return False
+        if s.get("needs_source") and not (source_data or {}).get(s["needs_source"]):
+            return False
+        return True
+
+    def _slot_res(s: dict) -> tuple[Any, Any]:
+        """slot을 풀 (call_idx, 결과) — from_tool이면 그 도구 call."""
+        if s.get("from_tool"):
+            return other_calls[s["from_tool"]]
+        return call_idx, res
 
     if not ws.title.startswith(tpl["sheet"]):
         ws.title = tpl["sheet"]  # 같은 틀 둘째 call은 호출 쪽이 붙인 " (2)" 이름 유지
@@ -365,6 +426,7 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
         "계정과목": "기업업무추진비",
         "label": label,
         "과세기간": 과세기간,
+        "귀속연도": 귀속연도,
     }
 
     # ── 열 너비 ──
@@ -385,6 +447,9 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
     for mc in tpl.get("cells", []):
         rng_s = mc["r"]
         txt = fill_text(mc.get("t"), res=res, meta=meta)
+        txt, dropped = strip_late_revision(txt, form_deadline)
+        if dropped:
+            info["개정일_생략"] = dropped
         al = AL_MAP.get(mc.get("al", "l"), mc.get("al", "l"))
         font = Font(name="맑은 고딕",
                     size=mc.get("size") if mc.get("size") else 10,
@@ -446,10 +511,11 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
     for s in tpl.get("slots", []):
         cell_addr = s["cell"]
         f = s.get("f", "")
-        if not f:
+        if not f or not _slot_on(s):
             continue
-        if call_idx is not None:
-            f_rendered = resolve_formula(f, res=res, call_idx=call_idx,
+        s_idx, s_res = _slot_res(s)
+        if s_idx is not None:
+            f_rendered = resolve_formula(f, res=s_res, call_idx=s_idx,
                                          local=local_slot_map, cross=cross_map,
                                          sheet_name_map=sheet_name_map, all_slots=all_slots,
                                          templates=templates, results=results)
@@ -547,8 +613,44 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
     # 각 check_col 위치마다 "도구 값"/"확인" 헤더와 검증 수식을 작성.
     tpl_check_col = tpl.get("check_col", "")
     # check_optional: 입력이 있을 때만 생기는 값(별지22 정산)은 도구 값이 없으면 검증 칸을 만들지 않는다
-    check_rows = [s for s in tpl["slots"] if s.get("check")
-                  and not (s.get("check_optional") and tool_value(res, s["check"]) is None)]
+    check_rows = [s for s in tpl["slots"] if s.get("check") and _slot_on(s)
+                  and not (s.get("check_optional") and tool_value(_slot_res(s)[1], s["check"]) is None)]
+    block_row = tpl.get("check_block_row")
+    if check_rows and block_row:
+        # 서식 아래 표: 서식 줄 | 도구 값 | 확인 — 같은 행 오른쪽 서식 줄(예: 별지3 136·139)과 섞이지 않게
+        hdr_font = Font(name="맑은 고딕", size=9, bold=True)
+        r0 = int(block_row)
+        ws.cell(r0, 1, "도구 확인 — 서식 칸과 계산 도구 값 대조(서식 밖)").font = hdr_font
+        lab_c, val_c, ok_c = tpl.get("check_block_cols", ["D", "F", "J"])
+        for c_l, h in ((lab_c, "서식 줄(칸)"), (val_c, "도구 값"), (ok_c, "확인")):
+            ws[f"{c_l}{r0 + 1}"].value = h
+            ws[f"{c_l}{r0 + 1}"].font = hdr_font
+            ws[f"{c_l}{r0 + 1}"].alignment = Alignment(horizontal="center", vertical="center")
+        rr = r0 + 2
+        for s in check_rows:
+            cell_addr = s["cell"]
+            tool_val = tool_value(_slot_res(s)[1], s["check"])
+            ws[f"{lab_c}{rr}"].value = f"{s.get('label') or s['id']} ({cell_addr})"
+            ws[f"{lab_c}{rr}"].font = Font(name="맑은 고딕", size=9)
+            tv = ws[f"{val_c}{rr}"]
+            tv.font = Font(name="맑은 고딕", size=9, color="808080")
+            tv.alignment = Alignment(horizontal="right", vertical="center")
+            if tool_val is None:
+                tv.value = None
+            elif isinstance(tool_val, float) and tool_val == float("inf"):
+                tv.value = "상한 없음"
+            else:
+                tv.value = tool_val
+                tv.number_format = MONEY_FMT
+            ok = ws[f"{ok_c}{rr}"]
+            ok.value = (f'=IF(ROUND({cell_addr},0)=ROUND(IF(ISNUMBER({val_c}{rr}),{val_c}{rr},0),0),'
+                        f'"일치","확인 필요")')
+            ok.font = Font(name="맑은 고딕", size=9)
+            ok.alignment = Alignment(horizontal="center", vertical="center")
+            rr += 1
+        if tpl.get("block_note"):
+            ws.cell(rr, 1, tpl["block_note"]).font = Font(name="맑은 고딕", size=8, color="808080")
+        check_rows = []
     if check_rows and (tpl_check_col or any(s.get("check_col") for s in check_rows)):
         # slot별 check_col 수집 (중복 제거, 정렬)
         check_col_positions: list[str] = []
@@ -573,7 +675,7 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
             check_path = s["check"]
             cc = s.get("check_col") or tpl_check_col
             cci = ord(cc) - 64
-            tool_val = tool_value(res, check_path)
+            tool_val = tool_value(_slot_res(s)[1], check_path)
             tv_cell = ws.cell(r, cci)
             tv_cell.font = Font(name="맑은 고딕", size=9, color="808080")
             tv_cell.alignment = Alignment(horizontal="right", vertical="center")
@@ -599,6 +701,7 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 1
     ws.page_setup.paperSize = 9  # A4
+    return info
 
 
 def _load_form_templates() -> dict[str, list[dict]]:
