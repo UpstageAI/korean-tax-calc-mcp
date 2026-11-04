@@ -14,6 +14,23 @@ def _won(v) -> str:
     return f"{v:,.0f}원"
 
 
+def _w(v):
+    """결과 표시용 원 단위 정수(원 미만 반올림, 0.5 올림). None은 그대로."""
+    from .exact import round_won
+    return None if v is None else round_won(v)
+
+
+def _int_amounts(o):
+    """계산 줄의 금액이 정수 값인 실수(400000000.0)면 정수로 — 원 단위 금액이 실수로 보이지 않게."""
+    if isinstance(o, float) and o.is_integer():
+        return int(o)
+    if isinstance(o, dict):
+        return {k: _int_amounts(v) for k, v in o.items()}
+    if isinstance(o, list):
+        return [_int_amounts(v) for v in o]
+    return o
+
+
 
 # ── 재무제표 → 순손익액·순자산가액 (영 제56조④, 제55조·규칙 제17조의2) ──────────────────
 
@@ -502,10 +519,13 @@ def unlisted_valuation(valuation_date: str, shares: int, incomes: list | None = 
         판단.append({"항목": "확인 필요", "결론": n, "근거": "상속세 및 증여세법 제63조③"})
     판단.append({"항목": "확인 필요", "결론": ("순자산가액 가감(영 제55조·규칙 제17조의2)은 입력한 항목만 반영 — 지급 확정 권리·선급비용·무형자산·미지급 법인세·확정 배당·퇴직급여추계액·충당금·준비금 중 빠진 것이 없는지, 자산별 상증법 평가차액(assets)을 넣었는지 확인" if "순자산가액 산출" in 계산_상세
                                          else "순자산가액은 상증법 평가액 기준으로 사용자가 가감(지급 확정 권리 +, 선급비용·무형자산 −, 미지급 법인세·확정 배당·퇴직급여추계액 +, 충당금·준비금 −)을 끝낸 값을 넣어야 함(항목형으로 주면 도구가 적용)") + ". 발행주식총수의 자기주식 포함 여부는 조문에 명시 없음(통칙 확인)", "근거": "상증법 시행령 제55조, 시행규칙 제17조의2"})
-    return {"결과": {"1주당_평가액": round(final, 2), "1주당_할증전": round(value, 2), "순손익가치": round(ev_per, 2) if ev_per is not None else None, "순자산가치": round(nav_per, 2), "가중평균": round(weighted, 2) if weighted is not None else None,
-                   "평가방법": method, "할증률": prem, "총평가액(보유주식×)": None},
-            "계산": {"순손익가치 산식": ev_calc, "연도별 1주당 순손익액": [{"사업연도": y, "1주당": round(v, 2)} for y, v in per_share], "가중치": f"{w_e}:{w_n}", "하한율": floor_r, "영업권": round(gw, 0), "환원율": cap_rate,
-                   **({"순손익액 산출": inc_lines_all} if inc_lines_all else {}), **계산_상세},
+    # 1주당 값은 원 단위 정수(원 미만 반올림)로 표시 — 계산은 반올림 전 값으로(할증 후 평가액도 반올림 전 값 × (1+할증률)).
+    # 값이 없는 항목(순자산가치만 평가해 순손익가치·가중평균이 없음)은 키를 넣지 않는다.
+    결과 = {"1주당_평가액": _w(final), "1주당_할증전": _w(value), "순손익가치": _w(ev_per), "순자산가치": _w(nav_per),
+            "가중평균": _w(weighted), "평가방법": method, "할증률": prem}
+    return {"결과": {k: v for k, v in 결과.items() if v is not None},
+            "계산": _int_amounts({"순손익가치 산식": ev_calc, "연도별 1주당 순손익액": [{"사업연도": y, "1주당": round(v, 2)} for y, v in per_share], "가중치": f"{w_e}:{w_n}", "하한율": floor_r, "영업권": _w(gw), "환원율": cap_rate,
+                   **({"순손익액 산출": inc_lines_all} if inc_lines_all else {}), **계산_상세}),
             "근거": "상속세 및 증여세법 제63조①1호나목·③, 시행령 제53조·제54조·제55조·제56조·제59조②, 시행규칙 제17조·제17조의2·제17조의3·제19조", "판단": 판단,
             "산식": "순손익가치 = (1년전×3+2년전×2+3년전×1)/6 ÷ 10% / 순자산가치 = (순자산가액+영업권) ÷ 발행주식총수 / 가중평균 3:2(부동산 과다 2:3), 하한 순자산가치×80%(2017.4~2018.3은 70%), 순자산가치만 평가 사유 있으면 순자산가치 / 최대주주 할증 20%(2019까지 50% 초과 30%, 중소 제외·2023~ 중견 제외)"}
 

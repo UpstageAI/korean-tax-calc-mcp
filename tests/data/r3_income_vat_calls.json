@@ -1,0 +1,277 @@
+[
+ {
+  "label": "금융소득 합산·Gross-up",
+  "tool": "financial_income_aggregate",
+  "args": {
+   "year": 2025,
+   "items": [
+    {
+     "kind": "예금이자",
+     "amount": 8000000
+    },
+    {
+     "kind": "비영업대금이익",
+     "amount": 5000000
+    },
+    {
+     "kind": "비실명이자",
+     "amount": 2000000
+    },
+    {
+     "kind": "비상장법인현금배당",
+     "amount": 12000000
+    },
+    {
+     "kind": "상장법인현금배당",
+     "amount": 6000000
+    },
+    {
+     "kind": "투자신탁환매이익",
+     "amount": 3000000,
+     "components": [
+      {
+       "asset": "배당",
+       "gain": 3000000
+      }
+     ]
+    },
+    {
+     "kind": "외국법인배당",
+     "amount": 4000000,
+     "withheld": false
+    }
+   ]
+  }
+ },
+ {
+  "label": "인적공제",
+  "tool": "personal_deduction",
+  "args": {
+   "year": 2025,
+   "taxpayer": {
+    "sex": "남",
+    "birth_year": 1970,
+    "has_spouse": true,
+    "comprehensive_income": 99800000
+   },
+   "persons": [
+    {
+     "name": "배우자",
+     "relation": "배우자",
+     "birth_year": 1973,
+     "income_items": []
+    },
+    {
+     "name": "부친",
+     "relation": "직계존속",
+     "birth_year": 1950,
+     "income_items": []
+    },
+    {
+     "name": "모친",
+     "relation": "직계존속",
+     "birth_year": 1957,
+     "income_items": [
+      {
+       "kind": "양도소득금액",
+       "amount": 5000000
+      }
+     ]
+    },
+    {
+     "name": "아들(25세)",
+     "relation": "직계비속",
+     "birth_year": 2000,
+     "income_items": [],
+     "disabled": true
+    },
+    {
+     "name": "딸(15세)",
+     "relation": "직계비속",
+     "birth_year": 2010,
+     "income_items": []
+    },
+    {
+     "name": "아들(6세)",
+     "relation": "직계비속",
+     "birth_year": 2019,
+     "income_items": []
+    }
+   ]
+  }
+ },
+ {
+  "label": "자녀세액공제",
+  "tool": "child_tax_credit",
+  "args": {
+   "year": 2025,
+   "children": [
+    {
+     "name": "아들(25세)",
+     "age": 25,
+     "basic_deduction": true
+    },
+    {
+     "name": "딸(15세)",
+     "age": 15,
+     "basic_deduction": true
+    },
+    {
+     "name": "아들(6세)",
+     "age": 6,
+     "basic_deduction": true
+    }
+   ]
+  }
+ },
+ {
+  "label": "제62조 비교산출·배당세액공제",
+  "tool": "dividend_tax_credit",
+  "args": {
+   "year": 2025,
+   "items": [
+    {
+     "kind": "예금이자",
+     "amount": 8000000
+    },
+    {
+     "kind": "비영업대금이익",
+     "amount": 5000000
+    },
+    {
+     "kind": "비실명이자",
+     "amount": 2000000
+    },
+    {
+     "kind": "비상장법인현금배당",
+     "amount": 12000000
+    },
+    {
+     "kind": "상장법인현금배당",
+     "amount": 6000000
+    },
+    {
+     "kind": "투자신탁환매이익",
+     "amount": 3000000,
+     "components": [
+      {
+       "asset": "배당",
+       "gain": 3000000
+      }
+     ]
+    },
+    {
+     "kind": "외국법인배당",
+     "amount": 4000000,
+     "withheld": false
+    }
+   ],
+   "other_base": 45000000
+  }
+ },
+ {
+  "label": "대손세액(소멸시효 22,000,000)",
+  "tool": "vat_bad_debt_credit",
+  "args": {
+   "bad_debt_incl_vat": 22000000
+  }
+ },
+ {
+  "label": "대손세액 가산(회수 5,500,000)",
+  "tool": "vat_bad_debt_credit",
+  "args": {
+   "bad_debt_incl_vat": 5500000
+  }
+ },
+ {
+  "label": "공통매입세액 정산",
+  "tool": "common_input_tax",
+  "args": {
+   "year": 2025,
+   "period": "2기",
+   "filing": "확정",
+   "supplies": {
+    "예정": {
+     "taxable": 280000000,
+     "exempt": 220000000
+    },
+    "확정": {
+     "taxable": 320000000,
+     "exempt": 180000000
+    }
+   },
+   "ledger": [
+    {
+     "항목": "공통 사용 비품·용역",
+     "매입세액": 6000000,
+     "사용처": "공통"
+    }
+   ],
+   "prior_common_input_tax": 4000000,
+   "prior_nondeductible": 1760000
+  }
+ },
+ {
+  "label": "납부세액 재계산(기계장치)",
+  "tool": "input_tax_recalculation",
+  "args": {
+   "asset_type": "기타감가상각자산",
+   "acquired": {
+    "year": 2024,
+    "period": 2
+   },
+   "input_tax": 20000000,
+   "ratios": [
+    {
+     "year": 2024,
+     "period": 2,
+     "exempt_ratio": 0.3
+    },
+    {
+     "year": 2025,
+     "period": 1,
+     "exempt_ratio": 0.33
+    },
+    {
+     "year": 2025,
+     "period": 2,
+     "exempt_ratio": 0.4
+    }
+   ]
+  }
+ },
+ {
+  "label": "매입세액 공제·불공제",
+  "tool": "vat_input_tax_deduction",
+  "args": {
+   "period": "2025-2",
+   "filing": "확정",
+   "items": [
+    {
+     "항목": "원재료(과세사업)",
+     "증빙": "세금계산서",
+     "공급가액": 150000000,
+     "성격": "일반"
+    },
+    {
+     "항목": "포장재(면세사업)",
+     "증빙": "세금계산서",
+     "공급가액": 40000000,
+     "성격": "면세사업"
+    },
+    {
+     "항목": "거래처 명절 선물",
+     "증빙": "세금계산서",
+     "공급가액": 3000000,
+     "성격": "접대"
+    },
+    {
+     "항목": "임원 업무용 승용차(1,998cc)",
+     "증빙": "세금계산서",
+     "공급가액": 30000000,
+     "성격": "비영업용승용차"
+    }
+   ]
+  }
+ }
+]

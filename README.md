@@ -161,7 +161,7 @@ AI가 도구를 언제 부르고, 도구의 답을 언제 믿을지 정해 주�
 | `vat_common_input_allocation` | 공통매입세액 안분 |
 | `vat_simplified_taxpayer` | 간이과세 납부세액 |
 | `vat_card_sales_credit` | 카드 발행세액공제 |
-| `vat_bad_debt_credit` | 대손세액공제 |
+| `vat_bad_debt_credit` | 대손세액공제(회수하면 매출세액 가산) |
 | `underreporting_penalty` | 과소신고가산세 |
 | `late_payment_penalty` | 납부지연가산세 |
 | `withholding_late_payment_penalty` | 원천징수 납부지연가산세(국세기본법 제47조의5, 3%+일할, 한도) |

@@ -7,7 +7,7 @@ import re
 from datetime import date, timedelta
 
 from .calc import won
-from .exact import exact as _x, floor_won as _floor
+from .exact import exact as _x, floor_won as _floor, round_won as _round
 
 # 키 = 사업연도(개시일이 속하는 연도). 값은 모두 법제처 efYd=그해1231 원문 + 개정 부칙 적용시기 대조(2026-09-30, knowledge/16 §법인 연도표).
 _T_OLD = [(200_000_000, 0.10), (20_000_000_000, 0.20), (math.inf, 0.22)]                                   # 제55조 2016·2017
@@ -653,9 +653,9 @@ def donation(base_income, carried_loss, special, general, special_carry=0, gener
         if carry_first:
             c = min(carry, lim); return c, min(cur, lim - c)
         u = min(cur, lim); return min(carry, lim - u), u
-    sp_limit = max(0, (base_income - loss) * 0.5)
+    sp_limit = won(max(0, (base_income - loss) * 0.5))          # 한도는 원 단위로 먼저 확정 — 한도와 한도초과가 지출액과 맞도록
     sp_carry_used, sp_used = use(special_carry, special, sp_limit)
-    gen_limit = max(0, (base_income - loss - sp_carry_used - sp_used) * (0.2 if social_enterprise and social_ok else 0.1))
+    gen_limit = won(max(0, (base_income - loss - sp_carry_used - sp_used) * (0.2 if social_enterprise and social_ok else 0.1)))
     gen_carry_used, gen_used = use(general_carry, general, gen_limit)
     return {"특례한도": won(sp_limit), "일반한도": won(gen_limit),
             "이월분 손금산입": won(sp_carry_used + gen_carry_used),
@@ -718,7 +718,7 @@ def late_payment_penalty(tax, due, until):
     if n.get(0.0003):
         out["0.03%일수"] = n[0.0003]
     out.update({"0.025%일수": n.get(0.00025, 0), "0.022%일수": n.get(0.00022, 0),
-                "가산세": int(round(sum(_x(tax) * _x(r) * k for k, r in seg)))})
+                "가산세": _round(sum(_x(tax) * _x(r) * k for k, r in seg))})
     return out
 
 

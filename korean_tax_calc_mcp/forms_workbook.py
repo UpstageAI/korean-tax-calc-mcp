@@ -708,9 +708,10 @@ def _load_form_templates() -> dict[str, list[dict]]:
     """form_templates JSON 디렉터리에서 도구별 템플릿 목록을 로드한다 (모듈 수준 캐시)."""
     result: dict[str, list[dict]] = {}
     for tpl in _read_template_files():
-        tool = tpl.get("tool", "")
-        if tool:
-            result.setdefault(tool, []).append(tpl)
+        # `tools`: 같은 서식 칸을 여러 도구가 채울 때(신고서 (4)란 ← 간주공급·면세전용) — 도구마다 같은 틀을 등록
+        for tool in tpl.get("tools") or [tpl.get("tool", "")]:
+            if tool:
+                result.setdefault(tool, []).append(tpl)
     return result
 
 
@@ -878,7 +879,11 @@ def export_form_inputs(tool: str, args: dict | None, data: dict | None) -> dict 
         out = [_inp("공급가액", a.get("supply_amount", 0)), _inp("가산세율", res.get("세율")),
                _inp("가산세유형", a.get("kind", ""))]
     elif tool == "vat_bad_debt_credit":
-        out = [_inp("대손금액", a.get("bad_debt_incl_vat", 0), "⑦ 대손금액(부가세 포함)")]
+        out = [_inp("대손금액", a.get("bad_debt_incl_vat", 0), "⑦ 대손금액(부가세 포함)" if not res.get("회수")
+                    else "회수한 대손금액(부가세 포함) — 매출세액 가산(부가가치세법 제45조① 단서)")]
+    elif tool == "vat_exempt_use_deemed_supply":
+        out = [_inp("판매등_과세표준", 0, "면세전용 — 세금계산서 발급분 없음"),
+               _inp("간주공급_과세표준", res.get("과세표준") or 0, "(4) 기타 — 면세전용 간주공급(부가가치세법 제10조①)")]
     elif tool == "gift_tax":
         from . import vocab
         gd = str(a.get("gift_date") or "")
@@ -992,4 +997,19 @@ def merged_form_sources(tool: str, entries: list[tuple[int, dict, dict]]) -> tup
             tot["가산세_합계"] += (d.get("결과") or {}).get("가산세") or 0
         src["21_가산세"] = [{"금액": ("=" + "+".join(amt[k])) if k in amt else None,
                              "세액": ("=" + "+".join(tax[k])) if k in tax else None} for k in range(_INVOICE_ROWS)]
+    elif tool in ("vat_deemed_supply_items", "vat_exempt_use_deemed_supply"):
+        # 신고서 (4) 기타: 간주공급(개인적공급·사업상증여 등)과 면세전용 call 과세표준 합계
+        src["21_간주공급"] = [{"금액": "=" + "+".join(f"호출{i + 1}_간주공급_과세표준" for i, _, _ in entries)}]
+        tot["간주공급_합계"] = sum(next((x.get("값") or 0 for x in d.get("계산식_입력") or [] if x.get("이름") == "간주공급_과세표준"), 0)
+                               for _, _, d in entries)
+    elif tool == "vat_bad_debt_credit":
+        # 신고서 (8) 대손세액 가감: 공제분 △, 회수분 가산
+        terms, total = [], 0
+        for i, _, d in entries:
+            r = d.get("결과") or {}
+            terms.append(("+" if r.get("회수") else "-") + f"ROUNDDOWN(ROUND(호출{i + 1}_대손금액*10/110,4),0)")
+            total += (r.get("대손세액") or 0) * (1 if r.get("회수") else -1)
+        f = "".join(terms)
+        src["21_대손"] = [{"세액": "=" + (f[1:] if f.startswith("+") else f)}]
+        tot["대손세액_가감_합계"] = total
     return src, tot, memo

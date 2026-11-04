@@ -157,7 +157,7 @@ Click a group to expand its tools.
 | `vat_common_input_allocation` | common input allocation |
 | `vat_simplified_taxpayer` | simplified taxpayer |
 | `vat_card_sales_credit` | card sales credit |
-| `vat_bad_debt_credit` | bad debt credit |
+| `vat_bad_debt_credit` | bad debt credit (added back to output tax on recovery) |
 | `underreporting_penalty` | under-reporting penalty |
 | `late_payment_penalty` | late payment penalty |
 | `withholding_late_payment_penalty` | withholding tax late-payment penalty (Framework Act Art. 47-5: 3% + daily, capped) |
