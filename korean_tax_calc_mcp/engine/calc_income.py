@@ -6,6 +6,7 @@ import math
 import os
 
 from .. import vocab
+from .exact import exact as _x, floor_won as _floor
 
 
 def _load_income_rules():
@@ -253,9 +254,12 @@ def _y(year):
 
 
 def _tier(x, tiers):
-    out, prev = 0.0, 0
+    """누진 구간 세액을 분수로 정확히(0.7 같은 세율을 7/10으로) — 부동소수 곱의 절사 오차(2,900,000×70% → 2,029,999) 방지.
+    호출 쪽이 int()로 원 미만을 버린다."""
+    x = _x(x)
+    out, prev = _x(0), 0
     for cap, r in tiers:
-        if x > prev: out += (min(x, cap) - prev) * r
+        if x > prev: out += (min(x, cap) - prev) * _x(r)
         prev = cap
     return out
 
@@ -294,26 +298,27 @@ def earned_tax_credit(calc_tax, gross, reduced_tax=0, year=2025):
     한도 ②: 2016~2022 귀속 3구간(7천만 초과 max(50만, 66만 − 초과분/2)), 2023 귀속~ 1억2천만 초과 구간 신설
     (max(20만, 50만 − 초과분/2), 2022.12.31. 개정 부칙 제15조: 시행 전 개시 과세기간 종전).
     감면(중소기업 취업자 등)이 있으면 공제액 × (1 − 감면세액/산출세액)(원 미만 절사)."""
-    c = calc_tax * 0.55 if calc_tax <= 1_300_000 else 715_000 + (calc_tax - 1_300_000) * 0.30
+    calc_tax, gross = _x(calc_tax), _x(gross)
+    c = calc_tax * _x(0.55) if calc_tax <= 1_300_000 else 715_000 + (calc_tax - 1_300_000) * _x(0.30)
     if gross <= 33_000_000: cap = 740_000
-    elif gross <= 70_000_000: cap = max(660_000, 740_000 - (gross - 33_000_000) * 0.008)
-    elif _y(year) <= 2022: cap = max(500_000, 660_000 - (gross - 70_000_000) * 0.5)
-    elif gross <= 120_000_000: cap = max(500_000, 660_000 - (gross - 70_000_000) * 0.5)
-    else: cap = max(200_000, 500_000 - (gross - 120_000_000) * 0.5)
+    elif gross <= 70_000_000: cap = max(660_000, 740_000 - (gross - 33_000_000) * _x(0.008))
+    elif _y(year) <= 2022: cap = max(500_000, 660_000 - (gross - 70_000_000) / 2)
+    elif gross <= 120_000_000: cap = max(500_000, 660_000 - (gross - 70_000_000) / 2)
+    else: cap = max(200_000, 500_000 - (gross - 120_000_000) / 2)
     v = min(c, cap)
-    return int(v * (1 - reduced_tax / calc_tax)) if reduced_tax and calc_tax else int(v)
+    return _floor(v, 1 - _x(reduced_tax) / calc_tax) if reduced_tax and calc_tax else _floor(v)
 
 
 def sme_youth_reduction(calc_tax, gross, reduced_gross, rate=0.9, cap=2_000_000):
     """중소기업 취업자 감면(조특법 제30조): 산출세액 × 감면대상 총급여/총급여 × 감면율, 연 200만 한도."""
-    return int(min(calc_tax * reduced_gross / gross * rate, cap))
+    return min(_floor(calc_tax, reduced_gross, rate, div=gross), cap)
 
 
 def daily_worker_tax(daily_wage, year=2025):
     """일용근로(제134조③): (일급 − 근로소득공제) × 6%(제129조①4호) × (1 − 55%, 제59조③), 1천원 미만 소액부징수(제86조).
     일용 근로소득공제(제47조②): 1일 10만(~2018) → 15만(2018.12.31. 개정, 2019.1.1. 시행)."""
     ded = 100_000 if _y(year) <= 2018 else 150_000
-    t = int(max(0, daily_wage - ded) * 0.06 * 0.45)
+    t = _floor(max(0, daily_wage - ded), 0.06, 0.45)
     return t if t >= 1_000 else 0
 
 
@@ -322,10 +327,10 @@ def withholding_late_penalty(unpaid, days, start=None):
     일수분 이율: start(법정납부기한 다음 날) 주면 국기령 제27조의4 이율 변경일로 안분(1만분의 3 → 10만분의 25 → 10만분의 22)."""
     if start:
         from .calc_vat import late_payment_rate_segments
-        daily = sum(unpaid * r * n for n, r in late_payment_rate_segments(start, days))
+        daily = sum(_x(unpaid) * _x(r) * n for n, r in late_payment_rate_segments(start, days))
     else:
-        daily = unpaid * 0.00022 * days
-    return int(min(unpaid * 0.03 + daily, unpaid * 0.10))
+        daily = _x(unpaid) * _x(0.00022) * days
+    return _floor(min(_x(unpaid) * _x(0.03) + daily, _x(unpaid) * _x(0.10)))
 
 
 def payment_statement_penalty(amount, within_3m=False, due_date=None, daily_worker=False, paid_on=None):
@@ -334,10 +339,10 @@ def payment_statement_penalty(amount, within_3m=False, due_date=None, daily_work
     - 제출기한이 2017.12.31. 이전(due_date 지정): 2%, 3개월 내 1%
     - 일용근로소득 지급명세서(daily_worker, 2021.7.1. 이후 지급분 — 2021.3.16. 개정 부칙 제2조): 0.25%, 기한 후 1개월 내 0.125%(within_3m=기한 후 제출 감면 구간 여부)"""
     if daily_worker and (paid_on is None or paid_on >= "2021-07-01"):
-        return int(amount * (0.00125 if within_3m else 0.0025))
+        return _floor(amount, 0.00125 if within_3m else 0.0025)
     if due_date and due_date < "2018-01-01":
-        return int(amount * (0.01 if within_3m else 0.02))
-    return int(amount * (0.005 if within_3m else 0.01))
+        return _floor(amount, 0.01 if within_3m else 0.02)
+    return _floor(amount, 0.005 if within_3m else 0.01)
 
 
 # ── 퇴직소득세(소득세법 제48조·제55조②) — 근속연수공제는 2023.1.1. 시행 개정표, 그 전은 구표 ─────
@@ -360,11 +365,12 @@ def retirement_service_deduction(years, retire_year=2025):
 def converted_pay_deduction(conv):
     """환산급여공제(제48조①2호): 800만 이하 100%, 7천만 이하 800만+60%, 1억 이하 4,520만+55%,
     3억 이하 6,170만+45%, 초과 1억5,170만+35%."""
+    conv = _x(conv)
     if conv <= 8_000_000: return conv
-    if conv <= 70_000_000: return 8_000_000 + (conv - 8_000_000) * 0.60
-    if conv <= 100_000_000: return 45_200_000 + (conv - 70_000_000) * 0.55
-    if conv <= 300_000_000: return 61_700_000 + (conv - 100_000_000) * 0.45
-    return 151_700_000 + (conv - 300_000_000) * 0.35
+    if conv <= 70_000_000: return 8_000_000 + (conv - 8_000_000) * _x(0.60)
+    if conv <= 100_000_000: return 45_200_000 + (conv - 70_000_000) * _x(0.55)
+    if conv <= 300_000_000: return 61_700_000 + (conv - 100_000_000) * _x(0.45)
+    return 151_700_000 + (conv - 300_000_000) * _x(0.35)
 
 
 def retirement_tax(income, years, retire_year=2025):
@@ -374,7 +380,7 @@ def retirement_tax(income, years, retire_year=2025):
     원 미만 절사만 적용(원천징수 10원 미만 절사는 국고금관리법 — 호출자 처리)."""
     if income <= 0 or years <= 0: return 0
     sd = min(retirement_service_deduction(years, retire_year), income)
-    conv = (income - sd) / years * 12
+    conv = _x(income - sd) / years * 12
     base = max(0, conv - converted_pay_deduction(conv))
     return int(_tier(base, RATES[_y(retire_year)]) / 12 * years)   # 기본세율은 퇴직한 해의 표(제55조②1호 "제1항의 세율")
 
@@ -412,7 +418,7 @@ def withholding_rate(kind, year=2025):
 def withholding_tax(kind, amount, year=2025):
     """분리 세율 원천징수세액(소득세분, 지방소득세 별도). 소득처분 배당 → '배당'(14%), 기타소득 처분 → '기타'(20%,
     필요경비 없음). 상여 처분은 기본세율 재정산(deemed_bonus_resettlement). 10원 미만 절사."""
-    return int(amount * withholding_rate(kind, year)) // 10 * 10
+    return _floor(amount, withholding_rate(kind, year)) // 10 * 10
 
 
 # ── 비거주자·외국법인 원천징수(소득세법 제156조 / 법인세법 제98조) ──────────────────
@@ -463,8 +469,8 @@ def nonresident_withholding(income_kind, amount, recipient_type, residence_count
     note = ""
     if treaty_rate is not None and treaty_rate > domestic:
         note = " · 조약세율이 국내세율보다 높아 국내세율 적용"
-    wh_amount = int(amount * applicable) // 10 * 10
-    local_income_tax = int(wh_amount * 0.10) // 10 * 10
+    wh_amount = _floor(amount, applicable) // 10 * 10
+    local_income_tax = _floor(wh_amount, 0.10) // 10 * 10
 
     # 쟁점 부착 (issues.json match 필드 기반 — SPEC r1f §1)
     _issues = _load_issues().get("nonresident_withholding", [])
@@ -513,7 +519,7 @@ def exec_retirement_limit(avg_pay_2019, months_2012_2019, avg_pay_final, months_
            + 퇴직일부터 소급 3년 총급여 연평균환산액 × 1/10 × (2020.1.1. 이후 근무월수)/12 × 2.
     근무월수는 1개월 미만 1개월(제22조④1호). 연평균환산액은 3년 미만이면 해당 근무기간 기준."""
     m1, m2 = _ceil_months(months_2012_2019), _ceil_months(months_2020_on)
-    return int(avg_pay_2019 * 0.1 * m1 / 12 * 3 + avg_pay_final * 0.1 * m2 / 12 * 2)
+    return _floor(_x(avg_pay_2019) * m1 * 3 / 120 + _x(avg_pay_final) * m2 * 2 / 120)
 
 
 def exec_retirement_excess(retire_income, months_before_2012, months_2012_2019, months_2020_on,
@@ -522,9 +528,9 @@ def exec_retirement_excess(retire_income, months_before_2012, months_2012_2019, 
     2011 가정액 = 퇴직소득금액 × 2011 이전 근무월수/전체 근무월수(소령§42의2⑥), 임원퇴직급여규정 선택 시 amount_2011."""
     m0, m1, m2 = (_ceil_months(x) for x in (months_before_2012, months_2012_2019, months_2020_on))
     tot = m0 + m1 + m2
-    pre = amount_2011 if amount_2011 is not None else (retire_income * m0 / tot if tot else 0)
+    pre = amount_2011 if amount_2011 is not None else (_x(retire_income) * m0 / tot if tot else 0)
     lim = exec_retirement_limit(avg_pay_2019, m1, avg_pay_final, m2)
-    return int(max(0, retire_income - pre - lim))
+    return _floor(max(0, retire_income - _x(pre) - lim))
 
 
 # ── 특별세액공제 ────────────────────────────────────────────────────
@@ -758,8 +764,8 @@ def special_tax_credit(
     장애인한도 = voc_p["그룹_한도"]
     일반대상 = min(일반대상, 일반한도)
     장애인전용대상 = min(장애인전용대상, 장애인한도)
-    일반공제액 = _won(일반대상 * voc_p["일반_율"])
-    장애인전용공제액 = _won(장애인전용대상 * voc_p["장애인전용_율"])
+    일반공제액 = _floor(일반대상, voc_p["일반_율"])
+    장애인전용공제액 = _floor(장애인전용대상, voc_p["장애인전용_율"])
     보험료공제 = 일반공제액 + 장애인전용공제액
 
     # ── 의료비 (제59조의4②) ──────────────────────────────────────────────
@@ -850,8 +856,8 @@ def special_tax_credit(
 
     미숙아율 = voc_m.get("미숙아_율", 0)
     난임율 = voc_m.get("난임_율", 0)
-    의료비공제 = _won(h1_target * 0.15 + h2_target * 0.15 +
-                       h3_target * 미숙아율 + h4_target * 난임율)
+    의료비공제 = _floor((_x(h1_target) + h2_target) * _x(0.15) +
+                       _x(h3_target) * _x(미숙아율) + _x(h4_target) * _x(난임율))
 
     # ── 교육비 (제59조의4③) ──────────────────────────────────────────────
     교육비대상합계 = 0
@@ -955,7 +961,7 @@ def special_tax_credit(
         사람별.append({"name": name, "대상액": person_total, "한도": None, "공제대상": person_total})
         교육비대상합계 += person_total
 
-    교육비공제 = _won(교육비대상합계 * voc_e["율"])
+    교육비공제 = _floor(교육비대상합계, voc_e["율"])
 
     # ── 합계 · 한도 · 표준세액공제 비교 ──────────────────────────────────
     특별합계 = 보험료공제 + 의료비공제 + 교육비공제
@@ -1497,11 +1503,11 @@ def _pension_deduction(total_pension):
     if total_pension <= 3_500_000:
         ded = total_pension
     elif total_pension <= 7_000_000:
-        ded = 3_500_000 + (total_pension - 3_500_000) * 0.40
+        ded = 3_500_000 + _floor(total_pension - 3_500_000, 0.40)
     elif total_pension <= 14_000_000:
-        ded = 4_900_000 + (total_pension - 7_000_000) * 0.20
+        ded = 4_900_000 + _floor(total_pension - 7_000_000, 0.20)
     else:
-        ded = 6_300_000 + (total_pension - 14_000_000) * 0.10
+        ded = 6_300_000 + _floor(total_pension - 14_000_000, 0.10)
     ded = int(ded)
     return min(ded, 9_000_000, total_pension)
 

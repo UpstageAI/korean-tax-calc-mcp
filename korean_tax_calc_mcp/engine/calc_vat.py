@@ -4,6 +4,8 @@
 
 import calendar
 
+from .exact import exact as _x, floor_won as _floor, trunc_won as _trunc
+
 
 # ── 과세기간·연도표 (2016년 제1기 ~ 2026년 제1기, 법제처 연혁본 원문 대조 — knowledge/16 '부가가치세 연도표') ──
 # 과세기간 인자: 'YYYY-1' | 'YYYY-2' | 'YYYY-MM-DD'(그 날이 속한 과세기간). None이면 현행(2026년) 값 — 기존 호출 호환.
@@ -17,9 +19,15 @@ class NoYearTable(ValueError):
 def _period(p):
     """→ (연도, 기). 'YYYY-1'/'YYYY-2' 또는 'YYYY-MM-DD'."""
     if p is None: return None
-    s = str(p)
-    if len(s) >= 10: y, h = int(s[:4]), 1 if int(s[5:7]) <= 6 else 2
-    else: y, h = int(s[:4]), int(s.split("-")[1])
+    s = str(p).strip()
+    try:
+        if len(s) >= 10: y, h = int(s[:4]), 1 if int(s[5:7]) <= 6 else 2
+        else:
+            a, b = s.split("-")
+            y, h = int(a), int(b)
+            if len(a) != 4 or h not in (1, 2): raise ValueError
+    except ValueError:
+        raise ValueError(f"과세기간 {p!r} — 'YYYY-1'(제1기)·'YYYY-2'(제2기) 또는 그 기간의 날짜 'YYYY-MM-DD'") from None
     if not (VAT_FIRST <= (y, h) <= VAT_LAST): raise NoYearTable(f"부가가치세 연도표 없음: {p}")
     return (y, h)
 
@@ -60,7 +68,7 @@ def deemed_rent(deposit, days, year_days=None, rate=None, period=None):
     if year_days is None:
         year_days = 366 if calendar.isleap(y) else 365
     if rate is None: rate = DEEMED_RENT_RATE[y] if period else 0.031
-    return int(round(deposit * rate * days / year_days, 6))  # 부동소수 오차(예: 3,257,999.9999) 제거 후 원 미만 절사
+    return _floor(deposit, rate, days, div=year_days)  # 원 미만 절사(분수 계산이라 3,257,999.9999 같은 오차 없음)
 
 
 def bad_debt_vat(amount_incl_vat):
@@ -121,13 +129,14 @@ def deemed_input(purchase, base, rate_num=None, rate_den=None, limit_ratio=None,
             limit_ratio = float('inf')  # 한도 없음
         else:
             limit_ratio = deemed_input_limit_ratio(period, individual, industry == "음식점", base)
-    return int(min(purchase, base * limit_ratio) * rate_num / rate_den)
+    cap = purchase if limit_ratio == float('inf') else min(_x(purchase), _x(base) * _x(limit_ratio))
+    return _floor(cap, rate_num, div=rate_den)
 
 
 def recycled_scrap(base, invoice_purchase, receipt_purchase):
     """재활용폐자원(조특법 제108조): 한도 = 과세표준 × 80% − 세금계산서 매입, 공제 = min(영수증 매입, 한도) × 3/103."""
-    limit = max(0, base * 0.8 - invoice_purchase)
-    return {"한도": int(limit), "공제": int(min(receipt_purchase, limit) * 3 / 103)}
+    limit = max(0, _x(base) * _x(0.8) - invoice_purchase)
+    return {"한도": _floor(limit), "공제": _floor(min(receipt_purchase, limit), 3, div=103)}
 
 
 # 간이과세 — 2021.7.1. 전후 산식이 다름(법률 제17653호 부칙 제10조: 2021.7.1. 전 공급받은 분 종전, 영 제31445호 부칙 제17조)
@@ -135,10 +144,10 @@ def simplified_tax(supply_incl_vat, value_added_rate, invoice_purchase_incl_vat,
     """간이과세자 납부세액(부가법 제63조).
     2021.7.1. 이후: 공급대가 × 업종별 부가가치율 × 10% − 세금계산서 등 수취 공급대가 × 0.5%.
     2021.6.30. 이전(period 지정): 공급대가 × 부가가치율 × 10% − 세금계산서 등 매입세액(공급대가 × 10/110) × 부가가치율(구 제63조③1호)."""
-    tax = int(supply_incl_vat * value_added_rate * 0.1)
+    tax = _floor(supply_incl_vat, value_added_rate, 0.1)
     if period and _date(period) < "2021-07-01":
-        return tax - int(int(invoice_purchase_incl_vat * 10 / 110) * value_added_rate)
-    return tax - int(invoice_purchase_incl_vat * 0.005)
+        return tax - _floor(_floor(invoice_purchase_incl_vat, 10, div=110), value_added_rate)
+    return tax - _floor(invoice_purchase_incl_vat, 0.005)
 
 
 def simplified_threshold(on):
@@ -178,7 +187,7 @@ def invoice_penalty_rate(kind, supplied_on=None, designated_individual=False):
 
 def invoice_penalties(supply, kind, supplied_on=None, designated_individual=False):
     """세금계산서 관련 가산세(부가법 제60조②⑤⑥⑦). 공급일 없으면 현행(지연전송 0.3%, 미전송 0.5%, 지연발급 1%, 지연수취 0.5%, 미발급 2%)."""
-    return int(supply * invoice_penalty_rate(kind, supplied_on, designated_individual))
+    return _floor(supply, invoice_penalty_rate(kind, supplied_on, designated_individual))
 
 
 # 신용카드매출전표 등 발행세액공제(부가법 제46조①)
@@ -190,7 +199,7 @@ def card_sales_credit(amount, supplied_on, simplified_food_lodging=False, used_t
     d = _date(supplied_on); y = int(d[:4])
     rate = 0.026 if (simplified_food_lodging and d < "2021-07-01") else 0.013
     cap = 5_000_000 if (y <= 2017 or (y == 2018 and d < "2018-07-01")) else 10_000_000
-    return int(max(0, min(amount * rate, cap - used_this_year)))
+    return _floor(max(0, min(_x(amount) * _x(rate), cap - used_this_year)))
 
 
 def late_payment_rate_segments(start, days):
@@ -209,11 +218,11 @@ def late_payment_rate_segments(start, days):
 
 def late_payment(unpaid, days, start=None):
     """국기법 제47조의4 납부지연. start 없으면 1일 0.022%, 있으면 이율 변경일로 기간 안분."""
-    if not start: return int(unpaid * 0.00022 * days)
-    return int(round(sum(unpaid * r * n for n, r in late_payment_rate_segments(start, days)), 6))  # 부동소수 오차 제거 후 절사
+    if not start: return _floor(unpaid, 0.00022, days)
+    return _floor(sum(_x(unpaid) * _x(r) * n for n, r in late_payment_rate_segments(start, days)))  # 분수로 합한 뒤 원 미만 절사
 
 
-def cash_sales_statement(unreported): return int(unreported * 0.01)  # 부가법 제60조⑧ 현금매출명세서 1%(2016~2026 동일)
+def cash_sales_statement(unreported): return _floor(unreported, 0.01)  # 부가법 제60조⑧ 현금매출명세서 1%(2016~2026 동일)
 
 
 # ── 간이과세자 업종별 부가가치율(부가령 제111조②, 2021.2.17. 개정, 2026.6.30. 시행 원문 대조) ──
@@ -260,17 +269,17 @@ def common_input_allocation(common_tax, total_supply, exempt_supply, no_supply_b
         ratio = exempt_supply / total_supply
         if ratio < 0.05 and common_tax < 5_000_000:
             return {"불공제": 0, "면세비율": ratio, "근거": "부가령 제81조②1호: 면세비율 5% 미만(공통매입세액 500만원 미만) 전액 공제"}
-        return {"불공제": int(common_tax * ratio), "면세비율": ratio, "근거": "부가령 제81조①"}
+        return {"불공제": _floor(common_tax, exempt_supply, div=total_supply), "면세비율": ratio, "근거": "부가령 제81조①"}
     if not no_supply_basis:
         return {"불공제": None, "근거": "부가령 제81조④: 공급가액 한쪽이 없음 — 매입가액·예정공급가액·예정사용면적 기준 필요"}
     name, ex, tot = no_supply_basis
     ratio = ex / tot
-    return {"불공제": int(common_tax * ratio), "면세비율": ratio, "근거": f"부가령 제81조④({name} 기준), 확정 시 제82조 정산 대상"}
+    return {"불공제": _floor(common_tax, ex, div=tot), "면세비율": ratio, "근거": f"부가령 제81조④({name} 기준), 확정 시 제82조 정산 대상"}
 
 
 def common_input_settlement(total_common_tax, final_exempt_ratio, already_disallowed):
     """정산(부가령 제82조, 별지22 ⑮~⑲): 불공제 총액 = 총공통매입세액 × 확정 면세비율, 가산(+)·공제(−) = 총액 − 기불공제."""
-    total = int(total_common_tax * final_exempt_ratio)
+    total = _floor(total_common_tax, final_exempt_ratio)
     return {"불공제 총액": total, "기불공제": already_disallowed, "가산또는공제": total - already_disallowed}
 
 
@@ -291,7 +300,7 @@ def common_input_recalc(input_tax, asset, acquired, current, prior_ratio, curren
     bldg = asset in ("건물", "구축물")
     n = min(elapsed_periods(acquired, current), 20 if bldg else 4)
     reduce = max(0.0, 1 - (0.05 if bldg else 0.25) * n)
-    return {"재계산": int(round(input_tax * reduce * diff, 6)), "경감률": reduce, "경과과세기간": n, "차이": diff,
+    return {"재계산": _trunc(input_tax, 1 - (_x(0.05) if bldg else _x(0.25)) * n, round(diff, 10)) if reduce > 0 else 0, "경감률": reduce, "경과과세기간": n, "차이": diff,
             "근거": "부가법 제41조, 부가령 제83조②" + ("1호" if bldg else "2호")}
 
 
@@ -467,7 +476,7 @@ def _deemed_market_value(자산, period):
     자산: {구분:'건물'|'구축물'|'기타', 취득가액, 취득일, 공급일}. period: 'YYYY-1'|'YYYY-2'."""
     체감률 = 0.05 if 자산["구분"] in ("건물", "구축물") else 0.25
     n = elapsed_periods(자산["취득일"], 자산["공급일"])
-    간주시가 = int(자산["취득가액"] * (1 - 체감률 * n))
+    간주시가 = _floor(자산["취득가액"], 1 - _x(체감률) * n)
     return max(0, 간주시가)
 
 

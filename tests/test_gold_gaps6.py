@@ -51,7 +51,8 @@ def test_pension_account_first_year_post2013_account():
 
 
 def test_pension_account_no_limit_from_year_11():
-    r = c("pension_account_withdrawal", {**ACC, "year": 2028})
+    # 연도표 범위(2016~2026) 안에서 11연차: 1966년생·2021년 개시 신청 → 2026년이 11연차
+    r = c("pension_account_withdrawal", {**ACC, "year": 2026, "birth_date": "1966-01-01", "start_request_date": "2021-01-01"})
     assert r["계산"]["연금수령연차"] == 11 and r["계산"]["연금수령한도"] is None
     assert sum(r["결과"]["연금외수령분"].values()) == 0
 

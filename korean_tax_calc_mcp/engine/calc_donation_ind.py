@@ -5,6 +5,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from .exact import exact as _x, floor_won as _floor
+
 PER_DAY = 80_000
 SMALL = 100_000
 
@@ -55,11 +57,11 @@ def individual_donation(year: int, base_income: int, carried_loss: int = 0, poli
     # 4) 일반기부금
     base_after = max(0, base_income - carried_loss - first - sp_used)   # A − (B + C): B = 특례 산입(정치·고향 포함)
     if re > 0:
-        ge_limit = int(base_after * 0.10 + min(base_after * 0.20, ge + carried_general))
-        formula = f"({base_after:,} × 10%) + min({base_after:,} × 20% = {int(base_after*0.2):,}, 종교단체 외 {ge + carried_general:,}) = {ge_limit:,}"
+        ge_limit = _floor(_x(base_after) * _x(0.10) + min(_x(base_after) * _x(0.20), ge + carried_general))
+        formula = f"({base_after:,} × 10%) + min({base_after:,} × 20% = {_floor(base_after, 0.2):,}, 종교단체 외 {ge + carried_general:,}) = {ge_limit:,}"
         basis = "소득세법 제34조③2호가목(종교단체 기부가 있는 경우)"
     else:
-        ge_limit = int(base_after * 0.30)
+        ge_limit = _floor(base_after, 0.30)
         formula = f"{base_after:,} × 30% = {ge_limit:,}"
         basis = "소득세법 제34조③2호나목"
     total_general = ge + re
