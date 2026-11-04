@@ -7,7 +7,7 @@ import re
 from datetime import date, timedelta
 
 from .calc import won
-from .exact import exact as _x, floor_won as _floor
+from .exact import exact as _x, floor_won as _floor, round_won as _round
 
 # 키 = 사업연도(개시일이 속하는 연도). 값은 모두 법제처 efYd=그해1231 원문 + 개정 부칙 적용시기 대조(2026-09-30, knowledge/16 §법인 연도표).
 _T_OLD = [(200_000_000, 0.10), (20_000_000_000, 0.20), (math.inf, 0.22)]                                   # 제55조 2016·2017
@@ -718,7 +718,7 @@ def late_payment_penalty(tax, due, until):
     if n.get(0.0003):
         out["0.03%일수"] = n[0.0003]
     out.update({"0.025%일수": n.get(0.00025, 0), "0.022%일수": n.get(0.00022, 0),
-                "가산세": int(round(sum(_x(tax) * _x(r) * k for k, r in seg)))})
+                "가산세": _round(sum(_x(tax) * _x(r) * k for k, r in seg))})
     return out
 
 

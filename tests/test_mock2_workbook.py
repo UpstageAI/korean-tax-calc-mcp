@@ -111,8 +111,11 @@ def test_forms_take_values_from_the_call_that_made_them(corp):
     # 별지50(을): 대손충당금 한도초과는 세무조정 call 금액(12,600,000) — 대손 call의 한도초과가 아님
     w50 = wb[S50]
     rows = {w50.cell(r, 1).value: (w50.cell(r, 3).value, w50.cell(r, 4).value) for r in range(8, 28)}
-    assert rows["대손충당금 한도초과"] == (0, 12_600_000)
-    assert rows["전기 대손충당금 한도초과 추인"] == (2_000_000, 0)            # △유보는 감소
+    # 같은 과목(대손충당금)의 유보·△유보는 한 줄 — △유보(전기 한도초과 추인)는 감소, 유보는 증가
+    assert rows["대손충당금 한도초과"] == (2_000_000, 12_600_000)
+    r50 = next(r for r in range(8, 28) if w50.cell(r, 1).value == "대손충당금 한도초과")
+    assert w50.cell(r50, 2).value == 2_000_000                               # ②기초 = 대손 call의 전기 한도초과(prior_excess)
+    assert "전기 대손충당금 한도초과 추인" not in rows
     assert "한도초과" not in rows                                            # 대손 call 세무조정의 '종류' 이름으로 섞이지 않음
     assert "기계장치 전기 상각부인액 추인" not in rows                         # 정률법 시트 행(㉗)과 겹치는 추인은 한 번만
     # 별지34는 대손 call 값 그대로, 다른 call(대손충당금 한도)과 다르면 알림

@@ -2,11 +2,15 @@
 세율·이자율은 2025 사업연도 가정값이며, 보고서 단계에서 법령 MCP로 해당 조문(시행일 기준)을 조회해 함께 싣는다."""
 from datetime import date
 
+from ...engine.exact import round_won
+
 RATE_OVERDRAFT = 0.046  # 당좌대출이자율 (법인세법 시행규칙 제43조제2항) — 조문 조회로 확인
 CORP_BRACKETS = [(200_000_000, 0.09), (20_000_000_000, 0.19), (300_000_000_000, 0.21), (float("inf"), 0.24)]  # 법인세법 제55조, 2025 사업연도 가정
 
 
-def won(x): return int(round(x))
+def won(x):
+    """원 미만 반올림(0.5는 올림) — engine.calc.won과 같은 규칙."""
+    return round_won(x)
 
 
 def corp_tax(base):

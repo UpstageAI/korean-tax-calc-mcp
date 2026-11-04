@@ -6,7 +6,7 @@ from fractions import Fraction
 from datetime import date, timedelta
 from typing import Literal
 
-from .exact import floor_won
+from .exact import floor_won, round_won
 
 M = 1_000_000
 
@@ -364,7 +364,7 @@ def inheritance_gift_valuation(
             avg = sum(g["가액"] for g in 감정들) / len(감정들)
             # 평균값에서 날짜는 감정들의 날짜 중 평가기준일과 가장 가까운 것
             closest_dt = min(감정들, key=lambda g: abs((g["날짜"] - vd).days))["날짜"]
-            return int(round(avg)), closest_dt, "감정 평균"
+            return round_won(sum(g["가액"] for g in 감정들), div=len(감정들)), closest_dt, "감정 평균"   # 원 미만 반올림(0.5 올림)
 
         # 감정이 하나 + 비감정이 여럿 → 감정 우선 (영 제49②: 종류가 여럿이면 평가기준일 가장 가까운 날짜)
         # 비감정만 있으면 가장 가까운 날짜

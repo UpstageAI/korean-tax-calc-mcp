@@ -2,12 +2,15 @@
 세율·이자율은 연도표(calc_cit.YEAR) 기준. hardcode 대신 사업연도별 표(2016~2026)를 경유한다."""
 from datetime import date
 
-from .exact import floor_won
+from .exact import floor_won, round_won
 
 RATE_OVERDRAFT = 0.046  # 당좌대출이자율 (법인세법 시행규칙 제43조제2항) — 연도별 변동 없음, 조문 조회로 확인
 
 
-def won(x): return int(round(x))
+def won(x):
+    """원 미만 반올림(0.5는 올림, 음수는 절댓값 기준) — 파이썬 round()의 짝수 쪽 반올림(…0.5가 호출마다 올림·버림으로 갈림)을 쓰지 않는다.
+    부동소수 곱의 표현 오차(181,078,830.4999…)는 exact()가 뜻한 분수로 읽어 바로잡는다."""
+    return round_won(x)
 
 
 def corp_tax(base, year=2025):

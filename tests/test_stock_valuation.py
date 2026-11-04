@@ -59,7 +59,7 @@ def test_premium_pre_2020_and_negative_income():
 def test_goodwill_from_equity():
     r = V(equity=100_000_000)
     # 3년 가중평균 순손익 1억 × 50% − 자기자본 1억 × 10% = 4천만 → ×3.7908 = 151,631,470 → 순자산가치 (8억+1.516억)/10만 = 9,516.3
-    assert abs(r["계산"]["영업권"] - 151_631_470) < 2 and abs(r["결과"]["순자산가치"] - 9516.31) < 0.05
+    assert abs(r["계산"]["영업권"] - 151_631_470) < 2 and r["결과"]["순자산가치"] == 9516   # 9,516.31 → 원 단위(원 미만 반올림)
 
 
 def test_missing_sme_for_max_shareholder():
@@ -105,7 +105,7 @@ def test_capital_change_adjustment_and_converted_shares():
     conv = [x for x in r["계산"]["증감자 조정"] if x["구분"] == "환산주식수"]
     assert {x["사업연도"]: x["값"] for x in conv} == {2024: 100_000, 2023: 100_000}
     # 1주당: 2025 (1억+5,833,333)/100,000 = 1,058.33 / 2024 9천만/100,000 = 900 / 2023 7천만/100,000 = 700 → (1058.33×3+900×2+700)/6 = 945.83 → 9,458.3
-    assert abs(r["결과"]["순손익가치"] - 9458.33) < 0.1
+    assert r["결과"]["순손익가치"] == 9458   # 9,458.33 → 원 단위(원 미만 반올림)
 
 
 def test_estimated_profit_requirements():

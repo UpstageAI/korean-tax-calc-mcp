@@ -202,7 +202,7 @@ def test_assessment_limitation_applies_deadline_rule_to_due_date():
 def test_assessment_limitation_weekday_due_unchanged():
     x = res(run("assessment_limitation", {"due_date": "2024-01-10", "offshore": True, "withholding": True}))
     assert x["만료일"] == "2031-01-10"
-    assert x["법정신고기한(적용)"] == "2024-01-10(수)"
+    assert x["법정납부기한(적용)"] == "2024-01-10(수)"   # 원천징수분은 법정납부기한
 
 
 # ── 도구 설명에 원문자(①②…) 금지 — 일부 클라이언트에서 '124'로 풀려 조문 번호와 붙어 읽힘 ──

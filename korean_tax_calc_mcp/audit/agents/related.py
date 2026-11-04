@@ -469,6 +469,23 @@ def judge_all(case, a, b, on="2099-12-31"):
 _CITE_CACHE = {}
 
 
+def _clean_quote(text, limit=200):
+    """조문 원문 인용: 개정 연혁(<개정 …>·<신설 …>·[전문개정 …])을 빼고 첫 문장('…다.')까지.
+    문장이 limit자를 넘으면 limit자 안의 마지막 띄어쓰기에서 끊고 '…'."""
+    import re
+    t = re.sub(r"<[^<>]*>", "", text)
+    t = re.sub(r"\[(?:전문개정|본조신설|제목개정|종전)[^\]]*\]", "", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    m = re.search(r"다\.(?=\s|$)", t)
+    if m and m.end() <= limit:
+        return t[:m.end()]
+    if len(t) <= limit:
+        return t
+    cut = t[:limit]
+    sp = cut.rfind(" ")
+    return (cut[:sp] if sp > limit // 2 else cut).rstrip() + " …"
+
+
 def cite_at(law, on):
     """law: 국기|법인|상증, on: YYYY-MM-DD → (법령, 조항, 원문 첫머리). 법제처에서 그 시점 버전을 받아 확인.
     확인된 이동: 법인령 제87조① → (2019.2.12.) 제2조⑤ → 이후 제2조⑧ / 상증령 제12조의2① → (2016.2.5.) 제2조의2①."""
@@ -490,11 +507,12 @@ def cite_at(law, on):
             if law == "법인" and jo == "제2조":
                 m = re.search(r"([①-⑳])\s*법 제2조제12호", t)
                 if not m: continue
-                out = (name, f"{jo}{m.group(1)}", t[m.start():m.start() + 120])
+                jo_full = f"{jo}{m.group(1)}"
+                out = (name, jo_full, f"{name} {jo_full}(기준일 {on[:10]} 시행본) — {_clean_quote(t[m.start():])}")
             else:
                 head = t.splitlines()[0]
                 if "특수관계인의 범위" not in head: continue
-                out = (name, f"{jo}①", head)
+                out = (name, f"{jo}①", f"{name} {jo}①(기준일 {on[:10]} 시행본) — {_clean_quote(head)}")
             _CITE_CACHE[key] = out
             return out
     except law_api.NoKey:
