@@ -315,7 +315,7 @@ def test_common_input_tax_labels():   # 점검 목록 #61·#62
     s = json.dumps(r["판단"], ensure_ascii=False)
     assert "과세전용(18,300,000" not in s and "18,760,000" in s
     직전 = {x["이름"]: x for x in r["계산식_입력"] if x["이름"].startswith("직전")}
-    assert all("입력 없음" in x["설명"] for x in 직전.values()) and len(직전) == 2   # 서식 시트가 참조해 이름은 남기되 입력 안 한 값임을 밝힘
+    assert not 직전   # 입력하지 않은 직전 과세기간 값은 0으로 넘기지 않음(서식 부가근거63은 '입력 없음')
     r = c("common_input_tax", dict(CIT, prior_period_supplies={"taxable": 300_000_000, "exempt": 200_000_000}))
     직전 = {x["이름"]: x for x in r["계산식_입력"] if x["이름"].startswith("직전")}
     assert 직전["직전과세공급가액"]["값"] == 300_000_000 and "입력 없음" not in 직전["직전과세공급가액"]["설명"]

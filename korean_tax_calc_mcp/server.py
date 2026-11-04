@@ -298,6 +298,9 @@ def _validate_items(items, field, specs, extra=None):
 
 # 한글 사실관계 필드명 → 도구 입력 필드명 매핑
 # 도구별로 필수로 요구할 입력 필드 (vocab의 필요한사실 중 일부만 필수 처리)
+# 대손금 항목의 법 제19조의2② 채권 표시 키(bad_debt_adjustment)
+_BD_EXCL_KEYS = ["excluded_reason", "recipient", "lent_on", "related_at_lending", "related_at_event"]
+
 _도구별_필수필드 = {
     "financial_income_aggregate": {
         "예금이자": {"필요": ["amount"], "허용": ["withheld"]},
@@ -324,11 +327,11 @@ _도구별_필수필드 = {
         "직장공제회초과반환금": {"필요": ["amount"], "허용": ["contribution_years"]},
     },
     "bad_debt_adjustment": {
-        "소멸시효완성": {"필요": ["amount", "arose_in"], "허용": ["instrument", "date", "account", "detail", "booked", "memo_excluded"]},
-        "화해·확정판결": {"필요": ["amount", "arose_in"], "허용": ["instrument", "date", "account", "detail", "booked", "memo_excluded"]},
-        "부도6개월": {"필요": ["amount", "arose_in", "instrument", "months_since_default"], "허용": ["mortgage", "date", "account", "detail", "booked", "memo_excluded"]},
-        "회수불능": {"필요": ["amount", "arose_in"], "허용": ["instrument", "date", "account", "detail", "booked", "memo_excluded"]},
-        "회수기일2년경과": {"필요": ["amount", "arose_in", "months_since_due", "related_party"], "허용": ["instrument", "date", "account", "detail", "booked", "memo_excluded"]},
+        "소멸시효완성": {"필요": ["amount", "arose_in"], "허용": ["instrument", "date", "account", "detail", "booked", "memo_excluded", *_BD_EXCL_KEYS]},
+        "화해·확정판결": {"필요": ["amount", "arose_in"], "허용": ["instrument", "date", "account", "detail", "booked", "memo_excluded", *_BD_EXCL_KEYS]},
+        "부도6개월": {"필요": ["amount", "arose_in", "instrument", "months_since_default"], "허용": ["mortgage", "date", "account", "detail", "booked", "memo_excluded", *_BD_EXCL_KEYS]},
+        "회수불능": {"필요": ["amount", "arose_in"], "허용": ["instrument", "date", "account", "detail", "booked", "memo_excluded", *_BD_EXCL_KEYS]},
+        "회수기일2년경과": {"필요": ["amount", "arose_in", "months_since_due", "related_party"], "허용": ["instrument", "date", "account", "detail", "booked", "memo_excluded", *_BD_EXCL_KEYS]},
     },
     "entertainment_adjustment": {
         "없음": {"필요": ["amount"]},
@@ -524,7 +527,7 @@ def entertainment_limit(year: YEAR, sme: Annotated[bool, Field(description="중�
                         months: Annotated[int, Field(description="사업연도 월수(1~12)")] = 12,
                         market: Annotated[int, Field(description="전통시장(및 조특법 제136조⑥의 대상)에서 지출한 기업업무추진비(원, 2023 사업연도부터) — 일반한도의 일정 비율 안에서 추가한도", ge=0)] = 0) -> dict:
     """기업업무추진비(접대비) 한도와 한도초과액. 언제: 법인세 세무조정에서 기업업무추진비 손금불산입액을 구할 때.
-입력: 수입금액(일반, 중단사업부문 매출 포함 기업회계 매출액) → general_revenue, 특수관계인 수입 → related_revenue, 중소기업 여부 → sme, 지출액(접대비) → expensed, 문화비 → culture, 전통시장 지출 → market(2023~), 사업연도 월수 → months.
+입력: 사업연도(2016~2026, 2023년까지는 '접대비') → year, 수입금액(일반, 중단사업부문 매출 포함 기업회계 매출액) → general_revenue, 특수관계인 수입 → related_revenue, 중소기업 여부 → sme, 지출액(접대비) → expensed, 문화비 → culture, 전통시장 지출 → market(2023~), 사업연도 월수 → months.
 결과: 한도·한도초과액(손금불산입)·근거(법인세법 제25조, 시행령 제42조). 기업업무추진비 한도와 한도초과액 계산; 접대비가 한도를 넘는가 확인할 때 쓴다."""
     _chk.int_range("months", months, 1, 12, "사업연도 월수 ")
     return _ok(C.entertain(year, sme, general_revenue, related_revenue, expensed, culture=culture, months=months, market=market),
@@ -879,6 +882,7 @@ def nonbusiness_interest_disallowance(loans: Annotated[list[Loan], Field(descrip
 판정: ⓪특수관계인 — 가지급금에 상대방을 주면 company↔상대방을 법인세법 특수관계인(법 제2조12호, 영 제2조⑧ — 2019.2.12. 전 영 제87조①, 2019.2.12.~2023.12.31. 영 제2조⑤) 각 호로 판정해(기준일: 기준일 또는 사업연도 종료일) 대상을 정한다 — 해당 없으면 비특수관계인, 법인이면 특수관계법인, 개인이면 officers·employees·stakes로 임원·직원·주주, 그 밖은 기타특수관계인. 임원·직원의 배우자 등이 지분 없이 상대방이면 relations.livelihood_shared의 생계 사실관계로 ⑧3호(생계를 함께하는 친족)를 판정 — 사실이 모자라 입력 확인 필요가 나오면 비특수관계인으로 넘기지 않고 확인할 항목·필요 자료를 돌려준다. 대상도 주면 대조만 하고 특수관계 여부(또는 규칙 제44조 6·7·7의2호에서 직원 여부)가 다르면 입력 확인 필요. ①차입금 구분 — 채권자불분명(영 제51조①)·비실명(영 제51조②)·건설자금(영 제52조)은 영 제55조 순위로 먼저 손금불산입하고, 기업구매자금대출·금융회사 등 제외 차입금(영 제53조④)과 함께 업무무관 산식의 지급이자·차입금에서 뺀다. ②가지급금 — 비특수관계인 대여는 제외, 규칙 제44조 각 호(미지급소득 소득세 대납은 총결정세액×미지급소득÷종합소득금액 한도, 직원 급료 가불은 월정급여 범위, 우리사주는 해당 회사 주식만, 중소기업 직원 주택자금 7의2호는 2020.1.1. 이후 개시 사업연도부터) 제외. ③적수 — 대여일 산입·회수일 불산입·말일 산입, 동일인 가수금 적수 상계(영 제53조③, 약정으로 상계 불가면 안 함 — 규칙 제28조②). ④업무무관 = 지급이자 × min(자산 적수, 차입금 적수) ÷ 차입금 적수(원 미만 절사).
 결과: 순위별 손금불산입·소득처분(채권자불분명·비실명 대표자 상여·원천세 기타사외유출, 건설자금 유보, 업무무관 기타사외유출), 가지급금별 제외 판단, 동일인별 적수, 인정이자는 deemed_interest로 이어 계산할 movements 안내. 지원 2016~2026 사업연도.
 지원 안 함: 일반차입금 건설자금이자 자본화 선택(법 제28조②), 업무무관자산 취득가액·적수 산정(영 제49조, 직접 적수 입력), 상대방 없이 대상만 준 가지급금의 특수관계 여부(입력 그대로 씀), 비소액주주등의 직원과 생계를 함께하는 친족(영 제2조⑧3호가목 중 주주의 직원)·대표이사 구분(officers에 대표 표시 없음 — 임원으로 봄), 금융회사 주된 수익사업 판단 — 해당하면 입력 확인 필요 또는 직접 적수 입력. 근거(법인세법 제28조, 시행령 제51조~제53조·제55조·제106조, 시행규칙 제28조·제44조)."""
+    loans = [l if isinstance(l, Loan) else Loan.model_validate(l) for l in loans]   # 파이썬에서 dict로 바로 불러도 같게
     simple = not (advances or deposits or year or fiscal_start or fiscal_end) and all(
         l.jeoksu is not None and l.kind is None and l.rate is None and l.principal is None and l.withholding is None for l in loans)
     if simple:
@@ -920,6 +924,9 @@ def business_car_expense(year: YEAR, upkeep: Annotated[int, Field(description="�
     """업무용승용차 관련비용 손금불산입(업무사용비율·사적사용·미작성 시 기준비율·감가상각 연 800만 원 한도). 언제: 임원·직원이 사용하는 승용차 관련비용을 어디까지 손금으로 인정할지 계산할 때.
 입력: 사업연도(2016~2026) → year, 유지비(유류·보험·수선 등, 원) → upkeep, 세법상 감가상각비(5년 정액, 원) → depreciation, 장부상 감가상각비(원) → booked_depreciation, 운행기록부 작성 여부 → log_kept, 업무사용비율(소수, 작성 시) → business_ratio, 보유 월수(1~12) → months, 부동산임대업 주업 등 특정법인 여부 → rental_corp, 법인 전용번호판 부착 여부 → plate_ok.
 결과: 업무사용비율·손금불산입·감가상각 한도 등, 근거(법인세법 제27조의2, 시행령 제50조의2)."""
+    if log_kept and business_ratio is None:
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": ["log_kept=True(운행기록부 작성)면 business_ratio(운행기록상 업무사용비율, 소수 0~1) 필요 — 운행기록부를 쓰지 않았으면 log_kept=False"]}
     plate_applies = (acquisition_cost is None) or (acquisition_cost >= 80_000_000)
     r = C.business_car(year, upkeep, depreciation, booked_depreciation, log_kept, business_ratio, months, rental_corp, plate_ok or not plate_applies)
     if not plate_ok and not plate_applies:
@@ -964,11 +971,12 @@ def thin_capitalization(equity: WON,
                         interest_treaty_rate: Annotated[float | None, Field(description="이자 조세조약 제한세율(소수, 예: 0.12 = 12%). 생략 시 국내세율 적용")] = None,
                         dividend_treaty_rate: Annotated[float | None, Field(description="배당 조세조약 제한세율(소수, 예: 0.15 = 15%). 생략 시 국내세율 적용")] = None,
                         recipient_type: Annotated[Literal['개인', '법인'], Field(description="수취인 구분 — 개인(비거주자) / 법인(외국법인)")] = '개인') -> dict:
-    """과소자본 손금불산입(국제조세조정에 관한 법률 제22조). 언제: 국외지배주주로부터 차입한 금액이 출자금액의 기준 배수(기본 2배)를 초과할 때 초과분 지급이자를 손금불산입한다.
+    """과소자본 손금불산입(국제조세조정에 관한 법률 제22조, 2020 사업연도까지 제14조). 언제: 국외지배주주로부터 차입한 금액이 출자금액의 기준 배수(기본 2배)를 초과할 때 초과분 지급이자를 손금불산입한다.
 입력: 국외지배주주 출자금액(원) → equity, 차입금액(원) → borrowings, 지급이자 총액(원) → total_interest, 적용 배수(기본 2) → ratio, 사업연도(2016~2026) → year, 수취인 거주지국 → recipient_residence_country, 이자 조세조약 제한세율(소수) → interest_treaty_rate, 배당 조세조약 제한세율(소수) → dividend_treaty_rate, 수취인 구분(개인/법인) → recipient_type.
-결과: 초과차입금·손금불산입 이자·처분(배당/기타사외유출), recipient_residence_country 지정 시 원천징수 재계산 결과 포함, 근거(국제조세조정에 관한 법률 제22조, 시행령 제34조). Thin capitalization disallowance."""
+결과: 초과차입금·손금불산입 이자·처분(배당/기타사외유출), recipient_residence_country 지정 시 원천징수 재계산 결과 포함, 근거(그해 조문 — 2021년부터 국제조세조정에 관한 법률 제22조·시행령 제46조~제50조, 2020년까지 전부개정 전 제14조·시행령 제24조~제26조). Thin capitalization disallowance."""
     base = C.thin_capitalization(equity, borrowings, total_interest, ratio, year)
-    result = {"결과": base, "근거": "국제조세조정에 관한 법률 제22조, 시행령 제34조"}
+    법조, 영조 = C.thin_cap_basis(year)
+    result = {"결과": base, "근거": f"국제조세조정에 관한 법률 {법조}, 시행령 {영조}"}
 
     # 쟁점 부착 (issues.json에서 읽음, 하드코딩 금지)
     from .engine.calc_income import _load_issues
@@ -992,7 +1000,7 @@ def thin_capitalization(equity: WON,
                 "배당 기준 지방소득세": dividend_wh["지방소득세"],
                 "소득세 차액": diff_income,
                 "지방소득세 차액": diff_local,
-                "근거": "국조법 제22조 ② 배당 처분 → 소득세법 제119조 2호 / 법인세법 제93조 2호 배당소득",
+                "근거": f"국조법 {법조} {'②' if 법조 == '제22조' else '①'} 배당 처분 → 소득세법 제119조 2호 / 법인세법 제93조 2호 배당소득",
             }
     return result
 
@@ -1266,25 +1274,25 @@ def vat_deemed_input_credit(period: Annotated[str, Field(description="과세기�
     ]
     if purchase_total > 0:
         steps.extend([
-            {"항목": "운반비 제외 비율", "금액": freight_ratio, "근거": "부가가치세법 제42조"},
-            {"항목": "운송비 제외 계수 (1 − 운반비 비율)", "금액": non_freight_factor, "근거": "부가가치세법 제42조"},
+            {"항목": "운반비 제외 비율", "비율": freight_ratio, "근거": "부가가치세법 제42조"},
+            {"항목": "운송비 제외 계수 (1 − 운반비 비율)", "비율": non_freight_factor, "근거": "부가가치세법 제42조"},
             {"항목": "과세 사용·소비액(운반비 제외)", "금액": used_taxable_adj, "근거": "부가가치세법 제42조"},
             {"항목": "면세 사용·판매액(운반비 제외)", "금액": used_exempt_adj, "근거": "부가가치세법 제42조"},
             {"항목": "공통 기말재고(실지귀속 불분명, 운반비 제외)", "금액": inventory_adj, "근거": "부가가치세법 제42조"},
         ])
     else:
-        steps.append({"항목": "운반비 제외 비율", "금액": 0, "근거": "부가가치세법 제42조"})
+        steps.append({"항목": "운반비 제외 비율", "비율": 0, "근거": "부가가치세법 제42조"})
 
     steps.extend([
         {"항목": "과세 공급가액", "금액": taxable_supply, "근거": "부가가치세법 시행령 제81조"},
         {"항목": "면세 공급가액", "금액": exempt_supply, "근거": "부가가치세법 시행령 제81조"},
-        {"항목": "과세 공급가액 비율", "금액": taxable_ratio, "근거": "부가가치세법 시행령 제81조"},
+        {"항목": "과세 공급가액 비율", "비율": taxable_ratio, "근거": "부가가치세법 시행령 제81조"},
     ])
 
     steps.extend([
         {"항목": "공제대상 매입가액 = 과세 사용분 + 공통 재고 × 과세비율", "금액": eligible_purchase, "근거": "부가가치세법 제42조, 시행령 제84조, 제81조"},
-        {"항목": f"공제율 ({num}/{den})", "금액": f"{num}/{den}", "근거": "부가가치세법 제42조"},
-        {"항목": f"한도율 ({limit_ratio})" if limit_ratio is not None else ("한도율 (예정신고 — 한도 없이 공제, 확정신고 때 정산)" if filing == "예정" else "한도율 (과세표준 없음 — 한도 미적용)"), "금액": limit_ratio, "근거": "부가가치세법 시행령 제84조"},
+        {"항목": f"공제율 ({num}/{den})", "비율": f"{num}/{den}", "근거": "부가가치세법 제42조"},
+        {"항목": f"한도율 ({limit_ratio})" if limit_ratio is not None else ("한도율 (예정신고 — 한도 없이 공제, 확정신고 때 정산)" if filing == "예정" else "한도율 (과세표준 없음 — 한도 미적용)"), "비율": limit_ratio, "근거": "부가가치세법 시행령 제84조"},
         {"항목": "의제매입세액 = min(공제대상 매입, 과세표준 × 한도율) × 공제율", "금액": deemed_tax, "근거": "부가가치세법 제42조"},
     ])
 
@@ -2431,6 +2439,9 @@ def _loss_rate_floor(rate: float, digits: int = 3) -> float:
     return math.floor(exact(rate) * 10 ** digits) / 10 ** digits
 
 
+_BD_EXCL_REASON = ("채무보증구상채권", "특수관계인업무무관가지급금")   # 법 제19조의2② 1호·2호
+_BD_RECIPIENT = {"법인": "기타사외유출", "사업자": "기타사외유출", "임원": "상여", "직원": "상여", "주주": "배당", "기타": "기타소득"}   # 영 제106조①1호 가~라목
+
 _BAD_DEBT_WRITEOFFS_DESC = (
     "대손금 목록 [{kind, amount, arose_in:'전기'|'당기'(대손 사유가 생긴 사업연도), instrument?:'외상매출금'|'받을어음'|'미수금'|'기타', "
     "months_since_default?(부도6개월: 부도발생일부터 사업연도 종료일까지 개월), mortgage?, "
@@ -2441,7 +2452,12 @@ _BAD_DEBT_WRITEOFFS_DESC = (
     "회수기일2년경과(①9의2호, 중소기업의 외상매출금·미수금, 특수관계인 거래분 제외, months_since_due·related_party 필수). "
     "booked: '상계'(대손충당금과 상계)·'손비'(당기 비용)·'전기부인'(전기 이전에 장부에서 대손 처리했으나 세무상 부인되어 유보로 남은 채권, 당기 장부 처리 없음 → "
     "당기에 요건을 갖추면 손금산입·△유보, 세법상 전기말 채권에 더함). booked를 모두 생략하면 장부 상계액(offset)을 순서대로 나눠 붙이고, "
-    "일부만 생략하면 생략한 항목은 손비로 봄. 법 제19조의2②(채무보증 구상채권·특수관계인 업무무관 가지급금) 해당 여부는 판단하지 않음 — 그런 채권은 넣지 말 것")
+    "일부만 생략하면 생략한 항목은 손비로 봄. "
+    "법 제19조의2② 채권이면 excluded_reason:'채무보증구상채권'(②1호, 영 제19조의2⑥의 손금 인정 채무보증은 넣지 말 것)|'특수관계인업무무관가지급금'(②2호, 법 제28조①4호나목) → "
+    "대손금·대손충당금 설정대상에서 빼고 손금불산입. 소득처분은 대손사유가 확정됐으면 채무자(귀속자) recipient:'법인'|'사업자'|'임원'|'직원'|'주주'|'기타'에 따라 "
+    "기타사외유출·상여·배당·기타소득(영 제106조①1호 — 국내 소득이 되지 않는 외국법인은 '기타', 생략하면 '법인'으로 봄), 대손 요건 전이면 유보. "
+    "가지급금은 lent_on(대여일 YYYY-MM-DD)·related_at_lending(대여 당시 특수관계, 기본 true)·related_at_event(대손사유 발생 당시 특수관계, 기본 true): "
+    "2021.1.1. 이후 대여분은 대여시점 기준(②2호 후단, 법률 제17652호 부칙 제5조), 그 전 대여분은 대손사유 발생 당시 기준(대법원 2012두6247)")
 
 
 @mcp.tool(annotations=CALC)
@@ -2452,18 +2468,23 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
                         receivables_end_book: WON,
                         writeoffs: Annotated[list, Field(description=_BAD_DEBT_WRITEOFFS_DESC)],
                         prior_excess: Annotated[int, Field(description="전기 대손충당금 한도초과액(원)")] = 0,
-                        loss_rate_digits: Annotated[int, Field(description="대손실적률 소수 자릿수(기본 3 — 넷째 자리 이하 절사)")] = 3) -> dict:
+                        loss_rate_digits: Annotated[int, Field(description="대손실적률 소수 자릿수(기본 3 — 넷째 자리 이하 절사)")] = 3,
+                        excluded_receivables_prev_end_book: Annotated[int, Field(description="receivables_prev_end_book 중 법 제19조의2② 채권(채무보증 구상채권·특수관계인 업무무관 가지급금) 잔액(원) — 설정대상에서 뺌(법 제34조②)", ge=0)] = 0,
+                        excluded_receivables_end_book: Annotated[int, Field(description="receivables_end_book 중 법 제19조의2② 채권 잔액(원) — 설정대상에서 뺌(법 제34조②), 서식 ⑳ 설정제외", ge=0)] = 0) -> dict:
     """대손금·대손충당금 세무조정(법인세법 제19조의2·제34조, 시행령 제19조의2·제61조).
     언제: 법인세 세무조정에서 대손금 인정 여부와 대손충당금 한도·한도초과를 함께 계산할 때.
     입력: 사업연도(2016~2026) → year, 중소기업 여부 → sme, 전기 대손충당금 한도초과액(원) → prior_excess,
     장부상 대손충당금 {opening, offset, provision, closing, reversal?}(원) → book,
     장부상 설정대상 채권 전기말·당기말(원) → receivables_prev_end_book·receivables_end_book,
-    대손금 목록 [{kind, amount, arose_in, instrument?, months_since_default?, mortgage?, months_since_due?, related_party?, date?, account?, detail?, booked?, memo_excluded?}] → writeoffs,
+    대손금 목록 [{kind, amount, arose_in, instrument?, months_since_default?, mortgage?, months_since_due?, related_party?, date?, account?, detail?, booked?, memo_excluded?,
+      excluded_reason?, recipient?, lent_on?, related_at_lending?, related_at_event?}] → writeoffs,
       kind: 소멸시효완성·화해·확정판결·부도6개월·회수불능(파산·강제집행·형의집행·사업폐지·사망·실종)·회수기일2년경과,
       booked: '상계'|'손비'|'전기부인'(전기 장부 대손·세무 부인 유보 채권 — 당기 요건 충족 시 손금산입 △유보),
-    대손실적률 소수 자릿수(기본 3) → loss_rate_digits.
+      excluded_reason: '채무보증구상채권'|'특수관계인업무무관가지급금'(법 제19조의2②) — 대손금·설정대상 채권에서 빼고 손금불산입, 소득처분은 recipient(귀속자, 영 제106조①1호),
+    대손실적률 소수 자릿수(기본 3) → loss_rate_digits,
+    장부 채권 중 법 제19조의2② 채권 잔액(전기말·당기말, 원) → excluded_receivables_prev_end_book·excluded_receivables_end_book.
     결과: 판단(항목별·근거)·계산(세법상 당기 대손금·전기말·당기말 채권·실적률)·결과(한도·한도초과)·세무조정({구분, 조정, 금액, 소득처분})·서식_표·계산식_입력.
-    법 제19조의2②(채무보증 구상채권·특수관계인 업무무관 가지급금)는 판단하지 않음. 대손금·대손충당금 세무조정."""
+    지원 안 함: 영 제19조의2⑥ 각 호(손금 인정 채무보증) 해당 여부 판단 — 해당하면 excluded_reason을 넣지 말 것, 전기 유보로 남은 제19조의2② 채권의 유보 정리. 대손금·대손충당금 세무조정."""
 
     원래_종류 = [(w or {}).get("kind") if isinstance(w, dict) else None for w in (writeoffs or [])]   # 별칭(파산 등)을 표시용으로 보관
     _extra = []
@@ -2474,6 +2495,19 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
             _extra.append(f"항목 {i+1}: booked='{w.get('booked')}' — '상계'|'손비'|'전기부인' 중 하나")
         if isinstance(w, dict) and w.get("arose_in") not in (None, "전기", "당기"):
             _extra.append(f"항목 {i+1}: arose_in='{w.get('arose_in')}' — '전기'|'당기' 중 하나")
+        if isinstance(w, dict) and w.get("excluded_reason") not in (None, *_BD_EXCL_REASON):
+            _extra.append(f"항목 {i+1}: excluded_reason='{w.get('excluded_reason')}' — {'|'.join(_BD_EXCL_REASON)} 중 하나(법 제19조의2②)")
+        if isinstance(w, dict) and w.get("recipient") not in (None, *_BD_RECIPIENT):
+            _extra.append(f"항목 {i+1}: recipient='{w.get('recipient')}' — {'|'.join(_BD_RECIPIENT)} 중 하나(영 제106조①1호 귀속자)")
+        if isinstance(w, dict) and w.get("lent_on") is not None and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(w["lent_on"])):
+            _extra.append(f"항목 {i+1}: lent_on='{w.get('lent_on')}' — 대여일 YYYY-MM-DD")
+        if isinstance(w, dict) and w.get("excluded_reason") == "특수관계인업무무관가지급금" and w.get("lent_on") is None \
+                and w.get("related_at_lending", True) != w.get("related_at_event", True):
+            _extra.append(f"항목 {i+1}: 대여 당시와 대손사유 발생 당시 특수관계가 다르면 lent_on(대여일) 필요 — 2021.1.1. 이후 대여분은 대여시점, 그 전은 대손사유 발생 당시 기준")
+    for nm, v, bk in (("excluded_receivables_prev_end_book", excluded_receivables_prev_end_book, receivables_prev_end_book),
+                      ("excluded_receivables_end_book", excluded_receivables_end_book, receivables_end_book)):
+        if v > bk:
+            _extra.append(f"{nm} {v:,}원 > 장부 채권 {bk:,}원 — 장부 설정대상 채권 중 법 제19조의2② 채권 잔액만")
     _v = _validate_items(writeoffs, "kind", _specs_from_vocab("bad_debt_adjustment", "kind"), extra=_extra)
     if _v: return _v
 
@@ -2487,6 +2521,7 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
     settlements_denied = []       # 당기 손금불산입(유보) — 부인 대손 금액
     settlements_prior = []        # 전기 사유분 손금불산입(유보)
     settlements_revived = []      # 전기부인 채권 당기 손금산입(△유보)
+    settlements_excluded = []     # 법 제19조의2② 채권 대손 손금불산입(귀속자 처분 또는 유보)
     per_item = []
 
     def _memo_split(amount, memo_excluded):
@@ -2558,6 +2593,41 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
         else:   # _validate_items가 걸러서 오지 않음
             결론, 근거, 이유 = "검토 필요", "종류 미정", f"kind={kind} — 세무 판단 기준 확인 필요"
 
+        excl = w.get("excluded_reason")
+        if excl == "특수관계인업무무관가지급금":
+            lent = w.get("lent_on")
+            if lent and lent >= "2021-01-01":
+                특수관계 = bool(w.get("related_at_lending", True))
+                시점 = f"2021.1.1. 이후 대여분({lent}) — 특수관계는 대여시점 기준(법 제19조의2②2호 후단, 법률 제17652호 부칙 제5조)"
+            else:
+                특수관계 = bool(w.get("related_at_event", True))
+                시점 = ((f"2020.12.31. 이전 대여분({lent})" if lent else "대여일 미입력") +
+                        " — 특수관계는 대손사유 발생 당시 기준(대법원 2012두6247; 대여시점 기준인 ②2호 후단은 2021.1.1. 이후 대여분부터, 법률 제17652호 부칙 제5조)")
+            if not 특수관계:
+                이유 += f" — 특수관계 없음: 법 제19조의2②2호 적용 안 함, 일반 대손 요건으로 판단({시점})"
+                excl = None
+        if excl:
+            조문 = "1호" if excl == "채무보증구상채권" else "2호"
+            이름 = "채무보증 구상채권" if excl == "채무보증구상채권" else "특수관계인 업무무관 가지급금"
+            사유확정 = (recognized + memo) > 0 or kind == "소멸시효완성"
+            귀속 = w.get("recipient") or "법인"
+            처분 = _BD_RECIPIENT[귀속] if 사유확정 else "유보"
+            근거 = f"법인세법 제19조의2②{조문}·제34조②" + (", 시행령 제106조①1호" if 사유확정 else "")
+            항목 = f"{표시} {amount:,}원({이름})"
+            이유 = 시점 if excl == "특수관계인업무무관가지급금" else "채무보증(영 제19조의2⑥ 각 호 제외)으로 생긴 구상채권"
+            if booked == "전기부인":
+                결론 = "당기 조정 없음 — 법 제19조의2② 채권은 대손금 손금산입 불가(전기 유보 유지)"
+                이유 += " — 대손금으로 손금산입하지 않으므로 △유보하지 않음, 대손충당금 설정대상 채권에도 넣지 않음(법 제34조②)"
+            else:
+                결론 = f"불인정(손금불산입·{처분}) — 법 제19조의2②{조문}"
+                이유 += (" — 대손금 손금불산입, 대손충당금 설정대상 채권에서 제외(법 제34조②). "
+                        + (f"대손사유가 확정되어 채무자({귀속}{'' if w.get('recipient') else ' — recipient 생략, 법인으로 봄'})에게 귀속 → {처분}(영 제106조①1호)"
+                           if 사유확정 else "대손 요건 전이라 채권이 남음 → 유보"))
+                settlements_excluded.append({"구분": f"대손금 손금불산입(법 제19조의2②{조문} {이름})", "조정": "손금불산입", "금액": amount, "소득처분": 처분})
+            judgments.append({"항목": 항목, "결론": 결론, "금액": amount, "근거": 근거, "이유": 이유})
+            per_item.append({"recognized": 0, "memo": 0, "excluded": True})
+            continue
+
         denied = 0 if (kind == "소멸시효완성" and arose_in == "전기") else amount - recognized - memo
         항목 = f"{표시} {amount:,}원" + (f"({arose_in} 사유)" if kind == "소멸시효완성" else "")
         if booked == "전기부인":
@@ -2590,10 +2660,11 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
         judgments.append({"항목": "세법상 전기말 채권", "결론": f"전기 사유 대손 {prior_year_reduced:,}원 > 장부 전기말 채권 {receivables_prev_end_book:,}원 — 0원으로 봄",
                           "금액": prior_year_reduced, "근거": "법인세법 시행령 제61조③",
                           "이유": "전기 사유분은 장부 전기말 채권에 들어 있어야 함 — receivables_prev_end_book 입력 확인"})
-    tax_receivables_prev = max(0, receivables_prev_end_book - prior_year_reduced) + prior_yubo_added
-    # 세법상 당기말 채권 = 장부 당기말 + 부인 채권(비망가액·전기부인 미인정분 포함)
+    # 법 제19조의2② 채권 잔액은 설정대상에서 뺌(법 제34조②)
+    tax_receivables_prev = max(0, receivables_prev_end_book - excluded_receivables_prev_end_book - prior_year_reduced) + prior_yubo_added
+    # 세법상 당기말 채권 = 장부 당기말 − 설정제외 + 부인 채권(비망가액·전기부인 미인정분 포함)
     reservation_total = memo_total
-    tax_receivables_end = receivables_end_book + end_yubo_added
+    tax_receivables_end = receivables_end_book - excluded_receivables_end_book + end_yubo_added
 
     # 대손실적률 = 세법상 당기 대손금 ÷ 세법상 전기말 채권 (절사)
     if tax_receivables_prev > 0:
@@ -2611,6 +2682,7 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
     denied_total = sum(settlements_denied)
     if denied_total > 0:
         settlements.append({"구분": "부인 대손", "조정": "손금불산입", "금액": denied_total, "소득처분": "유보"})
+    settlements.extend(settlements_excluded)
     settlements.extend(settlements_prior)
     if over > 0:
         settlements.append({"구분": "한도초과", "조정": "손금불산입", "금액": over, "소득처분": "유보"})
@@ -2647,6 +2719,9 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
     }
     if prior_yubo_added:
         calc_dict["전기부인 유보 채권(전기말 가산)"] = prior_yubo_added
+    if excluded_receivables_prev_end_book or excluded_receivables_end_book:
+        calc_dict["설정제외 채권(법 제34조②) 전기말"] = excluded_receivables_prev_end_book
+        calc_dict["설정제외 채권(법 제34조②) 당기말"] = excluded_receivables_end_book
 
     # ── 서식_표: 34_대손금 — 당기 장부에서 처리한 대손금만(전기부인 채권은 당기 장부 처리가 없어 행 없음) ──
     rows_34 = []
@@ -2670,7 +2745,9 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
         상계_부인 = 상계분 - 상계_시인
         손비_시인 = recognized - 상계_시인
         손비_부인 = 손비분 - 손비_시인
-        if memo > 0:
+        if per_item[idx].get("excluded"):
+            비고 = "법 제19조의2②"
+        elif memo > 0:
             비고 = "1천원 비망"
         elif recognized < amount:
             비고 = "전기 사유분" if arose_in == "전기" else "대손 요건 미충족"
@@ -2709,8 +2786,8 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
     rows_채권 = [{
         "계정과목": "설정대상 채권",
         "장부가액": receivables_end_book,
-        "부인누계": tax_receivables_end - receivables_end_book,
-        "설정제외": 0,
+        "부인누계": end_yubo_added,
+        "설정제외": excluded_receivables_end_book,
     }]
     서식_표 = {"34_대손금": rows_34, "34_채권잔액": rows_채권}
 
@@ -2739,6 +2816,7 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
     """기업업무추진비 세무조정 — 2023년 이전 사업연도의 "접대비"와 같은 항목(2024.1.1. 명칭 변경, 법률 19193). 접대비 문제·장부도 이 도구로 계산한다(법인세법 제25조, 시행령 제40조·제41조·제42조).
     언제: 법인세 신고에서 기업업무추진비 손금불산입을 항목별로 계산할 때.
     입력:
+      · 사업연도(2016~2026) → year, 중소기업 여부 → sme, 사업연도 월수(1~12, 기본 12) → months, 현물 평가 시 부가가치세 포함 여부(기본 True) → include_vat.
       · 원장: ledger=[{항목, 금액, 증빙:'없음'|'영수증 등'|'적격'(기본 '적격'), 성격?:'교제목적'|'직원단체_법인'|'직원단체_비법인'|'임직원부담'|'현물'|'경조금'|'문화', 시가?, 장부가액?, 건당기준초과?:(기본 true)}],
         revenue={매출액, 특수관계매출?(기본 0), 매출할인등:{일반?, 특수관계?}(기본 0)}.
       증빙 허용값(어휘 기반):
@@ -2753,6 +2831,8 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
         · 지역사랑상품권 → 포함(지역사랑상품권으로 지급한 적격 기업업무추진비, 조특법 제136조⑥, 2025 사업연도부터 전통시장등 추가한도 대상)
         · 온누리상품권 → 포함(온누리상품권으로 지급한 적격 기업업무추진비, 조특법 제136조⑥, 2026 사업연도 지출분부터 전통시장등 추가한도 대상)
     결과: 판단(항목별·근거)·결과(한도·한도초과)·세무조정(구분·금액·소득처분)·소득처분별_합계·손금불산입_합계·계산. 기업업무추진비 세액공제."""
+
+    _용어 = C.ent_term(year)   # 2024.1.1. 이후 개시 사업연도부터 '기업업무추진비'(법률 제19193호), 그 전은 '접대비'
 
     # ── 빈 원장 거부 ──
     if not ledger:
@@ -2863,7 +2943,7 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
 
         if 증빙 == "없음":
             no_receipt_total += 금액
-            judgments.append({"항목": 항목명, "성격": 성격, "결론": "손금불산입·상여(대표자)", "금액": 금액, "근거": "법인세법 제25조②(증빙서류 없는 접대비 손금불산입), 시행령 제106조①1호 단서", "이유": ("증빙서류 없음 — 전액 손금불산입, 귀속 불분명으로 대표자 상여 처분" + (f" — {_현물_판단_이유}" if _현물_판단_이유 else ""))})
+            judgments.append({"항목": 항목명, "성격": 성격, "결론": "손금불산입·상여(대표자)", "금액": 금액, "근거": f"법인세법 제25조②(증빙서류 없는 {_용어} 손금불산입), 시행령 제106조①1호 단서", "이유": ("증빙서류 없음 — 전액 손금불산입, 귀속 불분명으로 대표자 상여 처분" + (f" — {_현물_판단_이유}" if _현물_판단_이유 else ""))})
         elif 증빙 == "영수증 등":
             기준_일반 = vocab.rule("기업업무추진비_적격증빙미수취", year).get("기준", {}).get("일반", 30000)
             기준_경조금 = vocab.rule("기업업무추진비_적격증빙미수취", year).get("기준", {}).get("경조금", 200000)
@@ -2879,7 +2959,7 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
             items_for_limit.append(금액)
             items_for_limit_names.append(항목명)
             if 성격 == "문화":
-                judgments.append({"항목": 항목명, "성격": 성격, "결론": "시부인 대상(문화접대비)", "금액": 금액, "근거": "법인세법 제25조④(문화접대비)", "이유": ("적격증빙·문화비 지출 → 한도 계산 시 문화접대비 포함" + (f" — {_현물_판단_이유}" if _현물_판단_이유 else ""))})
+                judgments.append({"항목": 항목명, "성격": 성격, "결론": f"시부인 대상(문화{_용어})", "금액": 금액, "근거": f"법인세법 제25조④(문화{_용어})", "이유": (f"적격증빙·문화비 지출 → 한도 계산 시 문화{_용어} 포함" + (f" — {_현물_판단_이유}" if _현물_판단_이유 else ""))})
             elif 성격 == "경조금":
                 judgments.append({"항목": 항목명, "성격": 성격, "결론": "시부인 대상(경조금)", "금액": 금액, "근거": "법인세법 제25조①", "이유": ("적격증빙·경조금 지출 → 한도 계산 대상" + (f" — {_현물_판단_이유}" if _현물_판단_이유 else ""))})
             elif 성격 == "전통시장":
@@ -2941,7 +3021,7 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
         {"이름": "기본한도_중소", "값": 기본한도_중소, "설명": "중소기업 기본한도(원) — 법인세법 제25조①, 시행령 제42조"},
         {"이름": "기본한도_일반", "값": 기본한도_일반, "설명": "일반기업 기본한도(원) — 법인세법 제25조①, 시행령 제42조"},
         {"이름": "월수", "값": months, "설명": "사업연도 월수"},
-        {"이름": "문화금액", "값": culture_total, "설명": "문화접대비 지출 합계(적격증빙·문화 성격)"},
+        {"이름": "문화금액", "값": culture_total, "설명": f"문화{_용어} 지출 합계(적격증빙·문화 성격)"},
         {"이름": "일반수입금액", "값": revenue_general, "설명": "일반 수입금액 (매출액 − 특수관계매출 − 매출할인등)"},
         {"이름": "특수관계수입금액", "값": revenue_related, "설명": "특수관계 수입금액 (특수관계매출 − 매출할인등)"},
         {"이름": "수입구간1_한도", "값": t1_cap, "설명": f"수입금액 구간1 한도(원) — {t1_cap:,}원 이하"},
@@ -2989,7 +3069,7 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
         {"이름": "수입금액한도", "식": "수입금액일반한도+(수입금액합계한도-수입금액일반한도)*0.1",
          "값": int(ent_일반한도 - 실제기본한도 * months / 12), "설명": "일반 한도 + (특수관계 − 일반) × 10% (영 제42조①)"},
         {"이름": "문화한도", "식": "MIN(문화금액,(기본한도+수입금액한도)*0.2)",
-         "값": ent_문화한도, "설명": "문화접대비 min(문화비, (기본한도+수입금액한도) × 20%) — 조특법 제136조③"},
+         "값": ent_문화한도, "설명": f"문화{_용어} min(문화비, (기본한도+수입금액한도) × 20%) — 조특법 제136조③"},
     ]
     if 2023 <= year <= 2028 and 전통시장등_총액 > 0:
         비율 = C.YEAR[year].get("전통시장등_비율", 0)
@@ -4306,6 +4386,8 @@ def simplified_vat_return(year: YEAR,
     """간이과세자 부가가치세 확정신고 차가감납부세액 계산(부가가치세법 제63조·제68조의2·제69조·제46조).
     언제: 간이과세자의 과세기간(1.1~12.31) 부가가치세 확정신고 시 차가감납부세액을 원래 사실관계에서 계산한다.
     입력:
+      · 과세연도(2022~2026) → year, 업종(부가가치세법 시행령 제111조② 표의 업종 — 소매업·음식점업·제조업·숙박업·건설업·운수 및 창고업·정보통신업·
+        금융 및 보험 관련 서비스업·전문·과학 및 기술서비스업·부동산임대업·그 밖의 서비스업 등, 띄어쓰기·'및' 표기 차이는 같은 업종으로 봄) → business_type.
       · 원장: ledger={공급:[{항목, 금액}], 매입:[{항목, 금액}]}.
         항목명 → 역할 매핑은 어휘 간이과세자_원장항목.판단.공급/매입에서 읽음(항목명에 키워드가 포함되면 해당 역할).
         공급 금액 전부 합(total), 공제 대상 합(카드발급), 마일리지 합(자기마일리지)으로 변환.
@@ -4390,6 +4472,14 @@ def simplified_vat_return(year: YEAR,
         return {"error": "입력 확인 필요 — 계산하지 않음",
                 "문제": [f"year={year}의 부가가치율 표를 vocab에서 읽을 수 없음"],
                 "허용값": {}, "안내": "연도표 없는 해는 추정하지 않음"}
+    if business_type not in 부가가치율표:
+        # 법령 표(영 제111조②) 표기 — 띄어쓰기·'및'·가운뎃점·'관련' 차이는 같은 업종으로, 흔한 줄임말은 어휘 업종_별칭으로
+        def _업종키(t):
+            return re.sub(r"[\s·ㆍ・,]|및|관련", "", str(t))
+        찾은 = vat_rule.get("업종_별칭", {}).get(_업종키(business_type)) or next(
+            (k for k in 부가가치율표 if _업종키(k) == _업종키(business_type)), None)
+        if 찾은 in 부가가치율표:
+            business_type = 찾은
     if business_type not in 부가가치율표:
         return {"error": "입력 확인 필요 — 계산하지 않음",
                 "문제": [f"business_type='{business_type}' 은(는) 지원하지 않음"],
@@ -4906,15 +4996,17 @@ def common_input_tax(year: YEAR,                     period: Annotated[str, Fiel
 
     # ── 계산식 단계 (SPEC_export_workbook_f) ──────────────────────────────
     # 공통사용재화 공급 계산 관련 입력/식
-    # 직전 과세기간 공급가액은 서식 시트(부가근거63)가 이름으로 참조해 늘 넘기되, 입력하지 않았으면 설명에 밝힌다
-    _직전_없음 = "" if prior_period_supplies is not None else " (입력 없음 — 공통사용재화 공급이 없으면 쓰지 않음)"
+    # 직전 과세기간 공급가액은 입력했을 때만 넘긴다 — 넣지 않은 값을 0으로 쓰지 않음(서식 부가근거63은 없으면 '입력 없음')
     계산식_입력 = [
         {"이름": "과세공급가액", "값": 확정_과세 + 예정_과세, "설명": f"당기 과세 공급가액 합계 = 확정 {확정_과세:,} + 예정 {예정_과세:,} = {확정_과세 + 예정_과세:,}원"},
         {"이름": "면세공급가액", "값": 확정_면세 + 예정_면세, "설명": f"당기 면세 공급가액 합계 = 확정 {확정_면세:,} + 예정 {예정_면세:,} = {확정_면세 + 예정_면세:,}원"},
-        {"이름": "직전과세공급가액", "값": int((prior_period_supplies or {}).get("taxable", 0)), "설명": f"직전 과세기간 과세 공급가액 = {int((prior_period_supplies or {}).get('taxable', 0)):,}원" + _직전_없음},
-        {"이름": "직전면세공급가액", "값": int((prior_period_supplies or {}).get("exempt", 0)), "설명": f"직전 과세기간 면세 공급가액 = {int((prior_period_supplies or {}).get('exempt', 0)):,}원" + _직전_없음},
-        {"이름": "공급가액_전액기준", "값": 500000, "설명": "공급가액 50만 원 미만 전액 과세표준 기준 (영 제63조③2호)"},
     ]
+    if prior_period_supplies is not None:
+        계산식_입력 += [
+            {"이름": "직전과세공급가액", "값": int(prior_period_supplies.get("taxable", 0)), "설명": f"직전 과세기간 과세 공급가액 = {int(prior_period_supplies.get('taxable', 0)):,}원"},
+            {"이름": "직전면세공급가액", "값": int(prior_period_supplies.get("exempt", 0)), "설명": f"직전 과세기간 면세 공급가액 = {int(prior_period_supplies.get('exempt', 0)):,}원"},
+        ]
+    계산식_입력.append({"이름": "공급가액_전액기준", "값": 500000, "설명": "공급가액 50만 원 미만 전액 과세표준 기준 (영 제63조③2호)"})
 
     # 공통사용재화 공급 과세표준 계산 (공통사용재화_공급_과세표준을 구하는 식)
     계산식 = []
@@ -5076,7 +5168,7 @@ def input_tax_recalculation(asset_type: Annotated[str, Field(description="자산
       · 일괄공급 안분 연결(신규 대안): bundle={total_price, vat_included, appraisal?:{building,land}, standard_value?:{building,land}, book_value?:{building,land}}.
         bundle이 주어지면 내부에서 bundled_supply_split과 같은 규칙으로 건물 공급가액을 안분해 부가가치세를 input_tax로 쓴다.
         input_tax와 bundle 둘 다 주면 error.
-    결과: 이력(기간별 비율·기준비율·변동·재계산 여부·경과과세기간수·세액)·결과(당기_납부세액_가산·매입세액, 건물_매입세액은 옛 이름)·판단(안분 기준)·근거."""
+    결과: 이력(기간별 비율·기준비율·변동·재계산 여부·경과과세기간수·세액)·결과(당기_납부세액_가산·매입세액, 건물_매입세액은 건물·구축물일 때만 주는 옛 이름 — 매입세액을 쓸 것)·판단(안분 기준)·근거."""
 
     # ── 입력 충돌 검사 ──
     if input_tax is not None and bundle is not None:
@@ -5203,13 +5295,12 @@ def input_tax_recalculation(asset_type: Annotated[str, Field(description="자산
         })
         당기_세액 = 세액
 
+    결과 = {"당기_납부세액_가산": 당기_세액, "매입세액": input_tax}
+    if asset_type == "건물·구축물":
+        결과["건물_매입세액"] = input_tax   # 옛 이름(호환용, 폐지 예정) — 건물·구축물일 때만
     return {
         "이력": 이력,
-        "결과": {
-            "당기_납부세액_가산": 당기_세액,
-            "매입세액": input_tax,
-            "건물_매입세액": input_tax,   # 옛 이름(호환용) — 자산 종류와 무관하게 같은 값
-        },
+        "결과": 결과,
         "판단": 판단,
         "근거": vocab.basis("공통매입세액_재계산", recal_year),
     }
@@ -7055,7 +7146,7 @@ def special_tax_credit(
     special_income_deduction: WON = 0,
 ) -> dict:
     """근로소득자 특별세액공제(보험료·의료비·교육비)와 표준세액공제 비교. 언제: 연말정산·종합소득세 신고에서 특별세액공제와 표준세액공제 중 선택할 때.
-입력: 귀속연도 → year, 총급여액 → total_salary, 공제대상자 → persons, 지출 목록 → expenses, 근로소득 산출세액 → wage_computed_tax(선택).
+입력: 귀속연도 → year, 근로소득 종류('근로'|'일용근로'|'근로소득없음' — 계산은 '근로'만, 나머지는 특별세액공제 대상 아님으로 입력 확인 필요) → earner_type, 총급여액 → total_salary, 공제대상자 → persons, 지출 목록 → expenses, 근로소득 산출세액 → wage_computed_tax(선택), 월세액 세액공제액(원, 세액공제 한도·합계에 포함) → monthly_rent_credit, 기부금 세액공제액(원, 항목별 합계에 포함) → donation_credit, 특별소득공제 합계(원, 0이 아니면 표준세액공제 선택 불가) → special_income_deduction.
 결과: 보험료·의료비·교육비 공제액·특별세액공제 합계·표준세액공제 선택·적용 공제·근거. 특별세액공제 vs 표준세액공제 비교.
 연도별: 의료비 특정(2호) 중증질환자 등 2018~, 과세기간 개시일 현재 6세 이하 2024~, 미숙아·선천성이상아 20% 2022~. 교육비 체험학습 2017~, 대입전형료 2023~."""
     return I.special_tax_credit(

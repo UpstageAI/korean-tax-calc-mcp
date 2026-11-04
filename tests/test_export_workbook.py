@@ -34,7 +34,7 @@ def test_workbook_tabs_values_and_live_formulas(tmp_path):
     vals = [cell.value for row in calc.iter_rows() for cell in row]
     assert 16600000 in vals and 84400000 in vals
     j = [cell.value for row in wb["판단·근거"].iter_rows() for cell in row]
-    assert "법인세법 제25조④(문화접대비)" in j
+    assert "법인세법 제25조④(문화기업업무추진비)" in j   # 2024 사업연도부터 새 이름
     inp = [cell.value for row in wb["입력·가정"].iter_rows() for cell in row]
     assert 18000000000 in inp and any(isinstance(v, str) and "revenue" in v for v in inp)
     summ = [cell.value for row in wb["요약"].iter_rows() for cell in row]
