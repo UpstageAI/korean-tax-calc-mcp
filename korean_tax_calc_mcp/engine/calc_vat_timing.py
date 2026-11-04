@@ -336,20 +336,37 @@ def _apply_invoices(tx, i, parts, 영30, 간이, 판단):
                      "조기환급": bool(v.get("공급받는자_조기환급"))})
         if norm[-1]["금액"] is None:
             raise InputError(f"거래{i} 세금계산서{k + 1}: 세금계산서가 여러 장이면 장마다 금액 필요")
-    pool = sorted([dict(p) for p in parts], key=lambda x: x["공급시기"])
+    # 미발급 = 아직 세금계산서와 짝지어지지 않은 금액. 한 대가 부분을 세금계산서 두 장이 겹쳐 쓰지 않게 한다.
+    pool = sorted([dict(p, 미발급=p["금액"]) for p in parts], key=lambda x: x["공급시기"])
     out = []
     for inv in sorted(norm, key=lambda x: x["발급일"]):
         left = inv["금액"]
-        cand = [p for p in pool if p["공급시기"] > inv["발급일"] and p["금액"] > 0]
-        뒤 = sum(p["금액"] for p in cand)
+        # 먼저 ① 공급시기 당일 발급(정상 발급), ② 대가를 받았고 이미 도래한 공급시기분 — 그 뒤 발급은 지연발급이라
+        # 공급시기가 바뀌지 않는다(법 제15조·영 제28조, 제17조는 공급시기 '전' 발급만). 남는 금액만 ③ 선발급 특례 판정.
+        stages = [("당일", [p for p in pool if p["공급시기"] == inv["발급일"]])]
+        if inv["수령일"] is not None:
+            stages.append(("지연", [p for p in pool if p["공급시기"] < inv["발급일"]]))
+        for 구분, now in stages:
+            for p in now:
+                take = min(left, p["미발급"])
+                if take <= 0:
+                    continue
+                p["미발급"] -= take
+                left -= take
+                판단.append({"항목": f"세금계산서 {inv['발급일']} → 본래 공급시기 {p['공급시기']} 부분 {take:,}원",
+                           "결론": "공급시기에 발급 — 공급시기 그대로" if 구분 == "당일" else
+                                   f"공급시기({p['공급시기']}) 후 발급(지연발급) — 선발급 특례 대상 아님, 공급시기 그대로(발급 시기 가산세는 제60조로 별도 확인)",
+                           "근거": "부가가치세법 제15조·제17조(공급시기 '전' 발급만 특례)·제34조"})
+        cand = [p for p in pool if p["공급시기"] > inv["발급일"] and p["미발급"] > 0]
+        뒤 = sum(p["미발급"] for p in cand)
         if 뒤 < left:
-            판단.append({"항목": f"세금계산서 {inv['발급일']} {left:,}원 중 {left - 뒤:,}원",
-                       "결론": "본래 공급시기 당일·이후 발급분 — 선발급 특례 대상 아님, 공급시기는 본래대로(발급 시기·가산세는 제34조·제60조로 별도 확인)",
+            판단.append({"항목": f"세금계산서 {inv['발급일']} {inv['금액']:,}원 중 {left - 뒤:,}원",
+                       "결론": "짝지을 대가 부분 없음(본래 공급시기 당일·이후 발급분이거나 대가 합계 초과) — 선발급 특례 대상 아님, 공급시기는 본래대로(발급 시기·가산세는 제34조·제60조로 별도 확인)",
                        "근거": "부가가치세법 제17조(공급시기 '전' 발급만 해당)"})
         for p in cand:
             if left <= 0:
                 break
-            take = min(left, p["금액"])
+            take = min(left, p["미발급"])
             ok, why, basis = _special_ok(inv, p["공급시기"], 영30, 간이)
             판단.append({"항목": f"선발급 세금계산서 {inv['발급일']} → 본래 공급시기 {p['공급시기']} 부분 {take:,}원",
                        "결론": ("특례 적용 — 발급일을 공급시기로 봄: " if ok else "특례 미적용 — 본래 공급시기 유지(세금계산서 발급 시기 가산세는 별도 확인): ") + why,
@@ -357,8 +374,9 @@ def _apply_invoices(tx, i, parts, 영30, 간이, 판단):
             if ok:
                 out.append({"공급시기": inv["발급일"], "금액": take, "사유": "공급시기 전 세금계산서 발급 특례 — " + why, "근거": basis})
                 p["금액"] -= take
+            p["미발급"] -= take
             left -= take
-    return out + [p for p in pool if p["금액"] > 0]
+    return out + [{k: v for k, v in p.items() if k != "미발급"} for p in pool if p["금액"] > 0]
 
 
 def judge(transactions, 사업자="일반", period=None):

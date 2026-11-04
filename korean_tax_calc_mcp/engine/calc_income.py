@@ -434,6 +434,29 @@ DOMESTIC_WH_BASIS = {
 }
 
 
+# 조세조약 대상조세(제2조)에 한국의 지방소득세(주민세)가 들어 있는지 — 법인세법 제98조의7①·소득세법 제156조의8①(이자·배당·사용료)
+# 각 조약 제2조 국문 원문 대조(국세법령정보시스템, 2026-11-04). 표에 없는 나라는 treaty_includes_local_tax로 지정.
+TREATY_COVERS_LOCAL_TAX = {
+    "일본": True, "중국": True, "독일": True, "영국": True, "프랑스": True, "싱가포르": True,
+    "네덜란드": True, "캐나다": True, "호주": True, "베트남": True,
+    "미국": False,   # 한미조약 제2조(1)(a): 소득세 및 법인세만
+}
+_TREATY_COUNTRY_ALIAS = {
+    "JP": "일본", "JPN": "일본", "JAPAN": "일본", "CN": "중국", "CHN": "중국", "CHINA": "중국", "중화인민공화국": "중국",
+    "DE": "독일", "DEU": "독일", "GERMANY": "독일", "GB": "영국", "UK": "영국", "GBR": "영국", "UNITEDKINGDOM": "영국",
+    "FR": "프랑스", "FRA": "프랑스", "FRANCE": "프랑스", "SG": "싱가포르", "SGP": "싱가포르", "SINGAPORE": "싱가포르",
+    "NL": "네덜란드", "NLD": "네덜란드", "NETHERLANDS": "네덜란드", "CA": "캐나다", "CAN": "캐나다", "CANADA": "캐나다",
+    "AU": "호주", "AUS": "호주", "AUSTRALIA": "호주", "오스트레일리아": "호주", "VN": "베트남", "VNM": "베트남", "VIETNAM": "베트남",
+    "US": "미국", "USA": "미국", "UNITEDSTATES": "미국", "미합중국": "미국",
+}
+
+
+def treaty_covers_local_tax(country):
+    """거주지국 → 조약 대상조세에 지방소득세(주민세) 포함 여부(True/False), 표에 없으면 None."""
+    k = str(country or "").replace(" ", "").replace(".", "")
+    return TREATY_COVERS_LOCAL_TAX.get(_TREATY_COUNTRY_ALIAS.get(k.upper(), k))
+
+
 def _match(issue_match, *, income_kind, treaty_rate, related_party):
     """issues.json 쟁점의 match 필드와 실제 사실 관계 비교. AND 조건 — 적힌 키는 모두 만족해야 True."""
     if "income_kind" in issue_match:
@@ -452,24 +475,42 @@ def _match(issue_match, *, income_kind, treaty_rate, related_party):
 
 
 def nonresident_withholding(income_kind, amount, recipient_type, residence_country,
-                            treaty_rate=None, bond_interest=False, related_party=False):
+                            treaty_rate=None, bond_interest=False, related_party=False, treaty_includes_local_tax=None):
     """비거주자·외국법인 국내원천소득 원천징수. 적용세율 = min(국내세율, 조약 제한세율).
     domestic_rate는 소득세법 제156조(비거주자)·법인세법 제98조(외국법인)에 따르며, 수취인 구분(개인/법인)과
     관계없이 소득 종류 기준 동일 세율. 조약_rate 미지정 시 국내세율만 적용.
     채권이자(bond_interest=True, income_kind='이자')는 국가·지방자치단체·내국법인 발행 채권 이자로
     소득세법 제156조①1호가목·법인세법 제98조①1호가목 특례 14% 적용.
-    related_party=True이면 수취인이 국외지배주주일 가능성을 고려하여 과소자본 쟁점(국제조세조정에 관한 법률 제22조)을 함께 표시한다."""
+    related_party=True이면 수취인이 국외지배주주일 가능성을 고려하여 과소자본 쟁점(국제조세조정에 관한 법률 제22조)을 함께 표시한다.
+    이자·배당·사용료에서 조약 대상조세에 지방소득세(주민세)가 포함되면(법인세법 제98조의7①2호·소득세법 제156조의8①2호) 제한세율은
+    소득세(법인세)+지방소득세 합계의 상한 — 합계세율 = min(제한세율, 국내세율 × 110%), 국세분 = 지급액 × 합계세율 × 10/11, 지방소득세 = 국세분의 10%.
+    포함 여부는 treaty_includes_local_tax, 없으면 TREATY_COVERS_LOCAL_TAX(조약 제2조 원문 대조) 표."""
+    side = 0 if recipient_type == "개인" else 1   # 근거: 개인 → 소득세법, 법인 → 법인세법
     if bond_interest and income_kind == "이자":
         domestic = 0.14
-        basis = "소득세법 제156조①1호가목 / 법인세법 제98조①1호가목 (국가·지방자치단체·내국법인 발행 채권 이자)"
+        basis = ("소득세법 제156조①1호가목", "법인세법 제98조①1호가목")[side] + " (국가·지방자치단체·내국법인 발행 채권 이자)"
     else:
         domestic = DOMESTIC_WH_RATES[income_kind]
-        basis = DOMESTIC_WH_BASIS[income_kind]
+        basis = DOMESTIC_WH_BASIS[income_kind].split(" / ")[side]
     applicable = min(domestic, treaty_rate) if treaty_rate is not None else domestic
     note = ""
-    if treaty_rate is not None and treaty_rate > domestic:
-        note = " · 조약세율이 국내세율보다 높아 국내세율 적용"
-    wh_amount = _floor(amount, applicable) // 10 * 10
+    포함 = None
+    if treaty_rate is not None and income_kind in ("이자", "배당", "사용료"):
+        포함 = treaty_includes_local_tax if treaty_includes_local_tax is not None else treaty_covers_local_tax(residence_country)
+    if 포함:
+        cap = _x(domestic) * _x(1.1)
+        combined = min(_x(treaty_rate), cap)
+        applicable = float(combined)
+        wh_amount = _floor(amount, combined, div=_x(1.1)) // 10 * 10
+        note = (f" · 조약 대상조세에 지방소득세(주민세) 포함 — 제한세율 {float(treaty_rate)*100:g}%와 국내세율에 지방소득세 10%를 반영한 "
+                f"{float(cap)*100:g}% 중 낮은 {applicable*100:g}%가 국세+지방소득세 합계 상한(국세분 = 지급액 × {applicable*100:g}% × 10/11) "
+                + ("법인세법 제98조의7①2호" if side else "소득세법 제156조의8①2호"))
+    else:
+        if treaty_rate is not None and treaty_rate > domestic:
+            note = " · 조약세율이 국내세율보다 높아 국내세율 적용"
+        if 포함 is False and treaty_includes_local_tax is None:
+            note += " · 조약 대상조세에 지방소득세 없음(조약 제2조) — 지방소득세 10% 별도"
+        wh_amount = _floor(amount, applicable) // 10 * 10
     local_income_tax = _floor(wh_amount, 0.10) // 10 * 10
 
     # 쟁점 부착 (issues.json match 필드 기반 — SPEC r1f §1)
@@ -491,7 +532,9 @@ def nonresident_withholding(income_kind, amount, recipient_type, residence_count
         "합계": wh_amount + local_income_tax,
         "근거": basis + (f" · 조세조약 제한세율 {treaty_rate*100:.0f}%" if treaty_rate else "") + note,
         "쟁점": issues,
-    }
+    } | ({"조약_대상조세_지방소득세": {True: "포함 — 제한세율이 국세+지방소득세 합계 상한", False: "미포함 — 지방소득세 10% 별도"}.get(
+        포함, f"'{residence_country}' 조약 확인 필요 — 표에 없어 미포함으로 계산. 조약 제2조(대상조세)에 주민세·지방소득세가 있으면 treaty_includes_local_tax=True")}
+        if treaty_rate is not None and income_kind in ("이자", "배당", "사용료") else {})
 
 
 # ── 인정상여 귀속연도 연말정산 재정산(소득세법 제135조④·제131조②, 소령 제49조①3호·제196조) ──

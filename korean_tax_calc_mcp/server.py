@@ -650,6 +650,41 @@ def late_payment_penalty(unpaid_tax: WON, due: Annotated[str, Field(description=
 
 @mcp.tool(annotations=CALC)
 @_guard
+def withholding_late_payment_penalty(unpaid_tax: WON,
+                                     due: Annotated[str, Field(description="법정납부기한(YYYY-MM-DD) — 원천징수세액은 보통 징수일이 속하는 달의 다음 달 10일(반기 납부 승인이면 반기 마지막 달의 다음 달 10일)")],
+                                     until: Annotated[str, Field(description="납부일(고지 전 자진납부) 또는 납부고지일(YYYY-MM-DD)")]) -> dict:
+    """원천징수 등 납부지연가산세(국세기본법 제47조의5①) — 미납세액 3% + 일수분, 납부고지 전 기간은 10% 한도. 언제: 원천징수의무자(납세조합·부가가치세 대리납부자 포함)가 원천징수세액을 법정납부기한까지 내지 않았거나 적게 냈을 때.
+입력: 미납·과소납부 세액(원) → unpaid_tax, 법정납부기한(YYYY-MM-DD) → due, 납부일 또는 납부고지일(YYYY-MM-DD) → until.
+계산: 1호 미납세액 × 3% + 2호 미납세액 × 일수(법정납부기한 다음 날~until) × 1일 이율(시행령 제27조의4: 1만분의 3 → 2019.2.12.부터 10만분의 25 → 2022.2.15.부터 10만분의 22, 기간 안분),
+  1호 + 2호(고지 전 기간) 합계는 미납세액의 10% 한도. 일반 납부지연가산세(제47조의4, 3% 없음·한도 없음)는 late_payment_penalty.
+지원 안 함: 납부고지 후 기간분(전체 50% 한도, 2020.1.1. 이후 성립분), 2026.7.1. 이후 납부·고지(법률 제21212호 개정 — 일수 '전날까지', 지정납부기한 후 월 단위), ③ 적용 제외(주한미군·국가·지방자치단체 등) 판단.
+결과: 가산세·3%분·일수분·10% 한도·일수, 근거(국세기본법 제47조의5①, 시행령 제27조의4). Withholding late-payment penalty (3% + daily, 10% cap before notice)."""
+    try:
+        d0, d1 = _chk.to_date("due", due), _chk.to_date("until", until)
+    except ValueError as e:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [str(e)]}
+    문제 = []
+    if d1 <= d0:
+        문제.append(f"until={until} — 법정납부기한 due={due}보다 뒤 날짜(기한 안 납부면 가산세 없음)")
+    if d1 >= date(2026, 7, 1):
+        문제.append(f"until={until} — 2026.7.1. 시행 개정(법률 제21212호: 일수분 '납부일 전날까지', 지정납부기한 후 월 단위)은 지원하지 않음(2026.6.30.까지 납부·고지분만)")
+    if d0 < date(2016, 1, 1):
+        문제.append(f"due={due} — 2016.1.1. 이후 법정납부기한만 지원")
+    if 문제:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제}
+    days = (d1 - d0).days
+    start = date.fromordinal(d0.toordinal() + 1).isoformat()   # 법정납부기한 다음 날부터
+    기본 = I._floor(unpaid_tax, 0.03)
+    일수분 = I._floor(sum(I._x(unpaid_tax) * I._x(r) * n for n, r in V.late_payment_rate_segments(start, days)))
+    한도 = I._floor(unpaid_tax, 0.10)
+    가산세 = I.withholding_late_penalty(unpaid_tax, days, start)
+    return _ok({"가산세": 가산세, "3%분": 기본, "일수분": 일수분, "한도_10%": 한도, "한도_적용": 기본 + 일수분 > 한도, "일수": days},
+               "국세기본법 제47조의5①(1호 3% + 2호 일수분, 고지 전 10% 한도), 시행령 제27조의4",
+               산식=f"min({unpaid_tax:,} × 3% + {unpaid_tax:,} × {days}일 × 1일 이율, {unpaid_tax:,} × 10%)")
+
+
+@mcp.tool(annotations=CALC)
+@_guard
 def invoice_penalty(supply_amount: WON, kind: Annotated[Literal["가공", "지연발급", "미발급", "미발급_종이", "지연전송", "미전송", "지연수취",
                                                                "매출처별합계표_미제출", "매출처별합계표_예정분확정제출", "신용카드매입공제"],
                                                        Field(description="가산세 유형 — 가공=실물 없는 발급·수취")],
@@ -712,11 +747,15 @@ def nonresident_withholding(income_kind: Annotated[Literal["이자", "배당", "
                             residence_country: Annotated[str, Field(description="거주지국(ISO 2자 코드 또는 국명)")],
                             treaty_rate: Annotated[float | None, Field(description="조세조약 제한세율(소수, 예: 0.15 = 15%). 생략 시 국내세율 적용")] = None,
                             bond_interest: Annotated[bool, Field(description="채권 이자 여부 — 이자 소득에서만 의미, 특례 적용 필요 시 별도 확인")] = False,
-                            related_party: Annotated[bool, Field(description="수취인이 국외지배주주일 가능성 — 이자 소득에서 과소자본 쟁점 표시 시 사용")] = False) -> dict:
+                            related_party: Annotated[bool, Field(description="수취인이 국외지배주주일 가능성 — 이자 소득에서 과소자본 쟁점 표시 시 사용")] = False,
+                            treaty_includes_local_tax: Annotated[bool | None, Field(description="조세조약 대상조세(제2조)에 한국 지방소득세(주민세)가 포함되는지. 생략 시 내장 표(일본·중국·독일·영국·프랑스·싱가포르·네덜란드·캐나다·호주·베트남 포함, 미국 미포함), 표에 없으면 미포함으로 계산하고 확인 표시")] = None) -> dict:
     """비거주자·외국법인 국내원천소득 원천징수(소득세법 제156조 / 법인세법 제98조). 언제: 비거주자·외국법인에 이자·배당·사용료·인적용역·기타 소득을 지급할 때 원천징수세액을 구한다.
-입력: 소득 종류(이자·배당·사용료·인적용역·기타) → income_kind, 지급액(원) → amount, 수취인 구분(개인/법인) → recipient_type, 거주지국(ISO 2자 또는 국명) → residence_country, 조세조약 제한세율(소수) → treaty_rate, 채권 이자 여부 → bond_interest, 국외지배주주 가능성 → related_party.
-결과: 원천징수세액·지방소득세·적용 세율·국내세율, 근거(소득세법 제156조 / 법인세법 제98조). 적용세율 = min(국내세율, 조약 제한세율), 지방소득세 10% 별도. Non-resident/foreign corporation withholding tax on Korean-source income."""
-    r = I.nonresident_withholding(income_kind, amount, recipient_type, residence_country, treaty_rate, bond_interest, related_party)
+입력: 소득 종류(이자·배당·사용료·인적용역·기타) → income_kind, 지급액(원) → amount, 수취인 구분(개인/법인) → recipient_type, 거주지국(ISO 2자 또는 국명) → residence_country, 조세조약 제한세율(소수) → treaty_rate, 채권 이자 여부 → bond_interest, 국외지배주주 가능성 → related_party, 조약 대상조세의 지방소득세 포함 여부 → treaty_includes_local_tax.
+결과: 원천징수세액·지방소득세·적용 세율·국내세율, 근거(개인 소득세법 제156조 / 법인 법인세법 제98조). 적용세율 = min(국내세율, 조약 제한세율), 지방소득세는 원천징수세액의 10% 별도.
+  이자·배당·사용료에서 조약 대상조세에 지방소득세(주민세)가 포함되면(법인세법 제98조의7①2호·소득세법 제156조의8①2호) 제한세율이 국세+지방소득세 합계 상한:
+  적용세율 = min(제한세율, 국내세율 × 110%), 원천징수세액 = 지급액 × 적용세율 × 10/11, 지방소득세 = 그 10% (예: 한일조약 사용료 10% → 9.09% + 0.91%). Non-resident/foreign corporation withholding tax on Korean-source income."""
+    r = I.nonresident_withholding(income_kind, amount, recipient_type, residence_country, treaty_rate, bond_interest, related_party,
+                                  treaty_includes_local_tax)
     return _ok({k: v for k, v in r.items() if k != "쟁점"}, r["근거"], 쟁점=r["쟁점"])
 
 
@@ -784,12 +823,14 @@ def vat_input_tax_deduction(period: Annotated[str, Field(description="과세기�
 @mcp.tool(annotations=CALC)
 @_guard
 def vat_deemed_supply_items(period: Annotated[str, Field(description="과세기간('YYYY-1' 또는 'YYYY-2')")],
-                            items: Annotated[list, Field(description="[{항목, 거래, 매입세액공제(bool), 금액?|시가?|감가상각?, 1인당_연간금액?, 견본_광고선전물?}]")]) -> dict:
+                            items: Annotated[list, Field(description="[{항목, 거래, 매입세액공제(bool), 금액?|시가?|감가상각?, 사용인_구분?('경조사'|'설날·추석'|'창립기념일·생일'), 인원?, 1인당_연간금액?, 견본_광고선전물?}]")]) -> dict:
     """간주공급·판매 과세표준 판정(부가가치세법 제10조, 시행령 제19조의2·제20조·제66조). 언제: 재화의 판매·간주공급에 대한 부가가치세 과세표준을 항목별로 판정할 때.
-    입력: period=과세기간('YYYY-1'|'YYYY-2'), items=[{항목, 거래, 매입세액공제(bool), 금액?|시가?|감가상각?, 1인당_연간금액?, 견본_광고선전물?}].
+    입력: period=과세기간('YYYY-1'|'YYYY-2'), items=[{항목, 거래, 매입세액공제(bool), 금액?|시가?|감가상각?, 사용인_구분?, 인원?, 1인당_연간금액?, 견본_광고선전물?}].
       거래: '판매'|'면세전용'|'비영업용승용차전용'|'타사업장반출'|'개인적공급'|'사업상증여'|'폐업시잔존'.
       감가상각: {구분:'건물'|'구축물'|'기타', 취득가액, 취득일, 공급일} → 간주시가 = 취득가액 × (1 − 체감률 × 경과과세기간수), 체감률 건물·구축물 5%·기타 25%.
-      개인적공급: 1인당 연간 10만원 이하분은 공급 아님(영 제19조의2), 초과액만 과세.
+      개인적공급: 시가(감가상각 간주시가) 전액 과세. 사용인에게 준 경조사·설날·추석·창립기념일·생일 등 재화만(영 제19조의2 3호) 목별로 사용인 1명당 연간 10만원 한도,
+        초과액만 과세 — 사용인_구분('경조사'|'설날·추석'|'창립기념일·생일', '명절'·'생일' 등도 됨), 인원(선물 받은 사용인 수, 시가는 그 합계), 1인당_연간금액(이 선물을 포함한 그 목의 1인당 연간 누계,
+        앞서 준 같은 목 선물 포함)을 넣는다. 목: 2024년 제2기부터 가 경조사·나 설날·추석·다 창립기념일·생일 등, 2020년 제2기~2024년 제1기는 설날·추석·창립기념일·생일이 한 목. 2020년 제1기 이전은 미지원.
       사업상증여: 견본_광고선전물이 True면 0(법 제10조⑤ 단서).
     결과: {결과: {과세표준}, 계산: {항목별: [{항목, 거래, 과세표준, 제외사유?}], 판단: [{항목, 결론, 근거}]}}.
     규칙: '판매'·'타사업장반출'은 금액 그대로 과세(매입세액 공제 여부와 무관). 나머지 간주공급은 매입세액 공제 여부가 False면 0, True면 시가(또는 감가상각 간주시가) 과세."""
@@ -1386,6 +1427,7 @@ def vat_supply_timing(
       기간은 민법 제157조·제160조(초일 불산입, 해당일 전일 만료, 해당일 없으면 말일). 요건 미충족이면 인도(완료)일 일괄.
       선발급 특례(법 제17조) 공급분 연도별 — 2017까지 ①은 '동시에' 발급, ③은 청구·지급시기 별도기재+30일 모두 / 2018 ③ 별도기재+(30일 또는 과세기간 내 지급 확인) /
       2019~2021 ③ 30일 약정 또는 과세기간 내 공급시기 도래+지급 확인 / 2022~ 지급 확인 요건 삭제(부칙 제6조). 장기할부·계속적 공급은 ④(영 제30조) 발급일.
+      세금계산서 짝짓기(발급일 순): 공급시기 당일 발급분, 수령일이 있으면 이미 지난 공급시기분(지연발급)을 먼저 채우고 공급시기는 그대로 — 남는 금액만 뒤 공급시기의 선발급 특례로 판정. 대가 한 부분은 세금계산서 한 번만 짝지음.
     미지원(입력 확인 필요): 상품권·가공·무인판매기·보세구역·위탁판매·간주공급, 선적일 외 수출(중계무역·외국인도 등), 부동산 임대·선불 연회비(영 제29조②), 외국항행용역, 폐업일 의제, 공급시기 후 발급 가산세.
     결과: 기간별_과세표준·조회기간_과세표준, 거래별 공급시기·금액·신고기간·사유·근거, 판단(요건 경계 계산)."""
     from .engine import calc_vat_timing as VT
@@ -6702,7 +6744,7 @@ def gift_tax(
     nontaxable: WON = 0,
     excluded: WON = 0,
     assumed_debt: WON = 0,
-    prior_deduction_used: WON = 0,
+    prior_deduction_used: Annotated[int, Field(ge=0, description="10년 안에 이번에 합산하지 않는 다른 증여자(예: 조부모) 증여에서 받은 증여재산공제(원). 합산하는 같은 증여자분은 prior_deduction_same_donor로")] = 0,
     marriage_birth: Annotated[bool, Field(description="혼인일 전후 2년·자녀 출생일부터 2년 내 직계존속 증여")] = False,
     marriage_birth_used: WON = 0,
     appraisal_fee: WON = 0,
@@ -6712,11 +6754,15 @@ def gift_tax(
     prior_gift_tax_paid: WON = 0,
     other_credits: WON = 0,
     filed: Annotated[bool, Field(description="법정신고기한 내 신고")] = True,
+    prior_deduction_same_donor: Annotated[int | None, Field(ge=0, description="합산하는 같은 증여자 사전증여(prior_gifts_same_donor)에서 받은 증여재산공제(원) — 합산 과세가액에서 공제를 다시 계산하므로 빼지 않음(기록용). 합산하지 않으면 사용분으로 뺌")] = None,
 ) -> dict:
     """거주자 수증자 증여세 과세가액·증여재산공제·과세표준·산출세액·납부할세액. 언제: 증여세 신고·계산 시.
-입력: 증여일 → gift_date, 증여재산가액 → gift_value, 증여자 관계 → relation, 10년 내 동일 증여자 증여 → prior_gifts_same_donor,
-부담부증여 인수채무 → assumed_debt, 사전증여 공제 사용량 → prior_deduction_used, 혼인·출산 공제 → marriage_birth.
-결과: 과세가액·증여재산공제·과세표준·산출세액·할증세액·신고세액공제·납부할세액, 근거. 증여세 과세가액·공제·세액 계산."""
+입력: 증여일 → gift_date, 증여재산가액 → gift_value, 증여자 관계 → relation, 10년 내 동일 증여자 증여(합산, 직계존속은 그 배우자 포함) → prior_gifts_same_donor,
+부담부증여 인수채무 → assumed_debt, 혼인·출산 공제 → marriage_birth, 합산분 기납부 증여세 → prior_gift_tax_paid.
+사전 공제 입력(상증법 제47조②·제53조) — 같은 증여자 사전증여를 합산하면 증여재산공제는 합산 과세가액에서 한도까지 한 번 다시 계산한다:
+  합산하는 같은 증여자분에서 받은 공제 → prior_deduction_same_donor(빼지 않음), 합산하지 않는 다른 증여자(같은 공제 구분, 예: 조부모)분에서 받은 공제 → prior_deduction_used(한도에서 뺌).
+  합산하면서 prior_deduction_used만 주면 어느 쪽인지 몰라 '입력 확인 필요'. 나눠 준 증여가 한 번에 준 같은 합계보다 산출세액이 커지지 않는다.
+결과: 과세가액·증여재산공제·과세표준·산출세액·할증세액·신고세액공제·납부할세액, 근거. 납부세액공제(제58조) 한도는 계산하지 않고 입력값 사용."""
     rel_in = relation
     relation = _GIFT_RELATION_ALIAS.get(relation.replace(" ", ""), relation)
     if relation not in ("배우자", "직계존속", "직계비속", "기타친족", "기타"):
@@ -6731,7 +6777,7 @@ def gift_tax(
         marriage_birth_used=marriage_birth_used, appraisal_fee=appraisal_fee,
         share_appraisal_fee=share_appraisal_fee, share_appraisal_count=share_appraisal_count,
         generation_skip=generation_skip, prior_gift_tax_paid=prior_gift_tax_paid,
-        other_credits=other_credits, filed=filed,
+        other_credits=other_credits, filed=filed, prior_deduction_same_donor=prior_deduction_same_donor,
     )
     if isinstance(r, dict) and relation != rel_in:
         r["입력 해석"] = f"relation '{rel_in}' → '{relation}'(상증법 제53조 증여재산공제 구분)"
@@ -10343,6 +10389,10 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "재해손실": ["disaster_loss_credit"], "부당행위": ["unfair_transaction", "deemed_interest"], "특수관계": ["related_judge", "kinship_check"],
     "친족": ["kinship_check"], "일감몰아주기": ["tunnelling_gift_nts", "tunnelling_gift", "dominant_shareholder"],
     "가산세": ["underreporting_penalty", "late_payment_penalty", "invoice_penalty"], "납부지연": ["late_payment_penalty"],
+    "원천징수 납부지연": ["withholding_late_payment_penalty"], "원천징수 납부지연가산세": ["withholding_late_payment_penalty"],
+    "원천징수 가산세": ["withholding_late_payment_penalty"], "원천징수납부 불성실": ["withholding_late_payment_penalty"],
+    "원천세 가산세": ["withholding_late_payment_penalty"], "원천세 납부지연": ["withholding_late_payment_penalty"],
+    "제47조의5": ["withholding_late_payment_penalty"],
     "세금계산서": ["invoice_penalty", "vat_input_tax_deduction"], "공통매입세액": ["common_input_tax", "vat_common_input_allocation", "input_tax_recalculation"],
     "면세전용": ["vat_exempt_use_deemed_supply"], "간주공급": ["vat_deemed_supply_items", "vat_exempt_use_deemed_supply"],
     "의제매입": ["vat_deemed_input_credit"], "농산물": ["vat_deemed_input_credit"], "간이과세": ["simplified_vat_return", "vat_simplified_taxpayer"],
