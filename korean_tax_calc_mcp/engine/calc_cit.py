@@ -653,9 +653,9 @@ def donation(base_income, carried_loss, special, general, special_carry=0, gener
         if carry_first:
             c = min(carry, lim); return c, min(cur, lim - c)
         u = min(cur, lim); return min(carry, lim - u), u
-    sp_limit = max(0, (base_income - loss) * 0.5)
+    sp_limit = won(max(0, (base_income - loss) * 0.5))          # 한도는 원 단위로 먼저 확정 — 한도와 한도초과가 지출액과 맞도록
     sp_carry_used, sp_used = use(special_carry, special, sp_limit)
-    gen_limit = max(0, (base_income - loss - sp_carry_used - sp_used) * (0.2 if social_enterprise and social_ok else 0.1))
+    gen_limit = won(max(0, (base_income - loss - sp_carry_used - sp_used) * (0.2 if social_enterprise and social_ok else 0.1)))
     gen_carry_used, gen_used = use(general_carry, general, gen_limit)
     return {"특례한도": won(sp_limit), "일반한도": won(gen_limit),
             "이월분 손금산입": won(sp_carry_used + gen_carry_used),

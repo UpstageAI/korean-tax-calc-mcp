@@ -368,3 +368,13 @@ def test_assessment_limitation_withholding_labels():
     assert "제4조" in r["근거"]                           # 만료일이 토요일 → 다음 월요일
     plain = S.assessment_limitation(due_date="2024-03-31")
     assert "법정신고기한(적용)" in plain["결과"] and "제5조제1항" in plain["근거"]
+
+
+def test_donation_limit_and_excess_add_up_to_spending():
+    """한도는 원 단위로 확정한 뒤 한도초과를 계산 — 한도 + 한도초과 = 지출(이월 포함)."""
+    from korean_tax_calc_mcp import server as s
+    r = s.donation_limit(year=2025, base_income=392157935, carried_loss=30000000, special=20000000,
+                         general=39000000, general_carry=6000000, sme=True)
+    res = r.get("결과", r)
+    assert res["일반한도"] == 34215794 and res["한도초과(기타사외유출)"] == 10784206
+    assert res["일반한도"] + res["한도초과(기타사외유출)"] == 39000000 + 6000000
