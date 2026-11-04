@@ -3,7 +3,7 @@
     "title": "건물 기준시가 계산 규칙표 초안",
     "primary_source": "국세청 고시 제2025-39호 「국세청 건물 기준시가 계산방법 고시」(2025.12.31 고시, 2026.1.1 시행)",
     "primary_source_urls": [
-      "https://www.law.go.kr/DRF/lawService.do?OC=seungmi0723&target=admrul&ID=2100000271502&type=HTML",
+      "https://www.law.go.kr/admRulLsInfoP.do?admRulSeq=2100000271502",
       "http://law.go.kr/flDownload.do?flSeq=165038629"
     ],
     "legal_basis": ["소득세법 제99조①1호나목", "상속세 및 증여세법 제61조①2호"],
