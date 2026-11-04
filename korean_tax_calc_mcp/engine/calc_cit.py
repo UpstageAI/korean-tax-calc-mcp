@@ -80,6 +80,11 @@ def corp_tax(base, year, months=12, small_rental=False):
     return won(_tier(base * 12 / months, tiers) * months / 12)
 
 
+def ent_term(year):
+    """법인세법 제25조 명칭 — 2024.1.1. 이후 개시 사업연도부터 '기업업무추진비'(법률 제19193호, 2022.12.31.), 그 전 '접대비'."""
+    return "기업업무추진비" if year >= 2024 else "접대비"
+
+
 def entertain(year, sme, general_revenue, related_revenue, expensed, asset_part=0, no_card_over=0, culture=0, months=12,
               market=0, rental_corp=False, gov_invested=False, days_2020=None):
     """접대비 한도초과(법인세법 제25조). expensed=비용 계상 접대비(증빙 미수취분 포함), asset_part=자산(건설가계정 등) 계상분,
@@ -104,7 +109,7 @@ def entertain(year, sme, general_revenue, related_revenue, expensed, asset_part=
     limit = general_limit + culture_limit + market_limit
     total = expensed + asset_part - no_card_over
     over = max(0, total - limit)
-    return {"직부인(기타사외유출)": no_card_over, "세무상 접대비": won(total), "일반한도": won(general_limit), "문화한도": won(culture_limit), "전통시장한도": won(market_limit),
+    return {"직부인(기타사외유출)": no_card_over, f"세무상 {ent_term(year)}": won(total), "일반한도": won(general_limit), "문화한도": won(culture_limit), "전통시장한도": won(market_limit),
             "한도": won(limit), "한도초과(기타사외유출)": won(over),
             "자산감액": won(max(0, over - (expensed - no_card_over)))}
 
@@ -765,8 +770,14 @@ def receipt_check(items):
     return {"부인합계": total, "건별": out}
 
 
+def thin_cap_basis(year=None):
+    """과소자본 조문 — 국조법은 2021.1.1. 전부개정으로 제14조 → 제22조, 시행령은 2021.2.17. 전부개정으로
+    제24조~제26조 → 제46조~제50조. 2020 사업연도까지는 개정 전 조문. → (법 조, 시행령 조 범위)"""
+    return ("제14조", "제24조~제26조") if year is not None and year <= 2020 else ("제22조", "제46조~제50조")
+
+
 def thin_capitalization(equity, borrowings, total_interest, ratio=2, year=None):
-    """과소자본 손금불산입(국제조세조정에 관한 법률 제22조). 국외지배주주 출자금액 대비 차입금 배수가
+    """과소자본 손금불산입(국제조세조정에 관한 법률 제22조, 2020년까지 제14조). 국외지배주주 출자금액 대비 차입금 배수가
     기준비율(기본 2배, 금융업 등은 배수 선택)을 초과하는 경우 초과 차입금에 상당하는 지급이자를 손금불산입.
     borrowings = 직접차입금 + 특수관계인 차입금 + 지급보증으로 인한 차입금 합계.
     → 한도 차입금, 초과 차입금, 손금불산입 이자, 처분(배당/기타사외유출)."""
@@ -783,7 +794,7 @@ def thin_capitalization(equity, borrowings, total_interest, ratio=2, year=None):
         "지급이자": total_interest,
         "손금불산입 이자": disallowed,
         "처분": "배당" if disallowed else "해당없음",
-        "근거": "국제조세조정에 관한 법률 제22조(과소자본 손금불산입), 동법 시행령",
+        "근거": f"국제조세조정에 관한 법률 {thin_cap_basis(year)[0]}(과소자본 손금불산입), 동법 시행령 {thin_cap_basis(year)[1]}",
     }
 
 
