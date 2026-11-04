@@ -31,6 +31,7 @@ from .engine.exact import floor_won as _floor_won, trunc_won as _trunc_won, exac
 from .engine import inputs as _chk
 from . import vocab
 from .forms_workbook import render_form_sheet, _load_form_templates, tool_value, nonbusiness_form_sources, nonbusiness_form_data
+from .forms_workbook import export_form_inputs, merged_form_sources, vat_period_text
 
 # ── 세무조사 판정 도구 (audit 패키지) ──
 from .audit.agents import related as _R
@@ -8997,6 +8998,8 @@ def export_workbook(
                            "data": data})
             continue
         else:
+            # 부가·증여·원천징수 도구: 서식 칸 수식이 가리킬 '입력·가정' 이름을 내보내기에서만 덧붙임(도구 출력은 그대로)
+            data = export_form_inputs(tool, args, data)
             결과들.append({"label": label, "tool": tool,
                            "error": "",
                            "basis": data.get("근거", ""),
@@ -9338,8 +9341,20 @@ def export_workbook(
                 if req and not ((calls[i] or {}).get("args") or {}).get(req):
                     _skipped_tpl.add(tkey)
                     continue
+                # unless_tool: 그 도구 call이 있으면 그 도구의 서식이 같은 칸을 채우므로 만들지 않음(부가22매입 ↔ common_input_tax)
+                if tpl.get("unless_tool") and any(not c2["error"] and c2["result"] and c2.get("tool") == tpl["unless_tool"]
+                                                  for c2 in 결과들):
+                    continue
                 템플릿_목록.append({"key": tkey, "sheet": tpl["sheet"], "form": tpl["form"], "tool": tool,
-                                   "call_idx": i, "per_return": bool(tpl.get("per_return"))})
+                                   "call_idx": i, "per_return": bool(tpl.get("per_return")),
+                                   "one_sheet": bool(tpl.get("one_sheet"))})
+
+        # one_sheet 틀(부동산임대공급가액명세서·가산세액 명세 등): 같은 도구 call을 한 장의 행으로 모은다 — 마지막 call 시트 하나만
+        _합친_call: dict[str, list[int]] = {}
+        for _k in {t["key"] for t in 템플릿_목록 if t["one_sheet"]}:
+            _idx = [t["call_idx"] for t in 템플릿_목록 if t["key"] == _k]
+            _합친_call[_k] = _idx
+            템플릿_목록 = [t for t in 템플릿_목록 if t["key"] != _k or t["call_idx"] == _idx[-1]]
 
         # 같은 틀을 여러 call이 채울 때 시트 이름 규칙:
         #  - 신고서 한 부에 한 장인 서식(틀 per_return — 별지3·별지15·별지34 등): 마지막 call이 이름 그대로인 본 시트,
@@ -9367,7 +9382,11 @@ def export_workbook(
                              "별지34": 4.5,
                              "별지20정률": 5, "별지20정액": 5.5, "별지16의2": 6, "별지26갑": 6.1, "별지26을": 6.2, "별지50을": 7,
                              "부가22": 8, "부가근거63": 9, "부가근거64": 10, "종소배당": 11, "종소근로": 12,
-                             "별지84": 13, "별지84세액": 14, "별지84부표1": 15}
+                             "별지84": 13, "별지84세액": 14, "별지84부표1": 15,
+                             "부가21간주공급": 7.6, "부가21카드": 7.7, "부가21가산세": 7.8, "부가22매입": 8,
+                             "부가15": 8.5, "부가15한도없음": 8.5, "부가19": 8.6, "부가25": 8.7,
+                             "증여10": 16, "원천23의1": 17, "원천23의1법인": 17, "원천23의1국내": 17.1,
+                             "원천23의5": 18, "원천23의5법인": 18}
 
         def _tpl_sort_key(t):
             return (_tpl_render_order.get(t["key"], 99), not t.get("main", True), t["call_idx"])
@@ -9851,6 +9870,9 @@ def export_workbook(
         import datetime as _dt
 
         def _period_end(i: int) -> "_dt.date | None":
+            _gd = str(((calls[i] or {}).get("args") or {}).get("gift_date") or "")
+            if _re.fullmatch(r"\d{4}-\d{2}-\d{2}", _gd):   # 증여세: 증여일(신고기한은 _deadline에서)
+                return _dt.date.fromisoformat(_gd)
             m = _re.search(r"~\s*(\d{4})[.\-/]\s*(\d{1,2})[.\-/]\s*(\d{1,2})", period or "")
             if m:
                 try:
@@ -9882,6 +9904,9 @@ def export_workbook(
                 return nxt - _dt.timedelta(days=1)
             if form.startswith("소득세법"):
                 return _dt.date(end.year + 1, 5, 31)
+            if form.startswith("상속세 및 증여세법"):   # 증여일이 속하는 달의 말일부터 3개월(상증법 제68조①)
+                y, mth = end.year + (end.month + 4 > 12), (end.month + 3) % 12 + 1
+                return _dt.date(y, mth, 1) - _dt.timedelta(days=1)
             return None
 
         # 본 별지3에 채울 다른 도구 call(과세표준·산출세액): 마지막 corporate_tax call
@@ -9916,6 +9941,8 @@ def export_workbook(
                     과세기간 = f"{_y}년 제1기 ( 1월 1일 ~ 6월 30일 )"
                 elif _p == "2기":
                     과세기간 = f"{_y}년 제2기 ( 7월 1일 ~ 12월 31일 )"
+            elif tinfo.get("form", "").startswith("부가가치세법"):
+                과세기간 = vat_period_text(_args)
             _귀속연도 = _args.get("year") if isinstance(_args.get("year"), int) else None
 
             # 표 source: 본 시트 기준 기본값 + 이 call의 source(별지15·별지16의2·종소배당·부가 등은 그 call 값)
@@ -9930,6 +9957,15 @@ def export_workbook(
                 서식_표 = form_res.get("서식_표", {}) if isinstance(form_res, dict) else {}
                 if 서식_표:
                     call_sources = {**call_sources, **서식_표}
+            # one_sheet 틀: 같은 도구 call 전부를 표 행으로, 도구 값 합계는 확인 칸용 `계산`에(내보내기 전용)
+            if tinfo.get("one_sheet") and tkey in _합친_call:
+                _ents = [(j, (calls[j] or {}).get("args") or {}, 결과들[j].get("data") or {}) for j in _합친_call[tkey]]
+                _src, _tot, _memo = merged_form_sources(tinfo["tool"], _ents)
+                call_sources = {**call_sources, **_src}
+                if _tot:
+                    form_res = {**form_res, "계산": {**(form_res.get("계산") or {}), **_tot}}
+                for _n in _memo:
+                    _시트별_메모.setdefault(tinfo["sheet"], []).append("확인 필요 — " + _n)
             # 교차 참조는 같은 call에서 만든 시트를 가리킨다(같은 도구 call이 둘 이상이면 같은 call 시트끼리)
             cross_this = dict(slot_map_cross)
             for (ref_key, ref_id) in slot_map_cross:
@@ -10243,9 +10279,13 @@ def export_workbook(
             if source_data.get("22_재계산"):
                 for _i in _재계산_calls:
                     _들어간_곳.setdefault(_i, []).append(sheet_name_map["부가22"] + " 5.절")
+        for _k, _idx in _합친_call.items():   # one_sheet 틀: 앞선 call도 그 한 장의 행으로 들어감
+            for _i in _idx[:-1]:
+                if _k in sheet_name_map:
+                    _들어간_곳.setdefault(_i, []).append(sheet_name_map[_k])
         _서식_곳 = {_ci: [t["sheet"] for t in 템플릿_목록 if t["call_idx"] == _ci and t["tool"] != "*"] + _들어간_곳.get(_ci, [])
                   for _ci in range(len(결과들))}
-        # 서식 틀이 없는 도구(부가 간주공급·공급시기·가산세, 증여, 원천징수 등) — 서식 시트를 만들지 않은 이유를 적는다
+        # 서식 틀이 없는 도구(부가 공급시기, 일반 납부지연가산세, 제척기간 등) — 서식 시트를 만들지 않은 이유를 적는다
         if not 템플릿_목록:
             ws_list.cell(행, 1, "서식 시트")
             ws_list.cell(행, 2, "이번 call로 만든 서식 시트 없음 — 아래 '서식 틀 없음' 줄과 '계산 N' 시트 참고")

@@ -787,3 +787,209 @@ def nonbusiness_form_sources(data: dict | None) -> dict[str, list[dict]]:
     return {"26_차입금": loans, "26_업무무관자산": assets,
             "26_가지급금": _ledger(table.get("가지급금"), False),
             "26_가수금": _ledger(table.get("가수금"), True)}
+
+
+# ── 부가·증여·원천징수 서식 칸용 입력(내보내기 전용) ──
+# 이 도구들은 결과에 `계산식_입력`이 없다. 서식 칸 수식이 '입력·가정' 시트의 이름(호출N_이름)을 가리키도록
+# 내보내기에서만 call 입력·도구 값으로 `계산식_입력`을 만든다(도구 출력·계산은 그대로).
+_FORM_INPUT_NOTE = "서식 칸용(내보내기)"
+_NONRESIDENT_CODE = {"사용료": "61", "인적용역": "42", "기타": "62"}   # 별지 제23호서식(5) 작성방법 4. 소득구분코드
+_GIFT_BRACKETS = [(100_000_000, 0.10, 0), (500_000_000, 0.20, 10_000_000), (1_000_000_000, 0.30, 60_000_000),
+                  (3_000_000_000, 0.40, 160_000_000), (float("inf"), 0.50, 460_000_000)]   # 상증법 제26조(제56조 준용)
+
+
+def _inp(name: str, value: Any, desc: str = "") -> dict:
+    return {"이름": name, "값": value, "설명": f"{desc} — {_FORM_INPUT_NOTE}" if desc else _FORM_INPUT_NOTE}
+
+
+def _rate_fraction(r: float) -> tuple[int, int]:
+    """1일 이율 → (분자, 분모) 정수 — 엑셀에서 소수 곱셈 오차 없이 쓰려고. 0.00022 → (11, 50000)."""
+    from fractions import Fraction
+    f = Fraction(str(r)).limit_denominator(10_000_000)
+    return f.numerator, f.denominator
+
+
+def vat_period_text(args: dict | None) -> str:
+    """부가 서식 머리 '{year}년 제N기 ( … )' — args의 period('YYYY-1'·'YYYY-2'·'YYYY-2기'), year+period('1기'), supplied_on으로."""
+    a = args or {}
+    y = h = None
+    p = str(a.get("period") or "")
+    m = _re.match(r"^(\d{4})-([12])(?:기)?$", p)
+    if m:
+        y, h = int(m.group(1)), int(m.group(2))
+    elif p in ("1기", "2기") and isinstance(a.get("year"), int):
+        y, h = a["year"], int(p[0])
+    else:
+        m = _re.match(r"^(\d{4})-(\d{2})-\d{2}$", str(a.get("supplied_on") or ""))
+        if m:
+            y, h = int(m.group(1)), 1 if int(m.group(2)) <= 6 else 2
+    if y is None:
+        return ""
+    return f"{y}년 제{h}기 ( {'1월 1일 ~ 6월 30일' if h == 1 else '7월 1일 ~ 12월 31일'} )"
+
+
+def export_form_inputs(tool: str, args: dict | None, data: dict | None) -> dict | None:
+    """내보내기 전용: 도구 결과 data에 서식 칸용 `계산식_입력`(원천징수 납부지연가산세는 `계산식`도)을 덧붙인 사본.
+    해당 없는 도구·오류·이미 `계산식_입력`이 있으면 그대로."""
+    if not isinstance(data, dict) or "error" in data or data.get("계산식_입력"):
+        return data
+    a = args or {}
+    res = data.get("결과") or {}
+    calc = data.get("계산") or {}
+    판단 = data.get("판단") if isinstance(data.get("판단"), dict) else {}
+    out: list[dict] = []
+    steps: list[dict] = []
+    if tool == "vat_deemed_rent":
+        import calendar
+        p = a.get("period")
+        y = int(str(p)[:4]) if p else 2026
+        out = [_inp("보증금", a.get("deposit", 0), "⑭ 보증금"),
+               _inp("이자율", res.get("적용_이자율"), "정기예금 이자율(부가규칙 제47조)"),
+               _inp("일수", a.get("days", 0), "해당 과세기간 임대 일수"),
+               _inp("연일수", 366 if calendar.isleap(y) else 365, "365(윤년 366)")]
+    elif tool == "vat_deemed_input_credit":
+        out = [_inp("매입가액", res.get("공제대상_매입가액", 0), "⑦ 공제대상 면세농산물등 매입가액"),
+               _inp("공제율_분자", res.get("공제율_분자")), _inp("공제율_분모", res.get("공제율_분모")),
+               _inp("과세표준", a.get("base") or a.get("taxable_supply") or 0, "⑭ 과세기간 과세표준"),
+               _inp("한도율", res.get("한도율") or 0, "⑰ 한도율(예정신고·과세표준 없음이면 0 — 한도 계산 안 함)")]
+    elif tool == "vat_card_sales_credit":
+        from . import vocab
+        from .engine import calc_vat as V
+        on = str(a.get("supplied_on") or "")
+        if not _re.fullmatch(r"\d{4}-\d{2}-\d{2}", on):
+            return data
+        y = int(on[:4])
+        prior = a.get("prior_year_supply")
+        ok = a.get("individual", True) and not (prior is not None and prior > vocab.rule("직전연도_공급가액_한도", y)["한도"])
+        cap = 5_000_000 if (y <= 2017 or (y == 2018 and V._date(on) < "2018-07-01")) else 10_000_000
+        out = [_inp("발행금액", a.get("amount", 0), "(20) 금액 — 신용카드매출전표등 발행금액"),
+               _inp("공제율_천분율", 13, "13/1,000"),
+               _inp("연간한도", cap, "연간 한도"),
+               _inp("기공제액", a.get("used_this_year", 0), "같은 해 이미 공제받은 금액"),
+               _inp("공제대상", 1 if ok else 0, "개인사업자이고 직전 연도 공급가액 한도 이하면 1")]
+    elif tool == "vat_deemed_supply_items":
+        rows = calc.get("항목별") or []
+        out = [_inp(f"항목{i}_과세표준", r.get("과세표준", 0), f"{r.get('항목', '')} ({r.get('거래', '')})")
+               for i, r in enumerate(rows, 1)]
+        판매 = sum(r.get("과세표준", 0) or 0 for r in rows if r.get("거래") in ("판매", "타사업장반출"))
+        out.append(_inp("판매등_과세표준", 판매, "'판매'·'타사업장반출' 항목 합계(세금계산서 발급 여부를 도구가 모름)"))
+        out.append(_inp("간주공급_과세표준", (res.get("과세표준") or 0) - 판매, "(4) 기타(정규영수증 외 매출분)"))
+    elif tool == "invoice_penalty":
+        out = [_inp("공급가액", a.get("supply_amount", 0)), _inp("가산세율", res.get("세율")),
+               _inp("가산세유형", a.get("kind", ""))]
+    elif tool == "vat_bad_debt_credit":
+        out = [_inp("대손금액", a.get("bad_debt_incl_vat", 0), "⑦ 대손금액(부가세 포함)")]
+    elif tool == "gift_tax":
+        from . import vocab
+        gd = str(a.get("gift_date") or "")
+        if not _re.fullmatch(r"\d{4}-\d{2}-\d{2}", gd):
+            return data
+        y, ymd = int(gd[:4]), int(gd.replace("-", ""))
+        rel = ((판단.get("관계") or {}).get("결론")) or a.get("relation", "")
+        voc = vocab.rule("증여재산공제", ymd)
+        limit = voc.get("직계존속_미성년", 0) if (rel == "직계존속" and a.get("recipient_minor")) else voc.get(rel, 0)
+        합산 = bool(판단.get("합산여부"))
+        used = (a.get("prior_deduction_used") or 0) + (0 if 합산 else (a.get("prior_deduction_same_donor") or 0))
+        base = res.get("과세표준", 0) or 0
+        rate, prog = next((r, p) for top, r, p in _GIFT_BRACKETS if base <= top)
+        mb = bool(a.get("marriage_birth")) and rel == "직계존속"
+        out = [_inp("증여일자", gd, "⑩"),
+               _inp("증여재산가액", a.get("gift_value", 0), "⑰"), _inp("비과세재산가액", a.get("nontaxable", 0), "⑱"),
+               _inp("과세가액불산입", a.get("excluded", 0), "⑲~㉑ 합계(구분 입력 없음)"),
+               _inp("채무액", a.get("assumed_debt", 0), "㉒ 수증자가 인수한 채무"),
+               _inp("증여재산가산액", (a.get("prior_gifts_same_donor") or 0) if 합산 else 0, "㉓ 10년 내 동일인 증여 합산(제47조②)"),
+               _inp("관계구분", {"배우자": 1, "직계존속": 2, "직계비속": 3, "기타친족": 4}.get(rel, 0),
+                    "1 배우자 · 2 직계존속 · 3 직계비속 · 4 그 밖의 친족 · 0 친족 아님"),
+               _inp("증여재산공제한도", limit, "제53조 관계별 10년 한도"),
+               _inp("기공제액", used, "10년 내 이미 받은 공제(합산하는 같은 증여자분 제외)"),
+               _inp("혼인출산한도", vocab.rule("혼인출산_증여재산공제", ymd)["한도"] if mb else 0, "제53조의2 한도(해당 없으면 0)"),
+               _inp("혼인출산기공제액", (a.get("marriage_birth_used") or 0) if mb else 0),
+               _inp("감정평가수수료", res.get("감정평가수수료", 0), "㉝ 공제 한도 적용 후"),
+               _inp("과세최저한", vocab.rule("상증_과세최저한", y)["금액"], "과세표준이 이 금액 미만이면 산출세액 0(제55조②)"),
+               _inp("세율", rate, "㉟ 과세표준 구간 세율(제26조)"), _inp("누진공제", prog, "구간 누진공제액"),
+               _inp("할증율", calc.get("할증율", 0), "㊲ 세대생략 할증(제57조)"),
+               _inp("기납부세액", a.get("prior_gift_tax_paid", 0), "㊷ 합산분 기납부세액(입력값)"),
+               _inp("그밖의공제감면", a.get("other_credits", 0), "㊺"),
+               _inp("신고세액공제율", calc.get("신고세액공제율", 0) if a.get("filed", True) else 0, "㊹ 기한 내 신고면 공제율")]
+    elif tool == "nonresident_withholding":
+        kind = a.get("income_kind", "")
+        out = [_inp("소득종류", kind), _inp("소득구분코드", _NONRESIDENT_CODE.get(kind, ""), "별지 제23호서식(5) ⑨"),
+               _inp("거주지국", a.get("residence_country", "")),
+               _inp("지급액", a.get("amount", 0), "지급총액"),
+               _inp("적용세율", res.get("적용세율"), "min(국내세율, 조약 제한세율)"),
+               _inp("조약지방세포함", 1 if str(res.get("조약_대상조세_지방소득세", "")).startswith("포함") else 0,
+                    "조약 대상조세에 지방소득세가 들면 1 — 국세분 세율 = 적용세율 × 10/11"),
+               _inp("법인여부", 1 if a.get("recipient_type") == "법인" else 0, "1이면 법인세 칸, 0이면 소득세 칸"),
+               _inp("거주구분", "[ ] 거주자  [√] 비거주자"),
+               _inp("제한세율근거", data.get("근거", "") if a.get("treaty_rate") is not None else "", "조세조약 제한세율 근거(도구 근거 문구)")]
+    elif tool == "withholding_tax":
+        out = [_inp("소득종류", a.get("kind", "")), _inp("지급액", a.get("amount", 0), "지급액(소득금액)"),
+               _inp("적용세율", res.get("세율"), "소득세법 제129조"), _inp("조약지방세포함", 0), _inp("법인여부", 0),
+               _inp("거주구분", "[√] 거주자  [ ] 비거주자"), _inp("거주지국", "")]
+    elif tool == "withholding_late_payment_penalty":
+        import datetime as _dt
+        from .engine import calc_vat as V
+        try:
+            d0 = _dt.date.fromisoformat(str(a.get("due")))
+        except ValueError:
+            return data
+        segs = V.late_payment_rate_segments((d0 + _dt.timedelta(days=1)).isoformat(), int(res.get("일수") or 0))
+        out = [_inp("미납세액", a.get("unpaid_tax", 0), "미납·과소납부 세액")]
+        terms = []
+        for i, (n, r) in enumerate(segs, 1):
+            num, den = _rate_fraction(r)
+            out += [_inp(f"일수{i}", n, f"기간 {i} 일수"), _inp(f"이율{i}_분자", num), _inp(f"이율{i}_분모", den, f"1일 이율 {num}/{den}")]
+            terms.append(f"미납세액*일수{i}*이율{i}_분자/이율{i}_분모")
+        daily = "+".join(terms) or "0"
+        steps = [
+            {"이름": "기본가산세", "식": "ROUNDDOWN(미납세액*3/100,0)", "값": res.get("3%분"), "설명": "1호: 미납세액 × 3%"},
+            {"이름": "일수분", "식": f"ROUNDDOWN({daily},0)", "값": res.get("일수분"),
+             "설명": "2호: 미납세액 × 일수 × 1일 이율(국세기본법 시행령 제27조의4, 이율 변경일로 기간 안분)"},
+            {"이름": "한도", "식": "ROUNDDOWN(미납세액/10,0)", "값": res.get("한도_10%"), "설명": "납부고지 전 기간 한도 — 미납세액 × 10%"},
+            {"이름": "가산세", "식": f"ROUNDDOWN(MIN(미납세액*3/100+{daily},미납세액/10),0)", "값": res.get("가산세"),
+             "설명": "min(1호 + 2호, 10% 한도), 원 미만 절사(국세기본법 제47조의5①)"},
+        ]
+    if not out:
+        return data
+    new = {**data, "계산식_입력": out}
+    if steps:
+        new["계산식"] = steps
+    return new
+
+
+# 같은 서식 한 장에 여러 call을 행으로 모으는 틀(틀 `one_sheet`) — 표 source와 합계(도구 값 대조용)
+# 신고서(별지 제21호서식) 제4쪽 (29) 가산세액 명세 줄 → (64)부터 0-기준 순번. 작성방법 6쪽 1.나~사·(82)
+_INVOICE_LINE = {"지연발급": 1, "지연수취": 2, "미발급": 3, "가공": 3, "지연전송": 4, "미전송": 5,
+                 "매출처별합계표_미제출": 6, "매출처별합계표_예정분확정제출": 7, "신용카드매입공제": 18}
+_INVOICE_ROWS = 19   # (64)~(82)
+
+
+def merged_form_sources(tool: str, entries: list[tuple[int, dict, dict]]) -> tuple[dict[str, list[dict]], dict[str, Any], list[str]]:
+    """entries = [(call_idx, args, data)] (calls 순서) → (표 source, 합계 {계산 키: 값}, 서식에 넣지 않은 call 메모).
+    표 칸은 각 call의 '입력·가정' 이름(호출N_…)을 가리키는 수식."""
+    src: dict[str, list[dict]] = {}
+    tot: dict[str, Any] = {}
+    memo: list[str] = []
+    if tool == "vat_deemed_rent":
+        # 열: J ⑭ 보증금, L ⑯ 합계(⑰+⑱), M ⑰ 보증금 이자(계), N ⑱ 월 임대료(계)
+        src["25_임대"] = [{"보증금": f"=호출{i + 1}_보증금", "합계": "=M{r}+N{r}", "월임대료계": 0,
+                          "이자": f"=ROUNDDOWN(ROUND(호출{i + 1}_보증금*호출{i + 1}_이자율*호출{i + 1}_일수/호출{i + 1}_연일수,4),0)"}
+                         for i, _, _ in entries]
+        tot["간주임대료_합계"] = sum(((d.get("결과") or {}).get("간주임대료") or 0) for _, _, d in entries)
+    elif tool == "invoice_penalty":
+        amt: dict[int, list[str]] = {}
+        tax: dict[int, list[str]] = {}
+        tot["가산세_합계"] = 0
+        for i, a, d in entries:
+            k = _INVOICE_LINE.get(a.get("kind", ""))
+            if k is None:
+                memo.append(f"호출 {i + 1}: 가산세 유형 '{a.get('kind', '')}' — 신고서 가산세액 명세의 어느 줄인지 작성방법만으로 "
+                            f"정할 수 없어 넣지 않음(계산 시트 참고)")
+                continue
+            n = f"호출{i + 1}_"
+            amt.setdefault(k, []).append(f"{n}공급가액")
+            tax.setdefault(k, []).append(f"ROUNDDOWN(ROUND({n}공급가액*{n}가산세율,4),0)")
+            tot["가산세_합계"] += (d.get("결과") or {}).get("가산세") or 0
+        src["21_가산세"] = [{"금액": ("=" + "+".join(amt[k])) if k in amt else None,
+                             "세액": ("=" + "+".join(tax[k])) if k in tax else None} for k in range(_INVOICE_ROWS)]
+    return src, tot, memo

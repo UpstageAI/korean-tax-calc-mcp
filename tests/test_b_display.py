@@ -74,17 +74,18 @@ WH_CALLS = [
 
 
 # ── 서식 틀 없는 도구: '목록'에 안내, '계산 N'에 항목별 표 ──
+# (부가 간주공급·간주임대료·카드공제·세금계산서 가산세는 이제 서식 시트가 생김 — test_forms_vat_gift_wh.py)
 def test_forms_layout_notes_tools_without_form_template(tmp_path):
-    r, wb = build(tmp_path, VAT_CALLS)
+    r, wb = build(tmp_path, WH_CALLS)
     lst = wb["목록"]
     s = "\n".join(strings(lst))
-    for tool in ("vat_deemed_supply_items", "vat_deemed_rent", "vat_card_sales_credit", "invoice_penalty"):
+    for tool in ("late_payment_penalty", "assessment_limitation"):
         assert tool in s, f"목록에 {tool} 안내 없음"
     assert "서식 틀 없음" in s
     # call ↔ 시트 대응표의 서식 시트 칸도 비워 두지 않음
     table = rows(lst)
     hdr = next(i for i, rw in enumerate(table) if rw[:4] == ["call", "label", "계산 시트", "서식 시트"])
-    for rw in table[hdr + 1: hdr + 1 + len(VAT_CALLS)]:
+    for rw in table[hdr + 1: hdr + 1 + len(WH_CALLS)]:
         assert rw[3], rw
 
 
