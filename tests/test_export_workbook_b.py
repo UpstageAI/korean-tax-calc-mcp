@@ -37,7 +37,7 @@ def test_each_calc_sheet_uses_its_own_calc_dict(tmp_path):
 
 def test_direction_column_and_sumif_by_direction(tmp_path):
     adj = c("income_adjustment_total", ADJ)["결과"]["세무조정"]
-    assert {e["구분"]: e["조정"] for e in adj} == {"법인세": "익금산입", "환급금 이자": "손금산입"}
+    assert {e["구분"]: e["조정"] for e in adj} == {"법인세": "손금불산입", "환급금 이자": "익금불산입"}
     _, wb = build(tmp_path, [{"label": "차가감", "tool": "income_adjustment_total", "args": ADJ}])
     rs = rows(wb["계산 1"])
     hdr = next(r for r in rs if "구분" in r and "조정" in r)
