@@ -922,11 +922,11 @@ def depreciation_adjustment(year, method, acquisition_cost, booked_depreciation,
 
     if 면제사유:
         당기즉시상각의제 = 0
-        판단_목록.append({"항목": "즉시상각의제(영 제31조③)", "결론": "즉시상각의제 아님(비용 처리 지출 그대로 손금)",
+        판단_목록.append({"항목": "즉시상각의제 예외(영 제31조③)", "결론": "즉시상각의제 아님(비용 처리 지출 그대로 손금)",
                           "근거": "법인세법 시행령 제31조③", "이유": " · ".join(면제사유)})
     elif expensed_capex > 0:
-        판단_목록.append({"항목": "즉시상각의제(영 제31조③)", "결론": f"즉시상각의제 해당 → 당기 즉시상각의제액 {당기즉시상각의제:,}원",
-                          "근거": "법인세법 시행령 제31조②", "이유": "비용 처리한 자본적 지출은 당기 감가상각비에 합산"})
+        판단_목록.append({"항목": "즉시상각의제(법 제23조④2호, 영 제31조②)", "결론": f"즉시상각의제 해당 → 당기 즉시상각의제액 {당기즉시상각의제:,}원",
+                          "근거": "법인세법 제23조④2호, 시행령 제31조②(③ 예외 해당 없음)", "이유": "비용 처리한 자본적 지출은 당기 감가상각비에 합산"})
 
     # ── 세무상 취득가액 / 기초 미상각잔액 ──────────────────────────
     세무상취득가액 = acquisition_cost + prior_deemed_capex + 당기즉시상각의제
@@ -990,11 +990,11 @@ def depreciation_adjustment(year, method, acquisition_cost, booked_depreciation,
     # ── 세무조정 구성 ────────────────────────────────────────────
     settlements = []
     if 상각부인액 > 0:
-        settlements.append({"구분": "상각부인액", "금액": 상각부인액, "소득처분": "유보"})
+        settlements.append({"구분": "상각부인액", "조정": "손금불산입", "금액": 상각부인액, "소득처분": "유보"})
     if 전기부인추인 > 0:
-        settlements.append({"구분": "전기 상각부인액 추인", "금액": 전기부인추인, "소득처분": "△유보"})
+        settlements.append({"구분": "전기 상각부인액 추인", "조정": "손금산입", "금액": 전기부인추인, "소득처분": "△유보"})
     if 감가상각의제액 > 0:
-        settlements.append({"구분": "감가상각의제", "금액": 감가상각의제액, "소득처분": "△유보"})
+        settlements.append({"구분": "감가상각의제", "조정": "손금산입", "금액": 감가상각의제액, "소득처분": "△유보"})
 
     처분별 = {}
     for s in settlements:
@@ -1413,6 +1413,7 @@ def foreign_tax_credit(year, base, base_includes_grossup, method, countries, mon
     if method == "세액공제" and 총Grossup익금산입액 > 0 and not base_includes_grossup:
         세무조정목록.append({
             "구분": "간접외국납부세액 익금산입(Gross-up)",
+            "조정": "익금산입",
             "금액": 총Grossup익금산입액,
             "소득처분": "기타사외유출",
         })
@@ -2320,6 +2321,8 @@ def asset_grant_reserve(
         adj = {"과목": "사용계획분 미사용 익금산입", "조정": "익금산입", "금액": expired_unused,
                             "소득처분": "유보"}
         세무조정.append(adj)
+    for t in 세무조정:   # 다른 세무조정 도구와 같은 키(구분)도 함께 — 과목은 호환용으로 둠
+        t.setdefault("구분", t["과목"])
 
     # 소득금액 순영향
     익금합계 = sum(t["금액"] for t in 세무조정 if t["조정"] == "익금산입")

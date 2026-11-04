@@ -319,13 +319,16 @@ _도구별_필수필드 = {
         "환매조건부매매차익": {"필요": ["amount"], "허용": ["withheld"]},
         "출자공동사업자배당": {"필요": ["amount"]},
         "법원보증금이자": {"필요": ["amount"]},
+        "비실명이자": {"필요": ["amount"], "허용": ["withheld", "real_name_act"]},
+        "비실명배당": {"필요": ["amount"], "허용": ["withheld", "real_name_act"]},
         "직장공제회초과반환금": {"필요": ["amount"], "허용": ["contribution_years"]},
     },
     "bad_debt_adjustment": {
-        "소멸시효완성": {"필요": ["amount", "arose_in"], "허용": ["date", "account", "detail", "booked", "memo_excluded"]},
-        "화해·확정판결": {"필요": ["amount", "arose_in"], "허용": ["date", "account", "detail", "booked", "memo_excluded"]},
+        "소멸시효완성": {"필요": ["amount", "arose_in"], "허용": ["instrument", "date", "account", "detail", "booked", "memo_excluded"]},
+        "화해·확정판결": {"필요": ["amount", "arose_in"], "허용": ["instrument", "date", "account", "detail", "booked", "memo_excluded"]},
         "부도6개월": {"필요": ["amount", "arose_in", "instrument", "months_since_default"], "허용": ["mortgage", "date", "account", "detail", "booked", "memo_excluded"]},
-        "회수불능": {"필요": ["amount", "arose_in"], "허용": ["date", "account", "detail", "booked", "memo_excluded"]},
+        "회수불능": {"필요": ["amount", "arose_in"], "허용": ["instrument", "date", "account", "detail", "booked", "memo_excluded"]},
+        "회수기일2년경과": {"필요": ["amount", "arose_in", "months_since_due", "related_party"], "허용": ["instrument", "date", "account", "detail", "booked", "memo_excluded"]},
     },
     "entertainment_adjustment": {
         "없음": {"필요": ["amount"]},
@@ -2368,190 +2371,201 @@ def _loss_rate_floor(rate: float, digits: int = 3) -> float:
     return math.floor(exact(rate) * 10 ** digits) / 10 ** digits
 
 
+_BAD_DEBT_WRITEOFFS_DESC = (
+    "대손금 목록 [{kind, amount, arose_in:'전기'|'당기'(대손 사유가 생긴 사업연도), instrument?:'외상매출금'|'받을어음'|'미수금'|'기타', "
+    "months_since_default?(부도6개월: 부도발생일부터 사업연도 종료일까지 개월), mortgage?, "
+    "months_since_due?(회수기일2년경과: 회수기일부터 사업연도 종료일까지 개월), related_party?(회수기일2년경과: 특수관계인 거래분이면 true), "
+    "date?, account?, detail?, booked?:'상계'|'손비'|'전기부인', memo_excluded?:bool}]. "
+    "kind 허용값: 소멸시효완성(영 제19조의2①1~4호, 신고조정) · 화해·확정판결(①10호) · 부도6개월(①9호, instrument·months_since_default 필수) · "
+    "회수불능(①8호, 별칭 파산·강제집행·형의집행·사업폐지·사망·실종 — 입력한 이름 그대로 표시) · "
+    "회수기일2년경과(①9의2호, 중소기업의 외상매출금·미수금, 특수관계인 거래분 제외, months_since_due·related_party 필수). "
+    "booked: '상계'(대손충당금과 상계)·'손비'(당기 비용)·'전기부인'(전기 이전에 장부에서 대손 처리했으나 세무상 부인되어 유보로 남은 채권, 당기 장부 처리 없음 → "
+    "당기에 요건을 갖추면 손금산입·△유보, 세법상 전기말 채권에 더함). booked를 모두 생략하면 장부 상계액(offset)을 순서대로 나눠 붙이고, "
+    "일부만 생략하면 생략한 항목은 손비로 봄. 법 제19조의2②(채무보증 구상채권·특수관계인 업무무관 가지급금) 해당 여부는 판단하지 않음 — 그런 채권은 넣지 말 것")
+
+
 @mcp.tool(annotations=CALC)
 @_guard
 def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중소기업 여부")],
                         book: Annotated[dict, Field(description='장부상 대손충당금 {opening: 기초, offset: 당기상계, provision: 당기설정, closing: 기말, reversal?: 회사 환입액}(원)')],
                         receivables_prev_end_book: WON,
                         receivables_end_book: WON,
-                        writeoffs: Annotated[list, Field(description="대손금 목록 [{kind, amount, arose_in:'전기'|'당기', instrument?:'외상매출금'|'받을어음'|'기타', months_since_default?, mortgage?, date?, account?, detail?, booked?:'상계'|'손비', memo_excluded?:bool}]")],
+                        writeoffs: Annotated[list, Field(description=_BAD_DEBT_WRITEOFFS_DESC)],
                         prior_excess: Annotated[int, Field(description="전기 대손충당금 한도초과액(원)")] = 0,
                         loss_rate_digits: Annotated[int, Field(description="대손실적률 소수 자릿수(기본 3 — 넷째 자리 이하 절사)")] = 3) -> dict:
     """대손금·대손충당금 세무조정(법인세법 제19조의2·제34조, 시행령 제19조의2·제61조).
-    언제: 법인세 세무조정에서 대손금 인정 여부와 대손충당금 한도·국회초과를 함께 계산할 때.
+    언제: 법인세 세무조정에서 대손금 인정 여부와 대손충당금 한도·한도초과를 함께 계산할 때.
     입력: 사업연도(2016~2026) → year, 중소기업 여부 → sme, 전기 대손충당금 한도초과액(원) → prior_excess,
     장부상 대손충당금 {opening, offset, provision, closing, reversal?}(원) → book,
     장부상 설정대상 채권 전기말·당기말(원) → receivables_prev_end_book·receivables_end_book,
-    대손금 목록 [{kind, amount, arose_in, instrument?, months_since_default?, mortgage?, date?, account?, detail?, booked?, memo_excluded?}] → writeoffs,
+    대손금 목록 [{kind, amount, arose_in, instrument?, months_since_default?, mortgage?, months_since_due?, related_party?, date?, account?, detail?, booked?, memo_excluded?}] → writeoffs,
+      kind: 소멸시효완성·화해·확정판결·부도6개월·회수불능(파산·강제집행·형의집행·사업폐지·사망·실종)·회수기일2년경과,
+      booked: '상계'|'손비'|'전기부인'(전기 장부 대손·세무 부인 유보 채권 — 당기 요건 충족 시 손금산입 △유보),
     대손실적률 소수 자릿수(기본 3) → loss_rate_digits.
-    결과: 판단(항목별·근거)·계산(세법상 당기 대손금·전기말·당기말 채권·실적률)·결과(한도·한도초과)·세무조정·서식_표·계산식_입력. 대손금·대손충당금 세무조정."""
+    결과: 판단(항목별·근거)·계산(세법상 당기 대손금·전기말·당기말 채권·실적률)·결과(한도·한도초과)·세무조정({구분, 조정, 금액, 소득처분})·서식_표·계산식_입력.
+    법 제19조의2②(채무보증 구상채권·특수관계인 업무무관 가지급금)는 판단하지 않음. 대손금·대손충당금 세무조정."""
 
-    _v = _validate_items(writeoffs, "kind", _specs_from_vocab("bad_debt_adjustment", "kind"))
+    원래_종류 = [(w or {}).get("kind") if isinstance(w, dict) else None for w in (writeoffs or [])]   # 별칭(파산 등)을 표시용으로 보관
+    _extra = []
+    for i, w in enumerate(writeoffs or []):
+        if isinstance(w, dict) and isinstance(w.get("amount"), (int, float)) and w["amount"] < 0:
+            _extra.append(f"항목 {i+1}: amount {w['amount']:,}원 — 음수는 받지 않음(대손금은 0 이상)")
+        if isinstance(w, dict) and w.get("booked") not in (None, "상계", "손비", "전기부인"):
+            _extra.append(f"항목 {i+1}: booked='{w.get('booked')}' — '상계'|'손비'|'전기부인' 중 하나")
+        if isinstance(w, dict) and w.get("arose_in") not in (None, "전기", "당기"):
+            _extra.append(f"항목 {i+1}: arose_in='{w.get('arose_in')}' — '전기'|'당기' 중 하나")
+    _v = _validate_items(writeoffs, "kind", _specs_from_vocab("bad_debt_adjustment", "kind"), extra=_extra)
     if _v: return _v
-    # ── 대손금 인정 판단 ──
-    judgments = []  # 항목별 판단
-    tax_bad_debt_recognized = 0   # 세법상 당기 대손금(인정분)
-    prior_year_reduced = 0        # 전기 사유 신고조정 대손 → 전기말 채권 차감
-    denied_bad_debt = 0           # 당기 부인 대손 합계
-    current_disallowed_entries = []  # 당기 손금불산입(유보) 항목
-    memo_total = 0                   # 비망가액 합계: 인정 채권별 min(금액, 1,000원) (CodeSolar 리뷰 반영)
 
-    for w in writeoffs:
+    # ── 항목별 대손금 인정 판단(한 번만 판단하고 판단표·서식 행이 같은 값을 씀) ──
+    judgments = []
+    tax_bad_debt_recognized = 0   # 세법상 당기 대손금(인정분)
+    prior_year_reduced = 0        # 전기 사유(신고조정 대손)인데 당기 장부 처리 → 세법상 전기말 채권에서 뺌
+    prior_yubo_added = 0          # 전기부인 채권(전기말 유보) → 세법상 전기말 채권에 더함
+    end_yubo_added = 0            # 당기말에도 남는 부인 채권(당기 부인 + 전기부인 중 미인정분)
+    memo_total = 0                # 당기 장부 처리분 비망가액 합계(손금불산입·유보)
+    settlements_denied = []       # 당기 손금불산입(유보) — 부인 대손 금액
+    settlements_prior = []        # 전기 사유분 손금불산입(유보)
+    settlements_revived = []      # 전기부인 채권 당기 손금산입(△유보)
+    per_item = []
+
+    def _memo_split(amount, memo_excluded):
+        return (amount, 0) if memo_excluded else (max(0, amount - 1000), min(amount, 1000))
+
+    for idx, w in enumerate(writeoffs):
         kind = w["kind"]; amount = int(w["amount"]); arose_in = w["arose_in"]
+        표시 = 원래_종류[idx] or kind
         instrument = w.get("instrument"); months = w.get("months_since_default"); mortgage = w.get("mortgage", False)
-        booked = w.get("booked")  # '상계'|'손비'|None
-        memo_excluded = w.get("memo_excluded", False)  # bool
+        booked = w.get("booked")
+        memo_excluded = w.get("memo_excluded", False)
+        recognized, memo, 결론, 근거, 이유, 구분 = 0, 0, "", "", "", ""
 
         if kind == "화해·확정판결":
-            # 영 제19조의2①10호(재판상 화해 등 확정판결과 같은 효력)는 ③1호 열거 밖 → 결산조정: 손비로 계상한 사업연도 손금 (Claude 10-13 정정)
-            tax_bad_debt_recognized += amount
-            judgments.append({"항목": f"{kind} {amount:,}원", "결론": "인정(대손금, 결산조정)",
-                              "금액": amount, "근거": "법인세법 시행령 제19조의2①10호·③2호",
-                              "이유": "확정판결과 같은 효력으로 회수불능 확정 — 손비로 계상한 사업연도에 손금"})
-            continue
-        if kind == "소멸시효완성":
-            # 신고조정 대손: 사유 발생 사업연도 손금. arose_in='전기'인데 당기 장부 처리 → 당기 손금불산입(유보), 전기말 채권 차감
-            if arose_in == "전기":
-                # 전기 손금이었어야 할 것을 당기에 장부 처리 → 당기 손금불산입(유보), 전기 신고조정 추심
+            # 영 제19조의2①10호는 ③1호 열거 밖 → 결산조정: 손비로 계상한 사업연도 손금
+            recognized = amount
+            결론, 근거 = "인정(대손금, 결산조정)", "법인세법 시행령 제19조의2①10호·③2호"
+            이유 = "확정판결과 같은 효력으로 회수불능 확정 — 손비로 계상한 사업연도에 손금"
+        elif kind == "소멸시효완성" and arose_in == "전기":
+            # 신고조정 대손(③1호): 시효가 완성된 사업연도의 손금 — 당기 손금이 아님
+            if booked == "전기부인":
+                결론 = "당기 조정 없음 — 전기 사업연도 손금(경정청구 대상)"
+                이유 = "전기에 시효가 완성되어 전기 손금이었어야 함 — 전기 부인(유보)분은 전기 사업연도 경정청구로 바로잡고 당기에는 조정하지 않음"
+            else:
                 prior_year_reduced += amount
-                judgments.append({"항목": f"{kind} {amount:,}원(전기 사유, 당기 장부 처리)",
-                                  "결론": "손금불산입(유보)·전기 신고조정 추심",
-                                  "금액": amount, "근거": "법인세법 제19조의2·시행령 제19조의2(소멸시효완성 등 신고조정 대손)",
-                                  "이유": f"{arose_in} 사유 발생, 전기 손금 귀속분이나 당기 장부 처리 → 당기 손금불산입(유보)"})
-                current_disallowed_entries.append({"구분": "전기 사유분", "금액": amount, "소득처분": "유보"})
-            else:
-                # 당기 사유 → 세법상 인정
-                tax_bad_debt_recognized += amount
-                judgments.append({"항목": f"{kind} {amount:,}원(당기 사유)", "결론": "인정(대손금)",
-                                  "금액": amount, "근거": "법인세법 제19조의2·시행령 제19조의2",
-                                  "이유": "사유 발생 사업연도 손금 귀속, 당기 대손금 인정"})
-
+                결론 = "손금불산입(유보) — 전기 사업연도 손금(경정청구 대상)"
+                이유 = "전기에 시효가 완성되어 전기 손금 귀속분 — 당기 장부 대손은 손금불산입(유보)하고 전기 사업연도는 경정청구, 세법상 전기말 채권에서 뺌"
+                구분 = "전기 사유분"
+            근거 = "법인세법 제19조의2①·시행령 제19조의2①1호~4호·③1호(소멸시효완성 신고조정 대손)"
+        elif kind == "소멸시효완성":
+            recognized = amount
+            결론, 근거 = "인정(대손금, 신고조정)", "법인세법 제19조의2·시행령 제19조의2①1호~4호·③1호"
+            이유 = "시효가 완성된 사업연도 손금 — 당기 대손금 인정"
         elif kind == "회수불능":
-            # 영 제19조의2①8호(파산·강제집행·사업폐지·사망·실종 등) — 결산조정, 손비 계상 사업연도 손금
-            tax_bad_debt_recognized += amount
-            judgments.append({"항목": f"{kind} {amount:,}원", "결론": "인정(대손금, 결산조정)",
-                              "금액": amount, "근거": "법인세법 시행령 제19조의2①8호·③2호",
-                              "이유": "채무자 파산·강제집행·사업폐지·사망·실종 등으로 회수할 수 없는 채권 — 손비로 계상한 사업연도에 손금"})
-        elif kind == "부도6개월" and months is not None and int(months) < 6:
-            # 부도발생일부터 6개월이 지나지 않음 → 요건 미충족, 부인(유보) (CodeSolar 리뷰 반영)
-            denied_bad_debt += amount
-            judgments.append({"항목": f"부도6개월 {instrument or '기타'} {amount:,}원(부도 후 {months}개월)",
-                              "결론": "부인(손금불산입·유보) — 6개월 미경과",
-                              "금액": amount, "근거": "법인세법 시행령 제19조의2①9호",
-                              "이유": "부도발생일부터 6개월 이상 지나야 대손금 — 요건 미충족"})
-            current_disallowed_entries.append({"구분": "부인 대손(6개월 미경과)", "금액": amount, "소득처분": "유보"})
-        elif kind == "부도6개월":
-            if mortgage:
-                # 저당권 설정 시 불인정
-                denied_bad_debt += amount
-                judgments.append({"항목": f"부도6개월 {instrument or '기타'} {amount:,}원(저당권 설정)",
-                                  "결론": "불인정(저당권으로 인한 부인, 손금불산입·유보)",
-                                  "금액": amount, "근거": "법인세법 제19조의2·시행령 제19조의2(저당권 설정 부도6개월분 불인정)",
-                                  "이유": "저당권 설정 사유로 부도6개월 대손금 불인정"})
-                current_disallowed_entries.append({"구분": "부인 대손(저당권)", "금액": amount, "소득처분": "유보"})
-            elif instrument == "받을어음":
-                # 받을어음: 중소기업·일반 모두 인정 (비망 1,000원 공제)
-                if memo_excluded:
-                    recognized = amount; memo = 0
-                else:
-                    recognized = max(0, amount - 1000); memo = min(amount, 1000)
-                tax_bad_debt_recognized += recognized
-                memo_total += memo
-                judgments.append({"항목": f"부도6개월 받을어음 {amount:,}원",
-                                  "결론": f"인정(대손금, 비망 1,000원 공제 → {recognized:,}원)" if not memo_excluded else f"인정(대손금, 비망가액 제외 전액 시인 → {recognized:,}원)",
-                                  "금액": recognized, "근거": "법인세법 제19조의2·시행령 제19조의2(부도발생 후 6개월 경과 받을어음)",
-                                  "이유": "받을어음 부도6개월분 인정, 비망 1,000원 공제" if not memo_excluded else "받을어음 부도6개월분 인정, 비망가액 제외"})
-            elif instrument == "외상매출금":
-                if sme:
-                    # 중소기업: 부도 이전 발생 외상매출금 인정 (비망 1,000원 공제)
-                    if memo_excluded:
-                        recognized = amount; memo = 0
-                    else:
-                        recognized = max(0, amount - 1000); memo = min(amount, 1000)
-                    tax_bad_debt_recognized += recognized
-                    memo_total += memo
-                    judgments.append({"항목": f"부도6개월 외상매출금 {amount:,}원(중소기업)",
-                                      "결론": f"인정(대손금, 비망 1,000원 공제 → {recognized:,}원)" if not memo_excluded else f"인정(대손금, 비망가액 제외 전액 시인 → {recognized:,}원)",
-                                      "금액": recognized, "근거": "법인세법 제19조의2·시행령 제19조의2(중소기업 외상매출금 부도6개월분)",
-                                      "이유": "중소기업 외상매출금 부도6개월분 인정, 비망 1,000원 공제" if not memo_excluded else "중소기업 외상매출금 부도6개월분 인정, 비망가액 제외"})
-                else:
-                    # 일반법인: 외상매출금 부도6개월분 불인정
-                    denied_bad_debt += amount
-                    judgments.append({"항목": f"부인 대손(외상매출금) {amount:,}원(일반법인)",
-                                      "결론": "부인(손금불산입·유보)",
-                                      "금액": amount, "근거": "법인세법 제19조의2·시행령 제19조의2(중소기업 외 외상매출금 부도6개월분 불인정)",
-                                      "이유": "중소기업 아닌 일반법인, 외상매출금 부도6개월분 손금 불인정 — 부인"})
-                    current_disallowed_entries.append({"구분": "부인 대손(외상매출금)", "금액": amount, "소득처분": "유보"})
+            recognized = amount
+            결론, 근거 = "인정(대손금, 결산조정)", "법인세법 시행령 제19조의2①8호·③2호"
+            이유 = "채무자 파산·강제집행·형의 집행·사업폐지·사망·실종 등으로 회수할 수 없는 채권 — 손비로 계상한 사업연도에 손금"
+        elif kind == "회수기일2년경과":
+            due = w.get("months_since_due"); rp = bool(w.get("related_party", False))
+            근거 = "법인세법 시행령 제19조의2①9의2호·③2호"
+            사유 = []
+            if year < 2020: 사유.append("9의2호는 2020.1.1. 이후 개시 사업연도분부터(영 2020.2.11. 개정 부칙 제2조)")
+            if not sme: 사유.append("중소기업 아님")
+            if instrument not in (None, "외상매출금", "미수금"): 사유.append(f"채권 종류 '{instrument}' — 외상매출금·미수금만")
+            if rp: 사유.append("특수관계인과의 거래로 발생한 외상매출금등(9의2호 단서)")
+            if due is None or int(due) < 24: 사유.append(f"회수기일부터 {due}개월 — 2년(24개월) 미경과")
+            if 사유:
+                결론 = "부인(손금불산입·유보) — 9의2호 요건 미충족"
+                이유 = " · ".join(사유)
+                구분 = "부인 대손(회수기일 2년 미경과 등)"
             else:
-                # instrument 미지정 기타
-                if sme:
-                    if memo_excluded:
-                        recognized = amount; memo = 0
-                    else:
-                        recognized = max(0, amount - 1000); memo = min(amount, 1000)
+                recognized = amount
+                결론 = "인정(대손금, 결산조정)"
+                이유 = f"중소기업 외상매출금등, 회수기일부터 {int(due)}개월 경과, 특수관계인 거래 아님 — 손비로 계상한 사업연도에 손금(비망가액 없음)"
+        elif kind == "부도6개월":
+            근거 = "법인세법 시행령 제19조의2①9호·②·③2호"
+            if months is not None and int(months) < 6:
+                결론, 이유, 구분 = "부인(손금불산입·유보) — 6개월 미경과", "부도발생일부터 6개월 이상 지나야 대손금 — 요건 미충족", "부인 대손(6개월 미경과)"
+            elif mortgage:
+                결론, 이유, 구분 = "불인정(저당권으로 인한 부인, 손금불산입·유보)", "채무자 재산에 저당권 설정 — 9호 단서로 제외", "부인 대손(저당권)"
+            elif instrument == "받을어음" or sme:
+                recognized, memo = _memo_split(amount, memo_excluded)
+                대상 = "받을어음" if instrument == "받을어음" else f"{instrument or '기타'}(중소기업)"
+                결론 = f"인정(대손금, 비망 1,000원 공제 → {recognized:,}원)" if not memo_excluded else f"인정(대손금, 비망가액 제외 전액 시인 → {recognized:,}원)"
+                이유 = f"{대상} 부도6개월분 인정" + (", 비망 1,000원 공제(영 제19조의2② 후단)" if not memo_excluded else ", 비망가액 제외")
+            else:
+                결론, 이유 = "부인(손금불산입·유보)", f"중소기업 아닌 법인의 {instrument or '기타'} — 9호는 어음·수표와 중소기업 외상매출금만"
+                구분 = f"부인 대손({instrument or '기타'})"
+        else:   # _validate_items가 걸러서 오지 않음
+            결론, 근거, 이유 = "검토 필요", "종류 미정", f"kind={kind} — 세무 판단 기준 확인 필요"
+
+        denied = 0 if (kind == "소멸시효완성" and arose_in == "전기") else amount - recognized - memo
+        항목 = f"{표시} {amount:,}원" + (f"({arose_in} 사유)" if kind == "소멸시효완성" else "")
+        if booked == "전기부인":
+            # 전기 장부 대손·세무 부인(유보) 채권: 장부에는 이미 없으므로 세법상 전기말 채권에 더하고,
+            # 당기 인정분은 손금산입(△유보), 미인정분(비망가액 포함)은 유보로 남아 당기말 채권에 더함
+            항목 += "(전기 장부 대손·부인 유보)"
+            if not (kind == "소멸시효완성" and arose_in == "전기"):
+                prior_yubo_added += amount
+                end_yubo_added += amount - recognized
+                if recognized:
                     tax_bad_debt_recognized += recognized
-                    memo_total += memo
-                    judgments.append({"항목": f"부도6개월 기타 {amount:,}원(중소기업)", "결론": f"인정(비망 1,000원 공제 → {recognized:,}원)" if not memo_excluded else f"인정(비망가액 제외 전액 시인 → {recognized:,}원)",
-                                      "금액": recognized, "근거": "법인세법 제19조의2·시행령 제19조의2"})
+                    settlements_revived.append({"구분": f"전기 부인 대손금 손금산입({표시})", "조정": "손금산입", "금액": recognized, "소득처분": "△유보"})
+                    결론 = f"{결론} → 손금산입(△유보) {recognized:,}원"
+                    이유 += " — 전기 부인(유보)된 채권이 당기에 대손 요건을 갖춤: 당기 손금산입(△유보)"
                 else:
-                    denied_bad_debt += amount
-                    judgments.append({"항목": f"부도6개월 기타 {amount:,}원(일반법인)", "결론": "불인정(손금불산입·유보)",
-                                      "금액": amount, "근거": "법인세법 제19조의2·시행령 제19조의2"})
-                    current_disallowed_entries.append({"구분": "부인 대손(기타)", "금액": amount, "소득처분": "유보"})
-
+                    결론 = f"{결론} → 당기 조정 없음(전기 유보 유지)"
         else:
-            judgments.append({"항목": f"{kind} {amount:,}원", "결론": "검토 필요", "금액": amount,
-                              "근거": "종류 미정", "이유": f"kind={kind} — 세무 판단 기준 확인 필요"})
+            tax_bad_debt_recognized += recognized
+            memo_total += memo
+            end_yubo_added += denied + memo
+            if 구분 == "전기 사유분":
+                settlements_prior.append({"구분": "전기 사유분", "조정": "손금불산입", "금액": amount, "소득처분": "유보"})
+            elif denied:
+                settlements_denied.append(denied)
+        judgments.append({"항목": 항목, "결론": 결론, "금액": recognized if recognized else amount, "근거": 근거, "이유": 이유})
+        per_item.append({"recognized": recognized, "memo": memo})
 
-    # 세법상 전기말 채권 = 장부 전기말 − 전기 사유 신고조정 대손
-    tax_receivables_prev = receivables_prev_end_book - prior_year_reduced
-    # 세법상 당기말 채권 = 장부 당기말 + 부인 채권 + 비망가액
-    # (부인 채권 = 인정되지 않은 대손금, 비망가액은 인식된 부도6개월 채권의 1,000원)
-    # 비망가액 합계 계산 필요 — 인정된 부도6개월 채권별 1,000원
-    reservation_total = memo_total   # 인정된 부도6개월 채권별 비망가액 min(금액, 1,000원)
-    # 부인 채권: 인정되지 않은 writeoff
-    tax_receivables_end = receivables_end_book + denied_bad_debt + reservation_total
+    # 세법상 전기말 채권 = 장부 전기말 + 전기부인 유보 − 전기 사유 신고조정 대손(장부 전기말을 넘지 않음)
+    if prior_year_reduced > receivables_prev_end_book:
+        judgments.append({"항목": "세법상 전기말 채권", "결론": f"전기 사유 대손 {prior_year_reduced:,}원 > 장부 전기말 채권 {receivables_prev_end_book:,}원 — 0원으로 봄",
+                          "금액": prior_year_reduced, "근거": "법인세법 시행령 제61조③",
+                          "이유": "전기 사유분은 장부 전기말 채권에 들어 있어야 함 — receivables_prev_end_book 입력 확인"})
+    tax_receivables_prev = max(0, receivables_prev_end_book - prior_year_reduced) + prior_yubo_added
+    # 세법상 당기말 채권 = 장부 당기말 + 부인 채권(비망가액·전기부인 미인정분 포함)
+    reservation_total = memo_total
+    tax_receivables_end = receivables_end_book + end_yubo_added
 
     # 대손실적률 = 세법상 당기 대손금 ÷ 세법상 전기말 채권 (절사)
     if tax_receivables_prev > 0:
-        raw_rate = tax_bad_debt_recognized / tax_receivables_prev
-        loss_rate = _loss_rate_floor(raw_rate, loss_rate_digits)
+        loss_rate = _loss_rate_floor(tax_bad_debt_recognized / tax_receivables_prev, loss_rate_digits)
     else:
         loss_rate = 0.0
 
-    # 한도 = 세법상 당기말 채권 × max(1%, 실적률)
+    # 한도 = 세법상 당기말 채권 × max(1%, 실적률), 한도초과 = 장부 기말잔액 − 한도
     limit = _floor_won(tax_receivables_end, max(0.01, loss_rate))
-    # 한도초과 = 장부 기말잔액 − 한도
     book_closing = int(book["closing"])
     over = max(0, book_closing - limit)
 
-    # 세무조정 조립
+    # 세무조정 조립 — {구분, 조정, 금액, 소득처분}
     settlements = []
-    # 1. 부인 대손(손금불산입·유보)
-    if denied_bad_debt > 0:
-        settlements.append({"구분": "부인 대손", "금액": denied_bad_debt, "소득처분": "유보"})
-    # 2. 전기 사유분(손금불산입·유보)
-    for e in current_disallowed_entries:
-        if e["구분"] == "전기 사유분":
-            settlements.append({"구분": "전기 사유분", "금액": e["금액"], "소득처분": "유보"})
-    # 3. 한도초과(손금불산입·유보)
+    denied_total = sum(settlements_denied)
+    if denied_total > 0:
+        settlements.append({"구분": "부인 대손", "조정": "손금불산입", "금액": denied_total, "소득처분": "유보"})
+    settlements.extend(settlements_prior)
     if over > 0:
-        settlements.append({"구분": "한도초과", "금액": over, "소득처분": "유보"})
-    # 4. 전기 한도초과(손금산입·△유보)
+        settlements.append({"구분": "한도초과", "조정": "손금불산입", "금액": over, "소득처분": "유보"})
     if prior_excess > 0:
-        settlements.append({"구분": "전기 한도초과", "금액": prior_excess, "소득처분": "△유보"})
-    # 5. 비망가액 세무조정(대손금 부인(비망가액), 유보) — memo_excluded가 아닌 부도6개월 항목에만
+        settlements.append({"구분": "전기 한도초과", "조정": "손금산입", "금액": prior_excess, "소득처분": "△유보"})
     if memo_total > 0:
-        settlements.append({"구분": "대손금 부인(비망가액)", "금액": memo_total, "소득처분": "유보"})
+        settlements.append({"구분": "대손금 부인(비망가액)", "조정": "손금불산입", "금액": memo_total, "소득처분": "유보"})
+    settlements.extend(settlements_revived)
 
-    # 회사 환입액(기본 0)
     company_reversal = int(book.get("reversal", 0))
-    # 과소환입·과다환입 = 장부기초 − 기중환입(0) − 전기 한도초과 − ㉗계 − (장부 기말 − 당기 설정) − 회사 환입
     book_opening = int(book["opening"])
     book_offset = int(book["offset"])
     book_provision = int(book["provision"])
-    current_offset_sum = book_offset  # ㉗계(상계 합계) — 서식 표로 채워진 후 검증
-    under_over_reversal = book_opening - 0 - prior_excess - current_offset_sum - (book_closing - book_provision) - company_reversal
+    # 과소환입·과다환입 = 장부기초 − 기중환입(0) − 전기 한도초과 − ㉗계 − (장부 기말 − 당기 설정) − 회사 환입
+    under_over_reversal = book_opening - 0 - prior_excess - book_offset - (book_closing - book_provision) - company_reversal
 
     result = {
         "한도": limit,
@@ -2571,64 +2585,22 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
         "비망가액 합계": reservation_total,
         "장부 당기말": book_closing,
     }
+    if prior_yubo_added:
+        calc_dict["전기부인 유보 채권(전기말 가산)"] = prior_yubo_added
 
-    # ── 서식_표 구성 ──
-    # 34_대손금 행 구성
+    # ── 서식_표: 34_대손금 — 당기 장부에서 처리한 대손금만(전기부인 채권은 당기 장부 처리가 없어 행 없음) ──
     rows_34 = []
-    offset_remaining = book_offset  # booked가 없는 항목에 Sequential 배당용
-
-    for w in writeoffs:
-        kind = w["kind"]; amount = int(w["amount"]); arose_in = w["arose_in"]
-        instrument = w.get("instrument"); months = w.get("months_since_default"); mortgage = w.get("mortgage", False)
+    offset_remaining = book_offset
+    auto_offset = all(w.get("booked") is None for w in writeoffs)   # 모두 생략했을 때만 장부 상계액을 순서대로 나눠 붙임
+    for idx, w in enumerate(writeoffs):
         booked = w.get("booked")
-        memo_excluded = w.get("memo_excluded", False)
-        date_val = w.get("date", "")
-        account_val = w.get("account", "")
-        detail_val = w.get("detail", "")
-
-        # 항목별 인정·부인 금액 (위 판단 루프와 동일 로직)
-        if kind == "부도6개월" and months is not None and int(months) >= 6 and not mortgage:
-            if instrument == "받을어음":
-                if memo_excluded:
-                    recognized = amount; memo = 0
-                else:
-                    recognized = max(0, amount - 1000); memo = min(amount, 1000)
-            elif instrument == "외상매출금":
-                if sme:
-                    if memo_excluded:
-                        recognized = amount; memo = 0
-                    else:
-                        recognized = max(0, amount - 1000); memo = min(amount, 1000)
-                else:
-                    recognized = 0; memo = 0  # 일반법인 부인
-            else:  # 기타
-                if sme:
-                    if memo_excluded:
-                        recognized = amount; memo = 0
-                    else:
-                        recognized = max(0, amount - 1000); memo = min(amount, 1000)
-                else:
-                    recognized = 0; memo = 0  # 일반법인 부인
-        elif kind == "부도6개월" and months is not None and int(months) < 6:
-            recognized = 0; memo = 0  # 부인
-        elif kind == "부도6개월" and mortgage:
-            recognized = 0; memo = 0  # 부인
-        elif kind == "소멸시효완성":
-            if arose_in == "당기":
-                recognized = amount; memo = 0
-            else:
-                recognized = 0; memo = 0  # 전기 → 부인
-        elif kind == "회수불능":
-            recognized = amount; memo = 0
-        elif kind == "화해·확정판결":
-            recognized = amount; memo = 0
-        else:
-            recognized = 0; memo = 0
-
-        # 금액을 상계분·손비분으로 나눈 뒤 시인은 상계분부터 채운다 — 네 칸의 합은 항상 금액
+        if booked == "전기부인":
+            continue
+        amount = int(w["amount"]); arose_in = w["arose_in"]
+        recognized, memo = per_item[idx]["recognized"], per_item[idx]["memo"]
         if booked == "상계":
             상계분 = amount
-        elif booked == "손비":
+        elif booked == "손비" or not auto_offset:
             상계분 = 0
         else:
             상계분 = min(offset_remaining, amount)
@@ -2644,45 +2616,44 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
             비고 = "전기 사유분" if arose_in == "전기" else "대손 요건 미충족"
         else:
             비고 = ""
-
-        행 = {
-            "일자": date_val or "",
-            "계정과목": account_val or "",
-            "채권명세": detail_val or "",
-            "사유": kind,
+        rows_34.append({
+            "일자": w.get("date", "") or "",
+            "계정과목": w.get("account", "") or "",
+            "채권명세": w.get("detail", "") or "",
+            "사유": 원래_종류[idx] or w["kind"],
             "금액": amount,
             "상계_시인": 상계_시인,
             "상계_부인": 상계_부인,
             "손비_시인": 손비_시인,
             "손비_부인": 손비_부인,
             "비고": 비고,
-        }
-        rows_34.append(행)
+        })
+
+    생략 = [f"{원래_종류[i] or w['kind']} {int(w['amount']):,}원" for i, w in enumerate(writeoffs) if w.get("booked") is None]
+    if 생략 and not auto_offset:
+        judgments.append({"항목": "booked 생략 항목", "결론": f"{', '.join(생략)} — 당기 손비로 봄", "금액": 0,
+                          "근거": "법인세법 시행규칙 별지 제34호서식 2. 대손금조정",
+                          "이유": "다른 항목에 booked를 지정해 생략한 항목에는 장부 상계액을 나눠 붙이지 않음 — 전기에 장부에서 대손 처리하고 세무상 부인(유보)된 채권이면 booked='전기부인'"})
 
     # 상계 합계 ≠ book_offset 이면 판단에 '상계' 문구 추가
     actual_offset_sum = sum(r["상계_시인"] + r["상계_부인"] for r in rows_34)
     if actual_offset_sum != book_offset:
+        차이 = book_offset - actual_offset_sum
         judgments.append({"항목": "대손충당금 상계 합계",
-                          "결론": f"상계 합계 {actual_offset_sum:,}원 ≠ 장부 상계(offset) {book_offset:,}원",
+                          "결론": f"상계 합계 {actual_offset_sum:,}원 ≠ 장부 상계(offset) {book_offset:,}원" + (f" — 장부 상계 중 {차이:,}원은 어느 대손금에도 연결되지 않음" if 차이 > 0 else ""),
                           "금액": actual_offset_sum - book_offset,
                           "근거": "법인세법 시행규칙 별지 제34호서식 2. 대손금조정",
-                          "이유": f"서식 2.표의 대손충당금상계액(㉗) 합계 {actual_offset_sum:,}원이 장부상 충당금 상계(offset) {book_offset:,}원과 다름 — 장부상 상계 금액과 서식 상계 금액의 차이를 확인하세요"})
+                          "이유": f"서식 2.표의 대손충당금상계액(㉗) 합계 {actual_offset_sum:,}원이 장부상 충당금 상계(offset) {book_offset:,}원과 다름 — 빠진 대손금이 있거나 booked('상계'|'손비'|'전기부인') 지정을 확인하세요"})
 
     # 34_채권잔액 행
-    부인누계 = tax_receivables_end - receivables_end_book
     rows_채권 = [{
         "계정과목": "설정대상 채권",
         "장부가액": receivables_end_book,
-        "부인누계": 부인누계,
+        "부인누계": tax_receivables_end - receivables_end_book,
         "설정제외": 0,
     }]
+    서식_표 = {"34_대손금": rows_34, "34_채권잔액": rows_채권}
 
-    서식_표 = {
-        "34_대손금": rows_34,
-        "34_채권잔액": rows_채권,
-    }
-
-    # ── 계산식_입력 ──
     계산식_입력 = [
         {"이름": "장부기초", "값": book_opening, "설명": "장부상 대손충당금 기초잔액(원)"},
         {"이름": "당기설정", "값": book_provision, "설명": "당기 대손충당금 설정액(원)"},
@@ -2694,7 +2665,7 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
     unified = _build_tax_adjustment_result(settlements, result, calc_dict)
     return _ok(unified, "법인세법 제19조의2·제34조, 시행령 제19조의2·제61조",
                세무조정=settlements, 판단=judgments, 계산=calc_dict,
-               산식="세법상 당기 대손금 = 인정 대손금 합계, 세법상 전기말 채권 = 장부 전기말 − 전기 신고조정 대손, 세법상 당기말 채권 = 장부 당기말 + 부인 채권 + 비망가액, 실적률 = 당기 대손금 ÷ 전기말 채권(절사), 한도 = 당기말 채권 × max(1%, 실적률), 한도초과 = 장부 기말잔액 − 한도",
+               산식="세법상 당기 대손금 = 인정 대손금 합계(전기부인 채권의 당기 인정분 포함), 세법상 전기말 채권 = 장부 전기말 − 전기 사유 신고조정 대손(0 미만은 0) + 전기부인 유보 채권, 세법상 당기말 채권 = 장부 당기말 + 부인 채권 + 비망가액 + 전기부인 채권 중 미인정분, 실적률 = 당기 대손금 ÷ 전기말 채권(절사), 한도 = 당기말 채권 × max(1%, 실적률), 한도초과 = 장부 기말잔액 − 한도",
                서식_표=서식_표, 계산식_입력=계산식_입력)
 
 
@@ -2711,7 +2682,7 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
       · 원장: ledger=[{항목, 금액, 증빙:'없음'|'영수증 등'|'적격'(기본 '적격'), 성격?:'교제목적'|'직원단체_법인'|'직원단체_비법인'|'임직원부담'|'현물'|'경조금'|'문화', 시가?, 장부가액?, 건당기준초과?:(기본 true)}],
         revenue={매출액, 특수관계매출?(기본 0), 매출할인등:{일반?, 특수관계?}(기본 0)}.
       증빙 허용값(어휘 기반):
-        · 없음 — 지출 증빙이 전혀 없는 건(손금불산입·대표자상여)
+        · 없음 — 지출 증빙이 전혀 없는 건(손금불산입·상여, 귀속 대표자)
         · 영수증 등 — 영수증 등은 있으나 적격증명서류가 아닌 건(건당 기준 초과 시 손금불산입·기타사외유출)
         · 적격 — 적격증명서류(세금계산서·계산서·신용카드·현금영수증) 수취 건(한도 시부인 대상)
       성격 판단(어휘 기업업무추진비_포함항목.판단.성격별):
@@ -2826,13 +2797,13 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
 
         if 성격 == "사적사용":
             judgments.append({"항목": 항목명, "성격": "사적사용", "결론": "제외·손금불산입(상여)", "금액": 금액, "근거": "법인세법 제19조②·시행령 제40조①", "이유": "업무와 관련 없는 개인 용도 지출 — 시부인 대상 제외, 직접 손금불산입(상여)"})
-            settlements.append({"구분": "사적사용 손금불산입", "금액": 금액, "소득처분": "대표자상여"})
+            settlements.append({"구분": "사적사용 손금불산입", "조정": "손금불산입", "금액": 금액, "소득처분": "상여"})
             private_use_total += 금액
             continue
 
         if 증빙 == "없음":
             no_receipt_total += 금액
-            judgments.append({"항목": 항목명, "성격": 성격, "결론": "손금불산입·대표자상여", "금액": 금액, "근거": "법인세법 제25조②(증빙서류 없는 접대비 손금불산입)", "이유": ("증빙서류 없음 — 전액 손금불산입, 대표자상여 소득처분" + (f" — {_현물_판단_이유}" if _현물_판단_이유 else ""))})
+            judgments.append({"항목": 항목명, "성격": 성격, "결론": "손금불산입·상여(대표자)", "금액": 금액, "근거": "법인세법 제25조②(증빙서류 없는 접대비 손금불산입), 시행령 제106조①1호 단서", "이유": ("증빙서류 없음 — 전액 손금불산입, 귀속 불분명으로 대표자 상여 처분" + (f" — {_현물_판단_이유}" if _현물_판단_이유 else ""))})
         elif 증빙 == "영수증 등":
             기준_일반 = vocab.rule("기업업무추진비_적격증빙미수취", year).get("기준", {}).get("일반", 30000)
             기준_경조금 = vocab.rule("기업업무추진비_적격증빙미수취", year).get("기준", {}).get("경조금", 200000)
@@ -2917,8 +2888,9 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
         {"이름": "수입구간1_비율", "값": t1_r, "설명": f"수입금액 구간1 비율 — {t1_cap:,}원 이하"},
         {"이름": "수입구간2_한도", "값": t2_cap, "설명": f"수입금액 구간2 한도(원) — {t2_cap:,}원 이하"},
         {"이름": "수입구간2_비율", "값": t2_r, "설명": f"수입금액 구간2 비율 — {t2_cap:,}원 이하"},
-        {"이름": "수입구간3_한도", "값": t3_cap, "설명": f"수입금액 구간3 한도(원) — {t2_cap:,}원 초과"},
-        {"이름": "수입구간3_비율", "값": t3_r, "설명": f"수입금액 구간3 비율 — {t2_cap:,}원 초과"},
+        # 구간3 한도는 상한이 없어(무한대) JSON·엑셀 입력으로 넘기지 않음 — 식은 구간2 한도 초과분만 씀
+        *([{"이름": "수입구간3_한도", "값": t3_cap, "설명": f"수입금액 구간3 한도(원) — {t2_cap:,}원 초과"}] if math.isfinite(t3_cap) else []),
+        {"이름": "수입구간3_비율", "값": t3_r, "설명": f"수입금액 구간3 비율 — {t2_cap:,}원 초과" + ("" if math.isfinite(t3_cap) else "(상한 없음)")},
     ]
     for idx, item in enumerate(items_for_limit, 1):
         설명 = f"기업업무추진비 시부인 대상 항목 {idx} (적격증빙)"
@@ -2978,11 +2950,11 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
     # ── 세무조정 조립 ──
     # 루프의 settlements(사적사용 등)는 이미 collect 돼 있음 — 덮어쓰지 않고 추가만 한다.
     if no_receipt_total > 0:
-        settlements.append({"구분": "증빙 없음", "금액": no_receipt_total, "소득처분": "대표자상여"})
+        settlements.append({"구분": "증빙 없음", "조정": "손금불산입", "금액": no_receipt_total, "소득처분": "상여", "귀속": "대표자"})
     if no_qual_total > 0:
-        settlements.append({"구분": "적격증빙 미수취", "금액": no_qual_total, "소득처분": "기타사외유출"})
+        settlements.append({"구분": "적격증빙 미수취", "조정": "손금불산입", "금액": no_qual_total, "소득처분": "기타사외유출"})
     if over_limit > 0:
-        settlements.append({"구분": "한도초과", "금액": over_limit, "소득처분": "기타사외유출"})
+        settlements.append({"구분": "한도초과", "조정": "손금불산입", "금액": over_limit, "소득처분": "기타사외유출"})
 
     # 전통시장등 추가한도 판단 (연도별)
     if 2023 <= year <= 2028 and 전통시장등_총액 > 0:
@@ -3247,7 +3219,8 @@ def _직장공제회_원천(amt: int, 납입연수, year: int) -> str:
 def financial_income_aggregate(year: YEAR,
                                items: Annotated[list, Field(description="금융소득 항목 [{kind, amount, withheld?, ...}]. "
                                    "kind: 예금이자·비영업대금이익·소비대차전환이자·외상매출금지급기일연장이자·저축성보험차익·투자신탁환매이익·파생결합사채이익·장내파생상품이익·"
-                                   "상장법인현금배당·비상장법인현금배당·의제배당_잉여금자본전입·인정배당·출자공동사업자배당·외국법인배당·환매조건부매매차익·법원보증금이자·직장공제회초과반환금·통합발행채권할인액·손해배상법정이자·공익신탁이익. "
+                                   "상장법인현금배당·비상장법인현금배당·의제배당_잉여금자본전입·인정배당·출자공동사업자배당·외국법인배당·환매조건부매매차익·법원보증금이자·비실명이자·비실명배당·직장공제회초과반환금·통합발행채권할인액·손해배상법정이자·공익신탁이익. "
+                                   "비실명이자·비실명배당: 실지명의 미확인 소득(제129조②2호, 분리과세·합계 제외), real_name_act=true면 금융실명법 제5조 세율. "
                                    "withheld=false: 국내에서 원천징수되지 않은 이자·배당(개인 간 대여 이자, 국외 배당)은 2천만원 이하여도 종합과세(제14조③6호), 기본 true. "
                                    "의제배당_잉여금자본전입은 source 필수 — 이익잉여금·자기주식처분이익·상환주식_주식발행초과금·자기주식소각이익_2년내(과세) / 주식발행초과금·자본준비금·재평가적립금·합병차익·분할차익·주식의포괄적교환차익·주식의포괄적이전차익·자기주식소각이익(과세 제외) / 재평가적립금_토지1%. "
                                    "투자신탁환매이익은 components 필수 — [{asset, gain}] 목록, asset이 '상장주식'인 손익만 빼고 나머지(채권·비상장주식·배당·이자 등 아무 이름)는 합산, 손실은 음수. "
@@ -3403,6 +3376,14 @@ def financial_income_aggregate(year: YEAR,
             원천율 = vocab.rule("법원보증금이자", year).get("원천징수세율", 0.14)
             원천징수세액 = _trunc_won(amt, 원천율)
             add(k, "제외", amt, "소득세법 제129조②1호, 제14조③3호", f"민사집행법상 법원 보증금·경락대금 이자 — 원천징수 {원천율 * 100:.0f}%(제129조②1호) {원천징수세액:,}원으로 분리과세, 금융소득 합계·합산액 모두 제외")
+        elif k in ("비실명이자", "비실명배당"):
+            _규칙 = vocab.rule(k, year)
+            _실명법 = bool(it.get("real_name_act"))
+            원천율 = _규칙.get("원천징수세율_금융실명법", 0.9) if _실명법 else _규칙.get("원천징수세율", 0.45)
+            원천징수세액 = amt * round(원천율 * 100) // 100
+            add(k, "제외", amt, "소득세법 제129조②2호, 제14조③3호",
+                f"실지명의가 확인되지 않는 {'이자' if k == '비실명이자' else '배당'}소득 — 원천징수 {원천율 * 100:.0f}%(제129조②2호"
+                + (" 단서·금융실명법 제5조" if _실명법 else "") + f") {원천징수세액:,}원으로 분리과세, 금융소득 합계·합산액 모두 제외")
         elif k == "직장공제회초과반환금":
             add(k, "제외", amt, "소득세법 제16조①10호, 제14조③3호, 제129조①1호다목, 제63조①", _직장공제회_원천(amt, it.get("contribution_years"), year))
         elif k == "손해배상법정이자":
@@ -3439,7 +3420,7 @@ def financial_income_aggregate(year: YEAR,
         {"이름": "종합과세기준금액", "값": 20000000, "설명": "금융소득 종합과세 기준액 = 2,000만 원 (소득세법 제14조③6호)"},
         {"이름": "가산율", "값": rate, "설명": f"Gross-up 가산율 = {rate} ({year}년 기준, 소득세법 제56조)"},
         {"이름": "이자소득금액", "값": inc, "설명": f"이자소득금액 = {inc:,}원"},
-        {"이름": "배당비대상소득", "값": div_n, "설명": f"배당소득 중 Gross-up 비대상 = {div_n:,}원 (출자공동사업자배당 등)"},
+        {"이름": "배당비대상소득", "값": div_n, "설명": f"배당소득 중 Gross-up 비대상 = {div_n:,}원" + (f" ({', '.join(dict.fromkeys(h['항목'] for h in 항목별 if h['구분'] in ('GU비대상', '출자공동')))})" if div_n else "")},
         {"이름": "배당대상소득", "값": div_g, "설명": f"배당소득 중 Gross-up 대상 = {div_g:,}원 (상장법인·비상장법인 배당, 의제배당 등)"},
         {"이름": "출자공동사업자배당", "값": partner_div, "설명": f"출자공동사업자배당(always 합산 포함, 2천만원 판정 제외) = {partner_div:,}원"},
         {"이름": "제외합계", "값": exc, "설명": f"분리과세·제외 금융소득 합계 = {exc:,}원 (법원보증금이자, 직장공제회초과반환금 등)"},
@@ -4842,7 +4823,7 @@ def common_input_tax(year: YEAR,                     period: Annotated[str, Fiel
 
     # 판단 추가
     판단_목록.append({"항목": "공제매입세액 합계", "결론": (
-        f"과세전용({taxable_only:,} − 불공제 {taxable_only_nondeductible:,}) + "
+        f"과세사업분 {taxable_only - taxable_only_nondeductible:,}(사용처 과세·불공제 합계 {taxable_only:,} − 불공제 {taxable_only_nondeductible:,}) + "
         f"실지귀속 {실지귀속_공제:,} + "
         f"공통매입세액 {공통매입세액_공제:,} + "
         f"공통사용재화 {공통사용재화_매입세액_공제:,} = {공제매입세액:,}원"
@@ -4851,11 +4832,13 @@ def common_input_tax(year: YEAR,                     period: Annotated[str, Fiel
 
     # ── 계산식 단계 (SPEC_export_workbook_f) ──────────────────────────────
     # 공통사용재화 공급 계산 관련 입력/식
+    # 직전 과세기간 공급가액은 서식 시트(부가근거63)가 이름으로 참조해 늘 넘기되, 입력하지 않았으면 설명에 밝힌다
+    _직전_없음 = "" if prior_period_supplies is not None else " (입력 없음 — 공통사용재화 공급이 없으면 쓰지 않음)"
     계산식_입력 = [
         {"이름": "과세공급가액", "값": 확정_과세 + 예정_과세, "설명": f"당기 과세 공급가액 합계 = 확정 {확정_과세:,} + 예정 {예정_과세:,} = {확정_과세 + 예정_과세:,}원"},
         {"이름": "면세공급가액", "값": 확정_면세 + 예정_면세, "설명": f"당기 면세 공급가액 합계 = 확정 {확정_면세:,} + 예정 {예정_면세:,} = {확정_면세 + 예정_면세:,}원"},
-        {"이름": "직전과세공급가액", "값": int((prior_period_supplies or {}).get("taxable", 0)), "설명": f"직전 과세기간 과세 공급가액 = {int((prior_period_supplies or {}).get('taxable', 0)):,}원"},
-        {"이름": "직전면세공급가액", "값": int((prior_period_supplies or {}).get("exempt", 0)), "설명": f"직전 과세기간 면세 공급가액 = {int((prior_period_supplies or {}).get('exempt', 0)):,}원"},
+        {"이름": "직전과세공급가액", "값": int((prior_period_supplies or {}).get("taxable", 0)), "설명": f"직전 과세기간 과세 공급가액 = {int((prior_period_supplies or {}).get('taxable', 0)):,}원" + _직전_없음},
+        {"이름": "직전면세공급가액", "값": int((prior_period_supplies or {}).get("exempt", 0)), "설명": f"직전 과세기간 면세 공급가액 = {int((prior_period_supplies or {}).get('exempt', 0)):,}원" + _직전_없음},
         {"이름": "공급가액_전액기준", "값": 500000, "설명": "공급가액 50만 원 미만 전액 과세표준 기준 (영 제63조③2호)"},
     ]
 
@@ -4956,14 +4939,14 @@ def common_input_tax(year: YEAR,                     period: Annotated[str, Fiel
         "이름": "공제매입세액",
         "식": f"ROUNDDOWN((과세전용매입세액-불공제매입세액)+실지귀속공제+공통매입세액공제+공통사용재화매입세액공제,0)",
         "값": 공제매입세액,
-        "설명": f"공제매입세액 = (과세전용 − 불공제) + 실지귀속 + 공통매입세액 + 공통사용재화매입세액{' − 정산' if 정산_행 else ''} = {공제매입세액:,}원 (법 제40조, 영 제81조)",
+        "설명": f"공제매입세액 = (과세사업분 − 불공제) + 실지귀속 + 공통매입세액 + 공통사용재화매입세액{' − 정산' if 정산_행 else ''} = {공제매입세액:,}원 (법 제40조, 영 제81조)",
     })
     if 정산_행:
         계산식[-1]["식"] = "ROUNDDOWN((과세전용매입세액-불공제매입세액)+실지귀속공제+공통매입세액공제+공통사용재화매입세액공제-정산가산또는공제,0)"
         계산식_입력.append({"이름": "정산가산또는공제", "값": 정산_합계, "설명": f"공통매입세액 정산 ⑲ 합계 = {정산_합계:,}원 (영 제82조)"})
 
     계산식_입력.extend([
-        {"이름": "과세전용매입세액", "값": taxable_only - taxable_only_nondeductible, "설명": f"과세전용 매입세액 = {taxable_only:,} − 불공제 {taxable_only_nondeductible:,} = {taxable_only - taxable_only_nondeductible:,}원"},
+        {"이름": "과세전용매입세액", "값": taxable_only - taxable_only_nondeductible, "설명": f"과세사업분 공제 매입세액 = 사용처 과세·불공제 합계 {taxable_only:,} − 불공제 {taxable_only_nondeductible:,} = {taxable_only - taxable_only_nondeductible:,}원"},
         {"이름": "불공제매입세액", "값": taxable_only_nondeductible, "설명": f"불공제 매입세액 = {taxable_only_nondeductible:,}원"},
         {"이름": "실지귀속공제", "값": 실지귀속_공제, "설명": f"실지귀속 공제 = {실지귀속_공제:,}원"},
         {"이름": "공통매입세액공제", "값": 공통매입세액_공제, "설명": f"공통매입세액 공제 = {공통매입세액_공제:,}원"},
@@ -5528,7 +5511,7 @@ def retirement_allowance_adjustment(
       conversion_fund — 퇴직금전환금 기말잔액.
       pension — 확정급여형 {asset_closing, prior_deducted, book_provision?, book_paid?(운용자산 지급 중 장부 퇴직연금충당금 상계분), dc_transferred_allowance?}.
       운용자산에서 퇴직금을 지급한 해에는 장부 퇴직연금충당금 상계분(book_paid)과 퇴직급여충당금 상계분(paid_pension)을 나눠 넣어야 세무상 연금충당금 잔액이 맞는다.
-    결과: 세무조정(과목·조정 익금산입/손금불산입/손금산입·금액·소득처분 유보/△유보), 소득금액_순영향, 계산(세무상 잔액·한도). 입력이 모자라거나 장부 증감이 맞지 않으면 error."""
+    결과: 세무조정(구분·조정 손금불산입/손금산입·금액·소득처분 유보/△유보), 소득금액_순영향, 계산(세무상 잔액·한도). 입력이 모자라거나 장부 증감이 맞지 않으면 error."""
 
     # ── 입력 정리 ──
     opening = int(allowance.get("opening", 0))
@@ -5648,7 +5631,7 @@ def retirement_allowance_adjustment(
     # ── 퇴직연금 조정일 때 ──
     # 연금충당금 상계액은 pension 유무와 무관하게 정의(pension 없으면 0)
     # 운용자산 지급분(paid_pension)은 먼저 세무상 연금충당금(prior_deducted)과 상계 →
-    #     그 상계액만큼 퇴직연금충당금 익금산입(유보) + 퇴직급여충당금 손금산입(△유보)
+    #     그 상계액만큼 퇴직연금충당금 손금불산입(유보) + 퇴직급여충당금 손금산입(△유보)
     #     초과분은 퇴직급여충당금 직접 지급으로 보아 부인누계(유보)와 상계 → 손금산입(△유보) 추인
     연금충당금_상계액 = 0
     연금초과 = max(0, paid_pension - 연금충당금_상계액)   # pension 없으면 paid_pension 전액
@@ -5662,7 +5645,7 @@ def retirement_allowance_adjustment(
 
         # 운용자산 지급분 처리(2026-10-30 수정): 운용자산에서 지급된 금액은 장부에서 퇴직연금충당금과 상계한 몫(book_paid)과
         # 퇴직급여충당금과 상계한 몫(paid_pension)으로 나뉘지만, 세무상으로는 둘 다 먼저 세무상 퇴직연금충당금(prior_deducted)에서 빠진다.
-        # book_paid 몫은 장부·세무가 같아 조정 없음, paid_pension 몫은 익금산입(연금충당금)·손금산입(퇴직급여충당금)으로 바꾼다.
+        # book_paid 몫은 장부·세무가 같아 조정 없음, paid_pension 몫은 손금불산입(연금충당금)·손금산입(퇴직급여충당금)으로 바꾼다.
         book_paid = int(pension.get("book_paid", 0) or 0)
         세무_연금_감소총 = min(book_paid + paid_pension, prior_deducted)
         연금충당금_상계액 = max(0, 세무_연금_감소총 - min(book_paid, prior_deducted))
@@ -5719,15 +5702,15 @@ def retirement_allowance_adjustment(
                             "소득처분": "유보",
                             "근거": "법인세법 제33조①·시행령 제60조①·②",
                             "이유": f"당기 설정액 {provision:,}원 > 한도 {퇴직급여충당금_한도:,}원 → 초과 {한도초과액:,}원 손금불산입(유보)"})
-    # 2. 부인액 추인(손금산입·△유적)
+    # 2. 부인액 추인(손금산입·△유보)
     if 부인액_추인 > 0:
         settlements.append({"구분": "퇴직급여충당금(부인액 추인)",
                             "조정": "손금산입",
                             "금액": 부인액_추인,
                             "소득처분": "△유보",
                             "근거": "법인세법 제33조②·기본통칙 33-60…5",
-                            "이유": f"지급 총액 {지급총액:,}원 중 세무상 충당금 {세무상_충당금_기초:,}원 초과분 {초과지급액:,}원 → 부인누계(유보)와 상계, {부인액_추인:,}원 추인(△유보)"})
-    # 3. 퇴직연금 부족(손금산입·△유적) — 있으면
+                            "이유": f"지급 총액 {지급총액:,}원 중 퇴직연금충당금 상계 {연금상계:,}원을 뺀 {과세_지급액:,}원이 세무상 충당금 {세무상_충당금_기초:,}원을 넘는 {초과지급액:,}원 → 부인누계(유보)와 상계, {부인액_추인:,}원 추인(△유보)"})
+    # 3. 퇴직연금 부족(손금산입·△유보) — 있으면
     if has_pension and 퇴직연금_결과:
         r = 퇴직연금_결과
         if r["퇴직연금_납입_부족"] > 0:
@@ -5745,16 +5728,16 @@ def retirement_allowance_adjustment(
                                 "근거": "법인세법 제33조①·시행령 제44조의2④·시행규칙 제24조②",
                                 "이유": f"결산 계상 {book_provision:,}원 > 손금산입범위 {r['퇴직연금_손금산입범위액']:,}원 → 초과 {r['퇴직연금_납입_초과']:,}원 손금불산입(유보)"})
         # 퇴직연금 지급 시 상계: 운용자산 지급분은 우선 연금충당금(prior_deducted)과 상계
-        #   → 상계액만큼 퇴직연금충당금 익금산입(유보) + 퇴직급여충당금 손금산입(△유보)
+        #   → 상계액만큼 퇴직연금충당금 손금불산입(유보) + 퇴직급여충당금 손금산입(△유보)
         #   → 남은 초과분은 퇴직급여충당금 직접 지급으로 보아 부인누계(유보)와 상계 → 추인
         if paid_pension > 0:
             if 연금충당금_상계액 > 0:
                 settlements.append({"구분": "퇴직연금충당금(지급 상계)",
-                                    "조정": "익금산입",
+                                    "조정": "손금불산입",
                                     "금액": 연금충당금_상계액,
                                     "소득처분": "유보",
                                     "근거": "법인세법 제33조②·어휘 퇴직연금_지급(기본통칙 33-60…5)",
-                                    "이유": f"퇴직연금운용자산에서 {paid_pension:,}원 지급, 그중 {연금충당금_상계액:,}원(min(지급액, prior_deducted {prior_deducted:,}))은 세무상 연금충당금과 상계 → 퇴직연금충당금 익금산입(유보)"})
+                                    "이유": f"퇴직연금운용자산에서 {paid_pension:,}원 지급, 그중 {연금충당금_상계액:,}원(min(지급액, prior_deducted {prior_deducted:,}))은 세무상 연금충당금과 상계 → 이미 손금산입(△유보)한 퇴직연금충당금 손금불산입(유보)"})
                 settlements.append({"구분": "퇴직급여충당금(퇴직연금 지급 대체)",
                                     "조정": "손금산입",
                                     "금액": 연금충당금_상계액,
@@ -5850,7 +5833,8 @@ def retirement_allowance_adjustment(
          "근거": "법인세법 제33조①·시행령 제60조①·②"},
         {"항목": "한도초과", "결론": f"{한도초과액:,}원" if 한도초과액 > 0 else "없음",
          "근거": "법인세법 제33조①·시행령 제60조③"},
-        {"항목": "퇴직금 지급 상계", "결론": f"지급 {지급총액:,}원 → 세무상 충당금 {세무상_충당금_기초:,}원 상계, 초과 {초과지급액:,}원 → 부인누계 추인 {부인액_추인:,}원",
+        {"항목": "퇴직금 지급 상계", "결론": (f"지급 {지급총액:,}원 = 퇴직연금충당금 상계 {연금충당금_상계액:,}원 + 퇴직급여충당금 상계 {calc['퇴직급여충당금_상계']:,}원"
+                                            f"(세무상 기초잔액 {세무상_충당금_기초:,}원 범위) + 초과 {초과지급액:,}원 → 부인누계 추인 {부인액_추인:,}원"),
          "근거": "법인세법 제33조②·기본통칙 33-60…5"},
     ]
 
@@ -5867,8 +5851,8 @@ def retirement_allowance_adjustment(
              "근거": "법인세법 시행규칙 별지 제33호서식 ⑩"},
             {"항목": "퇴직연금 결산 계상", "결론": f"{book_provision:,}원",
              "근거": "법인세법 시행령 제44조의2④"},
-            {"항목": "퇴직연금 부족/초과", "결론": (f"부족 {r['퇴직연금_납입_부족']:,}원(손금산입·△유적)" if r['퇴직연금_납입_부족'] > 0 else
-                                                      f"초과 {r['퇴직연금_납입_초과']:,}원(손금불산입·유적)" if r['퇴직연금_납입_초과'] > 0 else "일치"),
+            {"항목": "퇴직연금 부족/초과", "결론": (f"부족 {r['퇴직연금_납입_부족']:,}원(손금산입·△유보)" if r['퇴직연금_납입_부족'] > 0 else
+                                                      f"초과 {r['퇴직연금_납입_초과']:,}원(손금불산입·유보)" if r['퇴직연금_납입_초과'] > 0 else "일치"),
              "근거": "법인세법 시행령 제44조의2④·시행규칙 제24조②"},
         ])
 
@@ -5877,8 +5861,8 @@ def retirement_allowance_adjustment(
         f"① 장부 증감: opening({opening:,}) + provision({provision:,}) + other_increase({other_increase:,}) "
         f"− paid_cash({paid_cash:,}) − paid_pension({paid_pension:,}) = closing({closing:,}) [일치]\n"
         f"② 세무상 기초 잔액 = opening − prior_disallowed = {opening:,} − {prior_disallowed:,} = {세무_기초_잔액:,}\n"
-        f"③ 세무상 충당금 지급 상계: min(지급액 {지급총액:,}, 세무상 잔액 {세무상_충당금_기초:,}) = {min(지급총액,세무상_충당금_기초):,}원 사용\n"
-        f"④ 부인액 추인: max(0, 지급액 {지급총액:,} − 세무상 잔액 {세무상_충당금_기초:,}) × min(…, prior_disallowed {prior_disallowed:,}) = {부인액_추인:,}원\n"
+        f"③ 세무상 충당금 지급 상계: 지급액 {지급총액:,} − 퇴직연금충당금 상계 {연금충당금_상계액:,} = {paid_cash + 연금초과:,}원, min({paid_cash + 연금초과:,}, 세무상 잔액 {세무상_충당금_기초:,}) = {calc['퇴직급여충당금_상계']:,}원 사용\n"
+        f"④ 부인액 추인: min(max(0, {paid_cash + 연금초과:,} − 세무상 잔액 {세무상_충당금_기초:,}), prior_disallowed {prior_disallowed:,}) = {부인액_추인:,}원\n"
         f"⑤ 대상 총급여 = {총급여_전체:,} − DC {dc_members:,} − 지급대상 외 {not_eligible:,} = {대상_총급여:,}원\n"
         f"⑥ 총급여 기준 한도 = {대상_총급여:,} × {급여_비율*100:.0f}% = {총급여기준_한도:,}원\n"
         f"⑦ 추계 추계액 = max(일시퇴직 {lump_sum:,}, 보험수리 {actuarial:,}) = {추계액:,}원\n"
@@ -5890,9 +5874,9 @@ def retirement_allowance_adjustment(
            f"    추계액을_기준으로 연금한도 = {추계액:,} − (기말 충당금 {calc['세무상_퇴직급여충당금_기말']:,} − DC전환 {dc_transferred:,}) = {r['추계액기준_연금한도']:,}원\n"
            f"    운용자산 기준 연금한도 = {asset_closing:,} − 이미 손금산입 {r['이미_손금산입한_부담금']:,} = {r['운용자산기준_연금한도']:,}원\n"
            f"    손금산입범위 = min({r['추계액기준_연금한도']:,}, {r['운용자산기준_연금한도']:,}) = {r['퇴직연금_손금산입범위액']:,}원\n"
-           f"    부족 {r['퇴직연금_납입_부족']:,}원 → 손금산입(△유적), 초과 {r['퇴직연금_납입_초과']:,}원 → 손금불산입(유보)\n"
-           f"    퇴직연금 지급 상계: {r['연금충당금_상계액']:,}원 → 퇴직연금충당금 익금산입(유보) + 퇴직급여충당금 손금산입(△유적)\n"
-           f"    퇴직연금 지급 초과분: {연금초과:,}원 → 퇴직급여충당금 직접 지급(손금산입·△유적)\n"
+           f"    부족 {r['퇴직연금_납입_부족']:,}원 → 손금산입(△유보), 초과 {r['퇴직연금_납입_초과']:,}원 → 손금불산입(유보)\n"
+           f"    퇴직연금 지급 상계: {r['연금충당금_상계액']:,}원 → 퇴직연금충당금 손금불산입(유보) + 퇴직급여충당금 손금산입(△유보)\n"
+           f"    퇴직연금 지급 초과분: {연금초과:,}원 → 퇴직급여충당금 직접 지급(손금산입·△유보)\n"
            if has_pension and r else "")
     )
     return _ok(result_data, 근거_문자열, 계산=calc, 판단=판단_목록, 산식=산식_str)
@@ -7777,7 +7761,7 @@ def corporate_deemed_rent_income(
     간주익금 = _trunc_won(max(0, _exact(net_jeoksu) / year_days * _exact(rate) - financial_income))
     세무조정 = []
     if 간주익금 > 0:
-        세무조정.append({"구분": "임대보증금 간주익금", "금액": 간주익금, "소득처분": "기타사외유출"})
+        세무조정.append({"구분": "임대보증금 간주익금", "조정": "익금산입", "금액": 간주익금, "소득처분": "기타사외유출"})
 
     return _ok({"간주익금": 간주익금, "세무조정": 세무조정},
                "조세특례제한법 제138조①②, 시행령 제132조",
@@ -8100,116 +8084,135 @@ def liquidation_income(
                산식=f"잔여재산가액 {잔여재산가액:,} − 자기자본총액 {자기자본총액:,} = {청산소득금액:,}원")
 
 
+_소득처분_허용 = ("유보", "△유보", "상여", "배당", "기타소득", "기타사외유출", "기타")
+_소득처분_별칭 = {"대표자상여": "상여", "인정상여": "상여", "사내유보": "유보", "-유보": "△유보", "(-)유보": "△유보", "유보(-)": "△유보", "(△)유보": "△유보"}
+_조정_방향 = {"익금산입": "가산", "손금불산입": "가산", "손금산입": "차감", "익금불산입": "차감"}
+# 흔히 쓰는 다른 이름·다른 세무조정 도구가 내는 구분 → 사전 종류
+_세무조정_종류_별칭 = {
+    "법인세": "법인세비용", "법인세등": "법인세비용", "국세환급가산금": "환급금이자", "지방세환급가산금": "환급금이자",
+    "자기주식처분이익": "자기주식처분이익(자본잉여금)", "미수이자": "미수이자(원천징수대상)", "재산세": "사업용 재산세",
+    "접대비 한도초과": "기업업무추진비 한도초과", "벌금": "벌금·과태료·가산세", "과태료": "벌금·과태료·가산세", "가산세": "벌금·과태료·가산세",
+    "기업업무추진비 한도초과액": "기업업무추진비 한도초과", "접대비 한도초과액": "기업업무추진비 한도초과",
+    "상각부인액": "감가상각비 한도초과", "감가상각비 상각부인액": "감가상각비 한도초과", "감가상각비 한도초과액": "감가상각비 한도초과",
+    "부인 대손": "대손금 부인", "대손금 부인(비망가액)": "대손금 부인", "대손충당금 한도초과액": "대손충당금 한도초과",
+    "퇴직급여충당금 한도초과액": "퇴직급여충당금 한도초과", "퇴직연금충당금 한도초과액": "퇴직연금충당금 한도초과",
+    "Gross-up": "간접외국납부세액 익금산입(Gross-up)", "간접외국납부세액": "간접외국납부세액 익금산입(Gross-up)",
+    "간주익금": "임대보증금 간주익금", "임대보증금 등 간주익금": "임대보증금 간주익금",
+    "인정이자": "가지급금 인정이자", "가지급금인정이자": "가지급금 인정이자", "기부금 한도초과액": "기부금 한도초과",
+}
+
+
 @mcp.tool(annotations=CALC)
 @_guard
 def income_adjustment_total(
-    net_income: WON,
-    items: Annotated[list, Field(description="[{항목(이름), 종류, 금액(원), 방향?('가산'|'차감'|'없음'), 소득처분?}] — 종류: 법인세비용·법인지방소득세·벌금·과태료·가산세·환급금이자·자기주식처분이익(자본잉여금)·미수이자(원천징수대상)·비지정기부금·기업업무추진비 한도초과·감가상각비 한도초과·업무무관 지급이자·수입배당금 익금불산입·이월결손금 보전 자산수증이익·사업용 재산세·기부금 한도초과(별칭: 법인세·국세환급가산금·자기주식처분이익·미수이자·재산세 등). 사전에 없으면 방향을 주면 됨")],
+    net_income: Annotated[int, Field(description="당기순이익(원, 당기순손실이면 음수)")],
+    items: Annotated[list, Field(description="[{항목(이름), 종류, 금액(원, 0 이상), 조정?('익금산입'|'손금불산입'|'손금산입'|'익금불산입'), 방향?('가산'|'차감'|'없음'), 소득처분?('유보'|'△유보'|'상여'|'배당'|'기타소득'|'기타사외유출'|'기타')}] — "
+                                                 "종류: 법인세비용·법인지방소득세·벌금·과태료·가산세·환급금이자·자기주식처분이익(자본잉여금)·미수이자(원천징수대상)·비지정기부금·기업업무추진비 한도초과·감가상각비 한도초과·업무무관 지급이자·수입배당금 익금불산입·이월결손금 보전 자산수증이익·사업용 재산세·기부금 한도초과·"
+                                                 "대손금 부인·대손충당금 한도초과·퇴직급여충당금 한도초과·퇴직연금충당금 한도초과·간접외국납부세액 익금산입(Gross-up)·임대보증금 간주익금·가지급금 인정이자(소득처분 필수)·한도초과(소득처분 필수) "
+                                                 "(별칭: 법인세·국세환급가산금·재산세·기업업무추진비 한도초과액·상각부인액·인정이자·간주익금·Gross-up 등). "
+                                                 "다른 세무조정 도구의 세무조정 항목 {구분, 조정, 금액, 소득처분}을 그대로 넣어도 됨. 사전에 없으면 조정 또는 방향을 주면 됨")],
     donation_excess: Annotated[int, Field(description="기부금 한도초과액(원), 차가감 이후 가산", ge=0)] = 0,
     donation_carryover_deduction: Annotated[int, Field(description="기부금 한도초과 이월액 손금산입(원)", ge=0)] = 0,
 ) -> dict:
     """차가감소득금액 집계(법인세 과세표준 및 세액조정계산서). 언제: 당기순이익에서 세법상 익금산입·손금산입을 가감해 차가감소득금액과 각 사업연도소득금액을 구할 때.
-입력: 당기순이익(원) → net_income, 조정 항목 목록 [{항목, 종류, 금액, 방향, 소득처분}] → items, 기부금 한도초과액(원) → donation_excess, 기부금 한도초과 이월액 손금산입(원) → donation_carryover_deduction.
-결과: 차가감소득금액·각사업연도소득금액·익금산입_손금불산입·손금산입_익금불산입·세무조정, 판단, 근거(법인세법 제18·19·21·23·24·25·28조 등)."""
+입력: 당기순이익(원, 손실은 음수) → net_income, 조정 항목 목록 [{항목, 종류, 금액, 조정, 방향, 소득처분}] → items(다른 세무조정 도구의 세무조정 항목을 그대로 넣어도 됨), 기부금 한도초과액(원) → donation_excess, 기부금 한도초과 이월액 손금산입(원) → donation_carryover_deduction.
+결과: 차가감소득금액·각사업연도소득금액·익금산입_손금불산입·손금산입_익금불산입·세무조정({구분, 조정(익금산입·손금불산입·손금산입·익금불산입), 금액, 소득처분}), 판단, 근거(법인세법 제18·19·21·23·24·25·28조 등). 소득처분은 유보·△유보·상여·배당·기타소득·기타사외유출·기타만 받음."""
     kinds = vocab.INCOME_ADJUSTMENT_KINDS
-    # 흔히 쓰는 다른 이름 → 사전 종류 (Claude 2026-10-28)
-    _별칭 = {"법인세": "법인세비용", "법인세등": "법인세비용", "국세환급가산금": "환급금이자", "지방세환급가산금": "환급금이자",
-            "자기주식처분이익": "자기주식처분이익(자본잉여금)", "미수이자": "미수이자(원천징수대상)", "재산세": "사업용 재산세",
-            "접대비 한도초과": "기업업무추진비 한도초과", "벌금": "벌금·과태료·가산세", "과태료": "벌금·과태료·가산세", "가산세": "벌금·과태료·가산세"}
-    for it in items:
-        if it.get("종류") in _별칭:
-            it["종류"] = _별칭[it["종류"]]
-    _모름 = [f"'{it.get('항목', '')}'(종류 '{it.get('종류', '')}')" for it in items
-            if it.get("종류") not in kinds and it.get("방향") is None]
+    문제, _모름, 정리 = [], [], []
+    for i, it in enumerate(items or []):
+        if not isinstance(it, dict):
+            문제.append(f"항목 {i+1}: {{항목, 종류, 금액, …}} 형태여야 함"); continue
+        항목명 = it.get("항목") or it.get("구분") or it.get("과목") or ""
+        종류 = it.get("종류") or it.get("구분") or it.get("과목") or ""
+        종류 = _세무조정_종류_별칭.get(종류, 종류)
+        라벨 = f"항목 {i+1}('{항목명}')"
+        금액_입력 = it.get("금액", 0)
+        if not isinstance(금액_입력, (int, float)) or isinstance(금액_입력, bool):
+            문제.append(f"{라벨}: 금액 {금액_입력!r} — 원 단위 숫자여야 함"); continue
+        if 금액_입력 < 0:
+            문제.append(f"{라벨}: 금액 {int(금액_입력):,}원 — 음수는 받지 않음. 반대 방향이면 조정('손금산입' 등)이나 방향('차감')을 바꿔 양수로 넣으세요"); continue
+        조정_입력, 방향_입력 = it.get("조정"), it.get("방향")
+        if 조정_입력 is not None and 조정_입력 not in _조정_방향:
+            문제.append(f"{라벨}: 조정 '{조정_입력}' — '익금산입'|'손금불산입'|'손금산입'|'익금불산입' 중 하나"); continue
+        if 방향_입력 is not None and 방향_입력 not in ("가산", "차감", "없음"):
+            문제.append(f"{라벨}: 방향 '{방향_입력}' 허용값 아님 — '가산'|'차감'|'없음'"); continue
+        if 조정_입력 and 방향_입력 and _조정_방향[조정_입력] != 방향_입력:
+            문제.append(f"{라벨}: 조정 '{조정_입력}'({_조정_방향[조정_입력]})과 방향 '{방향_입력}'이 서로 다름"); continue
+        소득처분_입력 = it.get("소득처분")
+        if 소득처분_입력 is not None:
+            소득처분_입력 = _소득처분_별칭.get(str(소득처분_입력).strip(), str(소득처분_입력).strip())
+            if 소득처분_입력 not in _소득처분_허용 and not (방향_입력 == "없음" and 소득처분_입력 in ("—", "-", "")):
+                문제.append(f"{라벨}: 소득처분 '{it.get('소득처분')}' — {'·'.join(_소득처분_허용)} 중 하나(귀속자는 항목 이름에)"); continue
+        kd = kinds.get(종류)
+        if kd is None and 조정_입력 is None and 방향_입력 is None:
+            _모름.append(f"'{항목명}'(종류 '{종류}')"); continue
+        if kd is not None and kd["방향"] == "차가감 이후":
+            정리.append({"항목": 항목명, "종류": 종류, "금액": int(금액_입력), "기부금": True, "근거": kd["근거"]}); continue
+        if 조정_입력:
+            방향, 조정 = _조정_방향[조정_입력], 조정_입력
+        elif 방향_입력:
+            방향 = 방향_입력
+            if kd is not None and kd["방향"] == 방향:
+                조정 = kd["조정"]
+            elif 방향 == "가산":
+                조정 = "익금산입" if ("익금" in 종류 + 항목명 and "불산입" not in 종류 + 항목명) else "손금불산입"
+            elif 방향 == "차감":
+                조정 = "익금불산입" if "익금불산입" in 종류 + 항목명 else "손금산입"
+            else:
+                조정 = None
+        else:
+            방향, 조정 = kd["방향"], kd["조정"]
+        if 소득처분_입력 is not None:
+            소득처분 = 소득처분_입력
+        elif kd is not None and kd["방향"] == 방향 and kd["소득처분"] is not None:
+            소득처분 = kd["소득처분"]
+        elif kd is not None and kd["소득처분"] is None:
+            문제.append(f"{라벨}: 종류 '{종류}'는 귀속자에 따라 소득처분이 달라 소득처분 입력 필요 — {'·'.join(_소득처분_허용)}"); continue
+        else:
+            소득처분 = {"가산": "기타사외유출", "차감": "기타"}.get(방향, "—")
+        추정 = kd is None and 조정_입력 is None and 방향 != "없음"
+        정리.append({"항목": 항목명, "종류": 종류, "금액": int(금액_입력), "방향": 방향, "조정": 조정, "소득처분": 소득처분,
+                   "근거": kd["근거"] if kd is not None else ("입력 조정 기준" if 조정_입력 else "입력 방향 기준"), "추정": 추정})
     if _모름:
-        return {"error": "입력 확인 필요 — 계산하지 않음",
-                "문제": [f"사전에 없는 종류 {len(_모름)}건: {', '.join(_모름)} — 종류를 아래 중에서 고르거나 방향('가산'|'차감'|'없음')을 주세요"],
-                "허용 종류": list(kinds)}
-    # 조정 이름: 가산 = 익금산입 또는 손금불산입, 차감 = 손금산입 또는 익금불산입
-    _조정명 = {"법인세비용": "손금불산입", "법인지방소득세": "손금불산입", "벌금·과태료·가산세": "손금불산입", "비지정기부금": "손금불산입",
-             "기업업무추진비 한도초과": "손금불산입", "감가상각비 한도초과": "손금불산입", "업무무관 지급이자": "손금불산입",
-             "자기주식처분이익(자본잉여금)": "익금산입", "환급금이자": "익금불산입", "수입배당금 익금불산입": "익금불산입",
-             "이월결손금 보전 자산수증이익": "익금불산입", "미수이자(원천징수대상)": "익금불산입"}
+        문제.insert(0, f"사전에 없는 종류 {len(_모름)}건: {', '.join(_모름)} — 종류를 아래 중에서 고르거나 조정('익금산입'|'손금불산입'|'손금산입'|'익금불산입') 또는 방향('가산'|'차감'|'없음')을 주세요")
+    if 문제:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제, "허용 종류": list(kinds), "허용 소득처분": list(_소득처분_허용)}
+
     익금산입 = 0
     손금산입 = 0
     세무조정 = []
     판단 = []
+    donation_excess = int(donation_excess) + sum(x["금액"] for x in 정리 if x.get("기부금"))
 
-    # 기부금 한도초과 금액 추출 (items 내 종류='기부금 한도초과' 항목에서)
-    extracted_donation_excess = 0
-    for it in items:
-        if it.get("종류") == "기부금 한도초과":
-            extracted_donation_excess += int(it.get("금액", 0) or 0)
-    donation_excess = int(donation_excess) + extracted_donation_excess
-
-    for it in items:
-        항목명 = it.get("항목", "")
-        종류 = it.get("종류", "")
-        금액 = int(it.get("금액", 0) or 0)
-        방향_입력 = it.get("방향", None)
-        소득처분_입력 = it.get("소득처분", None)
-
-        if 종류 not in kinds:
-            if 방향_입력 is None:
-                return {"error": "입력 확인 필요 — 계산하지 않음",
-                        "문제": [f"항목 '{항목명}': 종류 '{종류}' 사전에 없음, 방향을 주세요"]}
-            # 방향은 있으나 사전에 없는 종류 — 소득처분은 입력값 또는 기본
-            방향 = 방향_입력
-            # 소득처분 기본값: 가산→기타사외유출, 차감→기타, 없음→—
-            if 소득처분_입력:
-                소득처분 = 소득처분_입력
-            elif 방향 == "가산":
-                소득처분 = "기타사외유출"
-            elif 방향 == "차감":
-                소득처분 = "기타"
-            else:
-                소득처분 = "—"
-            근거 = "입력 방향 기준"
-        else:
-            kd = kinds[종류]
-            방향 = 방향_입력 if 방향_입력 is not None else kd["방향"]
-            소득처분 = 소득처분_입력 if 소득처분_입력 is not None else kd["소득처분"]
-            근거 = kd["근거"]
-
-        if 방향_입력 is not None and 방향_입력 not in ("가산", "차감", "없음"):
-            return {"error": "입력 확인 필요 — 계산하지 않음",
-                    "문제": [f"항목 '{항목명}': 방향 '{방향_입력}' 허용값 아님 — '가산'|'차감'|'없음'"]}
-
-        # 기부금 한도초과 — 차가감 이후 가산
-        if 종류 == "기부금 한도초과":
-            판단.append({"항목": 항목명, "결론": f"차가감소득금액 이후 가산 — 금액 {금액:,}원 (법 제24조)",
-                         "근거": 근거})
+    for x in 정리:
+        항목명, 종류, 금액 = x["항목"], x["종류"], x["금액"]
+        if x.get("기부금"):
+            판단.append({"항목": 항목명, "결론": f"차가감소득금액 이후 가산 — 금액 {금액:,}원 (법 제24조)", "근거": x["근거"]})
             continue
-
-        if 방향 == "없음":
-            판단.append({"항목": 항목명, "결론": f"조정 없음 — {금액:,}원 (손금 인정, 세무조정 대상 아님)",
-                         "근거": 근거})
+        if x["방향"] == "없음":
+            판단.append({"항목": 항목명, "결론": f"조정 없음 — {금액:,}원 (손금 인정, 세무조정 대상 아님)", "근거": x["근거"]})
             continue
-
-        if 방향 == "가산":
+        조정, 소득처분 = x["조정"], x["소득처분"]
+        if x["방향"] == "가산":
             익금산입 += 금액
-            조정 = _조정명.get(종류, "익금산입·손금불산입")
-            세무조정.append({"구분": 항목명, "금액": 금액, "소득처분": 소득처분, "조정": "익금산입", "조정구분": 조정, "종류": 종류})   # '조정'은 방향(엑셀 SUMIF용, 호환)
-            판단.append({"항목": 항목명, "결론": f"{조정}(가산) +{금액:,}원, 소득처분 {소득처분}",
-                         "근거": 근거})
-        elif 방향 == "차감":
+        else:
             손금산입 += 금액
-            조정 = _조정명.get(종류, "손금산입·익금불산입")
-            세무조정.append({"구분": 항목명, "금액": 금액, "소득처분": 소득처분, "조정": "손금산입", "조정구분": 조정, "종류": 종류})   # '조정'은 방향(엑셀 SUMIF용, 호환)
-            판단.append({"항목": 항목명, "결론": f"{조정}(차감) −{금액:,}원, 소득처분 {소득처분}",
-                         "근거": 근거})
+        세무조정.append({"구분": 항목명, "조정": 조정, "금액": 금액, "소득처분": 소득처분, "조정구분": 조정, "종류": 종류})
+        판단.append({"항목": 항목명, "결론": f"{조정}({x['방향']}) {'+' if x['방향'] == '가산' else '−'}{금액:,}원, 소득처분 {소득처분}"
+                                         + (" — 조정 이름은 방향으로 추정, 정확한 이름은 '조정'으로 지정" if x["추정"] else ""),
+                     "근거": x["근거"]})
 
     차가감소득금액 = net_income + 익금산입 - 손금산입
     각사업연도소득금액 = 차가감소득금액 + int(donation_excess) - int(donation_carryover_deduction)
 
     if int(donation_excess) > 0:
-        세무조정.append({"구분": "기부금 한도초과", "금액": int(donation_excess), "소득처분": "기타사외유출", "조정": "익금산입"})
+        세무조정.append({"구분": "기부금 한도초과", "조정": "손금불산입", "금액": int(donation_excess), "소득처분": "기타사외유출"})
         판단.append({"항목": "기부금 한도초과", "결론": f"차가감 이후 가산 +{int(donation_excess):,}원 (법 제24조)",
                      "근거": "법 제24조"})
 
     # ── 계산식 단계 (SPEC_export_workbook_c) ──────────────────────────────
     계산식_입력: list[dict] = [
-        {"이름": "당기순이익", "값": net_income, "설명": "당기순이익(세무조정 전)"},
+        {"이름": "당기순이익", "값": net_income, "설명": "당기순이익(세무조정 전, 손실은 음수)"},
     ]
     if int(donation_excess) > 0:
         계산식_입력.append({"이름": "기부금한도초과", "값": int(donation_excess),
@@ -8218,29 +8221,16 @@ def income_adjustment_total(
         계산식_입력.append({"이름": "기부금이월공제", "값": int(donation_carryover_deduction),
                              "설명": "기부금 한도초과 이월액 손금산입"})
 
-    # 항목은 익금산입·손금산입으로 나누어 번호 부여 (방향은 kinds 기준 최종값)
-    calc_items_add: list[dict] = []   # 익금산입·손금불산입 (가산)
-    calc_items_sub: list[dict] = []   # 손금산입·익금불산입 (차감)
-    for it in items:
-        금액 = int(it.get("금액", 0) or 0)
-        if 금액 == 0:
-            continue
-        종류 = it.get("종류", "")
-        kd = kinds.get(종류, {})
-        direction = it.get("방향") or kd.get("방향", "가산")
-        항목명 = it.get("항목", "")
-        if direction == "차감":
-            calc_items_sub.append({"항목명": 항목명, "종류": 종류, "금액": 금액})
-        else:
-            calc_items_add.append({"항목명": 항목명, "종류": 종류, "금액": 금액})
-
+    # 항목은 가산(익금산입·손금불산입)·차감(손금산입·익금불산입)으로 나누어 번호 부여
+    calc_items_add = [x for x in 정리 if not x.get("기부금") and x["방향"] == "가산" and x["금액"]]
+    calc_items_sub = [x for x in 정리 if not x.get("기부금") and x["방향"] == "차감" and x["금액"]]
     for idx, item in enumerate(calc_items_add, 1):
         계산식_입력.append({"이름": f"항목{idx}", "값": item["금액"],
-                             "설명": f"{item['항목명']} — {item['종류']} (익금산입)"})
+                             "설명": f"{item['항목']} — {item['종류']} ({item['조정']})"})
     가산_start = len(calc_items_add)
     for idx, item in enumerate(calc_items_sub, 1):
         계산식_입력.append({"이름": f"항목{가산_start + idx}", "값": item["금액"],
-                             "설명": f"{item['항목명']} — {item['종류']} (손금산입)"})
+                             "설명": f"{item['항목']} — {item['종류']} ({item['조정']})"})
 
     add_refs = "+".join(f"항목{i}" for i in range(1, len(calc_items_add) + 1)) or "0"
     sub_refs = "+".join(f"항목{i}" for i in range(가산_start + 1, 가산_start + len(calc_items_sub) + 1)) or "0"
@@ -8257,7 +8247,7 @@ def income_adjustment_total(
         {"이름": "손금산입_익금불산입", "식": sub_refs,
          "값": 손금산입, "설명": "손금산입·익금불산입 항목 합계"},
         {"이름": "차가감소득금액", "식": "당기순이익+익금산입_손금불산입-손금산입_익금불산입",
-         "값": 차가감소득금액, "설명": "당기순이익 + 익금산입 − 손금산입"},
+         "값": 차가감소득금액, "설명": "당기순이익 + 익금산입·손금불산입 − 손금산입·익금불산입"},
         {"이름": "각사업연도소득금액", "식": 각사_식,
          "값": 각사업연도소득금액, "설명": "차가감소득금액 + 기부금한도초과 − 이월공제"},
     ]
@@ -8267,7 +8257,7 @@ def income_adjustment_total(
                 "세무조정": 세무조정},
                "법인세법 제18·19·21·23·24·25·28조 등",
                판단=판단,
-               산식=f"당기순이익 {net_income:,} + 익금산입 {익금산입:,} − 손금산입 {손금산입:,} = 차가감 {차가감소득금액:,}원, + 기부금한도초과 {donation_excess:,} − 이월공제 {donation_carryover_deduction:,} = 각사업연도 {각사업연도소득금액:,}원",
+               산식=f"당기순이익 {net_income:,} + 익금산입·손금불산입 {익금산입:,} − 손금산입·익금불산입 {손금산입:,} = 차가감 {차가감소득금액:,}원, + 기부금한도초과 {donation_excess:,} − 이월공제 {donation_carryover_deduction:,} = 각사업연도 {각사업연도소득금액:,}원",
                계산식_입력=계산식_입력, 계산식=계산식)
 
 # ── 모든 도구 공통 — 정의되지 않은 최상위 인자 거부 ─────────────
@@ -8596,6 +8586,8 @@ def export_workbook(
   company — 법인명(서식 머리에 표시, 기본 '').
   period — 사업연도 표기(예 '2025.01.01 ~ 2025.12.31', 기본 '').
   biz_no — 사업자등록번호(서식 머리에 표시, 기본 '').
+  시트 규칙: '계산 N'은 N번째 call(오류 call 포함, call마다 한 장). 같은 도구를 여러 번 부르면 신고서 한 부에 한 장인
+    서식(별지3·15·34 등)은 마지막 call이 본 시트, 앞선 call은 '(호출 N)' 시트. 서식 칸은 그 값을 만든 call에서 채운다.
 
 결과:
   결과.파일 — 절대경로.
@@ -8754,15 +8746,22 @@ def export_workbook(
 
         시트이름들.append("요약")
 
-        # ── 2. 계산 시트들 (steps 모드, 기존 동작) ──
+        # ── 2. 계산 시트들 (steps 모드) — call마다 한 장, N은 calls 안 순번(오류 call은 오류 내용만) ──
         calc_idx = 0
-        for cd in 결과들:
-            if cd["error"] or not cd["result"]:
-                continue
-            calc_idx += 1
+        for _ci, cd in enumerate(결과들):
+            calc_idx = _ci + 1
             sh_name = f"계산 {calc_idx}"
             ws = wb.create_sheet(sh_name)
             시트이름들.append(sh_name)
+            if cd["error"] or not cd["result"]:
+                for rr, (k, v) in enumerate((("label", cd.get("label", "")), ("도구", cd.get("tool", "")),
+                                              ("오류", cd.get("error") or "결과 없음"),
+                                              ("안내", _cell_value(cd.get("basis")) if cd.get("basis") else "")), 1):
+                    ws.cell(rr, 1, k).font = bold
+                    ws.cell(rr, 2, v)
+                ws.column_dimensions["A"].width = 16
+                ws.column_dimensions["B"].width = 60
+                continue
             res = cd["result"] or {}
             calc_dict = (cd.get("data") or {}).get("계산") if isinstance(cd.get("data"), dict) else None
             formula = (cd.get("data") or {}).get("계산식") if isinstance(cd.get("data"), dict) else None
@@ -8996,20 +8995,45 @@ def export_workbook(
                     if not eval(when_py, {"__builtins__": {}}, {"입력_값": 입력_값, "결과_값": 결과_값}):
                         _skipped_tpl.add(tkey)
                         continue
-                sheet_name = tpl["sheet"]
-                _tpl_seen[tkey] = _tpl_seen.get(tkey, 0) + 1
-                if _tpl_seen[tkey] > 1:
-                    sheet_name = f"{tpl['sheet']} ({_tpl_seen[tkey]})"
-                템플릿_목록.append({"key": tkey, "sheet": sheet_name, "form": tpl["form"], "tool": tool, "call_idx": i})
+                # requires_args: 그 입력이 있는 call에서만 만든다(예: 공통사용재화 공급이 없으면 부가근거63 없음)
+                req = tpl.get("requires_args")
+                if req and not ((calls[i] or {}).get("args") or {}).get(req):
+                    _skipped_tpl.add(tkey)
+                    continue
+                템플릿_목록.append({"key": tkey, "sheet": tpl["sheet"], "form": tpl["form"], "tool": tool,
+                                   "call_idx": i, "per_return": bool(tpl.get("per_return"))})
+
+        # 같은 틀을 여러 call이 채울 때 시트 이름 규칙:
+        #  - 신고서 한 부에 한 장인 서식(틀 per_return — 별지3·별지15·별지34 등): 마지막 call이 이름 그대로인 본 시트,
+        #    앞선 call은 '<시트> (호출 N)'(N = calls 안 순번)으로 따로 남긴다. 본 시트끼리 교차 참조한다.
+        #  - 자산·거래마다 한 장인 서식(별지20·별지84 등): 첫 call이 본 시트, 다음은 '<시트> (2)'…
+        _tpl_groups: dict[str, list[dict]] = {}
+        for tinfo in 템플릿_목록:
+            _tpl_groups.setdefault(tinfo["key"], []).append(tinfo)
+        for _lst in _tpl_groups.values():
+            if _lst[0]["per_return"]:
+                for tinfo in _lst:
+                    tinfo["main"] = tinfo is _lst[-1]
+                    if not tinfo["main"]:
+                        tinfo["sheet"] = f"{tinfo['sheet']} (호출 {tinfo['call_idx'] + 1})"
+            else:
+                for n, tinfo in enumerate(_lst, 1):
+                    tinfo["main"] = n == 1
+                    if n > 1:
+                        tinfo["sheet"] = f"{tinfo['sheet']} ({n})"
+        _tpl_seen = {k: len(v) for k, v in _tpl_groups.items()}
 
         # 템플릿_목록을 spec 순서(별지3, 별지15, 별지23갑, 별지23을, 별지20정률, 별지16의2, 별지50을,
-        # 부가22, 부가근거63, 부가근거64, 종소배당, 종소근로)로 정렬
+        # 부가22, 부가근거63, 부가근거64, 종소배당, 종소근로)로 정렬 — 같은 틀은 본 시트 먼저, 그다음 call 순
         _tpl_render_order = {"별지3": 1, "별지15": 2, "별지23갑": 3, "별지23을": 4,
                              "별지34": 4.5,
-                             "별지20정률": 5, "별지16의2": 6, "별지26갑": 6.1, "별지26을": 6.2, "별지50을": 7,
+                             "별지20정률": 5, "별지20정액": 5.5, "별지16의2": 6, "별지26갑": 6.1, "별지26을": 6.2, "별지50을": 7,
                              "부가22": 8, "부가근거63": 9, "부가근거64": 10, "종소배당": 11, "종소근로": 12,
                              "별지84": 13, "별지84세액": 14, "별지84부표1": 15}
-        템플릿_목록.sort(key=lambda t: _tpl_render_order.get(t["key"], 99))
+
+        def _tpl_sort_key(t):
+            return (_tpl_render_order.get(t["key"], 99), not t.get("main", True), t["call_idx"])
+        템플릿_목록.sort(key=_tpl_sort_key)
 
         # ── 1. 목록 시트 ──
         ws_list = wb.active
@@ -9055,10 +9079,11 @@ def export_workbook(
                 ws_list.cell(행, 2, 설명)
                 행 += 1
 
-        # when 조건으로 만들지 않은 틀에 `목록_생략` 문구가 있으면 그 줄
+        # when 조건으로 만들지 않은 틀에 `목록_생략` 문구가 있으면 그 줄(다른 call에서 만들었으면 쓰지 않음)
         for _tool_tpls in _FORM_TEMPLATES.values():
             for _t in _tool_tpls:
-                if _t["key"] in _skipped_tpl and _t.get("목록_생략") and _t["sheet"] not in _목록_본:
+                if (_t["key"] in _skipped_tpl and _t["key"] not in _tpl_groups and _t.get("목록_생략")
+                        and _t["sheet"] not in _목록_본):
                     _목록_본.add(_t["sheet"])
                     ws_list.cell(행, 1, _t["sheet"])
                     ws_list.cell(행, 2, _t["목록_생략"])
@@ -9069,11 +9094,7 @@ def export_workbook(
             ws_list.cell(행, 1, "종소 배당·이자소득명세서")
             ws_list.cell(행, 2, "❻ 배당소득명세서·❺ 이자소득명세서 — 해당 없음(금융소득 2천만원 이하 분리과세)")
             행 += 1
-
-        ws_list.cell(행, 1,
-                    "이 파일은 계산 도구의 결과를 정리한 참고 자료이며 세무 자문이 아닙니다. 판단과 신고는 세무 전문가와 확인하세요.")
-        ws_list.cell(행, 1).font = Font(italic=True, color="C00000")
-        ws_list.merge_cells(start_row=행, start_column=1, end_row=행, end_column=8)
+        _목록_행 = 행  # 확인 메모·call 대응표·고지문은 서식을 다 그린 뒤 이 행부터
 
         ws_list.column_dimensions["A"].width = 30
         ws_list.column_dimensions["B"].width = 55
@@ -9170,7 +9191,8 @@ def export_workbook(
         slot_map_all: dict[str, str] = {}
         _tpl_by_key: dict[str, dict] = {}
         for tinfo in 템플릿_목록:
-            sheet_name_map[tinfo["key"]] = tinfo["sheet"]
+            if tinfo.get("main", True):
+                sheet_name_map[tinfo["key"]] = tinfo["sheet"]
             if tinfo["key"] not in _tpl_by_key:
                 for _tpl in _FORM_TEMPLATES.get(tinfo["tool"], []):
                     if _tpl["key"] == tinfo["key"]:
@@ -9186,8 +9208,11 @@ def export_workbook(
 
         # slot_map_cross: {(ref_key, ref_id): (sheet, cell)} — cross 참조 lookup용
         # 1단계: 모든 템플릿의 slots 수집 (tkey → {sid: (sheet, cell)})
+        # (같은 틀이 여러 시트면 본 시트 — 다른 틀에서 {틀key!id}로 가리키는 시트)
         all_slots: dict[str, dict[str, tuple[str, str]]] = {}
         for tinfo in 템플릿_목록:
+            if not tinfo.get("main", True):
+                continue
             tpl = _tpl_by_key[tinfo["key"]]
             all_slots[tinfo["key"]] = {}
             for s in tpl.get("slots", []):
@@ -9195,19 +9220,40 @@ def export_workbook(
 
         # tool: "*" (별지50을)는 유보 행이 1개 이상일 때 추가
         # (income_adjustment_total의 세무조정에서 유보 + depreciation 유보 행 포함)
-        _has_유보 = any(
-            s.get("소득처분") == "유보"
-            for cd in 결과들 if not cd.get("error")
-            for s in (cd.get("result") or {}).get("세무조정", [])
-        ) or ("별지20정률" in all_slots)
+        # 도구별 성공 call 순번(calls 순서). 서식 칸에 들어갈 값은 그 값을 만든 call에서만 가져온다
+        # (예전처럼 calls의 몇 번째 자리로 가정하지 않음).
+        _ok_calls: dict[str, list[int]] = {}
+        for i, cd in enumerate(결과들):
+            if not cd.get("error") and cd.get("result"):
+                _ok_calls.setdefault(cd.get("tool", ""), []).append(i)
+
+        def _last_call(tool_name: str) -> int | None:
+            lst = _ok_calls.get(tool_name) or []
+            return lst[-1] if lst else None
+
+        def _세무조정(i: int | None) -> list[dict]:
+            if i is None:
+                return []
+            return [s for s in ((결과들[i].get("result") or {}).get("세무조정") or []) if isinstance(s, dict)]
+
+        # 별지50(을)은 income_adjustment_total 중 유보·△유보가 있는 마지막 call(없으면 마지막 call)로 만든다
+        _adj_calls = _ok_calls.get("income_adjustment_total", [])
+        _유보_call = next((i for i in reversed(_adj_calls)
+                          if any(str(s.get("소득처분", "")).lstrip("△") == "유보" for s in _세무조정(i))),
+                         _adj_calls[-1] if _adj_calls else None)
+        _dep_keys = ("별지20정률", "별지20정액")
+
+        # tool: "*" (별지50을)는 유보 행이 1개 이상일 때 추가
+        # (income_adjustment_total의 세무조정에서 유보 + depreciation 유보 행 포함)
+        _has_유보 = any(s.get("소득처분") == "유보" for i in range(len(결과들)) for s in _세무조정(i)) \
+            or any(k in all_slots for k in _dep_keys)
         if _FORM_TEMPLATES.get("*", []) and _has_유보 and "별지50을" not in _tpl_seen:
             _tpl_seen["별지50을"] = 1
             별지50_tpl = _FORM_TEMPLATES["*"][0]
             sheet_name = 별지50_tpl["sheet"]
-            adj_call_idx = next((i for i, cd in enumerate(결과들)
-                                if cd.get("tool") == "income_adjustment_total" and not cd.get("error")), 0)
+            adj_call_idx = _유보_call if _유보_call is not None else 0
             tinfo_50 = {"key": "별지50을", "sheet": sheet_name, "form": 별지50_tpl["form"],
-                       "tool": "*", "call_idx": adj_call_idx}
+                       "tool": "*", "call_idx": adj_call_idx, "main": True, "per_return": True}
             템플릿_목록.append(tinfo_50)
             sheet_name_map["별지50을"] = sheet_name
             _tpl_by_key["별지50을"] = 별지50_tpl
@@ -9215,20 +9261,17 @@ def export_workbook(
             for s in 별지50_tpl.get("slots", []):
                 all_slots["별지50을"][s["id"]] = (sheet_name, s["cell"])
             # 별지50을 추가 후 다시 정렬하여 올바른 순서 유지
-            템플릿_목록.sort(key=lambda t: _tpl_render_order.get(t["key"], 99))
+            템플릿_목록.sort(key=_tpl_sort_key)
 
-        # adj_slots 구축: adjustment → [(시트명, 셀, check_path, call_idx)]
+        # adj_slots 구축: adjustment → [(시트명, 셀, check_path, call_idx)] — 시트마다(같은 틀 여러 장이면 각각)
         adj_slots: dict[str, list[tuple[str, str, str, int]]] = {}
-        for tkey, slots in all_slots.items():
-            tpl = _tpl_by_key[tkey]
+        for tinfo in 템플릿_목록:
+            tpl = _tpl_by_key[tinfo["key"]]
             for s in tpl.get("slots", []):
                 adj = s.get("adjustment")
                 if adj:
-                    sid = s["id"]
-                    시트명, 셀 = all_slots[tkey][sid]
-                    # call_idx 찾기: 템플릿_목록에서 해당 tinfo의 call_idx
-                    call_idx = next((ti["call_idx"] for ti in 템플릿_목록 if ti["key"] == tkey), 0)
-                    adj_slots.setdefault(adj, []).append((시트명, 셀, s.get("check", ""), call_idx))
+                    adj_slots.setdefault(adj, []).append((tinfo["sheet"], s["cell"], s.get("check", ""),
+                                                          tinfo["call_idx"]))
 
         # 2단계: {틀key!id} cross 참조 파싱 (slot 수식 + table 열 수식)
         cross_refs: set[tuple[str, str]] = set()
@@ -9258,149 +9301,260 @@ def export_workbook(
             # 대상이 없으면 제외 (render_form_sheet에서 fallback 값 사용)
 
         # ── source_data 구축 (테이블 소스 + cross fallback용) ──
+        # 표 source는 그 값을 만든 call에서 만든다. _call_src[call_idx]는 그 call의 시트에만 쓰는 source,
+        # source_data는 본 시트(같은 도구를 여러 번 부르면 마지막 call) 기준 기본값.
         source_data: dict[str, list[dict]] = {}
-        # adjustment 소스: income_adjustment_total의 세무조정에서 가산·차감 분리
-        adj_result = 결과들[3].get("result") if len(결과들) > 3 else {}
-        adj_items = (adj_result or {}).get("세무조정", [])
-        _adj_src_add: list[dict] = []
-        _adj_src_sub: list[dict] = []
-        for s in adj_items:
-            조정 = s.get("조정", "")
-            금액 = s.get("금액", 0)
-            if isinstance(금액, (int, float)):
+        _call_src: dict[int, dict[str, list[dict]]] = {}
+
+        def _조정_rows(i: int | None) -> tuple[list[dict], list[dict]]:
+            """income_adjustment_total 세무조정 → 별지15 가산·차감 행. 기부금 한도초과(차가감 뒤 가산, 별지3 105)는 빼다."""
+            add: list[dict] = []
+            sub: list[dict] = []
+            for s in _세무조정(i):
+                if s.get("구분") == "기부금 한도초과" and "조정구분" not in s:
+                    continue
+                조정 = s.get("조정", "")
+                금액 = s.get("금액", 0)
+                if not isinstance(금액, (int, float)):
+                    continue
+                처분 = s.get("소득처분", "")
                 if 조정 in ("익금산입", "손금불산입"):
-                    처분 = s.get("소득처분", "")
                     코드 = "400" if 처분 == "유보" else ("100" if 처분 == "△유보" else "500")
-                    _adj_src_add.append({"과목": s.get("구분", ""), "금액": 금액, "처분": 처분, "코드": 코드,
-                                         "종류": s.get("종류", s.get("구분", ""))})
+                    add.append({"과목": s.get("구분", ""), "금액": 금액, "처분": 처분, "코드": 코드,
+                                "종류": s.get("종류", s.get("구분", ""))})
                 elif 조정 in ("손금산입", "익금불산입"):
-                    처분 = s.get("소득처분", "")
                     코드 = "100" if 처분 == "△유보" else "200"
-                    _adj_src_sub.append({"과목": s.get("구분", ""), "금액": 금액, "처분": 처분, "코드": 코드,
-                                         "종류": s.get("종류", s.get("구분", ""))})
-        source_data["조정_가산"] = _adj_src_add
-        source_data["조정_차감"] = _adj_src_sub
+                    sub.append({"과목": s.get("구분", ""), "금액": 금액, "처분": 처분, "코드": 코드,
+                                "종류": s.get("종류", s.get("구분", ""))})
+            return add, sub
+
+        for i in _adj_calls:
+            a, b = _조정_rows(i)
+            _call_src.setdefault(i, {}).update({"조정_가산": a, "조정_차감": b})
+        source_data["조정_가산"], source_data["조정_차감"] = _조정_rows(_last_call("income_adjustment_total"))
+
         # 피출자법인 소스: dividend_received_deduction 결과 → SPEC대로 {이름, 지분율(%)=출자비율×100}
-        div_result = 결과들[2].get("result") if len(결과들) > 2 else {}
-        _피출자 = []
-        for inv in (div_result or {}).get("피출자법인별", []):
-            _피출자.append({
-                "이름": inv.get("이름", ""),
-                "지분율(%)": inv.get("출자비율", 0) * 100,
-            })
-        source_data["피출자법인"] = _피출자
-        # 유보 소스: depreciation_adjustment (별지20정률로 렌더된 경우) + income_adjustment_total 유보
+        def _피출자_rows(i: int | None) -> list[dict]:
+            if i is None:
+                return []
+            return [{"이름": inv.get("이름", ""), "지분율(%)": inv.get("출자비율", 0) * 100}
+                    for inv in (결과들[i].get("result") or {}).get("피출자법인별", [])]
+        for i in _ok_calls.get("dividend_received_deduction", []):
+            _call_src.setdefault(i, {})["피출자법인"] = _피출자_rows(i)
+        source_data["피출자법인"] = _피출자_rows(_last_call("dividend_received_deduction"))
+
+        # 유보 소스(별지50을): 감가상각 서식 시트마다 한 행(그 시트 칸을 가리킴) + income_adjustment_total 유보·△유보
+        # (income_adjustment_total이 없으면 각 도구 call의 세무조정 유보)
         _유보_rows: list[dict] = []
-        dep_result = 결과들[1].get("result") if len(결과들) > 1 else {}
-        if "별지20정률" in all_slots:
+        _dep_cols = {"별지20정률": ("⑪", "㉗", "㉖"), "별지20정액": ("㉕", "㉔", "㉓")}
+        _dep_vals: set = set()
+        for tinfo in 템플릿_목록:
+            if tinfo["key"] not in _dep_cols:
+                continue
+            ids = _dep_cols[tinfo["key"]]
+            cells = {s["id"]: s["cell"] for s in _tpl_by_key[tinfo["key"]].get("slots", [])}
+            sh = tinfo["sheet"]
             _유보_rows.append({
-                "과목": "감가상각비 한도초과(기계장치)",
-                "기초": "={별지20정률!⑪}",
-                "감소": "={별지20정률!㉗}",
-                "증가": "={별지20정률!㉖}",
+                "과목": f"감가상각비 한도초과({결과들[tinfo['call_idx']].get('label') or '감가상각자산'})",
+                "기초": f"='{sh}'!{cells[ids[0]]}",
+                "감소": f"='{sh}'!{cells[ids[1]]}",
+                "증가": f"='{sh}'!{cells[ids[2]]}",
                 "비고": "",
             })
-        for s in adj_items:
-            처분 = s.get("소득처분", "")
-            if 처분 == "유보":
+            dres = 결과들[tinfo["call_idx"]].get("result") or {}
+            for k in ("상각부인액", "전기부인액_추인"):
+                if isinstance(dres.get(k), (int, float)) and dres.get(k):
+                    _dep_vals.add(dres[k])
+        _유보_src = [_유보_call] if _유보_call is not None else [
+            i for i, cd in enumerate(결과들) if cd.get("tool") != "depreciation_adjustment"]
+        for i in _유보_src:
+            for s in _세무조정(i):
+                처분 = s.get("소득처분", "")
+                if 처분 not in ("유보", "△유보"):
+                    continue
+                금액 = s.get("금액", 0)
                 adj_key = s.get("종류", s.get("구분", ""))
-                is_손금_유보 = s.get("조정") == "손금산입"
-                if adj_key == "감가상각비 한도초과":
-                    continue  # 위 depreciation 행에서 처리됨
+                이름 = s.get("구분", "") or adj_key
+                if any(t["key"] in _dep_cols for t in 템플릿_목록):
+                    # 감가상각 서식 시트 행과 같은 금액(상각부인액·전기부인액 추인)이면 그 행에서 처리됨
+                    if adj_key == "감가상각비 한도초과" or ("상각" in f"{이름}{adj_key}" and 금액 in _dep_vals):
+                        continue
+                감소 = 처분 == "△유보" or s.get("조정") in ("손금산입", "익금불산입")
                 _유보_rows.append({
-                    "과목": adj_key,
+                    "과목": 이름 if i == _유보_call else adj_key,
                     "기초": 0,
-                    "감소": 0 if not is_손금_유보 else s.get("금액", 0),
-                    "증가": s.get("금액", 0) if not is_손금_유보 else 0,
+                    "감소": 금액 if 감소 else 0,
+                    "증가": 0 if 감소 else 금액,
                     "비고": "",
                 })
         source_data["유보"] = _유보_rows
-        # 공통사용재화 소스: common_input_tax args common_asset_sales → {순번: 1..}
-        for i, cd in enumerate(결과들):
-            if cd.get("tool") == "common_input_tax" and not cd.get("error"):
-                args = calls[i].get("args", {})
-                common_asset_sales = args.get("common_asset_sales", [])
-                _재화_rows = []
-                for idx, sale in enumerate(common_asset_sales, 1):
-                    _재화_rows.append({
-                        "순번": idx,
-                        "공급가액": int(sale.get("sale_price", 0)),
-                    })
-                source_data["공통사용재화"] = _재화_rows
-                break
 
-        # 배당명세·이자명세 소스: financial_income_aggregate 계산.항목별 → {코드, 일련번호, 항목, 금액}
-        for i, cd in enumerate(결과들):
-            if cd.get("tool") == "financial_income_aggregate" and not cd.get("error"):
-                calc_dict = (cd.get("data") or {}).get("계산", {})
-                항목별 = calc_dict.get("항목별", [])
-                판단목록 = (cd.get("data") or {}).get("판단", [])
-                # 판단목록에서 입력 순서 복구 (계산.항목별은 dict라 순서 없음)
-                순서맵 = {h["항목"]: idx for idx, h in enumerate(판단목록)}
-                _배당_rows: list[dict] = []
-                _이자_rows: list[dict] = []
-                # 코드 매핑: 배당 GU대상=21, GU비대상=22, 출자공동=28, 이자=13, 제외는 제외
-                코드맵 = {"GU대상": "21", "GU비대상": "22", "출자공동": "28", "이자": "13", "제외": None}
-                for item in 항목별:
-                    구분 = item.get("구분", "")
-                    코드 = 코드맵.get(구분)
-                    if 코드 is None:
-                        continue  # 제외는 넣지 않음
-                    항목명 = item.get("항목", "").replace("_", " ")
-                    금액 = item.get("금액", 0)
-                    if 구분 in ("GU대상", "GU비대상", "출자공동"):
-                        _배당_rows.append({"코드": 코드, "일련번호": 0, "항목": 항목명, "금액": 금액,
-                                           "_순서": 순서맵.get(item.get("항목", ""), 999)})
-                    elif 구분 == "이자":
-                        _이자_rows.append({"코드": 코드, "일련번호": 0, "항목": 항목명, "금액": 금액,
-                                            "_순서": 순서맵.get(item.get("항목", ""), 999)})
-                # 코드 오름차순, 같은 코드 안에서는 입력 순서(_순서)로 정렬
-                _배당_rows.sort(key=lambda r: (r["코드"], r["_순서"]))
-                _이자_rows.sort(key=lambda r: (r["코드"], r["_순서"]))
-                # 일련번호는 코드별 1부터
-                last_code = None
-                seq = 0
-                for r in _배당_rows:
-                    if r["코드"] != last_code:
-                        last_code = r["코드"]
-                        seq = 1
-                    else:
-                        seq += 1
+        # 공통사용재화 소스: common_input_tax args common_asset_sales → {순번: 1..} (call마다)
+        for i in _ok_calls.get("common_input_tax", []):
+            args = (calls[i] or {}).get("args", {}) or {}
+            _재화_rows = [{"순번": idx, "공급가액": int(sale.get("sale_price", 0))}
+                          for idx, sale in enumerate(args.get("common_asset_sales") or [], 1)]
+            _call_src.setdefault(i, {})["공통사용재화"] = _재화_rows
+            source_data.setdefault("공통사용재화", _재화_rows)
+
+        # 부가 별지22 2.(불공제 사유별): vat_input_tax_deduction 마지막 call — 세금계산서 수취분을 사유(①~⑧)별로 묶음
+        _vid = _last_call("vat_input_tax_deduction")
+        if _vid is not None:
+            _사유행 = {k: {"매수": 0, "공급가액": 0, "매입세액": 0, "항목": []} for k in range(1, 9)}
+            _성격행 = {"사업무관": 2, "비영업용승용차": 3, "접대": 4, "면세사업": 5, "토지관련": 6}
+            _v_items = ((calls[_vid] or {}).get("args") or {}).get("items") or []
+            _v_calc = ((결과들[_vid].get("data") or {}).get("계산") or {}).get("항목별") or []
+            for n, row in enumerate(_v_calc):
+                it = _v_items[n] if n < len(_v_items) and isinstance(_v_items[n], dict) else {}
+                불공제 = (row.get("세액") or 0) - (row.get("공제세액") or 0)
+                사유 = row.get("불공제사유") or ""
+                if not 사유 or 불공제 <= 0 or it.get("증빙", "세금계산서") != "세금계산서":
+                    continue
+                k = _성격행.get(it.get("성격", ""))
+                if k is None:
+                    k = 7 if "①8호" in 사유 else (1 if "①2호" in 사유 or "①1호" in 사유 else None)
+                if k is None:
+                    continue
+                공급가액 = it.get("실제공급가액") or it.get("공급가액")
+                if 공급가액 is None and it.get("공급대가") is not None:
+                    공급가액 = int(it["공급대가"] * 100 / 110)
+                d = _사유행[k]
+                d["매수"] += 1
+                d["공급가액"] += int(공급가액 or 0)
+                d["매입세액"] += int(불공제)
+                d["항목"].append(str(row.get("항목", "")))
+            _불공제_rows = [{"매수": d["매수"] or None, "공급가액": d["공급가액"] or None,
+                            "매입세액": d["매입세액"] or None, "비고": ", ".join(d["항목"])}
+                           for d in (_사유행[k] for k in range(1, 9))]
+            _불공제_rows.append({"매수": "=SUM(D12:D19)", "공급가액": "=SUM(E12:E19)",
+                                "매입세액": "=SUM(F12:F19)", "비고": ""})
+            source_data["22_불공제"] = _불공제_rows
+
+        # 부가 별지22 5.(재계산): input_tax_recalculation call마다 당기(마지막 이력) 재계산 한 행
+        _재계산_rows: list[dict] = []
+        _재계산_calls: list[int] = []
+        for i in _ok_calls.get("input_tax_recalculation", []):
+            dat = 결과들[i].get("data") or {}
+            이력 = dat.get("이력") or []
+            last = 이력[-1] if 이력 and isinstance(이력[-1], dict) else None
+            if not last or not last.get("재계산"):
+                continue
+            args = (calls[i] or {}).get("args") or {}
+            체감 = 0.05 if args.get("asset_type") == "건물·구축물" else 0.25
+            _재계산_calls.append(i)
+            _재계산_rows.append({
+                "매입세액": (dat.get("결과") or {}).get("매입세액", args.get("input_tax")),
+                "경감률": round(max(0.0, 1 - 체감 * int(last.get("경과과세기간수") or 0)), 6),
+                "비율": last.get("변동"),
+            })
+        if _재계산_rows:
+            source_data["22_재계산"] = _재계산_rows
+        # 배당명세·이자명세 소스: financial_income_aggregate 계산.항목별 → {코드, 일련번호, 항목, 금액} (call마다)
+        def _금융_rows(cd: dict) -> tuple[list[dict], list[dict]]:
+            calc_dict = (cd.get("data") or {}).get("계산", {})
+            항목별 = calc_dict.get("항목별", [])
+            판단목록 = (cd.get("data") or {}).get("판단", [])
+            # 판단목록에서 입력 순서 복구 (계산.항목별은 dict라 순서 없음)
+            순서맵 = {h["항목"]: idx for idx, h in enumerate(판단목록)}
+            _배당_rows: list[dict] = []
+            _이자_rows: list[dict] = []
+            # 코드 매핑: 배당 GU대상=21, GU비대상=22, 출자공동=28, 이자=13, 제외는 제외
+            코드맵 = {"GU대상": "21", "GU비대상": "22", "출자공동": "28", "이자": "13", "제외": None}
+            for item in 항목별:
+                구분 = item.get("구분", "")
+                코드 = 코드맵.get(구분)
+                if 코드 is None:
+                    continue  # 제외는 넣지 않음
+                항목명 = item.get("항목", "").replace("_", " ")
+                금액 = item.get("금액", 0)
+                row = {"코드": 코드, "일련번호": 0, "항목": 항목명, "금액": 금액,
+                       "_순서": 순서맵.get(item.get("항목", ""), 999)}
+                if 구분 in ("GU대상", "GU비대상", "출자공동"):
+                    _배당_rows.append(row)
+                elif 구분 == "이자":
+                    _이자_rows.append(row)
+            # 코드 오름차순, 같은 코드 안에서는 입력 순서(_순서)로 정렬, 일련번호는 코드별 1부터
+            for rows in (_배당_rows, _이자_rows):
+                rows.sort(key=lambda r: (r["코드"], r["_순서"]))
+                last_code, seq = None, 0
+                for r in rows:
+                    seq = 1 if r["코드"] != last_code else seq + 1
+                    last_code = r["코드"]
                     r["일련번호"] = seq
-                last_code = None
-                seq = 0
-                for r in _이자_rows:
-                    if r["코드"] != last_code:
-                        last_code = r["코드"]
-                        seq = 1
-                    else:
-                        seq += 1
-                    r["일련번호"] = seq
-                # _순서 필드 제거
-                for r in _배당_rows:
                     del r["_순서"]
-                for r in _이자_rows:
-                    del r["_순서"]
-                source_data["배당명세"] = _배당_rows
-                source_data["이자명세"] = _이자_rows
-                break
+            return _배당_rows, _이자_rows
 
-        # connection: adjustment 소스 행의 금액을 렌더된 서식 slot 참조로 치환
-        for src_name in ("조정_가산", "조정_차감"):
-            rows = source_data.get(src_name, [])
-            for row in rows:
-                kind = row.get("종류", row.get("과목", ""))
-                amount = row.get("금액", 0)
-                if isinstance(amount, (int, float)) and kind in adj_slots:
-                    for 시트명, 셀, check_path, call_idx in adj_slots[kind]:
-                        cd = 결과들[call_idx]
-                        # cd["data"]에는 nested "결과"가 있음 (템플릿 [결과.경로] 참조용)
-                        res = cd.get("data") or {}
-                        tv = tool_value(res, check_path)
-                        if tv == amount:
-                            row["금액"] = f"='{시트명}'!{셀}"
-                            break
+        for i in _ok_calls.get("financial_income_aggregate", []):
+            b_rows, i_rows = _금융_rows(결과들[i])
+            _call_src.setdefault(i, {}).update({"배당명세": b_rows, "이자명세": i_rows})
+        _fid = _last_call("financial_income_aggregate")
+        if _fid is not None:
+            source_data["배당명세"] = _call_src[_fid]["배당명세"]
+            source_data["이자명세"] = _call_src[_fid]["이자명세"]
 
+        # connection: adjustment 소스 행의 금액을 렌더된 서식 slot 참조로 치환(도구 값이 같은 시트만)
+        _조정_소스들 = [source_data] + [v for v in _call_src.values() if "조정_가산" in v]
+        for src in _조정_소스들:
+            for src_name in ("조정_가산", "조정_차감"):
+                for row in src.get(src_name, []):
+                    kind = row.get("종류", row.get("과목", ""))
+                    amount = row.get("금액", 0)
+                    if isinstance(amount, (int, float)) and kind in adj_slots:
+                        for 시트명, 셀, check_path, call_idx in adj_slots[kind]:
+                            cd = 결과들[call_idx]
+                            # cd["data"]에는 nested "결과"가 있음 (템플릿 [결과.경로] 참조용)
+                            res = cd.get("data") or {}
+                            tv = tool_value(res, check_path)
+                            if tv == amount:
+                                row["금액"] = f"='{시트명}'!{셀}"
+                                break
+
+        # 서식 머리 개정일: 그 과세기간 신고기한보다 뒤에 개정된 서식이면 개정일 표기를 뺀다
+        import datetime as _dt
+
+        def _period_end(i: int) -> "_dt.date | None":
+            m = _re.search(r"~\s*(\d{4})[.\-/]\s*(\d{1,2})[.\-/]\s*(\d{1,2})", period or "")
+            if m:
+                try:
+                    return _dt.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+                except ValueError:
+                    return None
+            a = (calls[i] or {}).get("args") or {}
+            vp = str(a.get("period", ""))
+            m = _re.match(r"^(\d{4})-([12])$", vp)
+            if m:
+                return _dt.date(int(m.group(1)), 6, 30) if m.group(2) == "1" else _dt.date(int(m.group(1)), 12, 31)
+            y = a.get("year")
+            if isinstance(y, int) and 1900 < y < 2100:
+                if vp == "1기":
+                    return _dt.date(y, 6, 30)
+                return _dt.date(y, 12, 31)
+            return None
+
+        def _deadline(form: str, end: "_dt.date | None") -> "_dt.date | None":
+            if end is None:
+                return None
+            if form.startswith("부가가치세법"):
+                return end + _dt.timedelta(days=25)
+            if form.startswith("법인세법"):
+                y, mth = end.year, end.month + 3
+                if mth > 12:
+                    y, mth = y + 1, mth - 12
+                nxt = _dt.date(y + (mth == 12), 1 if mth == 12 else mth + 1, 1)
+                return nxt - _dt.timedelta(days=1)
+            if form.startswith("소득세법"):
+                return _dt.date(end.year + 1, 5, 31)
+            return None
+
+        # 본 별지3에 채울 다른 도구 call(과세표준·산출세액): 마지막 corporate_tax call
+        _other_calls: dict[str, tuple[int, dict]] = {}
+        for _t in ("corporate_tax",):
+            _ci = _last_call(_t)
+            if _ci is not None:
+                _other_calls[_t] = (_ci, 결과들[_ci].get("data") or {})
+
+        _개정일_생략: list[tuple[str, str]] = []
+        _시트별_메모: dict[str, list[str]] = {}
         for tinfo in 템플릿_목록:
             cd = 결과들[tinfo["call_idx"]]
             tkey = tinfo["key"]
@@ -9415,64 +9569,110 @@ def export_workbook(
             for s in (cd.get("data") or {}).get("계산식", []) or []:
                 input_map[s["이름"]] = s["값"]
 
-            # {{과세기간}} 구성 (부가22 템플릿용): year·period args로 "{year}년 제N기 ( ... )"
+            # {{과세기간}} 구성 (부가 틀): 이 시트를 만든 common_input_tax call의 year·period로 "{year}년 제N기 ( ... )"
             과세기간 = ""
-            if tkey == "부가22":
-                for i, c in enumerate(calls):
-                    if c.get("tool") == "common_input_tax" and not 결과들[i].get("error"):
-                        args = c.get("args", {})
-                        year = args.get("year", "")
-                        period = args.get("period", "")
-                        if period == "1기":
-                            과세기간 = f"{year}년 제1기 ( 1월 1일 ~ 6월 30일 )"
-                        elif period == "2기":
-                            과세기간 = f"{year}년 제2기 ( 7월 1일 ~ 12월 31일 )"
-                        break
+            _args = (calls[tinfo["call_idx"]] or {}).get("args") or {}
+            if tinfo["tool"] == "common_input_tax":
+                _y, _p = _args.get("year", ""), _args.get("period", "")
+                if _p == "1기":
+                    과세기간 = f"{_y}년 제1기 ( 1월 1일 ~ 6월 30일 )"
+                elif _p == "2기":
+                    과세기간 = f"{_y}년 제2기 ( 7월 1일 ~ 12월 31일 )"
+            _귀속연도 = _args.get("year") if isinstance(_args.get("year"), int) else None
 
-            # 별지26 (갑)·(을): 표 source는 그 call 결과로(같은 도구 call이 여럿이면 call마다 따로)
-            call_sources = source_data
+            # 표 source: 본 시트 기준 기본값 + 이 call의 source(별지15·별지16의2·종소배당·부가 등은 그 call 값)
+            call_sources = {**source_data, **_call_src.get(tinfo["call_idx"], {})}
             form_res = cd.get("data", cd.get("result", {}))
+            # 별지26 (갑)·(을): 표 source는 그 call 결과로(같은 도구 call이 여럿이면 call마다 따로)
             if tinfo["tool"] == "nonbusiness_interest_disallowance":
                 form_res = nonbusiness_form_data(form_res, (calls[tinfo["call_idx"]] or {}).get("args", {}))
-                call_sources = {**source_data, **nonbusiness_form_sources(form_res)}
+                call_sources = {**call_sources, **nonbusiness_form_sources(form_res)}
             if tinfo["tool"] in ("bad_debt_adjustment", "common_input_tax"):
                 # 서식_표를 table source로 사용 (34_대손금, 34_채권잔액, 22_정산)
                 서식_표 = form_res.get("서식_표", {}) if isinstance(form_res, dict) else {}
                 if 서식_표:
                     call_sources = {**call_sources, **서식_표}
-            # 교차 참조는 같은 call에서 만든 시트를 가리킨다(같은 도구 call이 둘 이상이면 ' (2)' 시트끼리)
+            # 교차 참조는 같은 call에서 만든 시트를 가리킨다(같은 도구 call이 둘 이상이면 같은 call 시트끼리)
             cross_this = dict(slot_map_cross)
             for (ref_key, ref_id) in slot_map_cross:
                 same = next((t for t in 템플릿_목록 if t["key"] == ref_key and t["call_idx"] == tinfo["call_idx"]), None)
                 if same is not None:
                     cross_this[(ref_key, ref_id)] = (same["sheet"], all_slots[ref_key][ref_id][1])
             try:
-                render_form_sheet(ws, tpl, form_res, input_map,
-                                   sheet_name_map, slot_map_all, cross_this, tkey,
-                                   call_idx=tinfo["call_idx"], company=company, period=period, biz_no=biz_no,
-                                   source_data=call_sources, all_slots=all_slots,
-                                   label=cd.get("label", ""), 과세기간=과세기간)
+                _info = render_form_sheet(ws, tpl, form_res, input_map,
+                                          sheet_name_map, slot_map_all, cross_this, tkey,
+                                          call_idx=tinfo["call_idx"], company=company, period=period, biz_no=biz_no,
+                                          source_data=call_sources, all_slots=all_slots,
+                                          label=cd.get("label", ""), 과세기간=과세기간,
+                                          other_calls=_other_calls if tinfo.get("main", True) else {},
+                                          form_deadline=_deadline(tinfo.get("form", ""), _period_end(tinfo["call_idx"])),
+                                          귀속연도=_귀속연도)
             except ValueError as e:
                 if "max_rows" not in str(e):
                     raise
                 return {"error": f"입력 확인 필요 — {tpl.get('form', tkey)}의 칸보다 행이 많아 엑셀을 만들지 않음: {e}. 서식 칸에 맞게 묶거나 나눠서 호출하세요"}
+            if (_info or {}).get("개정일_생략"):
+                _개정일_생략.append((tinfo["sheet"], _info["개정일_생략"]))
             시트이름들.append(tinfo["sheet"])
 
-        # ── 3b. 계산 N 시트들 (틀 없는 도구들, call 순서대로) ──
-        calc_idx = 0
-        for cd in 결과들:
-            if cd["error"] or not cd["result"]:
+        # 같은 금액을 두 도구가 따로 계산했는데 값이 다르면(입력이 서로 다름) 서식 시트와 목록에 알린다
+        # (서식 도구, 그 결과 키, 같은 금액을 내는 다른 도구, 그 결과 키, 서식 틀, 이름)
+        _대조 = [("bad_debt_adjustment", "한도초과", "bad_debt_allowance", "한도초과(유보)", "별지34", "대손충당금 한도초과")]
+        for t_form, f_key, t_other, o_key, form_key, 이름 in _대조:
+            fi = next((t["call_idx"] for t in 템플릿_목록 if t["key"] == form_key and t.get("main")), None)
+            if fi is None:
                 continue
-            tool = cd.get("tool", "")
-            if tool in _FORM_TEMPLATES:
-                continue  # 틀 있는 도구는 이미 처리됨
-            tpl_list = _FORM_TEMPLATES.get(tool, [])
-            if tpl_list:
-                continue  # 틀 있는 도구
-            calc_idx += 1
+            fv = (결과들[fi].get("result") or {}).get(f_key)
+            for j in _ok_calls.get(t_other, []):
+                ov = (결과들[j].get("result") or {}).get(o_key)
+                if isinstance(fv, (int, float)) and isinstance(ov, (int, float)) and fv != ov:
+                    sh = sheet_name_map.get(form_key, "")
+                    _시트별_메모.setdefault(sh, []).append(
+                        f"확인 필요 — 이 서식은 호출 {fi + 1} '{결과들[fi].get('label', '')}' 결과로 채움: "
+                        f"{이름} {fv:,}원. 같은 파일의 호출 {j + 1} '{결과들[j].get('label', '')}'는 "
+                        f"{ov:,}원 — 두 호출의 입력(채권잔액·설정률 등)이 서로 다름")
+        # 부가 별지22 4.절은 영 제81조④ 정산만 적는다(작성방법 3) — 예정→확정 정산은 그 절에 넣지 않고 서식 아래 메모로
+        _안내_메모: dict[str, list[str]] = {}
+        for tinfo in 템플릿_목록:
+            if tinfo["key"] != "부가22":
+                continue
+            dat = 결과들[tinfo["call_idx"]].get("data") or {}
+            k = dat.get("계산") or {}
+            if (dat.get("서식_표") or {}).get("22_정산") or not k.get("불공제_확정"):
+                continue
+            _안내_메모.setdefault(tinfo["sheet"], []).append(
+                f"참고 — 예정신고분 확정 정산(영 제81조①·제82조): 과세기간 공통매입세액 {k.get('공통매입세액_과세기간합계', 0):,}원 × "
+                f"면세비율 {k.get('면세비율_과세기간', 0):.2%} = {k.get('불공제_과세기간합계', 0):,}원 − 예정신고 불공제 "
+                f"{k.get('불공제_예정반영', 0):,}원 = 확정 불공제 {k.get('불공제_확정', 0):,}원. "
+                f"4.절(⑮~⑲)은 영 제81조④로 안분한 매입세액의 정산만 적으므로 빈칸")
+        for memo, color in ((_시트별_메모, "C00000"), (_안내_메모, "595959")):
+            for sh, notes in memo.items():
+                if sh not in wb.sheetnames:
+                    continue
+                _ws = wb[sh]
+                _r = (_ws.max_row or 0) + 2
+                for n in notes:
+                    _ws.cell(_r, 1, n).font = Font(color=color, size=9)
+                    _r += 1
+        # ── 3b. 계산 N 시트들 — call마다 한 장, N은 calls 안 순번(1부터) ──
+        # 서식 틀로 간 call·오류 난 call도 시트를 만든다: 계산 시트 수 = call 수, '계산 N' = N번째 call.
+        calc_idx = 0
+        _calc_sheets: dict[int, str] = {}
+        for _ci, cd in enumerate(결과들):
+            calc_idx = _ci + 1
             sh_name = f"계산 {calc_idx}"
             ws = wb.create_sheet(sh_name)
             시트이름들.append(sh_name)
+            _calc_sheets[_ci] = sh_name
+            if cd["error"] or not cd["result"]:
+                for rr, (k, v) in enumerate((("label", cd.get("label", "")), ("도구", cd.get("tool", "")),
+                                              ("오류", cd.get("error") or "결과 없음"),
+                                              ("안내", _cell_value(cd.get("basis")) if cd.get("basis") else "")), 1):
+                    ws.cell(rr, 1, k).font = bold
+                    ws.cell(rr, 2, v)
+                ws.column_dimensions["A"].width = 16
+                ws.column_dimensions["B"].width = 60
+                continue
             res = cd.get("result", {}) or {}
             calc_dict = (cd.get("data") or {}).get("계산") if isinstance(cd.get("data"), dict) else None
             formula = (cd.get("data") or {}).get("계산식") if isinstance(cd.get("data"), dict) else None
@@ -9672,6 +9872,50 @@ def export_workbook(
             ws.column_dimensions["B"].width = 20
             ws.column_dimensions["C"].width = 16
             ws.freeze_panes = "A2"
+
+        # ── 목록 뒷부분: 확인 메모 → call ↔ 시트 대응표 → 고지문 ──
+        행 = _목록_행
+        for sh, rev in _개정일_생략:
+            ws_list.cell(행, 1, sh)
+            ws_list.cell(행, 2, f"서식 머리 개정일 표기 생략 — {rev}은 이 과세기간 신고기한 뒤 개정(서식 모양은 현행)")
+            행 += 1
+        for sh, notes in _시트별_메모.items():
+            for n in notes:
+                ws_list.cell(행, 1, sh)
+                ws_list.cell(행, 2, n).font = Font(color="C00000")
+                행 += 1
+        if any(len(v) > 1 and v[0]["per_return"] for v in _tpl_groups.values()):
+            ws_list.cell(행, 1, "같은 서식 여러 call")
+            ws_list.cell(행, 2, "신고서 한 부에 한 장인 서식은 마지막 call이 본 시트(이름 그대로), "
+                                       "앞선 call은 '(호출 N)' 시트로 따로 둠")
+            행 += 1
+        행 += 1
+        # call ↔ 시트 대응표('계산 N' = N번째 call)
+        for cc, h in enumerate(["call", "label", "계산 시트", "서식 시트"], 1):
+            c = ws_list.cell(행, cc, h); c.font = bold; c.fill = header_fill
+        행 += 1
+        # 다른 도구 시트의 칸·표로 들어간 call(별지3 112·115, 부가 별지22 2.·5.절)
+        _들어간_곳: dict[int, list[str]] = {}
+        if "corporate_tax" in _other_calls and "별지3" in sheet_name_map:
+            _들어간_곳.setdefault(_other_calls["corporate_tax"][0], []).append(sheet_name_map["별지3"] + " 112·115")
+        if "부가22" in sheet_name_map:
+            if source_data.get("22_불공제") and _vid is not None:
+                _들어간_곳.setdefault(_vid, []).append(sheet_name_map["부가22"] + " 2.절")
+            if source_data.get("22_재계산"):
+                for _i in _재계산_calls:
+                    _들어간_곳.setdefault(_i, []).append(sheet_name_map["부가22"] + " 5.절")
+        for _ci, cd in enumerate(결과들):
+            ws_list.cell(행, 1, _ci + 1)
+            ws_list.cell(행, 2, cd.get("label", ""))
+            ws_list.cell(행, 3, _calc_sheets.get(_ci, ""))
+            _곳 = [t["sheet"] for t in 템플릿_목록 if t["call_idx"] == _ci and t["tool"] != "*"] + _들어간_곳.get(_ci, [])
+            ws_list.cell(행, 4, ", ".join(_곳) or ("오류" if cd["error"] else ""))
+            행 += 1
+        행 += 1
+        ws_list.cell(행, 1,
+                    "이 파일은 계산 도구의 결과를 정리한 참고 자료이며 세무 자문이 아닙니다. 판단과 신고는 세무 전문가와 확인하세요.")
+        ws_list.cell(행, 1).font = Font(italic=True, color="C00000")
+        ws_list.merge_cells(start_row=행, start_column=1, end_row=행, end_column=8)
 
         # ── 4. 시트 순서 조정 (forms 모드: 입력·가정 시트를 틀+계산N 시트들 뒤로) ──
         if layout == "forms":
