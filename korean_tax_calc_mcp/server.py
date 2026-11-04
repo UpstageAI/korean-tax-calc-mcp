@@ -299,7 +299,7 @@ def _validate_items(items, field, specs, extra=None):
 # 한글 사실관계 필드명 → 도구 입력 필드명 매핑
 # 도구별로 필수로 요구할 입력 필드 (vocab의 필요한사실 중 일부만 필수 처리)
 # 대손금 항목의 법 제19조의2② 채권 표시 키(bad_debt_adjustment)
-_BD_EXCL_KEYS = ["excluded_reason", "recipient", "lent_on", "related_at_lending", "related_at_event"]
+_BD_EXCL_KEYS = ["excluded_reason", "recipient", "lent_on", "related_at_lending", "related_at_event", "guarantee_item", "guarantor_business"]
 
 _도구별_필수필드 = {
     "financial_income_aggregate": {
@@ -655,35 +655,81 @@ def late_payment_penalty(unpaid_tax: WON, due: Annotated[str, Field(description=
 @_guard
 def withholding_late_payment_penalty(unpaid_tax: WON,
                                      due: Annotated[str, Field(description="법정납부기한(YYYY-MM-DD) — 원천징수세액은 보통 징수일이 속하는 달의 다음 달 10일(반기 납부 승인이면 반기 마지막 달의 다음 달 10일)")],
-                                     until: Annotated[str, Field(description="납부일(고지 전 자진납부) 또는 납부고지일(YYYY-MM-DD)")]) -> dict:
-    """원천징수 등 납부지연가산세(국세기본법 제47조의5①) — 미납세액 3% + 일수분, 납부고지 전 기간은 10% 한도. 언제: 원천징수의무자(납세조합·부가가치세 대리납부자 포함)가 원천징수세액을 법정납부기한까지 내지 않았거나 적게 냈을 때.
-입력: 미납·과소납부 세액(원) → unpaid_tax, 법정납부기한(YYYY-MM-DD) → due, 납부일 또는 납부고지일(YYYY-MM-DD) → until.
-계산: 1호 미납세액 × 3% + 2호 미납세액 × 일수(법정납부기한 다음 날~until) × 1일 이율(시행령 제27조의4: 1만분의 3 → 2019.2.12.부터 10만분의 25 → 2022.2.15.부터 10만분의 22, 기간 안분),
-  1호 + 2호(고지 전 기간) 합계는 미납세액의 10% 한도. 일반 납부지연가산세(제47조의4, 3% 없음·한도 없음)는 late_payment_penalty.
-지원 안 함: 납부고지 후 기간분(전체 50% 한도, 2020.1.1. 이후 성립분), 2026.7.1. 이후 납부·고지(법률 제21212호 개정 — 일수 '전날까지', 지정납부기한 후 월 단위), ③ 적용 제외(주한미군·국가·지방자치단체 등) 판단.
-결과: 가산세·3%분·일수분·10% 한도·일수, 근거(국세기본법 제47조의5①, 시행령 제27조의4). Withholding late-payment penalty (3% + daily, 10% cap before notice)."""
+                                     until: Annotated[str, Field(description="고지 전 자진납부면 납부일, 납부고지가 있었으면 납부고지일(YYYY-MM-DD, 이때 notice_due·paid_on도)")],
+                                     notice_due: Annotated[str, Field(description="지정납부기한 = 납부고지서에 따른 납부기한(YYYY-MM-DD) — 납부고지가 있었을 때만")] = "",
+                                     paid_on: Annotated[str, Field(description="납부고지 후 실제 납부일(YYYY-MM-DD) — notice_due와 함께")] = "",
+                                     dunning_fee: Annotated[int, Field(ge=0, description="독촉에 드는 비용(원, 제47조의5①4호·영 제27조의4③ 등기우편 요금) — 개정 규정의 고지 후분에만")] = 0,
+                                     notice_amount: Annotated[int | None, Field(ge=0, description="납부고지서별·세목별 세액(원, ⑤ 150만원 기준) — 생략하면 미납세액 + 고지 전 가산세")] = None) -> dict:
+    """원천징수 등 납부지연가산세(국세기본법 제47조의5①) — 미납세액 3% + 일수분(고지 전 10% 한도) + 납부고지 후분, 전체 50% 한도. 언제: 원천징수의무자(납세조합·부가가치세 대리납부자 포함)가 원천징수세액을 법정납부기한까지 내지 않았거나 적게 냈을 때.
+입력: 미납·과소납부 세액(원) → unpaid_tax, 법정납부기한(YYYY-MM-DD) → due, 고지 전 납부일 또는 납부고지일(YYYY-MM-DD) → until,
+  납부고지가 있었으면 지정납부기한(납부고지서에 따른 납부기한) → notice_due, 실제 납부일 → paid_on, 독촉비용(원) → dunning_fee, 납부고지서별·세목별 세액(원, 생략 가능) → notice_amount.
+계산: 1호 미납세액 × 3% + 2호 미납세액 × 일수 × 1일 이율(시행령 제27조의4: 1만분의 3 → 2019.2.12.부터 10만분의 25 → 2022.2.15.부터 10만분의 22, 기간 안분), 1호 + 2호(고지 전)는 미납세액의 10% 한도.
+  2호 일수: until이 2026.7.1. 이후면 개정(법률 제21212호) — 법정납부기한 다음 날부터 납부고지일(고지 전 납부면 납부일)의 전날까지. 그 전이면 종전 — 납부일까지, 고지가 있으면 '납부고지일부터 납부고지서에 따른 납부기한까지' 제외라 고지일 전날까지.
+  고지 후(지정납부기한 다음 날부터 납부일): 지정납부기한이 2026.6.30. 이전에 지났으면 종전 규정(법률 제21212호 부칙 제4조) — 2호 일수분(납부일까지, ④ 5년 한도),
+  아니면 개정 3호 — 미납세액 × 지정납부기한 다음 날부터 납부일 전날까지 경과 개월 수(④ 5년 = 60개월 한도) × 월 1만분의 67(영 제27조의4②) + 4호 독촉비용.
+  ⑤ 납부고지서별·세목별 세액 150만원 미만이면 고지 후분(개정 3호·4호, 종전 지정납부기한 후 2호 일수분) 없음. 전체는 미납세액의 50% 한도.
+  일반 납부지연가산세(제47조의4, 3% 없음·한도 없음)는 late_payment_penalty.
+지원 안 함: ③ 적용 제외(주한미군·국가·지방자치단체 등) 판단, 고지 후 일부 납부(분할 납부) — 미납세액 전부를 paid_on에 낸 것으로 계산.
+결과: 가산세·3%분·일수분·10% 한도·일수·고지후분(종전 일수분 또는 개정 3호)·경과 개월·독촉비용·50% 한도·적용 규정, 근거(국세기본법 제47조의5, 시행령 제27조의4, 법률 제21212호 부칙). Withholding late-payment penalty (3% + daily, 10% cap before notice; after notice daily (old) or monthly 0.67% (from 2026-07-01); 50% overall cap)."""
     try:
         d0, d1 = _chk.to_date("due", due), _chk.to_date("until", until)
+        nd = _chk.to_date("notice_due", notice_due) if notice_due else None
+        pd = _chk.to_date("paid_on", paid_on) if paid_on else None
     except ValueError as e:
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [str(e)]}
     문제 = []
     if d1 <= d0:
         문제.append(f"until={until} — 법정납부기한 due={due}보다 뒤 날짜(기한 안 납부면 가산세 없음)")
-    if d1 >= date(2026, 7, 1):
-        문제.append(f"until={until} — 2026.7.1. 시행 개정(법률 제21212호: 일수분 '납부일 전날까지', 지정납부기한 후 월 단위)은 지원하지 않음(2026.6.30.까지 납부·고지분만)")
     if d0 < date(2016, 1, 1):
         문제.append(f"due={due} — 2016.1.1. 이후 법정납부기한만 지원")
+    if (nd is None) != (pd is None):
+        문제.append("notice_due(지정납부기한)와 paid_on(고지 후 납부일)은 함께 — 고지 없이 납부했으면 둘 다 비우고 until=납부일")
+    if nd is not None and nd < d1:
+        문제.append(f"notice_due={notice_due} — 납부고지일 until={until}보다 앞일 수 없음")
+    if nd is not None and pd is not None and pd < d1:
+        문제.append(f"paid_on={paid_on} — 납부고지일 until={until}보다 앞(고지 전 납부면 until=납부일, notice_due·paid_on 비움)")
+    if dunning_fee and not (nd is not None and pd is not None and pd > nd and nd >= date(2026, 7, 1)):
+        문제.append("dunning_fee — 독촉비용(제47조의5①4호)은 개정 규정(지정납부기한이 2026.7.1. 이후)의 지정납부기한 후 납부분에만")
+    if notice_amount is not None and nd is None:
+        문제.append("notice_amount — 납부고지가 있을 때만(notice_due와 함께)")
     if 문제:
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제}
-    days = (d1 - d0).days
-    start = date.fromordinal(d0.toordinal() + 1).isoformat()   # 법정납부기한 다음 날부터
-    기본 = I._floor(unpaid_tax, 0.03)
-    일수분 = I._floor(sum(I._x(unpaid_tax) * I._x(r) * n for n, r in V.late_payment_rate_segments(start, days)))
-    한도 = I._floor(unpaid_tax, 0.10)
-    가산세 = I.withholding_late_penalty(unpaid_tax, days, start)
-    return _ok({"가산세": 가산세, "3%분": 기본, "일수분": 일수분, "한도_10%": 한도, "한도_적용": 기본 + 일수분 > 한도, "일수": days},
-               "국세기본법 제47조의5①(1호 3% + 2호 일수분, 고지 전 10% 한도), 시행령 제27조의4",
-               산식=f"min({unpaid_tax:,} × 3% + {unpaid_tax:,} × {days}일 × 1일 이율, {unpaid_tax:,} × 10%)")
+    r = I.withholding_late_penalty_full(unpaid_tax, d0, d1, nd, pd, dunning_fee, notice_amount)
+    근거 = ["국세기본법 제47조의5①(1호 3% + 2호 일수분, 1호·2호 10% 한도, 전체 50% 한도), 시행령 제27조의4"]
+    판단 = []
+    if r["고지전_규정"] == "개정":
+        판단.append({"항목": "고지 전 일수", "결론": f"{r['일수']}일 — 법정납부기한 다음 날부터 {'납부고지일' if nd else '납부일'}의 전날까지",
+                   "근거": "국세기본법 제47조의5①2호(법률 제21212호, 2026.7.1. 시행)"})
+    else:
+        판단.append({"항목": "고지 전 일수", "결론": f"{r['일수']}일 — " + ("법정납부기한 다음 날부터 납부고지일 전날까지(납부고지일부터 납부고지서에 따른 납부기한까지 제외)" if nd else "법정납부기한 다음 날부터 납부일까지"),
+                   "근거": "국세기본법 제47조의5①2호(2026.7.1. 개정 전)"})
+    if r["고지후_규정"] == "종전":
+        근거.append("법률 제21212호 부칙 제4조(2026.6.30. 이전 지정납부기한 경과분 종전 규정)" if pd >= date(2026, 7, 1) else "국세기본법 제47조의5①2호·④·⑤(2026.7.1. 개정 전)")
+        판단.append({"항목": "고지 후", "결론": ("150만원 미만 — 고지 후 일수분 없음" if r["150만원미만_제외"] else
+                                             f"종전 2호 일수분 {r['고지후분']:,}원 — 지정납부기한 다음 날부터 납부일까지 {r['고지후_일수']}일(5년 한도)"),
+                   "근거": "국세기본법 제47조의5①2호·④·⑤(종전)" + (", 법률 제21212호 부칙 제4조" if pd >= date(2026, 7, 1) else "")})
+    elif r["고지후_규정"] == "개정":
+        근거.append("국세기본법 제47조의5①3호·4호·④·⑤(법률 제21212호, 2026.7.1. 시행), 시행령 제27조의4②③")
+        판단.append({"항목": "고지 후", "결론": ("150만원 미만 — 3호·4호 적용 안 함" if r["150만원미만_제외"] else
+                                             f"3호 {r['고지후분']:,}원 — 경과 {r['경과_개월']}개월 × 월 1만분의 67" + (f", 4호 독촉비용 {r['독촉비용']:,}원" if r["독촉비용"] else "")),
+                   "근거": "국세기본법 제47조의5①3호·4호·⑤(법률 제21212호), 시행령 제27조의4②③"})
+    if r["150만원미만_제외"]:
+        판단.append({"항목": "⑤ 소액 체납", "결론": f"납부고지서별·세목별 세액 {r['납부고지서_세액']:,}원 < 150만원" + ("" if notice_amount is not None else "(미납세액 + 고지 전 가산세로 봄 — 다르면 notice_amount)"),
+                   "근거": "국세기본법 제47조의5⑤"})
+    if r["고지후_규정"] == "개정" or r["고지전_규정"] == "개정":
+        근거.append("법률 제21212호 부칙 제1조 단서·제4조")
+    산식 = f"min({unpaid_tax:,} × 3% + {unpaid_tax:,} × {r['일수']}일 × 1일 이율, {unpaid_tax:,} × 10%)"
+    if r["고지후_규정"] == "종전" and not r["150만원미만_제외"]:
+        산식 += f" + {unpaid_tax:,} × {r['고지후_일수']}일 × 1일 이율"
+    elif r["고지후_규정"] == "개정" and not r["150만원미만_제외"]:
+        산식 += f" + {unpaid_tax:,} × {r['경과_개월']}개월 × 0.67%" + (f" + 독촉비용 {r['독촉비용']:,}" if r["독촉비용"] else "")
+    if nd:
+        산식 = f"min({산식}, {unpaid_tax:,} × 50%)"
+    결과 = {k: r[k] for k in ("가산세", "3%분", "일수분", "한도_10%", "한도_적용", "일수", "고지후분", "고지후_일수", "경과_개월", "독촉비용", "한도_50%", "50%한도_적용")}
+    결과["적용_규정"] = {"고지 전": r["고지전_규정"], "고지 후": r["고지후_규정"]}
+    out = _ok(결과, ", ".join(근거), 산식=산식)
+    out["판단"] = 판단
+    return out
 
 
 @mcp.tool(annotations=CALC)
@@ -2440,6 +2486,22 @@ def _loss_rate_floor(rate: float, digits: int = 3) -> float:
 
 
 _BD_EXCL_REASON = ("채무보증구상채권", "특수관계인업무무관가지급금")   # 법 제19조의2② 1호·2호
+# 영 제19조의2⑥ 각 호 — 법 제19조의2②1호 괄호의 손금 인정 채무보증: (요지, 시행일, 적용 부칙). 시행일 None = 2016년 전부터
+_BD_GUARANTEE = {
+    1: ("「독점규제 및 공정거래에 관한 법률」 제24조(2021.12.30. 전 제10조의2①) 각 호의 채무보증", None, ""),
+    2: ("영 제61조② 각 호의 금융회사 등이 행한 채무보증", None, ""),
+    3: ("법률에 따라 신용보증사업을 영위하는 법인이 행한 채무보증", None, ""),
+    4: ("「대ㆍ중소기업 상생협력 촉진에 관한 법률」에 따른 위탁기업이 수탁기업협의회 구성원인 수탁기업에 행한 채무보증", None, ""),
+    5: ("건설업(2018.2.13.부터 전기 통신업 포함) 내국법인이 건설사업과 직접 관련하여 특수관계인 아닌 자(민간투자 사업시행자 등은 특수관계인 포함)에 행한 채무보증",
+        "2017-02-03", "영 2017.2.3. 개정 부칙 제8조(시행 이후 대손금으로 손금에 산입하는 분부터)"),
+    6: ("해외자원개발사업자가 해외자원개발사업과 직접 관련하여 해외에서 설립된 법인에 행한 채무보증",
+        "2023-02-28", "영 2023.2.28. 개정 부칙 제5조(시행 이후 해당 채권을 회수할 수 없게 되는 경우, 시행 전 채무보증 포함)"),
+    7: ("「해외건설 촉진법」에 따른 해외건설사업자가 해외자원개발을 위한 해외건설업과 직접 관련하여 해외에서 설립된 법인에 행한 채무보증",
+        "2023-02-28", "영 2023.2.28. 개정 부칙 제5조(시행 이후 해당 채권을 회수할 수 없게 되는 경우, 시행 전 채무보증 포함)"),
+    8: ("내국법인이 「국가자원안보 특별법」에 따른 핵심자원 및 그 소재ㆍ부품의 생산과 직접 관련하여 해외에서 설립된 법인에 행한 채무보증",
+        "2026-02-27", "영 2026.2.27. 개정 부칙 제3조(시행 이후 해당 채권을 회수할 수 없게 되는 경우, 시행 전 채무보증 포함)"),
+}
+_BD_GUARANTEE_TEL = ("2018-02-13", "영 2018.2.13. 개정 부칙 제5조(시행 이후 대손금으로 손금에 산입하는 분부터)")   # 5호 전기 통신업
 _BD_RECIPIENT = {"법인": "기타사외유출", "사업자": "기타사외유출", "임원": "상여", "직원": "상여", "주주": "배당", "기타": "기타소득"}   # 영 제106조①1호 가~라목
 
 _BAD_DEBT_WRITEOFFS_DESC = (
@@ -2453,11 +2515,15 @@ _BAD_DEBT_WRITEOFFS_DESC = (
     "booked: '상계'(대손충당금과 상계)·'손비'(당기 비용)·'전기부인'(전기 이전에 장부에서 대손 처리했으나 세무상 부인되어 유보로 남은 채권, 당기 장부 처리 없음 → "
     "당기에 요건을 갖추면 손금산입·△유보, 세법상 전기말 채권에 더함). booked를 모두 생략하면 장부 상계액(offset)을 순서대로 나눠 붙이고, "
     "일부만 생략하면 생략한 항목은 손비로 봄. "
-    "법 제19조의2② 채권이면 excluded_reason:'채무보증구상채권'(②1호, 영 제19조의2⑥의 손금 인정 채무보증은 넣지 말 것)|'특수관계인업무무관가지급금'(②2호, 법 제28조①4호나목) → "
+    "법 제19조의2② 채권이면 excluded_reason:'채무보증구상채권'(②1호)|'특수관계인업무무관가지급금'(②2호, 법 제28조①4호나목) → "
     "대손금·대손충당금 설정대상에서 빼고 손금불산입. 소득처분은 대손사유가 확정됐으면 채무자(귀속자) recipient:'법인'|'사업자'|'임원'|'직원'|'주주'|'기타'에 따라 "
     "기타사외유출·상여·배당·기타소득(영 제106조①1호 — 국내 소득이 되지 않는 외국법인은 '기타', 생략하면 '법인'으로 봄), 대손 요건 전이면 유보. "
     "가지급금은 lent_on(대여일 YYYY-MM-DD)·related_at_lending(대여 당시 특수관계, 기본 true)·related_at_event(대손사유 발생 당시 특수관계, 기본 true): "
-    "2021.1.1. 이후 대여분은 대여시점 기준(②2호 후단, 법률 제17652호 부칙 제5조), 그 전 대여분은 대손사유 발생 당시 기준(대법원 2012두6247)")
+    "2021.1.1. 이후 대여분은 대여시점 기준(②2호 후단, 법률 제17652호 부칙 제5조), 그 전 대여분은 대손사유 발생 당시 기준(대법원 2012두6247). "
+    "채무보증 구상채권이 영 제19조의2⑥ 각 호의 채무보증이면 guarantee_item: 1~8(호 번호 — 1 공정거래법 제24조, 2 금융회사 등, 3 신용보증사업 법인, 4 상생협력법 수탁기업, "
+    "5 건설업·전기 통신업 건설사업(guarantor_business:'건설업'|'전기통신업', 생략하면 건설업), 6 해외자원개발, 7 해외건설, 8 핵심자원) → 대손일(date, 생략하면 사업연도 말) 현재 "
+    "그 호가 시행 중이면 제외하지 않고 일반 대손 요건으로 판단(5호 2017.2.3.·전기 통신업 2018.2.13., 6·7호 2023.2.28., 8호 2026.2.27. 시행). "
+    "booked:'전기부인'인 법 제19조의2② 채권은 당기에 대손사유가 확정되면 유보 정리 — 손금산입(△유보) + 같은 금액 손금불산입(귀속자 처분)")
 
 
 @mcp.tool(annotations=CALC)
@@ -2481,10 +2547,12 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
       kind: 소멸시효완성·화해·확정판결·부도6개월·회수불능(파산·강제집행·형의집행·사업폐지·사망·실종)·회수기일2년경과,
       booked: '상계'|'손비'|'전기부인'(전기 장부 대손·세무 부인 유보 채권 — 당기 요건 충족 시 손금산입 △유보),
       excluded_reason: '채무보증구상채권'|'특수관계인업무무관가지급금'(법 제19조의2②) — 대손금·설정대상 채권에서 빼고 손금불산입, 소득처분은 recipient(귀속자, 영 제106조①1호),
+      guarantee_item: 1~8(영 제19조의2⑥ 호 — 손금 인정 채무보증이면 구상채권을 제외하지 않음, 호별 시행일 대조)·guarantor_business('건설업'|'전기통신업', 5호),
+      booked='전기부인' + excluded_reason: 당기 대손사유 확정 시 전기 유보 정리(손금산입 △유보 + 손금불산입 귀속자 처분),
     대손실적률 소수 자릿수(기본 3) → loss_rate_digits,
     장부 채권 중 법 제19조의2② 채권 잔액(전기말·당기말, 원) → excluded_receivables_prev_end_book·excluded_receivables_end_book.
     결과: 판단(항목별·근거)·계산(세법상 당기 대손금·전기말·당기말 채권·실적률)·결과(한도·한도초과)·세무조정({구분, 조정, 금액, 소득처분})·서식_표·계산식_입력.
-    지원 안 함: 영 제19조의2⑥ 각 호(손금 인정 채무보증) 해당 여부 판단 — 해당하면 excluded_reason을 넣지 말 것, 전기 유보로 남은 제19조의2② 채권의 유보 정리. 대손금·대손충당금 세무조정."""
+    지원 안 함: 영 제19조의2⑥ 각 호의 사실 요건(업종·직접 관련성·특수관계 등) 판단 — guarantee_item 입력을 그대로 믿음. 대손금·대손충당금 세무조정."""
 
     원래_종류 = [(w or {}).get("kind") if isinstance(w, dict) else None for w in (writeoffs or [])]   # 별칭(파산 등)을 표시용으로 보관
     _extra = []
@@ -2501,6 +2569,15 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
             _extra.append(f"항목 {i+1}: recipient='{w.get('recipient')}' — {'|'.join(_BD_RECIPIENT)} 중 하나(영 제106조①1호 귀속자)")
         if isinstance(w, dict) and w.get("lent_on") is not None and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(w["lent_on"])):
             _extra.append(f"항목 {i+1}: lent_on='{w.get('lent_on')}' — 대여일 YYYY-MM-DD")
+        if isinstance(w, dict) and w.get("guarantee_item") is not None:
+            gi = w.get("guarantee_item")
+            if isinstance(gi, bool) or not isinstance(gi, int) or gi not in _BD_GUARANTEE:
+                _extra.append(f"항목 {i+1}: guarantee_item={gi!r} — 영 제19조의2⑥ 호 번호 1~8")
+            if w.get("excluded_reason") != "채무보증구상채권":
+                _extra.append(f"항목 {i+1}: guarantee_item은 excluded_reason='채무보증구상채권'(법 제19조의2②1호)과 함께")
+        if isinstance(w, dict) and w.get("guarantor_business") is not None and \
+                (w.get("guarantor_business") not in ("건설업", "전기통신업") or w.get("guarantee_item") != 5):
+            _extra.append(f"항목 {i+1}: guarantor_business='{w.get('guarantor_business')}' — guarantee_item=5(영 제19조의2⑥5호)일 때 '건설업'|'전기통신업'")
         if isinstance(w, dict) and w.get("excluded_reason") == "특수관계인업무무관가지급금" and w.get("lent_on") is None \
                 and w.get("related_at_lending", True) != w.get("related_at_event", True):
             _extra.append(f"항목 {i+1}: 대여 당시와 대손사유 발생 당시 특수관계가 다르면 lent_on(대여일) 필요 — 2021.1.1. 이후 대여분은 대여시점, 그 전은 대손사유 발생 당시 기준")
@@ -2594,6 +2671,21 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
             결론, 근거, 이유 = "검토 필요", "종류 미정", f"kind={kind} — 세무 판단 기준 확인 필요"
 
         excl = w.get("excluded_reason")
+        guar_note = ""
+        if excl == "채무보증구상채권" and w.get("guarantee_item") is not None:
+            gi = w["guarantee_item"]; 요지, 시행, 부칙 = _BD_GUARANTEE[gi]
+            업종 = w.get("guarantor_business") or "건설업"
+            if gi == 5 and 업종 == "전기통신업":
+                시행, 부칙 = _BD_GUARANTEE_TEL
+            기준일 = w.get("date") or f"{year}-12-31"
+            보증인 = f", 보증인 {업종}" if gi == 5 else ""
+            if 시행 is None or 기준일 >= 시행:
+                excl = None
+                근거 += f", 법인세법 제19조의2②1호 괄호·시행령 제19조의2⑥{gi}호" + (f"·{부칙}" if 부칙 else "")
+                이유 += (f" — 영 제19조의2⑥{gi}호 채무보증({요지}{보증인})으로 생긴 구상채권: "
+                        "법 제19조의2②1호 괄호로 손금불산입 대상에서 빠짐 → 일반 대손 요건으로 판단")
+            else:
+                guar_note = f" — 영 제19조의2⑥{gi}호({요지}{보증인})는 {시행} 시행({부칙}), 대손일 {기준일}에는 적용 안 됨"
         if excl == "특수관계인업무무관가지급금":
             lent = w.get("lent_on")
             if lent and lent >= "2021-01-01":
@@ -2614,9 +2706,19 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
             처분 = _BD_RECIPIENT[귀속] if 사유확정 else "유보"
             근거 = f"법인세법 제19조의2②{조문}·제34조②" + (", 시행령 제106조①1호" if 사유확정 else "")
             항목 = f"{표시} {amount:,}원({이름})"
-            이유 = 시점 if excl == "특수관계인업무무관가지급금" else "채무보증(영 제19조의2⑥ 각 호 제외)으로 생긴 구상채권"
-            if booked == "전기부인":
-                결론 = "당기 조정 없음 — 법 제19조의2② 채권은 대손금 손금산입 불가(전기 유보 유지)"
+            이유 = (시점 if excl == "특수관계인업무무관가지급금" else "채무보증(영 제19조의2⑥ 각 호 제외)으로 생긴 구상채권") + guar_note
+            if booked == "전기부인" and 사유확정 and not (kind == "소멸시효완성" and arose_in == "전기"):
+                결론 = f"전기 유보 정리 — 손금산입(△유보) {amount:,}원 + 손금불산입({처분}) {amount:,}원"
+                이유 += (" — 전기에 대손 요건 전이라 유보로 남은 법 제19조의2② 채권이 당기에 대손사유 확정: 유보를 손금산입(△유보)으로 정리하고 "
+                        f"같은 금액은 대손금 손금불산입, 채무자({귀속}{'' if w.get('recipient') else ' — recipient 생략, 법인으로 봄'})에게 귀속 → {처분}(영 제106조①1호). "
+                        "대손금·대손충당금 설정대상 채권에는 넣지 않음(법 제34조②)")
+                settlements_excluded.append({"구분": f"전기 유보 정리(법 제19조의2②{조문} {이름})", "조정": "손금산입", "금액": amount, "소득처분": "△유보"})
+                settlements_excluded.append({"구분": f"대손금 손금불산입(법 제19조의2②{조문} {이름})", "조정": "손금불산입", "금액": amount, "소득처분": 처분})
+            elif booked == "전기부인" and kind == "소멸시효완성" and arose_in == "전기":
+                결론 = "당기 조정 없음 — 전기에 소멸시효 완성(그 사업연도에 유보 정리·귀속자 처분, 경정청구 대상)"
+                이유 += " — 대손사유가 전기에 확정되어 당기 조정 대상 아님, 대손충당금 설정대상 채권에도 넣지 않음(법 제34조②)"
+            elif booked == "전기부인":
+                결론 = "당기 조정 없음 — 대손사유 확정 전(전기 유보 유지)"
                 이유 += " — 대손금으로 손금산입하지 않으므로 △유보하지 않음, 대손충당금 설정대상 채권에도 넣지 않음(법 제34조②)"
             else:
                 결론 = f"불인정(손금불산입·{처분}) — 법 제19조의2②{조문}"
@@ -6879,18 +6981,22 @@ def gift_tax(
     share_appraisal_fee: WON = 0,
     share_appraisal_count: Annotated[int, Field(description="평가기관 수")] = 1,
     generation_skip: Annotated[bool, Field(description="자녀 아닌 직계비속 수증")] = False,
-    prior_gift_tax_paid: WON = 0,
+    prior_gift_tax_paid: Annotated[int, Field(ge=0, description="합산한 같은 증여자 사전증여에 대해 납부했거나 납부할 증여세액(그때 증여세산출세액, 원) — 상증법 제58조 납부세액공제, 한도 계산")] = 0,
     other_credits: WON = 0,
     filed: Annotated[bool, Field(description="법정신고기한 내 신고")] = True,
-    prior_deduction_same_donor: Annotated[int | None, Field(ge=0, description="합산하는 같은 증여자 사전증여(prior_gifts_same_donor)에서 받은 증여재산공제(원) — 합산 과세가액에서 공제를 다시 계산하므로 빼지 않음(기록용). 합산하지 않으면 사용분으로 뺌")] = None,
+    prior_deduction_same_donor: Annotated[int | None, Field(ge=0, description="합산하는 같은 증여자 사전증여(prior_gifts_same_donor)에서 받은 증여재산공제(원) — 합산 과세가액에서 공제를 다시 계산하므로 빼지 않음. 합산하지 않으면 사용분으로 뺌. 납부세액공제 한도의 가산분 과세표준 계산에 씀")] = None,
+    prior_tax_base_same_donor: Annotated[int | None, Field(ge=0, description="가산한 사전증여의 과세표준(원, 상증법 제58조②) — 생략하면 prior_gifts_same_donor − prior_deduction_same_donor")] = None,
 ) -> dict:
     """거주자 수증자 증여세 과세가액·증여재산공제·과세표준·산출세액·납부할세액. 언제: 증여세 신고·계산 시.
 입력: 증여일 → gift_date, 증여재산가액 → gift_value, 증여자 관계 → relation, 10년 내 동일 증여자 증여(합산, 직계존속은 그 배우자 포함) → prior_gifts_same_donor,
-부담부증여 인수채무 → assumed_debt, 혼인·출산 공제 → marriage_birth, 합산분 기납부 증여세 → prior_gift_tax_paid.
+부담부증여 인수채무 → assumed_debt, 혼인·출산 공제 → marriage_birth, 합산분 기납부 증여세(그때 산출세액) → prior_gift_tax_paid, 합산분 과세표준 → prior_tax_base_same_donor.
 사전 공제 입력(상증법 제47조②·제53조) — 같은 증여자 사전증여를 합산하면 증여재산공제는 합산 과세가액에서 한도까지 한 번 다시 계산한다:
   합산하는 같은 증여자분에서 받은 공제 → prior_deduction_same_donor(빼지 않음), 합산하지 않는 다른 증여자(같은 공제 구분, 예: 조부모)분에서 받은 공제 → prior_deduction_used(한도에서 뺌).
   합산하면서 prior_deduction_used만 주면 어느 쪽인지 몰라 '입력 확인 필요'. 나눠 준 증여가 한 번에 준 같은 합계보다 산출세액이 커지지 않는다.
-결과: 과세가액·증여재산공제·과세표준·산출세액·할증세액·신고세액공제·납부할세액, 근거. 납부세액공제(제58조) 한도는 계산하지 않고 입력값 사용."""
+납부세액공제(제58조): 합산한 사전증여에 대해 낸 증여세(prior_gift_tax_paid)를 공제하되, 한도(②) = 산출세액(제56조) × 가산한 증여재산의 과세표준
+  ÷ 합친 금액의 과세표준. 가산분 과세표준은 prior_tax_base_same_donor, 생략하면 prior_gifts_same_donor − prior_deduction_same_donor. 합산할 사전증여 없이 넣으면 '입력 확인 필요'.
+  ① 단서(가산분 증여세가 부과제척기간 만료로 부과되지 않은 경우 공제 없음)는 판단하지 않음 — 그때는 prior_gift_tax_paid=0.
+결과: 과세가액·증여재산공제·과세표준·산출세액·할증세액·기납부세액공제(한도 적용 후)·신고세액공제·납부할세액, 계산의 납부세액공제_한도, 근거."""
     rel_in = relation
     relation = _GIFT_RELATION_ALIAS.get(relation.replace(" ", ""), relation)
     if relation not in ("배우자", "직계존속", "직계비속", "기타친족", "기타"):
@@ -6906,6 +7012,7 @@ def gift_tax(
         share_appraisal_fee=share_appraisal_fee, share_appraisal_count=share_appraisal_count,
         generation_skip=generation_skip, prior_gift_tax_paid=prior_gift_tax_paid,
         other_credits=other_credits, filed=filed, prior_deduction_same_donor=prior_deduction_same_donor,
+        prior_tax_base_same_donor=prior_tax_base_same_donor,
     )
     if isinstance(r, dict) and relation != rel_in:
         r["입력 해석"] = f"relation '{rel_in}' → '{relation}'(상증법 제53조 증여재산공제 구분)"

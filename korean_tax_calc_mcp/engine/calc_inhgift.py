@@ -433,11 +433,15 @@ def gift_tax(
     other_credits: int = 0,
     filed: bool = True,
     prior_deduction_same_donor: int | None = None,
+    prior_tax_base_same_donor: int | None = None,
 ):
     """증여세 과세가액·증여재산공제·과세표준·산출세액·납부할세액 계산.
     공제 입력 계약(상증법 제47조②·제53조): prior_deduction_used = 10년 안에 '이번에 합산하지 않는' 증여(다른 증여자, 예: 조부모)에서 받은 증여재산공제.
     prior_deduction_same_donor = 합산하는 같은 증여자 사전증여에서 받은 공제 — 합산 과세가액에서 공제를 한 번 다시 계산하므로 빼지 않는다
-    (합산하지 않을 때만 사용분으로 뺌). 합산하면서 prior_deduction_used만 들어오면 어느 쪽인지 몰라 계산하지 않는다."""
+    (합산하지 않을 때만 사용분으로 뺌). 합산하면서 prior_deduction_used만 들어오면 어느 쪽인지 몰라 계산하지 않는다.
+    납부세액공제(제58조): prior_gift_tax_paid = 합산한 사전증여에 대해 납부했거나 납부할 증여세액(그때 증여세산출세액),
+    한도(②) = 이번 산출세액 × 가산한 증여재산의 과세표준(prior_tax_base_same_donor, 생략하면 prior_gifts_same_donor − prior_deduction_same_donor)
+    ÷ 합친 금액의 과세표준."""
     gift_date_dt = date.fromisoformat(gift_date)
     연도 = gift_date_dt.year
     연도_int = 연도 * 10000 + gift_date_dt.month * 100 + gift_date_dt.day
@@ -466,6 +470,11 @@ def gift_tax(
                        "합산하지 않는 다른 증여자(예: 조부모) 증여에서 받은 공제면 prior_deduction_same_donor도 함께(없으면 0) 넣으세요"],
                 "근거": "상속세 및 증여세법 제47조②·제53조"}
     같은증여자_기공제 = prior_deduction_same_donor or 0
+    if prior_gift_tax_paid > 0 and not 합산여부:
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"prior_gift_tax_paid {prior_gift_tax_paid:,}원 — 납부세액공제는 제47조②로 합산(가산)한 같은 증여자 사전증여에 대한 증여세만(제58조①). "
+                       "합산할 사전증여(prior_gifts_same_donor)가 없거나 합계 1천만원 미만"],
+                "근거": "상속세 및 증여세법 제58조①"}
 
     # 2. 과세가액
     과세가액 = max(0, gift_value - nontaxable - excluded - assumed_debt)
@@ -515,15 +524,25 @@ def gift_tax(
             할증율 = 0.3
     할증세액 = _floor(산출세액, 할증율) if 할증율 > 0 else 0
 
+    # 8의2. 납부세액공제(제58조) — 한도: 산출세액(제56조) × 가산한 증여재산 과세표준 ÷ 합친 금액의 과세표준(②)
+    납부세액공제 = 0
+    납부세액공제_한도 = None
+    가산분_과세표준 = None
+    if prior_gift_tax_paid > 0:
+        가산분_과세표준 = (prior_tax_base_same_donor if prior_tax_base_same_donor is not None
+                      else max(0, prior_gifts_same_donor - 같은증여자_기공제))
+        납부세액공제_한도 = _floor(산출세액, 가산분_과세표준, div=과세표준) if 과세표준 else 0
+        납부세액공제 = min(prior_gift_tax_paid, 납부세액공제_한도, 산출세액 + 할증세액)   # 산출세액에서 공제 — 넘는 부분은 없음
+
     # 9. 신고세액공제
     신고율 = vocab.rule_on("상증_신고세액공제율", 연도_int)["율"]
     if filed:
-        신고공제 = _floor(max(0, 산출세액 + 할증세액 - prior_gift_tax_paid - other_credits), 신고율)
+        신고공제 = _floor(max(0, 산출세액 + 할증세액 - 납부세액공제 - other_credits), 신고율)
     else:
         신고공제 = 0
 
     # 10. 납부할세액
-    납부할세액 = max(0, 산출세액 + 할증세액 - prior_gift_tax_paid - other_credits - 신고공제)
+    납부할세액 = max(0, 산출세액 + 할증세액 - 납부세액공제 - other_credits - 신고공제)
 
     # 남은 공제한도
     남은한도 = 한도 - 기사용 - 증여공제
@@ -545,8 +564,6 @@ def gift_tax(
         판단.append({"항목": "혼인출산공제", "결론": f"혼인·출산 증여재산공제 {혼인출산공제:,}원 적용", "근거": "상속세 및 증여세법 제53조의2"})
     if generation_skip:
         판단.append({"항목": "할증", "결론": f"세대생략 할증 {할증율*100:.0f}% 적용", "근거": "상속세 및 증여세법 제57조①"})
-    if prior_gift_tax_paid > 0:
-        판단.append({"항목": "기납부세액공제", "결론": "납부세액공제는 입력값 사용(한도 계산하지 않음)", "근거": "상속세 및 증여세법 제58조"})
 
     근거 = [
         ["상속세 및 증여세법", "제47조", "①②", "과세가액·합산"],
@@ -557,6 +574,8 @@ def gift_tax(
         ["상속세 및 증여세법", "제57조", "①", "세대생략 할증"],
         ["상속세 및 증여세법", "제69조", "②", "신고세액공제"],
     ]
+    if prior_gift_tax_paid > 0:
+        근거.insert(-1, ["상속세 및 증여세법", "제58조", "①②", "납부세액공제·한도"])
 
     결과 = {
         "과세가액": 과세가액,
@@ -566,7 +585,7 @@ def gift_tax(
         "과세표준": 과세표준,
         "산출세액": 산출세액,
         "할증세액": 할증세액,
-        "기납부세액공제": prior_gift_tax_paid,
+        "기납부세액공제": 납부세액공제,
         "신고세액공제": 신고공제,
         "납부할세액": 납부할세액,
     }
@@ -577,6 +596,8 @@ def gift_tax(
         "할증율": 할증율,
         "신고세액공제율": 신고율,
     }
+    if prior_gift_tax_paid > 0:
+        계산.update({"납부세액공제_입력": prior_gift_tax_paid, "가산분_과세표준": 가산분_과세표준, "납부세액공제_한도": 납부세액공제_한도})
 
     판단 = {
         "관계": {"결론": relation, "근거": "상속세 및 증여세법 제53조"},
@@ -590,5 +611,15 @@ def gift_tax(
         "과세최저한": 과세최저한,
         "기타친족_범위": 기타친족_범위,
     }
+    if prior_gift_tax_paid > 0:
+        출처 = ("prior_tax_base_same_donor" if prior_tax_base_same_donor is not None else
+               f"prior_gifts_same_donor {prior_gifts_same_donor:,} − prior_deduction_same_donor {같은증여자_기공제:,}"
+               + ("(같은 증여자분 공제 미입력 — 0으로 봄, 그때 공제를 받았으면 prior_deduction_same_donor 또는 prior_tax_base_same_donor)"
+                  if prior_deduction_same_donor is None else ""))
+        판단["납부세액공제"] = {
+            "결론": f"min(입력 {prior_gift_tax_paid:,}, 한도 {납부세액공제_한도:,}) = {min(prior_gift_tax_paid, 납부세액공제_한도):,}원 — 한도 = 산출세액 {산출세액:,} × 가산분 과세표준 {가산분_과세표준:,}"
+                    f"({출처}) ÷ 과세표준 {과세표준:,}" + (" — 한도 적용" if 납부세액공제_한도 < prior_gift_tax_paid else "")
+                    + (f", 산출세액에서 공제하므로 {납부세액공제:,}원까지" if 납부세액공제 < min(prior_gift_tax_paid, 납부세액공제_한도) else ""),
+            "근거": "상속세 및 증여세법 제58조①(공제)·제58조②(한도 — 산출세액은 제56조, 세대생략 할증 제외)"}
 
     return {"결과": 결과, "계산": 계산, "판단": 판단, "근거": 근거}
