@@ -32,8 +32,6 @@ def deemed_interest(segments, year_end=None, rate=RATE_OVERDRAFT):
     year_end 미지정 시 사업연도 종료일( Calc_cit.YEAR 기준 2025-12-31 )."""
     if year_end is None: year_end = "2025-12-31"
     seg = sorted(({"from": s["from"], "bal": int(s.get("잔액", s.get("amount", 0)))} for s in segments), key=lambda x: x["from"])
-    """segments=[{from:'2025-01-01', 잔액:800000000}, {from:'2025-04-01', 잔액:1200000000}] — 그날부터 다음 구간 전날까지의 잔액으로 적수 계산."""
-    seg = sorted(({"from": s["from"], "bal": int(s.get("잔액", s.get("amount", 0)))} for s in segments), key=lambda x: x["from"])
     parts, jeoksu = [], 0
     for i, s in enumerate(seg):
         end = (date.fromisoformat(seg[i + 1]["from"]).toordinal() - 1) if i + 1 < len(seg) else date.fromisoformat(year_end).toordinal()
