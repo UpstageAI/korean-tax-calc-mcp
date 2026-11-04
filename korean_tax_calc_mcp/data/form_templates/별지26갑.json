@@ -537,5 +537,6 @@
       "check": "결과.차입금적수",
       "check_col": "Q"
     }
-  ]
+  ],
+  "per_return": true
 }

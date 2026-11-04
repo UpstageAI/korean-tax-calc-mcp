@@ -223,5 +223,6 @@
    "check": "결과.손금산입_익금불산입",
    "check_col": "L"
   }
- ]
+ ],
+ "per_return": true
 }
