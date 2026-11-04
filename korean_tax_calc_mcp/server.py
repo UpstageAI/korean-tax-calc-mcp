@@ -663,13 +663,14 @@ def invoice_penalty(supply_amount: WON, kind: Annotated[Literal["가공", "지�
 
 
 @mcp.tool(annotations=CALC)
-def assessment_limitation(due_date: Annotated[str, Field(description="법정신고기한(YYYY-MM-DD, 부과할 수 있는 날 = 그 다음 날)")],
+def assessment_limitation(due_date: Annotated[str, Field(description="법정신고기한(YYYY-MM-DD, 부과할 수 있는 날 = 그 다음 날). 원천징수의무자에게 부과하는 원천징수분은 법정납부기한")],
                           case: Annotated[Literal["일반", "무신고", "부정행위"], Field(description="일반(과소신고 등) / 무신고 / 부정행위로 포탈·환급")] = "일반",
                           offshore: Annotated[bool, Field(description="역외거래(국제거래 또는 국외 자산·용역 관련 거래) 여부")] = False,
-                          inheritance_gift: Annotated[bool, Field(description="상속세·증여세 여부")] = False) -> dict:
+                          inheritance_gift: Annotated[bool, Field(description="상속세·증여세 여부")] = False,
+                          withholding: Annotated[bool, Field(description="원천징수의무자(또는 납세조합)에게 부과하는 원천징수세액이면 True — 기산일이 법정납부기한 다음 날(국세기본법 시행령 제12조의3②1호)")] = False) -> dict:
     """국세 부과제척기간과 만료일(2020년 이후 부과분 기준 현행 조문). 언제: 어느 과세기간의 세금이든 부과·제척기간이 언제까지인지 역산한다.
-입력: 법정신고기한(YYYY-MM-DD) → due_date, 부과 성격(일반·무신고·부정행위) → case, 역외거래 여부 → offshore, 상속세·증여세 여부 → inheritance_gift.
-결과: 제척기간(년)·기산일·만료일, 근거(국세기본법 제26조의2①②④). 일반 5년(역외 7년), 무신고 7년(역외 10년), 부정행위 10년(역외 15년), 상속·증여 10년(부정 등 15년)."""
+입력: 법정신고기한(원천징수분은 법정납부기한, YYYY-MM-DD) → due_date, 부과 성격(일반·무신고·부정행위) → case, 역외거래 여부 → offshore, 상속세·증여세 여부 → inheritance_gift, 원천징수분 → withholding.
+결과: 제척기간(년)·기산일·만료일, 근거(국세기본법 제26조의2①②④, 시행령 제12조의3). 일반 5년(역외 7년), 무신고 7년(역외 10년), 부정행위 10년(역외 15년), 상속·증여 10년(부정 등 15년)."""
     if inheritance_gift: n = 10 if case == "일반" else 15
     else: n = {"일반": (5, 7), "무신고": (7, 10), "부정행위": (10, 15)}[case][1 if offshore else 0]
     try:
@@ -678,7 +679,9 @@ def assessment_limitation(due_date: Annotated[str, Field(description="법정신�
         return {"error": f"입력 오류: {e}"}
     try: end = d.replace(year=d.year + n)
     except ValueError: end = d.replace(year=d.year + n, day=28)
-    return _ok({"제척기간(년)": n, "기산일": "법정신고기한 다음 날", "만료일": end.isoformat()},
+    기산일 = ("법정납부기한 다음 날(원천징수분, 국세기본법 시행령 제12조의3②1호)" if withholding
+             else "법정신고기한 다음 날(국세기본법 시행령 제12조의3①1호)")
+    return _ok({"제척기간(년)": n, "기산일": 기산일, "만료일": end.isoformat()},
                "국세기본법 제26조의2" + ("④" if inheritance_gift else ("②" if case != "일반" else "①")),
                주의="2019.12.31. 개정 전 기간·특례(이월결손금 공제 시 ③, 상증세 안 날부터 1년 ⑤, 쟁송 결과 ⑥)는 별도 확인 — 원문은 korean-tax-mcp law_article")
 
@@ -729,14 +732,29 @@ def retirement_income_tax(income: Annotated[int, Field(description="퇴직소득
 입력: 퇴직소득금액(퇴직급여, 비과세 제외, 원) → income, 근속연수(1~60년) → years_of_service, 퇴직한 해 → retire_year(기본 2025).
 연도: 근속연수공제는 2023.1.1. 이후 퇴직 개정표(100만·200만·250만·300만), 2022년까지는 구표(30만·50만·80만·120만). 기본세율은 퇴직한 해 표.
 지원하지 않음: 2016~2019년 퇴직(종전·개정 방식 세액을 비율로 섞는 경과 부칙, 법률 제12852호).
-결과: 퇴직소득세, 근거(소득세법 제48조·제55조②). Retirement income tax (근속연수공제·환산급여 방식)."""
+결과: 퇴직소득세(산출세액)와 계산 단계 — 근속연수공제·환산급여·환산급여공제·퇴직소득과세표준·환산산출세액, 산식, 근거(소득세법 제48조·제55조②). Retirement income tax (근속연수공제·환산급여 방식)."""
     _chk.int_range("years_of_service", years_of_service, 1, 60, "근속연수(1년 미만의 기간은 1년으로 보아 올려 넣음, 소득세법 제48조① 괄호) ")
     if retire_year < 2020:
         return {"error": "입력 확인 필요 — 계산하지 않음",
                 "문제": [f"retire_year={retire_year}: 2016~2019년 퇴직은 종전 방식과 개정 방식 세액을 비율로 섞는 경과 부칙(법률 제12852호) 대상 — 이 도구는 지원하지 않음"]}
-    return _ok({"퇴직소득세": I.retirement_tax(income, years_of_service, retire_year),
-                "근속연수공제": min(I.retirement_service_deduction(years_of_service, retire_year), income)},
-               "소득세법 제48조·제55조②" + (" (2022년 이전 퇴직 — 근속연수공제 구표)" if retire_year <= 2022 else ""))
+    st = I.retirement_tax_steps(income, years_of_service, retire_year)
+    n = years_of_service
+    산식 = [
+        f"근속연수공제 = {st['근속연수공제']:,}원 (근속연수 {n}년, 퇴직소득금액 한도 — 소득세법 제48조①1호)",
+        f"환산급여 = (퇴직소득금액 {income:,} − 근속연수공제 {st['근속연수공제']:,}) ÷ {n} × 12 = {st['환산급여']:,}원 (제48조①2호)",
+        f"환산급여공제 = {st['환산급여공제']:,}원 (제48조①2호 구간표)",
+        f"퇴직소득과세표준 = 환산급여 {st['환산급여']:,} − 환산급여공제 {st['환산급여공제']:,} = {st['과세표준']:,}원",
+        f"환산산출세액 = 과세표준 {st['과세표준']:,}원 × 기본세율({retire_year}년 표, 제55조①) = {st['환산산출세액']:,}원",
+        f"퇴직소득 산출세액 = 환산산출세액 {st['환산산출세액']:,} ÷ 12 × {n} = {st['산출세액']:,}원 (제55조②)",
+    ]
+    return _ok({"퇴직소득세": st["산출세액"],
+                "근속연수공제": st["근속연수공제"],
+                "환산급여": st["환산급여"],
+                "환산급여공제": st["환산급여공제"],
+                "퇴직소득과세표준": st["과세표준"],
+                "환산산출세액": st["환산산출세액"]},
+               "소득세법 제48조·제55조②" + (" (2022년 이전 퇴직 — 근속연수공제 구표)" if retire_year <= 2022 else ""),
+               산식=산식)
 
 
 @mcp.tool(annotations=CALC)
@@ -2236,7 +2254,7 @@ def ownership_ratio(holder: Annotated[str, Field(description='보유자(이름)'
 
 @mcp.tool(description="""수혜법인의 지배주주 판정(상증법 시행령 제34조의3①). 언제: 일감몰아주기 증여의제이익 계산에서 수혜법인의 지배주주가 누구인지 판정할 때.
 입력: 수혜법인(이름) → corp, people={이름: {구분: "개인"|"법인"}} → people, family=[[a, b, "부모자녀"|"배우자"]] → family, stakes=[[보유자, 법인, 지분율(0~1)]] → stakes(related_judge와 동일 형식).
-결과: 지배주주(이름)·판정 이유. 수혜법인의 지배주주를 판정한다Amid(중견기업 중 직접보유 최고자 / 법인이면 직접+간접 최고 개인).""")
+결과: 지배주주(이름)·판정 이유. 수혜법인의 지배주주를 판정한다(중견기업 중 직접보유 최고자 / 법인이면 직접+간접 최고 개인).""")
 def dominant_shareholder(corp: Annotated[str, Field(description='수혜법인(이름)')],
                          people: Annotated[dict, Field(description='사람·법인 목록 {이름: {"구분": "개인"|"법인"}}. 예: {"김갑": {"구분": "개인"}}')],
                          family: Annotated[list, Field(description='친족 관계 [[a, b, "부모자녀"|"배우자"]]. 예: [["김갑", "김을", "부모자녀"]]')],
@@ -2297,7 +2315,7 @@ def related_provision_at(law: Annotated[str, Field(description="법령 구분('�
 
 @mcp.tool(description="""주주명부·가족관계·임원명단 PDF에서 관계표(people/family/stakes/officers)를 추출한다. 언제: 세무조사·의료법인 친족확인 등에서 PDF 문서에 있는 관계표를 도구 입력으로 정리할 때.
 입력: PDF 파일 경로 → pdf_path.
-결과: people·family·stakes·오 officers 추출 결과(초안) + AI 생성 표시(필요 시). related_judge에 넣기 전에 사람이 확인한다. UPSTAGE_API_KEY 없이도 pypdf 로컬 추출 후 정리 가능(기본), 키 설정 시 Document Parse + Solar Pro 4로 더 정교한 표 추출. 주주명부·가족관계·임원명단 PDF에서 관계표를 뽑는다.""")
+결과: people·family·stakes·officers 추출 결과(초안) + AI 생성 표시(필요 시). related_judge에 넣기 전에 사람이 확인한다. UPSTAGE_API_KEY 없이도 pypdf 로컬 추출 후 정리 가능(기본), 키 설정 시 Document Parse + Solar Pro 4로 더 정교한 표 추출. 주주명부·가족관계·임원명단 PDF에서 관계표를 뽑는다.""")
 @_pdf_guard
 def extract_relations(pdf_path: Annotated[str, Field(description="PDF 파일 경로")]) -> dict:
     from .audit.agents import related_intake
@@ -3419,7 +3437,8 @@ def financial_income_aggregate(year: YEAR,
     계산식_입력 = [
         {"이름": "종합과세기준금액", "값": 20000000, "설명": "금융소득 종합과세 기준액 = 2,000만 원 (소득세법 제14조③6호)"},
         {"이름": "가산율", "값": rate, "설명": f"Gross-up 가산율 = {rate} ({year}년 기준, 소득세법 제56조)"},
-        {"이름": "이자소득금액", "값": inc, "설명": f"이자소득금액 = {inc:,}원"},
+        {"이름": "이자소득금액", "값": inc, "설명": f"이자소득 총수입금액(2천만원 판정용) = {inc:,}원"
+         + (" — 분리과세면 결과의 이자소득금액에는 합산하지 않음" if 분리과세 and inc else "")},
         {"이름": "배당비대상소득", "값": div_n, "설명": f"배당소득 중 Gross-up 비대상 = {div_n:,}원" + (f" ({', '.join(dict.fromkeys(h['항목'] for h in 항목별 if h['구분'] in ('GU비대상', '출자공동')))})" if div_n else "")},
         {"이름": "배당대상소득", "값": div_g, "설명": f"배당소득 중 Gross-up 대상 = {div_g:,}원 (상장법인·비상장법인 배당, 의제배당 등)"},
         {"이름": "출자공동사업자배당", "값": partner_div, "설명": f"출자공동사업자배당(always 합산 포함, 2천만원 판정 제외) = {partner_div:,}원"},
@@ -3437,8 +3456,21 @@ def financial_income_aggregate(year: YEAR,
     # 합산액: 판정합계 > 기준금액이면 판정합계+grossup+출자공동사업자배당, 아니면 MAX(0, 출자공동사업자배당)
     합산액_식 = f"IF({판정합계_식}>종합과세기준금액,{판정합계_식}+{grossup_식}+출자공동사업자배당,MAX(0,출자공동사업자배당))"
 
-    배당소득금액_설명 = f"배당비대상 + 배당대상 + Gross-up = {div_n:,} + {div_g:,} + {grossup:,} = {결과_배당소득금액:,}원 (분리과세 시 출자공동사업자배당만 배당소득)"
-    합산액_설명 = f"판정합계 + Gross-up + 출자공동사업자배당 = {cond_total:,} + {grossup:,} + {partner_div:,} = {결과_합산액:,}원 (분리과세 시 출자공동사업자배당만 합산)"
+    if 분리과세:
+        # 분리과세면 판정합계는 합산하지 않는다 — 설명 산식도 실제로 더한 값만(예전: '3,000,000 + 0 + 0 = 0원')
+        _분리_머리 = f"분리과세 — 판정합계 {cond_total:,}원 ≤ 기준 {threshold:,}원이라 이자·배당은 원천징수로 끝나고 합산하지 않음."
+        _미원천_배당 = 미원천 - 미원천_이자
+        배당소득금액_설명 = (f"{_분리_머리} 배당소득금액 = 출자공동사업자배당 {partner_div:,}"
+                       + (f" + 원천징수되지 않은 배당 {_미원천_배당:,}" if _미원천_배당 else "") + f" = {결과_배당소득금액:,}원")
+        합산액_설명 = (f"{_분리_머리} 합산액 = 출자공동사업자배당 {partner_div:,}"
+                    + (f" + 원천징수되지 않은 금융소득 {미원천:,}" if 미원천 else "") + f" = {결과_합산액:,}원")
+    else:
+        배당소득금액_설명 = f"배당비대상 + 배당대상 + Gross-up = {div_n:,} + {div_g:,} + {grossup:,} = {결과_배당소득금액:,}원"
+        합산액_설명 = f"판정합계 + Gross-up + 출자공동사업자배당 = {cond_total:,} + {grossup:,} + {partner_div:,} = {결과_합산액:,}원"
+    판단.append({"항목": "종합과세 판정",
+               "결론": (f"분리과세 — 판정합계 {cond_total:,}원 ≤ {threshold:,}원, 합산액 {결과_합산액:,}원" if 분리과세
+                      else f"종합과세 — 판정합계 {cond_total:,}원 > {threshold:,}원, 합산액 {결과_합산액:,}원(Gross-up {grossup:,}원 포함)"),
+               "금액": 결과_합산액, "근거": "소득세법 제14조③6호"})
 
     계산식 = [
         {"이름": "배당소득금액",
@@ -6316,7 +6348,7 @@ def capital_gains_income(
         designated_area: Annotated[bool, Field(description="non_business_land=True인 토지: 지정지역(제104조의2②) 소재 여부. True면 2018.1.1. 이후 양도분 기본세율+20%p(제104조④3호). apply_basic_deduction=True일 때 산출세액에 반영")] = False,
         apply_basic_deduction: Annotated[bool, Field(description="True면 양도소득 기본공제(연 250만원)와 과세표준까지 계산(같은 해 같은 그룹에서 이미 공제받았으면 False)")] = False,
         burdened_gift: Annotated[dict | None, Field(description="부담부증여(소득세법 시행령 제159조) — {증여가액, 채무액, 평가:'시가'|'기준시가', 취득_기준시가?(평가='기준시가'면 필수), 취득가액_실지?(평가='시가'면 필수)}. 증여가액·채무액으로 양도가액과 취득가액을 자동 계산. transfer_price나 acquisition_price와 함께 입력 불가")] = None) -> dict:
-    """토지·건물·주택의 양도차익 → 1세대1주택 비과세·고가주택 안분 → 장기보유특별공제(표1·표2) → 양도소득금액(소득세법 제89조·제92조·제95조·제97조·제103조, 시행령 제154조·제156조·제159조의3(4)·제160조·제176조의2·제163조).
+    """토지·건물·주택의 양도차익 → 1세대1주택 비과세·고가주택 안분 → 장기보유특별공제(표1·표2) → 양도소득금액(소득세법 제89조·제92조·제95조·제97조·제103조, 시행령 제154조·제156조·제159조의4(2021.2.17. 전 제159조의3)·제160조·제176조의2·제163조).
     언제: 부동산 양도소득금액·장기보유특별공제를 양도일 기준 공제율·고가주택 기준(2021.12.8. 전 9억원, 이후 12억원)으로 계산할 때.
     입력:
       자산 종류 → asset_type, 취득일·양도일 → acquisition_date·transfer_date,
@@ -6513,22 +6545,27 @@ def capital_gains_income(
         items = rule_dict.get("근거", [])
         return ", ".join(str(x) for x in items) if items else ""
 
-    r["근거"] = r.get("근거", []) + [
-        ["소득세법", "제95조", "②", f"장기보유특별공제 표1·표2 — {_근거문자열(장기보유_적용근거)}"],
-    ]
+    def _근거_추가(law, art, cl, gist, extra):
+        """근거 목록에 한 줄 더한다. 같은 조·항이 이미 있으면 새 줄을 만들지 않고(연도 근거가 있으면 요지에 덧붙임),
+        연도 근거가 비어 있으면 요지 끝에 '— '를 남기지 않는다."""
+        lst = r.setdefault("근거", [])
+        for b in lst:
+            if list(b[:3]) == [law, art, cl]:
+                if extra and extra not in str(b[3]):
+                    b[3] = f"{b[3]} — {extra}"
+                return
+        lst.append([law, art, cl, f"{gist} — {extra}" if extra else gist])
+
+    _근거_추가("소득세법", "제95조", "②", "장기보유특별공제 표1·표2", _근거문자열(장기보유_적용근거))
     if "고가주택 안분" in str(r.get("판단", [])):
-        r["근거"] = r["근거"] + [
-            ["소득세법", "제89조", "①", f"1세대 1주택 비과세·고가주택 — {_근거문자열(고가주택_적용근거)}"],
-        ]
+        _근거_추가("소득세법", "제89조", "①", "1세대 1주택 비과세·고가주택", _근거문자열(고가주택_적용근거))
         r["판단"] = r.get("판단", []) + [{
             "항목": "고가주택 양도차익",
             "결론": f"이 주택의 양도차익은 과세대상 양도차익 {r['결과']['과세대상_양도차익']:,}원(안분 전 전체 양도차익 {r['결과']['양도차익']:,}원)",
             "근거": "소득세법 제95조③, 시행령 제160조①1호",
         }]
     if r["결과"].get("양도소득_기본공제", 0) > 0:
-        r["근거"] = r["근거"] + [
-            ["소득세법", "제103조", "①", f"양도소득 기본공제 연 250만원 — {_근거문자열(기본공제_적용근거)}"],
-        ]
+        _근거_추가("소득세법", "제103조", "①", "양도소득 기본공제 연 250만원", _근거문자열(기본공제_적용근거))
 
     # 토지는 주택 요건 무관 안내 (one_house=False, exempt_met=False가 무시된 경우)
     if not is_주택:
@@ -6799,22 +6836,25 @@ def inheritance_gift_valuation(
     valuation_date: Annotated[str, Field(description="상속개시일 또는 증여일(YYYY-MM-DD)")],
     supplementary_value: Annotated[int, Field(description="보충적 평가액(개별공시지가 등, 원)")],
     market_values: Annotated[list | None, Field(description="[{대상:'해당재산'|'유사재산', 종류:'매매'|'감정'|'수용'|'경매'|'공매', 가액, 날짜}]")] = None,
-    secured_debt: Annotated[dict | None, Field(description="{채권최고액?, 채무액} — 저당권·근저당 등 담보")] = None,
+    secured_debt: Annotated[dict | list | None, Field(description="{채권최고액?, 채무액?, 임대보증금?} 또는 그 목록 — 저당권·근저당·전세권·임대보증금 등 담보. 여러 채권이면 목록(영 제63조② 합계)")] = None,
+    lease: Annotated[dict | None, Field(description="임대 중인 재산: {연간임대료 | 월임대료, 임대보증금?} — 임대료 등 환산가액(연 임대료 ÷ 12% + 보증금)을 기준시가와 비교(법 제61조⑤), 임대보증금은 담보채권액에도 합산(영 제63조①5호)")] = None,
 ) -> dict:
-    """상속·증여재산 평가: 시가 우선 → 보충적 평가 → 담보권 특례(상증법 제60조·제66조, 영 제49조·제63조).
+    """상속·증여재산 평가: 시가 우선 → 보충적 평가(임대 재산은 임대료 등 환산가액과 큰 금액) → 담보권 특례(상증법 제60조·제61조⑤·제66조, 영 제49조·제50조⑦·제63조, 규칙 제15조의2).
     언제: 상속·증여재산의 시가를 구할 때. 해당재산 가액이 있으면 시가, 없으면 유사재산, 둘 다 없으면 보충적 평가액(법 제61조).
     입력:
       kind — '상속' 또는 '증여'
       valuation_date — 상속개시일·증여일
-      supplementary_value — 보충적 평가액(개별공시지가 등)
+      supplementary_value — 보충적 평가액(개별공시지가·기준시가 등)
       market_values — [{대상, 종류, 가액, 날짜}] 선택
-      secured_debt — {채권최고액?, 채무액} 선택
-    결과: 평가액, 계산.시가·적용·담보채권액, 판단.
+      secured_debt — {채권최고액?, 채무액?, 임대보증금?} 또는 목록 선택. 채권마다 min(채권최고액, 채무액), 여러 채권·임대보증금은 합계
+      lease — {연간임대료 | 월임대료, 임대보증금?} 선택. 시가가 없으면 max(supplementary_value, 연 임대료 ÷ 12% + 임대보증금)
+    지원하지 않음: 토지·건물 소유자가 다를 때의 환산가액 안분(영 제50조⑧ — 각자 몫을 계산해 넣음), 공동저당 안분(영 제63조①2호).
+    결과: 평가액, 계산.시가·적용·담보채권액(·임대료_환산가액·보충적_평가액), 판단.
     주의: 평가기간 밖 가액은 시가에서 제외(상속=전후 6개월, 증여=전 6개월~후 3개월)."""
     _chk.supported_year("valuation_date", valuation_date)
     return GG.inheritance_gift_valuation(
         kind=kind, valuation_date=valuation_date, supplementary_value=supplementary_value,
-        market_values=market_values, secured_debt=secured_debt,
+        market_values=market_values, secured_debt=secured_debt, lease=lease,
     )
 
 
@@ -8564,6 +8604,161 @@ def _이름_치환(식: str, 이름_맵: dict[str, str]) -> str:
     return "".join(tok)
 
 
+# ── '계산 N' 세부 표 · '판단·근거' 보충 (서식 틀이 없는 도구도 결과를 다 보이게) ─────────────────
+# 위쪽 '항목·금액' 표는 결과·계산의 숫자·문자 한 줄 값만 보인다. 중첩 dict(판정 등)·dict 목록(항목별·연도별 산출)·
+# 문자 목록은 여기서 '세부' 블록으로 펼친다. 이미 다른 표로 그린 키는 뺀다.
+_DETAIL_SKIP_TOP = frozenset({"세무조정", "판단", "산식", "계산식", "계산식_입력", "계산", "쟁점", "입력 해석"})
+
+
+def _detail_blocks(res: dict, calc_dict) -> tuple[list[tuple[str, Any]], list[tuple[str, list[str], list[list[Any]]]]]:
+    """결과·계산 dict에서 한 줄 값으로 못 보인 것을 (경로, 값) 줄과 (제목, 머리글, 행) 표로 돌려준다."""
+    lines: list[tuple[str, Any]] = []
+    tables: list[tuple[str, list[str], list[list[Any]]]] = []
+
+    def _scalar(v):
+        return v is None or isinstance(v, (str, int, float, bool))
+
+    def _row_dicts(items: list, parent: dict | None = None) -> list[dict]:
+        # dict 목록 → 평평한 행. 안쪽 dict 목록(예: 연도별 '산출')은 바깥 칸을 앞에 붙여 행으로 편다
+        out: list[dict] = []
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            base = dict(parent or {})
+            nested = None
+            for k, v in it.items():
+                if isinstance(v, list) and v and all(isinstance(x, dict) for x in v) and nested is None:
+                    nested = (k, v)
+                elif _scalar(v):
+                    base[k] = v
+                else:
+                    base[k] = _cell_value(v)
+            if nested:
+                out.extend(_row_dicts(nested[1], base))
+            else:
+                out.append(base)
+        return out
+
+    def _walk(d: dict, prefix: str, top: bool):
+        for k, v in d.items():
+            if top and k in _DETAIL_SKIP_TOP:
+                continue
+            path = f"{prefix}{k}"
+            if _scalar(v):
+                if not top and v is not None and v != "":
+                    lines.append((path, v))
+                continue
+            if isinstance(v, dict):
+                if v:
+                    _walk(v, path + ".", False)
+                continue
+            if isinstance(v, list):
+                if not v:
+                    continue
+                if all(isinstance(x, dict) for x in v):
+                    rws = _row_dicts(v)
+                    hdr: list[str] = []
+                    for rw in rws:
+                        for kk in rw:
+                            if kk not in hdr:
+                                hdr.append(kk)
+                    tables.append((path, hdr, [[rw.get(h) for h in hdr] for rw in rws]))
+                elif _is_basis_list(v) or _is_wrapped_basis_list(v):
+                    if not top:
+                        lines.append((path, _cell_value(v)))
+                elif all(_scalar(x) for x in v):
+                    lines.append((path, ", ".join("" if x is None else str(x) for x in v)))
+                else:
+                    lines.append((path, _cell_value(v)))
+
+    if isinstance(res, dict):
+        _walk(res, "", True)
+    if isinstance(calc_dict, dict) and calc_dict is not res:
+        _walk(calc_dict, "", True)
+    return lines, tables
+
+
+def _write_detail_blocks(ws, start_row: int, res: dict, calc_dict, *, bold, header_fill, money_fmt) -> int:
+    """'계산 N' 시트 아래에 세부 블록을 쓴다. 쓴 것이 없으면 start_row를 그대로 돌려준다."""
+    from openpyxl.styles import Alignment
+    lines, tables = _detail_blocks(res, calc_dict)
+    if not lines and not tables:
+        return start_row
+    행 = start_row
+
+    def _put(r, c, v, key=""):
+        cell = ws.cell(r, c)
+        if isinstance(v, bool):
+            cell.value = "예" if v else "아니오"
+        elif isinstance(v, (int, float)):
+            cell.value = v
+            # 금액만 천 단위 쉼표 — 연도(사업연도 2024)·비율(0.2)은 그대로
+            if not ("연도" in key or key.endswith("년")) and (float(v).is_integer() or abs(v) >= 1000):
+                cell.number_format = money_fmt
+        else:
+            cell.value = v
+            if isinstance(v, str) and len(v) > 40:
+                cell.alignment = Alignment(wrap_text=True, vertical="top")
+
+    if lines:
+        for cc, h in enumerate(["세부 항목", "값"], 1):
+            c = ws.cell(행, cc, h); c.font = bold; c.fill = header_fill
+        행 += 1
+        for k, v in lines:
+            ws.cell(행, 1, k)
+            _put(행, 2, v, k)
+            행 += 1
+        행 += 1
+    for title, hdr, rws in tables:
+        ws.cell(행, 1, title).font = bold
+        행 += 1
+        for cc, h in enumerate(hdr, 1):
+            c = ws.cell(행, cc, h); c.font = bold; c.fill = header_fill
+        행 += 1
+        for rw in rws:
+            for cc, v in enumerate(rw, 1):
+                _put(행, cc, v, str(hdr[cc - 1]))
+            행 += 1
+        행 += 1
+    return 행
+
+
+def _judgement_rows(data: dict, calc_sheet: str) -> list[dict]:
+    """'판단·근거' 시트에 쓸 행. 도구가 '판단'을 주면 그대로, 없으면 판정·쟁점을, 그것도 없으면 그 사실을 한 줄로."""
+    판단목록 = data.get("판단") or []
+    if isinstance(판단목록, dict):      # religious_income·inheritance_gift_valuation 등 {항목: 결론} 형태
+        # 값이 {결론, 근거} dict면(gift_tax) 칸을 나눠 쓴다 — JSON 문자열로 보이지 않게
+        판단목록 = [{"항목": k, **{kk: vv for kk, vv in v.items() if kk in ("결론", "근거", "이유", "금액")}}
+                 if isinstance(v, dict) and "결론" in v else {"항목": k, "결론": v}
+                 for k, v in 판단목록.items()]
+    elif isinstance(판단목록, str):
+        판단목록 = [판단목록]
+    out = [j if isinstance(j, dict) else {"결론": j} for j in 판단목록]   # 문장 목록인 도구(예: nonbusiness_interest_disallowance)
+    if out:
+        return out
+    판정 = data.get("판정")
+    if isinstance(판정, dict):          # related_judge — 법별 판정
+        조문 = data.get("적용조문") if isinstance(data.get("적용조문"), dict) else {}
+        근거 = data.get("근거") if isinstance(data.get("근거"), dict) else {}
+        for k, v in 판정.items():
+            g = 근거.get(k) or []
+            c = 조문.get(k) or []
+            out.append({"항목": f"판정({k})", "결론": v,
+                        "근거": ", ".join(map(str, g)) if isinstance(g, list) and g else (" ".join(map(str, c[:2])) if isinstance(c, list) else str(c)),
+                        "이유": "; ".join(map(str, data.get("참고") or [])) if isinstance(data.get("참고"), list) else ""})
+    for q in data.get("쟁점") or []:     # nonresident_withholding 등 — 확인할 쟁점
+        if isinstance(q, dict) and q.get("쟁점"):
+            out.append({"항목": "쟁점", "결론": q["쟁점"], "근거": ", ".join(map(str, q.get("참고") or [])),
+                        "이유": q.get("판단", "")})
+    if out:
+        return out
+    근거 = data.get("근거", "")
+    if isinstance(근거, list) and (_is_basis_list(근거) or _is_wrapped_basis_list(근거)):
+        근거 = _format_basis_short(근거)
+    return [{"항목": "(판단 항목 없음)", "결론": f"이 도구 결과에는 판단 항목이 없음 — 계산 값은 '{calc_sheet}' 시트",
+             "근거": 근거 if isinstance(근거, str) else _cell_value(근거), "이유": data.get("주의", "")}]
+
+
 @mcp.tool(annotations=CALC)
 def export_workbook(
     title: Annotated[str, Field(description="문서 제목 — 파일명 기본값")],
@@ -8571,7 +8766,7 @@ def export_workbook(
     output_dir: Annotated[str, Field(description="내보낼 폴더 경로(기본: 현재 작업 폴더)")] = ".",
     filename: Annotated[str | None, Field(description="파일명 기본값(제목), 확장자 .xlsx 자동)")] = None,
     layout: Annotated[Literal["forms", "steps"], Field(description="'forms'(법정서식 틀 + 계산·입력가정·판단근거, 기본) 또는 'steps'(요약 + 계산 N)")] = "forms",
-    company: Annotated[str, Field(description="법인명(서식 머리에 표시, 기본 빈 문자열)")] = "",
+    company: Annotated[str, Field(description="법인명 또는 상호·성명(개인 세목) — 서식 머리에 표시, 기본 빈 문자열")] = "",
     period: Annotated[str, Field(description="사업연도 표기(예 '2025.01.01 ~ 2025.12.31', 기본 빈 문자열)")] = "",
     biz_no: Annotated[str, Field(description="사업자등록번호(서식 머리에 표시, 기본 빈 문자열)")] = "",
 ) -> dict:
@@ -8583,7 +8778,7 @@ def export_workbook(
   output_dir — 저장할 폴더(기본: '.'). 없으면 오류.
   filename — 파일명(기본: title, .xlsx 자동). '/ \\ : * ? " < > |'는 '_'로 대체.
   layout — 'forms'(기본: 서식 틀 시트 + 계산 N + 입력·가정 + 판단·근거) 또는 'steps'(요약 + 계산 N + 입력·가정 + 판단·근거).
-  company — 법인명(서식 머리에 표시, 기본 '').
+  company — 법인명 또는 상호·성명(개인 세목) — 서식 머리에 표시, 기본 ''.
   period — 사업연도 표기(예 '2025.01.01 ~ 2025.12.31', 기본 '').
   biz_no — 사업자등록번호(서식 머리에 표시, 기본 '').
   시트 규칙: '계산 N'은 N번째 call(오류 call 포함, call마다 한 장). 같은 도구를 여러 번 부르면 신고서 한 부에 한 장인
@@ -8951,8 +9146,14 @@ def export_workbook(
             if 산식:
                 행 += 1
                 ws.cell(행, 1, "산식").font = bold
-                ac = ws.cell(행, 2, _cell_value(산식))
+                # 산식이 문장 목록이면 줄바꿈으로(JSON 대괄호·따옴표가 보이지 않게)
+                ac = ws.cell(행, 2, "\n".join(산식) if isinstance(산식, list) and all(isinstance(x, str) for x in 산식)
+                             else _cell_value(산식))
                 ac.alignment = Alignment(wrap_text=True)
+
+            # 세부: 중첩 판정·항목별·연도별 산출 등 위 표에 안 나온 값
+            _write_detail_blocks(ws, ws.max_row + 2, res, calc_dict,
+                                 bold=bold, header_fill=header_fill, money_fmt=money_fmt)
 
             ws.column_dimensions["A"].width = 32
             ws.column_dimensions["B"].width = 20
@@ -9865,8 +10066,14 @@ def export_workbook(
             if 산식:
                 행 += 1
                 ws.cell(행, 1, "산식").font = bold
-                ac = ws.cell(행, 2, _cell_value(산식))
+                # 산식이 문장 목록이면 줄바꿈으로(JSON 대괄호·따옴표가 보이지 않게)
+                ac = ws.cell(행, 2, "\n".join(산식) if isinstance(산식, list) and all(isinstance(x, str) for x in 산식)
+                             else _cell_value(산식))
                 ac.alignment = Alignment(wrap_text=True)
+
+            # 세부: 중첩 판정·항목별·연도별 산출 등 위 표에 안 나온 값
+            _write_detail_blocks(ws, ws.max_row + 2, res, calc_dict,
+                                 bold=bold, header_fill=header_fill, money_fmt=money_fmt)
 
             ws.column_dimensions["A"].width = 32
             ws.column_dimensions["B"].width = 20
@@ -9889,11 +10096,6 @@ def export_workbook(
             ws_list.cell(행, 2, "신고서 한 부에 한 장인 서식은 마지막 call이 본 시트(이름 그대로), "
                                        "앞선 call은 '(호출 N)' 시트로 따로 둠")
             행 += 1
-        행 += 1
-        # call ↔ 시트 대응표('계산 N' = N번째 call)
-        for cc, h in enumerate(["call", "label", "계산 시트", "서식 시트"], 1):
-            c = ws_list.cell(행, cc, h); c.font = bold; c.fill = header_fill
-        행 += 1
         # 다른 도구 시트의 칸·표로 들어간 call(별지3 112·115, 부가 별지22 2.·5.절)
         _들어간_곳: dict[int, list[str]] = {}
         if "corporate_tax" in _other_calls and "별지3" in sheet_name_map:
@@ -9904,12 +10106,33 @@ def export_workbook(
             if source_data.get("22_재계산"):
                 for _i in _재계산_calls:
                     _들어간_곳.setdefault(_i, []).append(sheet_name_map["부가22"] + " 5.절")
+        _서식_곳 = {_ci: [t["sheet"] for t in 템플릿_목록 if t["call_idx"] == _ci and t["tool"] != "*"] + _들어간_곳.get(_ci, [])
+                  for _ci in range(len(결과들))}
+        # 서식 틀이 없는 도구(부가 간주공급·공급시기·가산세, 증여, 원천징수 등) — 서식 시트를 만들지 않은 이유를 적는다
+        if not 템플릿_목록:
+            ws_list.cell(행, 1, "서식 시트")
+            ws_list.cell(행, 2, "이번 call로 만든 서식 시트 없음 — 아래 '서식 틀 없음' 줄과 '계산 N' 시트 참고")
+            행 += 1
+        _틀없는_도구: dict[str, list[str]] = {}
+        for _ci, cd in enumerate(결과들):
+            if not cd["error"] and cd.get("result") and not _서식_곳[_ci]:
+                _틀없는_도구.setdefault(cd.get("tool", ""), []).append(_calc_sheets.get(_ci, f"계산 {_ci + 1}"))
+        for _tool, _sheets in _틀없는_도구.items():
+            ws_list.cell(행, 1, f"서식 틀 없음 — {_tool}")
+            ws_list.cell(행, 2, "이 도구 결과를 담는 서식 틀이 없음(법정서식이 없거나 아직 만들지 않음) — 값은 "
+                         + ", ".join(f"'{x}'" for x in _sheets) + " 시트")
+            행 += 1
+        행 += 1
+        # call ↔ 시트 대응표('계산 N' = N번째 call)
+        for cc, h in enumerate(["call", "label", "계산 시트", "서식 시트"], 1):
+            c = ws_list.cell(행, cc, h); c.font = bold; c.fill = header_fill
+        행 += 1
         for _ci, cd in enumerate(결과들):
             ws_list.cell(행, 1, _ci + 1)
             ws_list.cell(행, 2, cd.get("label", ""))
             ws_list.cell(행, 3, _calc_sheets.get(_ci, ""))
-            _곳 = [t["sheet"] for t in 템플릿_목록 if t["call_idx"] == _ci and t["tool"] != "*"] + _들어간_곳.get(_ci, [])
-            ws_list.cell(행, 4, ", ".join(_곳) or ("오류" if cd["error"] else ""))
+            _곳 = _서식_곳[_ci]
+            ws_list.cell(행, 4, ", ".join(_곳) or ("오류" if cd["error"] else "서식 틀 없음 — 계산 시트 참고"))
             행 += 1
         행 += 1
         ws_list.cell(행, 1,
@@ -9969,28 +10192,22 @@ def export_workbook(
     for cc, h in enumerate(["call", "항목", "결론", "금액", "근거", "이유"], 1):
         c = ws_jud.cell(행, cc, h); c.font = bold; c.fill = header_fill
     행 += 1
-    for cd in 결과들:
+    for _ci, cd in enumerate(결과들):
         if cd["error"]:
             continue
         label = cd["label"]
-        판단목록 = (cd.get("data") or {}).get("판단", [])
-        if not 판단목록:
-            continue
-        if isinstance(판단목록, dict):      # religious_income 등 {항목: 결론} 형태
-            판단목록 = [{"항목": k, "결론": v} for k, v in 판단목록.items()]
-        elif isinstance(판단목록, str):
-            판단목록 = [판단목록]
-        for j in 판단목록:
-            if not isinstance(j, dict):  # 판단이 문장 목록인 도구(예: nonbusiness_interest_disallowance)
-                j = {"결론": j}
+        # 판단이 없는 도구(원천징수·가산세·제척기간 등)도 call마다 한 줄 이상 — 판정·쟁점, 없으면 '판단 항목 없음'
+        for j in _judgement_rows(cd.get("data") or {}, f"계산 {_ci + 1}"):
             ws_jud.cell(행, 1, label)
             ws_jud.cell(행, 2, j.get("항목", ""))
             con = ws_jud.cell(행, 3, _cell_value(j.get("결론", "")))
-            amt = j.get("금액", 0)
-            if isinstance(amt, (int, float)):
+            amt = j.get("금액")      # 금액이 없는 문장 판단은 빈칸(0으로 채우지 않음)
+            if isinstance(amt, bool):
+                ws_jud.cell(행, 4, "예" if amt else "아니오")
+            elif isinstance(amt, (int, float)):
                 _set_money(ws_jud.cell(행, 4), amt)
-            else:
-                ws_jud.cell(행, 4, amt)
+            elif amt not in (None, ""):
+                ws_jud.cell(행, 4, _cell_value(amt))
             근거_val = j.get("근거", "")
             근거_cell = ws_jud.cell(행, 5, _cell_value(근거_val))
             if isinstance(근거_val, list) and _is_basis_list(근거_val):

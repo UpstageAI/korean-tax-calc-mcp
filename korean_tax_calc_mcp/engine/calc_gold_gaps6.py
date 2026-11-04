@@ -2,6 +2,7 @@
 근거: 소득세법 시행령 제40조의2·제40조의3(2024.1.1. 시행본), 상속세 및 증여세법 제60조·제66조, 시행령 제49조·제63조."""
 
 import math
+from fractions import Fraction
 from datetime import date, timedelta
 from typing import Literal
 
@@ -241,10 +242,56 @@ def inheritance_gift_valuation(
     valuation_date: str,
     supplementary_value: int,
     market_values: list | None = None,
-    secured_debt: dict | None = None,
+    secured_debt: dict | list | None = None,
+    lease: dict | None = None,
 ):
-    """상속·증여재산 평가: 시가 우선 → 보충적 평가 → 담보 특례(상증법 제60조·제66조, 영 제49조·제63조)."""
+    """상속·증여재산 평가: 시가 우선 → 보충적 평가(임대 재산은 임대료 등 환산가액과 비교) → 담보 특례
+    (상증법 제60조·제61조⑤·제66조, 영 제49조·제50조⑦·제63조, 규칙 제15조의2)."""
     vd = _parse_date(valuation_date)
+
+    # 담보 목록·임대 입력 정리 (영 제63조①·②: 같은 재산이 여러 채권의 담보면 채권액 합계, 임대보증금 포함)
+    if isinstance(secured_debt, dict):
+        담보목록 = [secured_debt]
+    elif isinstance(secured_debt, list):
+        담보목록 = secured_debt
+    else:
+        담보목록 = []
+    문제 = []
+    for i, it in enumerate(담보목록):
+        if not isinstance(it, dict):
+            문제.append(f"secured_debt[{i}]는 {{채권최고액?, 채무액?, 임대보증금?}} 형식이어야 함")
+            continue
+        for k in ("채권최고액", "채무액", "임대보증금", "전세금"):
+            v = it.get(k)
+            if v is not None and (not isinstance(v, (int, float)) or v < 0):
+                문제.append(f"secured_debt[{i}].{k}가 0 이상의 숫자가 아님")
+    lease_보증금 = None
+    lease_연임대료 = None
+    if lease is not None:
+        if not isinstance(lease, dict):
+            문제.append("lease는 {연간임대료 | 월임대료, 임대보증금?} 형식이어야 함")
+        else:
+            연 = lease.get("연간임대료")
+            월 = lease.get("월임대료")
+            if 연 is None and 월 is None:
+                문제.append("lease에 연간임대료 또는 월임대료가 없음")
+            elif 연 is not None and 월 is not None:
+                문제.append("lease에 연간임대료와 월임대료를 함께 넣음 — 하나만")
+            else:
+                v = 연 if 연 is not None else 월
+                if not isinstance(v, (int, float)) or v < 0:
+                    문제.append("lease 임대료가 0 이상의 숫자가 아님")
+                else:
+                    lease_연임대료 = int(연) if 연 is not None else int(월) * 12
+            b = lease.get("임대보증금", 0) or 0
+            if not isinstance(b, (int, float)) or b < 0:
+                문제.append("lease.임대보증금이 0 이상의 숫자가 아님")
+            else:
+                lease_보증금 = int(b)
+            if lease_보증금 and any(isinstance(it, dict) and (it.get("임대보증금") or it.get("전세금")) for it in 담보목록):
+                문제.append("임대보증금을 lease와 secured_debt에 함께 넣음 — 한 곳에만(lease에 넣으면 담보채권액에도 합산함)")
+    if 문제:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제}
 
     # 보충적 평가액 유효성
     if supplementary_value < 0:
@@ -340,21 +387,37 @@ def inheritance_gift_valuation(
             시가 = None
             적용근거 = "시가 없음 — 보충적 평가액 적용(법 제61조)"
 
-    # 담보 특례(법 제66조, 영 제63조)
-    담보채권액 = 0
-    if secured_debt:
-        최대 = secured_debt.get("채권최고액")
-        채무 = secured_debt.get("채무액", 0)
-        if 최대 is not None:
-            담보채권액 = min(int(최대), int(채무))
-        else:
-            담보채권액 = int(채무)
+    # 임대료 등 환산가액(법 제61조⑤, 영 제50조⑦, 규칙 제15조의2: 1년간 임대료 ÷ 12% + 임대보증금)
+    환산가액 = None
+    보충적 = supplementary_value
+    if lease_연임대료 is not None:
+        환산가액 = int(Fraction(lease_연임대료) / Fraction(12, 100)) + (lease_보증금 or 0)
+        보충적 = max(supplementary_value, 환산가액)
 
-    평가액 = supplementary_value
+    # 담보 특례(법 제66조, 영 제63조) — 채권마다 min(채권최고액, 채무액), 여러 채권·임대보증금은 합계(영 제63조②)
+    담보채권액 = 0
+    담보_내역 = []
+    for it in 담보목록:
+        최대 = it.get("채권최고액")
+        채무 = it.get("채무액")
+        if 채무 is not None or 최대 is not None:
+            채무 = int(채무 or 0)
+            v = min(int(최대), 채무) if 최대 is not None else 채무
+            담보채권액 += v
+            담보_내역.append(f"{'min(채권최고액, 채무액)' if 최대 is not None else '채무액'} {v:,}원")
+        for k in ("임대보증금", "전세금"):
+            if it.get(k):
+                담보채권액 += int(it[k])
+                담보_내역.append(f"{k} {int(it[k]):,}원")
+    if lease_보증금:
+        담보채권액 += lease_보증금
+        담보_내역.append(f"임대보증금 {lease_보증금:,}원(영 제63조①5호)")
+
+    평가액 = 보충적
     if 시가 is not None:
         평가액 = max(시가, 담보채권액) if 담보채권액 > 0 else 시가
     else:
-        평가액 = max(supplementary_value, 담보채권액) if 담보채권액 > 0 else supplementary_value
+        평가액 = max(보충적, 담보채권액) if 담보채권액 > 0 else 보충적
 
     # 판단
     판단사항 = []
@@ -377,22 +440,35 @@ def inheritance_gift_valuation(
         판단사항.append("해당재산·유사재산 시가 모두 없음 → 보충적 평가액(법 제61조) 적용")
 
     if 담보채권액 > 0:
-        판단사항.append(f"담보특약(법 제66조, 영 제63조): 담보채권액 = {'min(채권최고액, 채무액)' if secured_debt.get('채권최고액') is not None else '채무액'} = {담보채권액:,}원, 평가액 = max(시가·보충액, 담보채권액) = {평가액:,}원")
+        판단사항.append(f"담보특약(법 제66조, 영 제63조): 담보채권액 = {' + '.join(담보_내역)} = {담보채권액:,}원, 평가액 = max(시가·보충액, 담보채권액) = {평가액:,}원")
     else:
         판단사항.append(f"담보 없음 → 평가액 = {'시가' if 시가 is not None else '보충적 평가액'} = {평가액:,}원")
 
     판단 = {
         "평가기간": 기간라벨,
         "시가_결정": 적용근거,
-        "담보특례": f"담보채권액 {담보채권액:,}원" if 담보채권액 > 0 else "해당 없음",
-        "근거": "상속세 및 증여세법 제60조(평가원칙)·제66조(담보 부동산 등)·시행령 제49조(시가)·제63조(저당권 등 담보재산)",
     }
+    if 환산가액 is not None:
+        if 시가 is not None:
+            판단["임대료_환산"] = (f"시가가 있어 법 제61조⑤ 비교는 하지 않음(참고: 임대료 등 환산가액 {환산가액:,}원 = "
+                               f"연 임대료 {lease_연임대료:,} ÷ 12% + 임대보증금 {lease_보증금 or 0:,})")
+        else:
+            판단["임대료_환산"] = (f"임대료 등 환산가액 = 연 임대료 {lease_연임대료:,} ÷ 12% + 임대보증금 {lease_보증금 or 0:,} = {환산가액:,}원, "
+                               f"보충적 평가액(기준시가 등) {supplementary_value:,}원과 비교해 큰 금액 {보충적:,}원 (상증법 제61조⑤, 시행령 제50조⑦, 시행규칙 제15조의2)")
+    판단["담보특례"] = (f"담보채권액 = {' + '.join(담보_내역)} = {담보채권액:,}원 → 평가액 = max({'시가' if 시가 is not None else '보충적 평가액'}, 담보채권액) "
+                    f"= {평가액:,}원 (상증법 제66조, 시행령 제63조①·②)" if 담보채권액 > 0 else "해당 없음")
+    판단["근거"] = ("상속세 및 증여세법 제60조(평가원칙)·" + ("제61조⑤(임대 재산)·" if 환산가액 is not None else "")
+                  + "제66조(담보 부동산 등)·시행령 제49조(시가)·" + ("제50조⑦(임대료 등 환산가액)·" if 환산가액 is not None else "")
+                  + "제63조(저당권 등 담보재산)")
 
     계산 = {
         "시가": 시가,
         "적용": 적용근거,
         "담보채권액": 담보채권액,
     }
+    if 환산가액 is not None:
+        계산["임대료_환산가액"] = 환산가액
+        계산["보충적_평가액"] = 보충적
 
     결과 = {
         "평가액": 평가액,
