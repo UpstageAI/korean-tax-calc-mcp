@@ -335,6 +335,79 @@ def withholding_late_penalty(unpaid, days, start=None):
     return _floor(min(_x(unpaid) * _x(0.03) + daily, _x(unpaid) * _x(0.10)))
 
 
+WL_AMEND_DATE = "2026-07-01"   # 법률 제21212호(2025.12.23.) 제47조의5 개정규정 시행일(부칙 제1조 단서)
+
+
+def _civil_months_elapsed(start, last_day, cap=None):
+    """start(기산일)부터 last_day(마지막 날, 포함)까지 경과한 개월 수 — 민법 제160조(국기법 제4조):
+    n개월은 n개월 뒤 기산일에 해당한 날의 전일에 만료, 그 달에 해당일이 없으면 그 달 말일에 만료."""
+    import calendar
+    from datetime import date, timedelta
+    n = 0
+    while cap is None or n < cap:
+        y, m = divmod(start.month - 1 + n + 1, 12)
+        y, m = start.year + y, m + 1
+        last = calendar.monthrange(y, m)[1]
+        end = date(y, m, start.day) - timedelta(days=1) if start.day <= last else date(y, m, last)
+        if end > last_day:
+            break
+        n += 1
+    return n
+
+
+def withholding_late_penalty_full(unpaid, due, until, notice_due=None, paid_on=None, dunning_fee=0, notice_amount=None):
+    """원천징수 등 납부지연가산세(국기법 제47조의5) — 납부고지 전후, 2026.7.1. 개정(법률 제21212호) 반영. 날짜는 date.
+    until: 고지 없이 납부했으면 납부일, 납부고지가 있었으면 납부고지일(notice_due·paid_on 함께).
+    고지 전(1호 3% + 2호 일수분, 합계 10% 한도): until이 2026.7.1. 이후면 개정 — 2호 '납부고지일(납부일)의 전날까지',
+      그 전이면 종전 — 납부일까지(고지가 있으면 '납부고지일부터 납부고지서에 따른 납부기한까지' 제외라 고지일 전날까지).
+    고지 후(지정납부기한 다음 날부터 납부일): 부칙 제4조 — 2026.6.30. 이전에 지정납부기한이 지났으면 종전(2호 일수분, ④ 5년),
+      아니면 개정 3호(월 1만분의 67 × 경과 개월 수, ④ 5년 = 60개월) + 4호 독촉비용, ⑤ 고지서별·세목별 150만원 미만이면 고지 후분 없음.
+    전체 한도 미납세액 50%. 1일 이율은 영 제27조의4(이율 변경일 안분, late_payment_rate_segments)."""
+    from datetime import date, timedelta
+    from .calc_vat import late_payment_rate_segments
+    amend = date.fromisoformat(WL_AMEND_DATE)
+    new_pre = until >= amend
+    noticed = notice_due is not None
+    days = (until - due).days - (1 if (new_pre or noticed) else 0)
+    start = (due + timedelta(days=1)).isoformat()
+    u = _x(unpaid)
+    p1 = u * _x(0.03)
+    p2 = sum(u * _x(r) * n for n, r in late_payment_rate_segments(start, days)) if days > 0 else _x(0)
+    cap10 = u * _x(0.10)
+    pre = min(p1 + p2, cap10)
+    out = {"고지전_규정": "개정" if new_pre else "종전", "일수": max(days, 0), "3%분": _floor(p1), "일수분": _floor(p2),
+           "한도_10%": _floor(cap10), "한도_적용": p1 + p2 > cap10, "고지후_규정": None, "고지후분": 0, "고지후_일수": 0,
+           "경과_개월": 0, "독촉비용": 0, "150만원미만_제외": False, "납부고지서_세액": None}
+    post = _x(0)
+    if noticed and paid_on > notice_due:
+        old_post = notice_due < amend          # 부칙 제4조: 2026.6.30. 이전에 지정납부기한 경과
+        out["고지후_규정"] = "종전" if old_post else "개정"
+        고지세액 = notice_amount if notice_amount is not None else unpaid + _floor(pre)
+        out["납부고지서_세액"] = 고지세액
+        if 고지세액 < 1_500_000:
+            out["150만원미만_제외"] = True
+        else:
+            try: five = notice_due.replace(year=notice_due.year + 5)
+            except ValueError: five = notice_due.replace(year=notice_due.year + 5, day=28)
+            if old_post:
+                pd = (min(paid_on, five) - notice_due).days
+                post = sum(u * _x(r) * n for n, r in late_payment_rate_segments((notice_due + timedelta(days=1)).isoformat(), pd))
+                out["고지후_일수"] = pd
+            else:
+                months = _civil_months_elapsed(notice_due + timedelta(days=1), paid_on - timedelta(days=1), cap=60)
+                post = u * _x(0.0067) * months
+                out["경과_개월"] = months
+        out["고지후분"] = _floor(post)
+        if out["고지후_규정"] == "개정" and not out["150만원미만_제외"]:
+            out["독촉비용"] = dunning_fee
+            post += dunning_fee
+    cap50 = u * _x(0.5)
+    out["한도_50%"] = _floor(cap50)
+    out["50%한도_적용"] = pre + post > cap50
+    out["가산세"] = _floor(min(pre + post, cap50))
+    return out
+
+
 def payment_statement_penalty(amount, within_3m=False, due_date=None, daily_worker=False, paid_on=None):
     """지급명세서 미제출(소득세법 제81조의11, 2019년 이전 제81조①).
     - 제출기한이 2018.1.1. 이후: 1%, 기한 후 3개월 내 0.5%(2016.12.20. 개정, 부칙 제7조)
