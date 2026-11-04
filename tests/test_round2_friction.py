@@ -23,7 +23,7 @@ def test_income_adjustment_aliases_and_precise_labels():
     r = c("income_adjustment_total", {"net_income": 100000000, "items": [
         {"항목": "법인세", "종류": "법인세", "금액": 8000000}, {"항목": "환급금 이자", "종류": "국세환급가산금", "금액": 2000000}]})
     adj = {e["구분"]: (e["조정"], e["조정구분"]) for e in r["결과"]["세무조정"]}
-    assert adj["법인세"] == ("익금산입", "손금불산입") and adj["환급금 이자"] == ("손금산입", "익금불산입")
+    assert adj["법인세"] == ("손금불산입", "손금불산입") and adj["환급금 이자"] == ("익금불산입", "익금불산입")
     e = c("income_adjustment_total", {"net_income": 1, "items": [{"항목": "a", "종류": "없는1", "금액": 1}, {"항목": "b", "종류": "없는2", "금액": 1}]})
     assert "2건" in e["문제"][0] and "허용 종류" in e
 

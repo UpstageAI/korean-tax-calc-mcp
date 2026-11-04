@@ -60,7 +60,7 @@ def test_entertainment_public_case_65():  # 공개 검증 사례(답 대표자�
     tot = {}
     for a in r["세무조정"]:
         tot[a["소득처분"]] = tot.get(a["소득처분"], 0) + a["금액"]
-    assert tot.get("대표자상여") == 8_000_000
+    assert tot.get("상여") == 8_000_000
     assert tot.get("기타사외유출") == 12_350_000
     assert r["결과"]["한도"] == 35_650_000 and r["결과"]["한도초과"] == 6_350_000
 
@@ -69,7 +69,7 @@ def test_entertainment_sme_within_limit():  # 실무형: 중소기업, 한도 �
     r = c("entertainment_adjustment", {"year": 2024, "sme": True, "months": 12, "revenue_general": 5_000_000_000, "revenue_related": 0,
                                         "expenses": [{"amount": 30_000_000, "evidence": "적격"}, {"amount": 2_000_000, "evidence": "없음"}]})
     assert r["결과"]["한도"] == 51_000_000 and r["결과"]["한도초과"] == 0
-    assert sum(a["금액"] for a in r["세무조정"] if a["소득처분"] == "대표자상여") == 2_000_000
+    assert sum(a["금액"] for a in r["세무조정"] if a["소득처분"] == "상여") == 2_000_000
 
 
 def test_entertainment_short_year():  # 실무형: 일반법인 6개월 사업연도

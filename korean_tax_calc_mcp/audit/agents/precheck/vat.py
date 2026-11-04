@@ -407,15 +407,21 @@ SCHEMA.update({
 @rule("V-C05", S, "공제받지못할매입세액명세서(다과세기간)", "공통매입세액 안분·정산·재계산 과세기간별 대조", "부가법 제40·41조, 부가령 제81~83조·제63조",
       needs=["공통매입원장.과세기간", "공통매입원장.자산", "공통매입원장.신고"], source="vat_common 원장")
 def _(d):
-    from ..vat_common import Common, Period, run as _run, summarize
-    ps = [Period(**p) for p in d["공통매입원장.과세기간"]]
+    기간, 자산, 신고 = d["공통매입원장.과세기간"], d["공통매입원장.자산"], d["공통매입원장.신고"]   # 자료가 없으면 먼저 '자료 부족'
+    try:
+        from ..vat_common import Common, Period, run as _run, summarize
+    except ImportError:   # 다과세기간 원장 모듈은 이 패키지에 들어 있지 않음 — 도구 전체가 멈추지 않게 미지원으로 돌려줌
+        return {"결과": "사실 확인 필요",
+                "확인": "부가세 사전검토 미지원 — 공통매입세액 다과세기간 원장 대조(V-C05)는 이 패키지에서 지원하지 않음. "
+                        "과세기간별 별지22 3·4·5번은 common_input_tax·input_tax_recalculation으로 재계산해 대조하세요"}
+    ps = [Period(**p) for p in 기간]
     calc_ = {}
-    for a in d["공통매입원장.자산"]:
+    for a in 자산:
         a = {**a, **({"임시기준": tuple(a["임시기준"])} if a.get("임시기준") else {}), **({"공급": tuple(a["공급"])} if a.get("공급") else {})}
         for k, v in summarize(_run(Common(**a), ps)).items():
             for kk, vv in v.items():
                 calc_.setdefault(k, {}).setdefault(kk, 0); calc_[k][kk] += vv
-    rep = d["공통매입원장.신고"]; bad = []
+    rep = 신고; bad = []
     for per in sorted(set(calc_) | set(rep)):
         for col in ("3번 안분 불공제", "4번 정산", "5번 재계산"):
             c, r = calc_.get(per, {}).get(col, 0), rep.get(per, {}).get(col, 0)

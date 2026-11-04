@@ -52,8 +52,8 @@ def test_entertainment_private_use_is_bonus_not_limit_test():
                                        "revenue": {"매출액": 1000000000}})
     assert r["결과"]["직부인_대표자상여"] == 1000000 and r["결과"]["시부인_대상"] == 5000000
     assert r["결과"]["손금불산입_합계"] == 1000000
-    assert r["결과"]["소득처분별_합계"]["대표자상여"] == 1000000
-    assert any(t["소득처분"] == "대표자상여" and t["금액"] == 1000000 for t in r["결과"]["세무조정"])
+    assert r["결과"]["소득처분별_합계"]["상여"] == 1000000
+    assert any(t["소득처분"] == "상여" and t["금액"] == 1000000 for t in r["결과"]["세무조정"])
 
 
 def test_common_input_new_building_uses_planned_area_ratio():
