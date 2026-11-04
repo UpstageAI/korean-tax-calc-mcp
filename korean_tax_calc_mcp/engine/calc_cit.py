@@ -7,6 +7,7 @@ import re
 from datetime import date, timedelta
 
 from .calc import won
+from .exact import exact as _x, floor_won as _floor
 
 # 키 = 사업연도(개시일이 속하는 연도). 값은 모두 법제처 efYd=그해1231 원문 + 개정 부칙 적용시기 대조(2026-09-30, knowledge/16 §법인 연도표).
 _T_OLD = [(200_000_000, 0.10), (20_000_000_000, 0.20), (math.inf, 0.22)]                                   # 제55조 2016·2017
@@ -696,14 +697,24 @@ def loss_limit_ratio(year, sme):
 
 
 def late_payment_penalty(tax, due, until):
-    """납부지연가산세 일수분(국세기본법 제47조의4, 영 제27조의4): 1일 10만분의 25 → 2022.2.15.부터 10만분의 22.
-    due=법정납부기한, until=납부일·고지일. 기간을 나눠 각각의 율 적용."""
+    """납부지연가산세 일수분(국세기본법 제47조의4①1호, 영 제27조의4): 1일 1만분의 3 → 2019.2.12.부터 10만분의 25
+    → 2022.2.15.부터 10만분의 22. 시행일 전 기간분은 종전 이율(영 부칙<제29534호,2019.2.12.> 제9조, 부칙<제32424호,2022.2.15.> 제6조)
+    — 기간을 나눠 각각의 율 적용(calc_vat.late_payment_rate_segments). due=법정납부기한, until=납부일·고지일."""
     from datetime import date as _d, timedelta
-    a, b = _d.fromisoformat(due) + timedelta(days=1), _d.fromisoformat(until)
-    cut = _d(2022, 2, 15)
-    d1 = max(0, (min(b, cut - timedelta(days=1)) - a).days + 1) if a < cut else 0
-    d2 = max(0, (b - max(a, cut)).days + 1)
-    return {"일수": d1 + d2, "0.025%일수": d1, "0.022%일수": d2, "가산세": int(round(tax * (0.00025 * d1 + 0.00022 * d2)))}
+    from .calc_vat import late_payment_rate_segments
+    d0, b = _d.fromisoformat(due), _d.fromisoformat(until)
+    if b < d0:
+        raise ValueError(f"until={until}이 법정납부기한 due={due}보다 앞섬 — 납부일·고지일은 납부기한 이후 날짜")
+    a = d0 + timedelta(days=1)
+    days = max(0, (b - a).days + 1)
+    seg = late_payment_rate_segments(a.isoformat(), days) if days else []
+    n = {r: k for k, r in seg}
+    out = {"일수": days}
+    if n.get(0.0003):
+        out["0.03%일수"] = n[0.0003]
+    out.update({"0.025%일수": n.get(0.00025, 0), "0.022%일수": n.get(0.00022, 0),
+                "가산세": int(round(sum(_x(tax) * _x(r) * k for k, r in seg)))})
+    return out
 
 
 class NoYearTable(Exception):
@@ -924,19 +935,19 @@ def depreciation_adjustment(year, method, acquisition_cost, booked_depreciation,
     기초세무상미상각 = acquisition_cost - 기초누계 + prior_disallowed + 당기즉시상각의제
 
     # ── 상각범위액 ─────────────────────────────────────────────────
-    월할계수 = 사용월수 / 12.0
+    월할계수 = _x(사용월수) / 12   # 분수로 계산(상각률 0.451 같은 곱의 부동소수 절사 오차 방지), 원 미만은 아래에서 버림
 
     if 실제방법 == "정액법":
-        범위액 = max(0, 세무상취득가액 * 최종상각률 * 월할계수)
+        범위액 = max(0, _x(세무상취득가액) * _x(최종상각률) * 월할계수)
     else:  # 정률법 — 영 제26조⑥⑦: 잔존가액 5%를 미리 빼지 않음
-        비망가액 = min(acquisition_cost * 정률법_잔존가액_비율, 1000)
+        비망가액 = min(_x(acquisition_cost) * _x(정률법_잔존가액_비율), 1000)
         # 기본 상각범위액 = 기초 미상각잔액 × 상각률 × 월할 (잔존가액 차감 없음)
-        기본범위액 = max(0, 기초세무상미상각 * 최종상각률 * 월할계수)
+        기본범위액 = max(0, _x(기초세무상미상각) * _x(최종상각률) * 월할계수)
         # 미상각잔액 − 기본범위액 ≤ 취득가액×5% 가 처음 되는 해 → 잔존가액(5%) 가산 (영 제26조⑥)
         상각후잔액 = 기초세무상미상각 - 기본범위액
         # 미상각잔액 − 기본범위액 ≤ 취득가액×5% 이면 잔존가액(5%) 가산 (영 제26조⑥)
-        if 상각후잔액 <= acquisition_cost * 정률법_잔존가액_비율:
-            기본범위액 += acquisition_cost * 정률법_잔존가액_비율
+        if 상각후잔액 <= _x(acquisition_cost) * _x(정률법_잔존가액_비율):
+            기본범위액 += _x(acquisition_cost) * _x(정률법_잔존가액_비율)
         # 상각범위액 상한 = 미상각잔액 − 비망가액 (영 제26조⑦)
         상한 = 기초세무상미상각 - 비망가액
         범위액 = max(0, min(기본범위액, 상한))
@@ -2035,7 +2046,7 @@ def dividend_received_deduction(
                 exclusion_rate = _get_general_exclusion_rate_2016_2018(ratio, inv.get("listed", False))
 
         # 익금불산입 대상액 = floor(대상 배당 × 익금불산입률)
-        대상액 = int(대상_배당금 * exclusion_rate)
+        대상액 = _floor(대상_배당금, exclusion_rate)
         대상액_합계 += 대상액
 
         # 차감액 = floor(A × B / C × D), where B는 익금불산입 대상 주식의 장부가액 적수
@@ -2047,12 +2058,12 @@ def dividend_received_deduction(
             # 즉, 3개월 이내 취득분이 제외되었으면 그 배당만큼 주식 적수도 차감에서 뺀다
             # (법 제18조의2①2호·영 제17조의2③: 익금불산입 대상 주식의 장부가액 적수)
             if within_3m_dividend > 0 and dividend > 0:
-                target_ratio = (dividend - within_3m_dividend) / dividend
+                target_ratio = _x(dividend - within_3m_dividend) / dividend
             elif dividend == 0:
-                target_ratio = 0.0
+                target_ratio = 0
             else:
-                target_ratio = 1.0
-            차감액 = int(A * book_value * target_ratio * exclusion_rate / total_assets_jeoksu)
+                target_ratio = 1
+            차감액 = _floor(A, book_value, target_ratio, exclusion_rate, div=total_assets_jeoksu)
         else:
             차감액 = 0
         차감액_합계 += 차감액
@@ -2244,9 +2255,9 @@ def asset_grant_reserve(
 
             if disposed:
                 if depreciable:
-                    처분익금 = int((reserve_opening - 상계액) * disposed_ratio)
+                    처분익금 = _floor(reserve_opening - 상계액, disposed_ratio)
                 else:
-                    처분익금 = int(reserve_opening * disposed_ratio)
+                    처분익금 = _floor(reserve_opening, disposed_ratio)
             else:
                 처분익금 = 0
 

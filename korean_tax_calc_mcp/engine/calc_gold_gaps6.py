@@ -5,6 +5,8 @@ import math
 from datetime import date, timedelta
 from typing import Literal
 
+from .exact import floor_won
+
 M = 1_000_000
 
 
@@ -121,7 +123,7 @@ def pension_account_withdrawal(
     if 연금수령연차 >= 11:
         연금수령한도 = None
     else:
-        연금수령한도 = _floor_won(balance_at_period_start / (11 - 연금수령연차) * 1.2)
+        연금수령한도 = floor_won(balance_at_period_start, 1.2, div=11 - 연금수령연차)
 
     # ── 인출순서 (영 제40조의3①③) ──
     # 한도 이내 = 연금수령분, 한도 초과 = 연금외수령분

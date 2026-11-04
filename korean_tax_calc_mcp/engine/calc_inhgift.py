@@ -4,6 +4,7 @@ from datetime import date
 from typing import Literal
 
 from .. import vocab
+from .exact import exact as _x, floor_won as _floor
 
 M = 1_000_000
 
@@ -37,13 +38,14 @@ def _rate_table(year):
 
 
 def _tier(amount, tiers):
-    out, prev = 0.0, 0
+    """누진세액 — 세율을 분수로 곱해(10% → 1/10) 부동소수 절사 오차 없이 원 미만 버림."""
+    out, prev = _x(0), 0
     for cap, r in tiers:
         if amount > prev:
             if cap is None:
-                out += (amount - prev) * r
+                out += (_x(amount) - prev) * _x(r)
             else:
-                out += (min(amount, cap) - prev) * r
+                out += (min(_x(amount), cap) - prev) * _x(r)
         prev = cap
     return _won(out)
 
@@ -130,7 +132,7 @@ def _금융재산공제(year, net_financial_assets):
     한도 = voc["한도"]  # 2억
     if net_financial_assets <= 기준:
         return net_financial_assets
-    return min(max(_won(net_financial_assets * 율), 최소), 한도)
+    return min(max(_floor(net_financial_assets, 율), 최소), 한도)
 
 
 def _동거주택공제(year, cohabiting_house):
@@ -147,7 +149,7 @@ def _동거주택공제(year, cohabiting_house):
         base = value - secured
     else:
         base = value
-    return min(_won(base * 율), 한도)
+    return min(_floor(base, 율), 한도)
 
 
 def _감정평가수수료(year, appraisal_fee, share_appraisal_fee, share_appraisal_count):
@@ -190,7 +192,7 @@ def _추정상속재산(year, presumed_items):
                            "사유": f"요건 미충족({'1년 2억' if window == '1년' else '2년 5억'} 미만)"})
             continue
 
-        차감 = _won(amount * 율)
+        차감 = _floor(amount, 율)
         차감 = min(차감, 한도)
         if unexplained < 차감:
             추정 = 0
@@ -326,7 +328,7 @@ def inheritance_tax(
     # 16. 신고세액공제
     신고율 = vocab.rule_on("상증_신고세액공제율", year * 10000 + 101 if year >= 2016 else 20160101)["율"]
     if filed:
-        신고공제 = _won(max(0, 산출세액 + generation_skip_surcharge - gift_tax_credit - other_credits) * 신고율)
+        신고공제 = _floor(max(0, 산출세액 + generation_skip_surcharge - gift_tax_credit - other_credits), 신고율)
     else:
         신고공제 = 0
 
@@ -437,6 +439,10 @@ def gift_tax(
     연도_int = 연도 * 10000 + gift_date_dt.month * 100 + gift_date_dt.day
 
     # 오류 검사
+    if not 2016 <= 연도 <= 2026:
+        # 연도표(공제·세율·신고세액공제율, 상증법 제69조②: 2016 10% → 2017 7% → 2018 5% → 2019~ 3%)가 없는 해는 추정 계산하지 않음
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"gift_date={gift_date} — 2016~2026 증여분만 지원(연도표 없는 해는 계산하지 않음)"]}
     if marriage_birth and gift_date < "2024-01-01":
         return {"error": "입력 확인 필요 — 계산하지 않음",
                 "문제": ["혼인·출산 증여재산공제는 2024.1.1 이후 증여분부터(법 제53조의2, 부칙 제19932호 제3조)"]}
@@ -494,12 +500,12 @@ def gift_tax(
             할증율 = 0.4
         else:
             할증율 = 0.3
-    할증세액 = _won(산출세액 * 할증율) if 할증율 > 0 else 0
+    할증세액 = _floor(산출세액, 할증율) if 할증율 > 0 else 0
 
     # 9. 신고세액공제
     신고율 = vocab.rule_on("상증_신고세액공제율", 연도_int)["율"]
     if filed:
-        신고공제 = _won(max(0, 산출세액 + 할증세액 - prior_gift_tax_paid - other_credits) * 신고율)
+        신고공제 = _floor(max(0, 산출세액 + 할증세액 - prior_gift_tax_paid - other_credits), 신고율)
     else:
         신고공제 = 0
 

@@ -47,7 +47,7 @@ def test_v02_tools():
            "taxable_supply": 280_000_000, "exempt_supply": 120_000_000,
            "period": "2026-1", "industry": "제조", "individual": False, "sme": False})
     assert r["결과"]["의제매입세액"] == 1_419_215
-    assert r["결과"]["공제대상_매입가액"] == 72_379_999
+    assert r["결과"]["공제대상_매입가액"] == 72_380_000   # 70,000,000×94% + 10,000,000×94%×70% (예전 값 72,379,999는 부동소수 절사 오차)
     items = [{"amount": 50_000}, {"amount": 20_000}, {"amount": 300_000, "congratulatory": True}, {"amount": 100_000, "qualified": True}]
     assert c("missing_receipt_disallowance", {"year": 2025, "items": items})["결과"]["손금불산입"] == 350_000
     assert c("vat_common_input_allocation", {"common_tax": 10_000_000, "total_supply": 1_000_000_000, "exempt_supply": 300_000_000})["결과"]["불공제"] == 3_000_000

@@ -3,6 +3,7 @@ import asyncio, json, re, shutil, subprocess
 import openpyxl
 import pytest
 from korean_tax_calc_mcp.server import mcp
+from korean_tax_calc_mcp.engine.exact import trunc_won
 
 
 def c(tool, a):
@@ -31,7 +32,8 @@ def _py(expr):
 
 
 def evaluate(r):
-    env = {"MIN": min, "MAX": max, "IF": lambda c, a, b: a if c else b, "_RD": lambda x, n=0: int(x), "TRUE": True, "FALSE": False}
+    # ROUNDDOWN: 엑셀처럼 표시 정밀도(15자리) 안의 부동소수 오차는 무시하고 0 쪽으로 절사(119,174,999.99999999 → 119,175,000)
+    env = {"MIN": min, "MAX": max, "IF": lambda c, a, b: a if c else b, "_RD": lambda x, n=0: trunc_won(x), "TRUE": True, "FALSE": False}
     for i in r["계산식_입력"]:
         assert NAME.match(i["이름"]), i["이름"]
         env[i["이름"]] = i["값"]

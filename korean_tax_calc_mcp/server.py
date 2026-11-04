@@ -27,6 +27,8 @@ from .engine import calc_stock_val as SV
 from .engine import calc_official_price as OP
 from .engine import calc_building as BL
 from .engine import calc_donation_ind as DI
+from .engine.exact import floor_won as _floor_won, trunc_won as _trunc_won, exact as _exact
+from .engine import inputs as _chk
 from . import vocab
 from .forms_workbook import render_form_sheet, _load_form_templates, tool_value, nonbusiness_form_sources, nonbusiness_form_data
 
@@ -476,6 +478,7 @@ def corporate_tax(base: WON, year: YEAR,
     """법인세 산출세액(사업연도 과세표준 × 세율표, 1년 미만 사업연도 월할 환산). 언제: 법인세 신고·세무조정에서 과세표준이 정해졌을 때 산출세액을 구한다.
 입력: 과세표준(과세표준, 원) → base, 사업연도(2016~2026) → year, 월수(1~12) → months.
 결과: 산출세액·과세표준·사업연도·월수와 근거(법인세법 제55조①·②). Corporate income tax on a tax base for a fiscal year (rate table, prorated for short fiscal years)."""
+    _chk.int_range("months", months, 1, 12, "사업연도 월수 ")
     return _ok({"산출세액": C.corp_tax(base, year, months), "과세표준": base, "사업연도": year, "월수": months}, "법인세법 제55조(세율)·제55조②(1년 미만)")
 
 
@@ -520,6 +523,7 @@ def entertainment_limit(year: YEAR, sme: Annotated[bool, Field(description="중�
     """기업업무추진비(접대비) 한도와 한도초과액. 언제: 법인세 세무조정에서 기업업무추진비 손금불산입액을 구할 때.
 입력: 수입금액(일반, 중단사업부문 매출 포함 기업회계 매출액) → general_revenue, 특수관계인 수입 → related_revenue, 중소기업 여부 → sme, 지출액(접대비) → expensed, 문화비 → culture, 전통시장 지출 → market(2023~), 사업연도 월수 → months.
 결과: 한도·한도초과액(손금불산입)·근거(법인세법 제25조, 시행령 제42조). 기업업무추진비 한도와 한도초과액 계산; 접대비가 한도를 넘는가 확인할 때 쓴다."""
+    _chk.int_range("months", months, 1, 12, "사업연도 월수 ")
     return _ok(C.entertain(year, sme, general_revenue, related_revenue, expensed, culture=culture, months=months, market=market),
                "법인세법 제25조, 시행령 제42조")
 
@@ -540,7 +544,11 @@ def deemed_interest(movements: Annotated[list[Movement], Field(description="가�
         return {"error": "입력 확인 필요 — 계산하지 않음",
                 "문제": ["received_interest와 charged_rate를 함께 입력할 수 없음 — 둘 중 하나만 사용"]}
     mv = [(m.date, int(m.amount)) for m in movements]
-    y_end = _date.fromisoformat(year_end)
+    y_end = _chk.to_date("year_end", year_end)
+    _chk.supported_year("year_end", year_end)
+    for d_str, _amt in mv:
+        _chk.need(_chk.to_date("movements.date", d_str) <= y_end,
+                  f"movements.date={d_str} — 사업연도 종료일 year_end={year_end} 뒤의 증감은 이 사업연도 적수에 넣지 않음")
     # fiscal_start 없으면 year_end의 1년 전 다음 날
     if fiscal_start is None:
         try:
@@ -561,9 +569,17 @@ def deemed_interest(movements: Annotated[list[Movement], Field(description="가�
             fy_movements.append((d_str, amt))
     if opening != 0:
         fy_movements.insert(0, (fiscal_start, opening))
+    _chk.need(fs <= y_end, f"fiscal_start={fiscal_start}가 year_end={year_end}보다 뒤")
+    by_day: dict[str, int] = {}
+    for d_str, amt in fy_movements:
+        by_day[d_str] = by_day.get(d_str, 0) + amt
+    bal = 0
+    for d_str in sorted(by_day):
+        bal += by_day[d_str]
+        _chk.need(bal >= 0, f"{d_str} 가지급금 잔액 {bal:,}원 — 회수(−)가 그때까지의 대여 잔액보다 큼. 날짜·부호 확인(대여 +, 회수 −)")
     j = C.jeoksu(fy_movements, year_end)
     if received_interest is not None:
-        market = int(j * market_rate / days)
+        market = _trunc_won(j, market_rate, div=days)
         charged = received_interest
         diff = market - charged
         hit = diff >= 300_000_000 or (market and diff >= market * 0.05)
@@ -607,6 +623,7 @@ def minimum_tax(base_before_incentives: WON, year: YEAR,
     """최저한세(감면 전 과세표준 × 최저한세율). 언제: 세액감면·공제를 받은 뒤에도 납부해야 할 최저한세를 확인할 때(중소기업 졸업 유예 연차 포함).
 입력: 감면 전 과세표준(원) → base_before_incentives, 사업연도(2016~2026) → year, 중소기업 여부 → sme, 졸업 후 경과 연차(0~5) → grace_year.
 결과: 최저한세액, 근거(조세특례제한법 제132조①). Minimum corporate tax = base before incentives × minimum tax rate."""
+    _chk.int_range("grace_year", grace_year, 0, 5, "중소기업 졸업 후 경과 연차(0=해당 없음) ")
     return _ok({"최저한세": C.min_tax(base_before_incentives, sme=sme, grace_year=grace_year, year=year)}, "조세특례제한법 제132조①")
 
 
@@ -652,7 +669,10 @@ def assessment_limitation(due_date: Annotated[str, Field(description="법정신�
 결과: 제척기간(년)·기산일·만료일, 근거(국세기본법 제26조의2①②④). 일반 5년(역외 7년), 무신고 7년(역외 10년), 부정행위 10년(역외 15년), 상속·증여 10년(부정 등 15년)."""
     if inheritance_gift: n = 10 if case == "일반" else 15
     else: n = {"일반": (5, 7), "무신고": (7, 10), "부정행위": (10, 15)}[case][1 if offshore else 0]
-    d = date.fromisoformat(due_date)
+    try:
+        d = _chk.to_date("due_date", due_date)
+    except ValueError as e:
+        return {"error": f"입력 오류: {e}"}
     try: end = d.replace(year=d.year + n)
     except ValueError: end = d.replace(year=d.year + n, day=28)
     return _ok({"제척기간(년)": n, "기산일": "법정신고기한 다음 날", "만료일": end.isoformat()},
@@ -707,6 +727,7 @@ def retirement_income_tax(income: Annotated[int, Field(description="퇴직소득
 연도: 근속연수공제는 2023.1.1. 이후 퇴직 개정표(100만·200만·250만·300만), 2022년까지는 구표(30만·50만·80만·120만). 기본세율은 퇴직한 해 표.
 지원하지 않음: 2016~2019년 퇴직(종전·개정 방식 세액을 비율로 섞는 경과 부칙, 법률 제12852호).
 결과: 퇴직소득세, 근거(소득세법 제48조·제55조②). Retirement income tax (근속연수공제·환산급여 방식)."""
+    _chk.int_range("years_of_service", years_of_service, 1, 60, "근속연수(1년 미만의 기간은 1년으로 보아 올려 넣음, 소득세법 제48조① 괄호) ")
     if retire_year < 2020:
         return {"error": "입력 확인 필요 — 계산하지 않음",
                 "문제": [f"retire_year={retire_year}: 2016~2019년 퇴직은 종전 방식과 개정 방식 세액을 비율로 섞는 경과 부칙(법률 제12852호) 대상 — 이 도구는 지원하지 않음"]}
@@ -723,6 +744,11 @@ def vat_deemed_rent(deposit: WON, days: Annotated[int, Field(description="과세
     """간주임대료(보증금 × 정기예금이자율 × 일수/연일수, 윤년이면 연수 366). 언제: 상가·오피스텔 등 임대 보증금을 받을 때 부가가치세 간주임대료를 계산한다.
 입력: 보증금(원) → deposit, 과세기간 중 임대 일수(1~184) → days, 과세기간('YYYY-1' 또는 'YYYY-2') → period, 적용 이자율(소수, 생략 시 연도표) → rate.
 결과: 간주임대료·적용_이자율, 근거(부가가치세법 시행령 제65조). VAT deemed rent on lease deposits."""
+    if period:
+        y, h = V._period(period)
+        if len(str(period).strip()) < 10:   # 'YYYY-1'·'YYYY-2'면 그 과세기간 일수까지(제1기 181·182일, 제2기 184일)
+            _chk.int_range("days", days, 1, (date(y, 7, 1) - date(y, 1, 1)).days if h == 1 else 184, f"{y}년 제{h}기 임대 일수 ")
+    _chk.int_range("days", days, 1, 184, "과세기간 중 임대 일수 ")
     결과 = V.deemed_rent(deposit, days, period=period, rate=rate)
     적용이자율 = rate if rate is not None else V.DEEMED_RENT_RATE.get(V._period(period)[0], 0.031) if period else 0.031
     return _ok({"간주임대료": 결과, "적용_이자율": 적용이자율}, "부가가치세법 시행령 제65조")
@@ -1100,9 +1126,10 @@ def vat_deemed_input_credit(period: Annotated[str, Field(description="과세기�
     if purchase_total > 0:
         freight_ratio = freight_included / purchase_total if purchase_total > 0 else 0
         non_freight_factor = 1 - freight_ratio
-        used_taxable_adj = int(used_taxable * non_freight_factor)
-        used_exempt_adj = int(used_exempt * non_freight_factor)
-        inventory_adj = int(ending_inventory_common * non_freight_factor)
+        # 운반비 제외 = 금액 × (총구입액 − 운반비) ÷ 총구입액 — 분수로 계산 후 원 미만 버림(0.94 같은 부동소수 곱의 1원 절사 오차 방지)
+        used_taxable_adj = _floor_won(used_taxable, purchase_total - freight_included, div=purchase_total)
+        used_exempt_adj = _floor_won(used_exempt, purchase_total - freight_included, div=purchase_total)
+        inventory_adj = _floor_won(ending_inventory_common, purchase_total - freight_included, div=purchase_total)
     else:
         used_taxable_adj = used_taxable
         used_exempt_adj = used_exempt
@@ -1117,7 +1144,8 @@ def vat_deemed_input_credit(period: Annotated[str, Field(description="과세기�
     # items가 제공되면 items 기반 계산 결과 사용, 아니면 기존 로직
     if items is None:
         # 공제대상 매입가액 = 과세 사용분 + 공통 재고 × 과세 공급가액 비율
-        eligible_purchase = used_taxable_adj + int(inventory_adj * taxable_ratio)
+        eligible_purchase = used_taxable_adj + (_floor_won(inventory_adj, taxable_supply, div=taxable_supply + exempt_supply)
+                                                if taxable_supply > 0 and exempt_supply > 0 else inventory_adj)
 
         # 사용처 구분이 모두 0이면 purchase 또는 purchase_total − freight_included
         if used_taxable == 0 and used_exempt == 0 and ending_inventory_common == 0:
@@ -1223,6 +1251,8 @@ def vat_common_input_allocation(common_tax: WON, total_supply: WON, exempt_suppl
     """겸영사업자 공통매입세액 안분(불공제분 계산). 언제: 과세·면세 사업을 겸영할 때 공통 매입세액 중 얼마가 불공제인지 계산한다.
 입력: 공통매입세액(원) → common_tax, 총공급가액(원) → total_supply, 면세공급가액(원) → exempt_supply.
 결과: 불공제 매입세액, 근거(부가가치세법 시행령 제81조). 면세비율 5% 미만·공통매입세액 5만 원 미만이면 전액 공제. 불공제 = 공통매입세액 × 면세공급가액 ÷ 총공급가액. 확정신고에서 예정신고분을 정산하거나 신축 건물 면적 안분이 있으면 common_input_tax를 쓴다. 겸영사업자 공통매입세액 안분(불공제분 계산)."""
+    _chk.need(not total_supply or exempt_supply <= total_supply,
+              f"exempt_supply {exempt_supply:,}원이 total_supply {total_supply:,}원보다 큼 — 총공급가액은 과세+면세 공급가액 합계(부가령 제81조①)")
     return _ok(V.common_input_allocation(common_tax, total_supply, exempt_supply), "부가가치세법 시행령 제81조", 산식="불공제 = 공통매입세액 × 면세공급가액 ÷ 총공급가액")
 
 
@@ -1247,16 +1277,16 @@ def vat_simplified_taxpayer(supply_incl_vat: Annotated[int, Field(description="�
     tax_base = supply_incl_vat - mileage_supply_incl_vat
 
     # 납부세액 = 과세표준 × 부가가치율 × 10%
-    tax_due = int(tax_base * value_added_rate * 0.1)
+    tax_due = _floor_won(tax_base, value_added_rate, 0.1)
 
     # 매입세금계산서 등 공제 = 수취 매입 × 0.5%
-    input_credit = int(invoice_purchase_incl_vat * 0.005)
+    input_credit = _floor_won(invoice_purchase_incl_vat, 0.005)
 
     # 신용카드매출전표등 발행세액공제 (제46조, 1.3%, 연 한도 1,000만원)
     card_credit = card_sales_credit(card_cash_receipt_supply_incl_vat, f"{year}-01-01")
 
     # 세금계산서 미수취 가산세 (제68조의2, 0.5%)
-    no_invoice_penalty = int(no_invoice_purchase_incl_vat * 0.005)
+    no_invoice_penalty = _floor_won(no_invoice_purchase_incl_vat, 0.005)
 
     # 공제 합계 (납부세액 한도)
     total_credits = min(input_credit + card_credit, tax_due)
@@ -2333,8 +2363,9 @@ def return_precheck_pdf(pdf_path: Annotated[str, Field(description="PDF 파일 �
 # ───────── 끝에서 끝까지 계산기 시범 3종 ─────────
 
 def _loss_rate_floor(rate: float, digits: int = 3) -> float:
-    """대손실적률 소수 자릿수 절사(넷째 자리 이하 버림)."""
-    return math.floor(rate * 10 ** digits) / 10 ** digits
+    """대손실적률 소수 자릿수 절사(넷째 자리 이하 버림). 분수로 절사 — 0.0003×10⁴ = 2.999…처럼 부동소수 곱이 한 단위 모자라는 오차 방지."""
+    from .engine.exact import exact
+    return math.floor(exact(rate) * 10 ** digits) / 10 ** digits
 
 
 @mcp.tool(annotations=CALC)
@@ -2489,7 +2520,7 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
         loss_rate = 0.0
 
     # 한도 = 세법상 당기말 채권 × max(1%, 실적률)
-    limit = int(tax_receivables_end * max(0.01, loss_rate))
+    limit = _floor_won(tax_receivables_end, max(0.01, loss_rate))
     # 한도초과 = 장부 기말잔액 − 한도
     book_closing = int(book["closing"])
     over = max(0, book_closing - limit)
@@ -3070,6 +3101,7 @@ def deemed_dividend_bonus_shares(
 
     from fractions import Fraction
 
+    _chk.need(par_value > 0, f"par_value={par_value} — 신주 1주의 액면금액(원)은 1 이상")
     taxable_source = source in _TAXABLE_SOURCES or source in _TAXABLE_SOURCES_GU_FALSE
     total_pre = sum(int(h["shares"]) for h in shareholders)
     n_new = int(capitalized_amount / par_value)  # 신주 총수
@@ -3203,10 +3235,10 @@ def _직장공제회_원천(amt: int, 납입연수, year: int) -> str:
         연수공제 = 4_000_000 + 800_000 * (n - 10)
     else:
         연수공제 = 12_000_000 + 1_200_000 * (n - 20)
-    과표 = max(0, amt - int(amt * 0.4) - 연수공제)
+    과표 = max(0, amt - _floor_won(amt, 0.4) - 연수공제)
     연평균 = 과표 // n
     세액 = I.income_tax(연평균, year) * n
-    return (방법 + f" — 납입연수 {n}년: ({amt:,} − {int(amt * 0.4):,} − {연수공제:,}) ÷ {n} = {연평균:,}원,"
+    return (방법 + f" — 납입연수 {n}년: ({amt:,} − {_floor_won(amt, 0.4):,} − {연수공제:,}) ÷ {n} = {연평균:,}원,"
             f" 기본세율 세액 {I.income_tax(연평균, year):,}원 × {n} = 산출세액 {세액:,}원, 금융소득 합계·합산액 모두 제외")
 
 
@@ -3369,7 +3401,7 @@ def financial_income_aggregate(year: YEAR,
             add(k, "이자", amt, "소득세법 제16조①8호", "환매조건부매매(RP) 차익 — 이자소득, 조건부 종합과세")
         elif k == "법원보증금이자":
             원천율 = vocab.rule("법원보증금이자", year).get("원천징수세율", 0.14)
-            원천징수세액 = int(amt * 원천율)
+            원천징수세액 = _trunc_won(amt, 원천율)
             add(k, "제외", amt, "소득세법 제129조②1호, 제14조③3호", f"민사집행법상 법원 보증금·경락대금 이자 — 원천징수 {원천율 * 100:.0f}%(제129조②1호) {원천징수세액:,}원으로 분리과세, 금융소득 합계·합산액 모두 제외")
         elif k == "직장공제회초과반환금":
             add(k, "제외", amt, "소득세법 제16조①10호, 제14조③3호, 제129조①1호다목, 제63조①", _직장공제회_원천(amt, it.get("contribution_years"), year))
@@ -3395,7 +3427,7 @@ def financial_income_aggregate(year: YEAR,
         filled = min(threshold, inc + (div_n - partner_div))   # 이자 → 비대상 배당(비출자공동) 순으로 2천만 원 채움
         gu_base = div_g - max(0, threshold - filled)
         gu_base = max(0, min(div_g, gu_base))
-        grossup = int(gu_base * rate)
+        grossup = _trunc_won(gu_base, rate)
         합산 = cond_total + grossup + partner_div
         분리과세 = False
     # ── 계산식 단계 (SPEC_export_workbook_f) ──────────────────────────────
@@ -3568,9 +3600,9 @@ def dividend_tax_credit(year: YEAR,
                 "문제": [f"출자공동사업자배당 {partner:,}원이 다른 과세표준 {other_base:,}원보다 큼 — 종합소득공제를 어디서 뺐는지 판단이 필요해 지원하지 않음(제62조2호 나목 단서)"]}
 
     # 제62조2호: 가목(이자소득등 × 원천징수세율) + 나목(다른 종합소득 산출세액, 출자공동사업자배당 비교세액 하한)
-    가목 = int(f14 * rate_14) + int(f25 * rate_25)
+    가목 = _trunc_won(f14, rate_14) + _trunc_won(f25, rate_25)
     나목_본문 = I.income_tax(other_base, year)
-    나목_비교 = int(partner * rate_14) + I.income_tax(other_base - partner, year) if partner else 0   # 제129조①1호라목 14%
+    나목_비교 = _trunc_won(partner, rate_14) + I.income_tax(other_base - partner, year) if partner else 0   # 제129조①1호라목 14%
     나목 = max(나목_본문, 나목_비교)
     비교산출 = 가목 + 나목
     if 종합과세:
@@ -3765,7 +3797,7 @@ def other_income_aggregate(year: YEAR,
 
         elif k == "연금외수령":
             소득 = amount
-            원천징수세액 = int(amount * rule["원천징수세율"])
+            원천징수세액 = _trunc_won(amount, rule["원천징수세율"])
             분리과세_기타소득금액 += 소득
             분리과세_원천징수세액 += 원천징수세액
             항목별.append({"kind": k, "총수입금액": amount, "비과세": 0, "필요경비": 0,
@@ -3782,7 +3814,7 @@ def other_income_aggregate(year: YEAR,
             비과세 = max(0, min(amount, 비과세한도 - employment_exempt_used))
             소득 = amount - 비과세
             원천징수세율 = rule.get("원천징수세율", 0.2)
-            원천징수세액 = int(소득 * 원천징수세율) if 소득 > 0 else 0
+            원천징수세액 = _trunc_won(소득, 원천징수세율) if 소득 > 0 else 0
             비과세소득 = 비과세
             비과세_합계 += 비과세
             if year < 2020 and 소득 > 0:
@@ -3895,14 +3927,14 @@ def other_income_aggregate(year: YEAR,
                 산식_목록.append(f"{k}: {amount:,}원 — {사유} → 과세 대상 아님(소득세법 시행령 제41조⑭)")
             else:
                 if 구간제:   # 2020 과세기간부터: 1억 이하 90%, 초과분 80%(보유 10년 이상 90%)
-                    율경비 = int(amount * 0.9) if (held >= 10 or amount <= 100000000) else int(100000000 * 0.9 + (amount - 100000000) * 0.8)
+                    율경비 = _floor_won(amount, 0.9) if (held >= 10 or amount <= 100000000) else 90_000_000 + _floor_won(amount - 100000000, 0.8)
                     율설명 = '보유 10년 이상 90%' if held >= 10 else ('1억 이하 90%' if amount <= 100000000 else '1억까지 90%·초과분 80%')
                 else:        # 2019 과세기간까지: 받은 금액의 80%(보유 10년 이상 90%)
-                    율경비 = int(amount * (0.9 if held >= 10 else 0.8))
+                    율경비 = _trunc_won(amount, 0.9 if held >= 10 else 0.8)
                     율설명 = '2019년까지 — ' + ('보유 10년 이상 90%' if held >= 10 else '80%')
                 필요경비 = max(율경비, actual)
                 소득 = amount - 필요경비
-                원천징수세액 = int(소득 * rule.get("원천징수세율", 0.2))
+                원천징수세액 = _trunc_won(소득, rule.get("원천징수세율", 0.2))
                 과세구분표시, 비과세 = "분리과세", 0
                 분리과세_기타소득금액 += 소득
                 분리과세_원천징수세액 += 원천징수세액
@@ -3931,7 +3963,7 @@ def other_income_aggregate(year: YEAR,
             필요경비 = min(과세대상금액, max(과세대상금액 * 필요경비율, actual_expense))
             소득 = amount - 필요경비
             원천징수세율 = rule.get("원천징수세율", 0.2)
-            원천징수세액 = int(소득 * 원천징수세율) if 소득 > 0 else 0
+            원천징수세액 = _trunc_won(소득, 원천징수세율) if 소득 > 0 else 0
             # 과세최저한(소득세법 제84조3호): 건별 기타소득금액이 5만원 이하이면 과세하지 않음
             과세최저한 = rule.get("과세최저한", 50000)
             if 소득 <= 과세최저한:
@@ -4323,7 +4355,7 @@ def simplified_vat_return(year: YEAR,
     과세표준 = 총공급대가 - 자기마일리지
 
     # 2. 납부세액 = 과세표준 × 부가가치율 × 10% (제63조②). 원 미만 절사
-    납부세액 = int(과세표준 * 부가가치율 * 0.1)
+    납부세액 = _floor_won(과세표준, 부가가치율, 0.1)
 
     # 3. 납부의무 면제: 과세표준(공급대가 합계) < 기준(그해) → 모두 0 (제69조①)
     면제기준_rule = vocab.rule("간이과세자_납부의무면제", year)
@@ -4349,10 +4381,10 @@ def simplified_vat_return(year: YEAR,
         공제후세액 = 0
     else:
         # 4. 세금계산서등수취세액공제 = tax_invoice_received × 0.5% (제63조③1호)
-        세금계산서수취공제 = int(세금계산서수취 * 세금계산서수취공제율)
+        세금계산서수취공제 = _trunc_won(세금계산서수취, 세금계산서수취공제율)
 
         # 5. 신용카드매출전표등발급세액공제 = min(card × 공제율, 한도) (제46조①3호)
-        카드발급공제 = int(min(카드발급 * 카드공제율, 카드공제한도))
+        카드발급공제 = _trunc_won(min(_exact(카드발급) * _exact(카드공제율), 카드공제한도))
 
         # 6. 공제 합계가 납부세액을 넘으면 넘는 부분은 없음 (제63조⑥)
         공제합계 = min(세금계산서수취공제 + 카드발급공제, 납부세액)
@@ -4364,7 +4396,7 @@ def simplified_vat_return(year: YEAR,
     if 직전연도 < 영수증발급기준:
         미수취가산세 = 0
     else:
-        미수취가산세 = int(미수취매입 * 미수취가산세율)
+        미수취가산세 = _trunc_won(미수취매입, 미수취가산세율)
 
     # 8. 의제매입세액공제 0 (2021-07-01부터 적용 없음), 대손세액공제 적용 없음 — 판단에 명시
     의제매입세액공제 = 0
@@ -4477,7 +4509,7 @@ def _settlement_row(s):
     if (s.get("기불공제") is None) == (s.get("이미공제세액") is None):
         return None, "기불공제(⑱)와 이미공제세액 중 하나만 입력"
     기불공제 = int(s["기불공제"]) if s.get("기불공제") is not None else 총 - int(s["이미공제세액"])
-    총액 = int(총 * 비율)
+    총액 = _trunc_won(총, 비율)
     return {"항목": s.get("항목") or "공통매입세액", "총공통매입세액": 총, "확정비율": float(비율), "불공제총액": 총액,
             "기불공제": 기불공제, "가산또는공제": 총액 - 기불공제, "근거": 근거}, None
 
@@ -4669,7 +4701,7 @@ def common_input_tax(year: YEAR,                     period: Annotated[str, Fiel
     if filing == "예정":
         # 예정신고: 공제 = common.예정 × (1 − 예정 면세비율)
         공통매입세액_합계 = common_예정
-        불공제_예정 = int(common_예정 * 면세비율_예정)
+        불공제_예정 = _floor_won(common_예정, 예정_면세, div=총예정)
         공통매입세액_공제 = common_예정 - 불공제_예정
         판단_목록.append({"항목": "공통매입세액 예정 공제", "결론": f"안분 공제 {공통매입세액_공제:,}원 (불공제 {불공제_예정:,}원 = {common_예정:,} × {면세비율_예정:.4f})",
                           "근거": "부가가치세법 시행령 제81조①"})
@@ -4696,14 +4728,14 @@ def common_input_tax(year: YEAR,                     period: Annotated[str, Fiel
             산식_목록.append(f"면세비율 {면세비율_과세기간:.1%} < 5% & 공통매입세액 합계 {공통매입세액_합계:,}원 < 500만원 → 전액 공제 (영 제81조②1호)")
         else:
             # 정산 계산 (영 제82조)
-            불공제_과세기간합계 = int(공통매입세액_합계 * 면세비율_과세기간)
+            불공제_과세기간합계 = _floor_won(공통매입세액_합계, 예정_면세 + 확정_면세, div=총과세기간) if 총과세기간 else 0
 
             # 불공제_예정반영: prior_nondeductible이 있으면 그대로, 없으면 예정 기간 비율로 계산
             if prior_nondeductible is not None:
                 불공제_예정반영 = prior_nondeductible
             else:
                 # 예정 기간 비율로 계산 = common.예정 × 예정 면세비율
-                불공제_예정반영 = int(common_예정 * 면세비율_예정) if common_예정 > 0 else 0
+                불공제_예정반영 = _floor_won(common_예정, 예정_면세, div=총예정) if common_예정 > 0 and 총예정 else 0
 
             불공제_확정 = 불공제_과세기간합계 - 불공제_예정반영
             공통매입세액_공제 = common_확정 - 불공제_확정
@@ -4726,7 +4758,7 @@ def common_input_tax(year: YEAR,                     period: Annotated[str, Fiel
     for attr in attributed:
         attr_tax = int(attr.get("input_tax", 0))
         attr_ratio = float(attr.get("taxable_ratio", 1.0))
-        실지귀속_공제 += int(attr_tax * attr_ratio)
+        실지귀속_공제 += _floor_won(attr_tax, attr_ratio)
     if attributed:
         산식_목록.append(f"실지귀속 공제 = Σ(input_tax × taxable_ratio) = {실지귀속_공제:,}원")
 
@@ -4767,7 +4799,7 @@ def common_input_tax(year: YEAR,                     period: Annotated[str, Fiel
                 산식_목록.append(f"직전 면세비율 {직전_면세비율:.1%} < 5% & 공급가액 {sale_price:,}원 < 5천만원 → 전액 과세표준 (영 제63조③1호)")
             elif prior_period_supplies is not None and 직전_총계 > 0:
                 # 직전 과세기간 과세비율로 안분
-                과세표준 = int(sale_price * 직전_과세비율)
+                과세표준 = _floor_won(sale_price, 직전_과세, div=직전_총계)
                 판단_목록.append({"항목": f"공통사용재화 공급(공급가액 {sale_price:,}원)", "결론": f"과세표준 {과세표준:,}원 = {sale_price:,} × 직전 과세비율 {직전_과세비율:.4f}",
                                   "근거": "부가가치세법 시행령 제63조①"})
                 산식_목록.append(f"과세표준 = {sale_price:,} × 직전 과세비율 {직전_과세비율:.4f} = {과세표준:,}원 (영 제63조①)")
@@ -4775,7 +4807,7 @@ def common_input_tax(year: YEAR,                     period: Annotated[str, Fiel
                 return {"error": f"공통사용재화 공급가액 {sale_price:,}원 — 신규 사업이 아니고 직전 과세기간 자료가 없음 → 안분 불가"}
 
             공통사용재화_공급_과세표준 += 과세표준
-            추가_매출세액 += int(과세표준 * 0.1)
+            추가_매출세액 += 과세표준 // 10
 
             # 그 재화의 매입세액 공제 판단
             if new_business:
@@ -4788,7 +4820,7 @@ def common_input_tax(year: YEAR,                     period: Annotated[str, Fiel
                 # 신규 사업이 아니면 그 재화의 매입세액은 ledger(공통)에 넣지 말고
                 # common_asset_sales.input_tax에만 입력 — 직전 과세기간 과세비율로 안분 공제 (영 제81조④)
                 if prior_period_supplies is not None and 직전_총계 > 0:
-                    공제액 = int(sale_input_tax * 직전_과세비율)
+                    공제액 = _floor_won(sale_input_tax, 직전_과세, div=직전_총계)
                     공통사용재화_매입세액_공제 += 공제액
                     판단_목록.append({"항목": f"공통사용재화 매입세액(입력세액 {sale_input_tax:,}원)", "결론": f"공통사용재화 매입세액 {sale_input_tax:,}원 × 직전 과세비율 {직전_과세비율:.4f} = {공제액:,}원 공제 (영 제81조④)",
                                       "근거": "부가가치세법 시행령 제81조④"})
@@ -4944,7 +4976,7 @@ def common_input_tax(year: YEAR,                     period: Annotated[str, Fiel
             "면세비율_예정": 면세비율_예정,
             "면세비율_과세기간": 면세비율_과세기간,
             "공통매입세액_과세기간합계": 공통매입세액_합계 if filing == "확정" else 공통매입세액_합계,
-            "불공제_과세기간합계": int(공통매입세액_합계 * 면세비율_과세기간) if filing == "확정" and 공통매입세액_합계 > 0 else 0,
+            "불공제_과세기간합계": _floor_won(공통매입세액_합계, 예정_면세 + 확정_면세, div=총과세기간) if filing == "확정" and 공통매입세액_합계 > 0 and 총과세기간 else 0,
             "불공제_예정반영": 불공제_예정반영 if filing == "확정" else 0,
             "불공제_확정": 불공제_확정 if filing == "확정" else 0,
             "공통매입세액_공제": 공통매입세액_공제,
@@ -4992,6 +5024,8 @@ def input_tax_recalculation(asset_type: Annotated[str, Field(description="자산
     # ── 입력 충돌 검사 ──
     if input_tax is not None and bundle is not None:
         return {"error": "입력 확인 필요 — input_tax와 bundle을 함께 입력할 수 없음. 한 가지 방식으로 입력하세요"}
+    if input_tax is None and bundle is None:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["해당 재화 매입세액 input_tax(원) 또는 토지·건물 일괄공급 안분 입력 bundle 중 하나가 필요"]}
 
     # ── bundle 처리 ──
     if bundle is not None:
@@ -5025,10 +5059,10 @@ def input_tax_recalculation(asset_type: Annotated[str, Field(description="자산
         if vat_included:
             L_B비 = 기준_토지 / 기준_건물
             건물_공급가액 = int(total_price / (1 + L_B비 + 0.1))
-            부가가치세 = int(건물_공급가액 * 0.1)
+            부가가치세 = _floor_won(건물_공급가액, 0.1)
         else:
-            건물_공급가액 = int(total_price * 건물비율)
-            부가가치세 = int(건물_공급가액 * 0.1)
+            건물_공급가액 = _trunc_won(total_price, 건물비율)
+            부가가치세 = _floor_won(건물_공급가액, 0.1)
 
         input_tax = 부가가치세
         판단 = 판단_목록
@@ -5050,15 +5084,22 @@ def input_tax_recalculation(asset_type: Annotated[str, Field(description="자산
     acq_year = int(acquired["year"])
     acq_period = acquired["period"]
 
+    def _half(p):
+        """과세기간 표기 1·'1'·'1기'·'제1기' → 1, 2기 → 2 (그 밖은 입력 오류)."""
+        t = str(p).strip().removeprefix("제").removesuffix("기")
+        _chk.need(t in ("1", "2"), f"period={p!r} — 과세기간은 1·2(또는 '1기'·'2기')")
+        return int(t)
+
     def _period_key(y, p):
-        return int(y) * 2 + (0 if p == "1기" else 1)
+        # 경과된 과세기간 수는 과세기간(반기) 단위(영 제83조② 후단 → 제66조② 후단), 취득일은 그 과세기간 개시일로 봄(영 제83조⑤)
+        return int(y) * 2 + (_half(p) - 1)
 
     acq_pk = _period_key(acq_year, acq_period)
 
     # 기준비율 = 취득 과세기간 비율
     기준비율 = None
     for r in ratios:
-        if r["year"] == acq_year and r["period"] == acq_period:
+        if _period_key(r["year"], r["period"]) == acq_pk:
             기준비율 = float(r["exempt_ratio"])
             break
     if 기준비율 is None:
@@ -5088,7 +5129,7 @@ def input_tax_recalculation(asset_type: Annotated[str, Field(description="자산
             if 경감 <= 0:
                 세액 = 0
             else:
-                세액 = int(round(input_tax * 경감 * 변동, 6))
+                세액 = _trunc_won(input_tax, 경감, 변동)
             기준비율 = 비율  # 새 기준비율로 갱신
         else:
             세액 = 0
@@ -5163,8 +5204,8 @@ def _bundled_supply_general(total_price, vat_included, appraisal, standard_value
     기타 = [a["name"] for a in 자산[2:]]
     과세_몫 = 몫["건물"] * r + sum(몫[n] for n in 기타)
     총공급 = Fr(total_price) / (1 + 과세_몫 / 10) if vat_included else Fr(total_price)
-    건물_과세 = int(총공급 * 몫["건물"] * r)
-    건물_면세 = int(총공급 * 몫["건물"] * (1 - r))
+    건물_과세 = _trunc_won(총공급, 몫["건물"], r)
+    건물_면세 = _trunc_won(총공급, 몫["건물"], 1 - _exact(r))
     기타_목록 = [{"name": n, "공급가액": int(총공급 * 몫[n])} for n in 기타]
     과세표준 = 건물_과세 + sum(x["공급가액"] for x in 기타_목록)
     부가세 = 과세표준 // 10
@@ -5269,15 +5310,15 @@ def bundled_supply_split(total_price: WON,
         # B = total ÷ (1 + L/B비 + 0.1)
         L_B비 = 기준_토지 / 기준_건물
         B = int(total_price / (1 + L_B비 + 0.1))
-        부가가치세 = int(B * 0.1)
+        부가가치세 = _floor_won(B, 0.1)
         토지_가액 = total_price - B - 부가가치세
         판단_목록.append({"항목": "건물 공급가액(안분)", "결론": f"{B:,}원 (부가세 포함 총 {total_price:,}원, 건물·토지 비율 {건물비율:.4f}, 부가세 별도)",
                           "근거": "부가가치세법 시행령 제64조①"})
         산식_목록.append(f"부가세 포함: B + L + 0.1B = {total_price:,}, B:L = {기준_건물:,.0f}:{기준_토지:,.0f}")
         산식_목록.append(f"B = {total_price:,} ÷ (1 + {L_B비:.4f} + 0.1) = {B:,}원")
     else:
-        B = int(total_price * 건물비율)
-        부가가치세 = int(B * 0.1)
+        B = _trunc_won(total_price, 건물비율)
+        부가가치세 = _floor_won(B, 0.1)
         토지_가액 = total_price - B
         판단_목록.append({"항목": "건물 공급가액(안분)", "결론": f"{B:,}원 (총 {total_price:,}원 × 건물비율 {건물비율:.4f})",
                           "근거": "부가가치세법 시행령 제64조①"})
@@ -6060,12 +6101,12 @@ def deemed_dividend_capital_reduction(
                     # 단기소각 대상 주식 수 비례 감소
                     총_단기 = sum(dp["shares"] for dp in 단기_프로필_상태.values())
                     if 총_단기 > 0:
-                        감소_총량 = int(총_단기 * dispose_ratio)  # 정수 내림
+                        감소_총량 = _trunc_won(총_단기, dispose_ratio)  # 정수 내림
                         # 각 항목에 비례 배분 (나머지는 주식 수가 큰 항목에 할당)
                         배분 = []
                         for dp_key, dp_val in 단기_프로필_상태.items():
                             if dp_val["shares"] > 0:
-                                몫 = int(dp_val["shares"] * dispose_ratio)
+                                몫 = _trunc_won(dp_val["shares"], dispose_ratio)
                                 배분.append((dp_key, 몫))
                         남은_감소 = 감소_총량 - sum(b[1] for b in 배분)
                         if 남은_감소 > 0:
@@ -6075,8 +6116,8 @@ def deemed_dividend_capital_reduction(
                         for dp_key, 감소 in 배분:
                             단기_프로필_상태[dp_key]["shares"] = max(0, 단기_프로필_상태[dp_key]["shares"] - 감소)
                     # 기타 주식 총취득원가·총주식수 비례 감소
-                    기타_총취득원가 = int(기타_총취득원가 * (1 - dispose_ratio))
-                    기타_총주식수 = int(기타_총주식수 * (1 - dispose_ratio))
+                    기타_총취득원가 = _trunc_won(기타_총취득원가, 1 - _exact(dispose_ratio))
+                    기타_총주식수 = _trunc_won(기타_총주식수, 1 - _exact(dispose_ratio))
             fra.append({"date": a["date"], "kind": k, "shares": s, "unit_cost": None,
                         "source": None, "held_after": held, "_dispose_ratio": dispose_ratio,
                         "_is_within_period": is_within})
@@ -6323,18 +6364,18 @@ def capital_gains_income(
         채무액 = int(burdened_gift["채무액"])
         평가 = burdened_gift["평가"]
         비율 = 채무액 / 증여가액
-        양도_가액 = int(증여가액 * 비율)  # = 채무액
+        양도_가액 = _trunc_won(증여가액, 비율)  # = 채무액
         if 평가 == "기준시가":
             취득_기준시가 = int(burdened_gift["취득_기준시가"])
-            취득_기준시가_비율 = int(취득_기준시가 * 비율)
-            필요경비개산공제 = int(취득_기준시가_비율 * (0.003 if not registered else 0.03))  # 토지·건물 3%, 미등기 0.3% (영 제159조①·제163조⑥)
+            취득_기준시가_비율 = _trunc_won(취득_기준시가, 비율)
+            필요경비개산공제 = _trunc_won(취득_기준시가_비율, 0.003 if not registered else 0.03)  # 토지·건물 3%, 미등기 0.3% (영 제159조①·제163조⑥)
             취득_가액 = 취득_기준시가_비율 + 필요경비개산공제
             부담부판단 = (f"비율 = 채무액 {채무액:,}원 ÷ 증여가액 {증여가액:,}원 = {비율:.4f}; "
                           f"양도가액 = 증여가액 {증여가액:,}원 × 비율 = {양도_가액:,}원(= 채무액); "
                           f"취득가액 = 취득기준시가 {취득_기준시가:,}원 × 비율 = {취득_기준시가_비율:,}원 + 개산공제 {필요경비개산공제:,}원(취득기준시가×비율 × {'0.3%' if not registered else '3%'}) = {취득_가액:,}원 (영 제159조①·제163조⑥)")
         elif 평가 == "시가":
             취득_실지 = int(burdened_gift["취득가액_실지"])
-            취득_가액 = int(취득_실지 * 비율)
+            취득_가액 = _trunc_won(취득_실지, 비율)
             부담부판단 = (f"비율 = 채무액 {채무액:,}원 ÷ 증여가액 {증여가액:,}원 = {비율:.4f}; "
                           f"양도가액 = 증여가액 {증여가액:,}원 × 비율 = {양도_가액:,}원(= 채무액); "
                           f"취득가액 = 실지취득가액 {취득_실지:,}원 × 비율 = {취득_가액:,}원 (영 제159조①)")
@@ -6365,7 +6406,7 @@ def capital_gains_income(
         if acquisition_standard_price is not None and transfer_standard_price is not None:
             사용환산취득가액 = True
             환산취득가액 = int(_bp * acquisition_standard_price / transfer_standard_price)  # 원 미만 버림 (시행령 제176조의2②2호)
-            개산공제 = int(acquisition_standard_price * (0.003 if not registered else 0.03))   # 미등기 0.3%, 등기 3% (시행령 제163조⑥)
+            개산공제 = _trunc_won(acquisition_standard_price, 0.003 if not registered else 0.03)   # 미등기 0.3%, 등기 3% (시행령 제163조⑥)
             필요경비_환산 = 환산취득가액 + 개산공제
             실제필요경비 = _bce + _be
             if 필요경비_환산 >= 실제필요경비:
@@ -6470,9 +6511,9 @@ def capital_gains_income(
         안분비율 = old_과세대상 / old_양도차익 if old_양도차익 > 0 else 1.0
         r["결과"]["양도차익"] = 새양도차익
         공제율 = r["결과"].get("공제율", 0)
-        새장기공제 = int(새양도차익 * 공제율 * 안분비율)
+        새장기공제 = _trunc_won(새양도차익, round(공제율, 6), 안분비율)
         r["결과"]["장기보유특별공제액"] = 새장기공제
-        r["결과"]["과세대상_양도차익"] = int(새양도차익 * 안분비율)
+        r["결과"]["과세대상_양도차익"] = _trunc_won(새양도차익, 안분비율)
         r["결과"]["양도소득금액"] = max(r["결과"]["과세대상_양도차익"] - 새장기공제, 0)
         r["판단"] = r.get("판단", []) + [{"항목": "필요경비(환산취득가액)", "결론": f"필요경비 {최종필요경비:,}원 = {최종사용} (소득세법 제97조②2호 단서)", "근거": "소득세법 제97조②2호 단서, 시행령 제176조의2②2호·제163조⑥"}]
         if acquisition_tax > 0 or acquisition_brokerage > 0:
@@ -6755,6 +6796,7 @@ def pension_account_withdrawal(
     결과: 연금수령분·연금외수령분 각 {과세제외금액, 이연퇴직소득, 그밖}, 사적연금_총연금액(종합과세 대상 사적연금),
       이연퇴직_연금수령(연금소득·분리과세), 기타소득_연금외수령, 계산.연금수령연차·연금수령한도, 판단.
     주의: contributions_not_deducted > contributions_total, 음수, 날짜 형식 오류 → error."""
+    _chk.supported_year("year", year)
     return GG.pension_account_withdrawal(
         year=year, birth_date=birth_date, join_date=join_date,
         start_request_date=start_request_date, balance_at_period_start=balance_at_period_start,
@@ -6785,6 +6827,7 @@ def inheritance_gift_valuation(
       secured_debt — {채권최고액?, 채무액} 선택
     결과: 평가액, 계산.시가·적용·담보채권액, 판단.
     주의: 평가기간 밖 가액은 시가에서 제외(상속=전후 6개월, 증여=전 6개월~후 3개월)."""
+    _chk.supported_year("valuation_date", valuation_date)
     return GG.inheritance_gift_valuation(
         kind=kind, valuation_date=valuation_date, supplementary_value=supplementary_value,
         market_values=market_values, secured_debt=secured_debt,
@@ -7202,7 +7245,7 @@ def _주택간주임대료(year: int, houses: list, financial_income: int = 0, e
         적수 = (h["보증금"] - 차감) * h["일수"]
         적수합 += 적수
         계산.append({"주택": h["이름"], "보증금": h["보증금"], "3억_차감": 차감, "일수": h["일수"], "적수": 적수})
-    전 = int(적수합 * 0.6 / days_in_year * r)
+    전 = _floor_won(적수합, 0.6, r, div=days_in_year)
     금융 = 0 if estimated else financial_income
     산입액 = max(0, 전 - 금융)
     판단.append({"항목": "간주임대료 과세 여부", "결론": "과세 — " + 사유, "근거": "소득세법 제25조①"})
@@ -7468,12 +7511,12 @@ def housing_rental_income(
         else:
             의무.append({"주택": h["이름"], "등록신청일": None, "의무임대기간_년": "2020.8.18. 전 신청 4년 / 이후 신청 10년 — 등록신청일 입력 시 확정"})
     일반수입 = 총수입 - 등록수입
-    경비 = int(등록수입 * 0.6) + int(일반수입 * 0.5)
+    경비 = _floor_won(등록수입, 0.6) + _floor_won(일반수입, 0.5)
     공제 = 0
     if other_income_amount <= 20_000_000 and 총수입:
         공제 = int(4_000_000 * 등록수입 / 총수입) + int(2_000_000 * 일반수입 / 총수입)
     소득금액 = max(0, 총수입 - 경비 - 공제)
-    세액 = int(소득금액 * 0.14)
+    세액 = _floor_won(소득금액, 0.14)
     등록이름 = []
     for k, r in enumerate(주택별, 1):
         if "등록기간_수입금액" not in r:
@@ -7731,7 +7774,7 @@ def corporate_deemed_rent_income(
                     "문제": [f"rentals: 구분='{구분}'은(는) 허용값 아님 — '주택'|'비주택'"]}
 
     net_jeoksu = max(0, 보증금적수 - 건설비상당액적수)
-    간주익금 = int(max(0, net_jeoksu / year_days * rate - financial_income))
+    간주익금 = _trunc_won(max(0, _exact(net_jeoksu) / year_days * _exact(rate) - financial_income))
     세무조정 = []
     if 간주익금 > 0:
         세무조정.append({"구분": "임대보증금 간주익금", "금액": 간주익금, "소득처분": "기타사외유출"})
@@ -7846,7 +7889,7 @@ def estimated_business_income(
     판단.append({"항목": "적용방법", "결론": 적용방법, "근거": "소득령 제143조③④"})
 
     if 적용방법 == "단순경비율":
-        사업소득금액 = int(round(수입금액 * (1 - simple_rate), 6))
+        사업소득금액 = _trunc_won(수입금액, 1 - _exact(simple_rate))
         return _ok({"사업소득금액": 사업소득금액},
                    "소득세법 시행령 제143조③",
                    계산={"수입금액": 수입금액, "장부구분": 장부구분, "적용방법": 적용방법, "주요경비": 0,
@@ -7871,12 +7914,12 @@ def estimated_business_income(
     적용기준경비율 = base_rate / 2 if 장부구분 == "복식부기의무자" else base_rate
     기준경비율_소득 = 수입금액 - 주요경비 - 수입금액 * 적용기준경비율
     기준경비율_소득 = max(0, int(round(기준경비율_소득, 6)))
-    단순경비율_소득 = int(round(수입금액 * (1 - simple_rate), 6))
+    단순경비율_소득 = _trunc_won(수입금액, 1 - _exact(simple_rate))
     if multiplier is None:
         return {"error": "입력 확인 필요 — 계산하지 않음",
                 "문제": ["2019년 귀속은 추계 배율이 결정·경정 시점에 따라 간편 2.6·복식 3.2(2020.3.12.까지) 또는 "
                          "간편 2.8·복식 3.4(2020.3.13.부터, 소득세법 시행규칙 제67조) — multiplier를 직접 입력"]}
-    한도 = int(round(단순경비율_소득 * multiplier, 6))
+    한도 = _trunc_won(단순경비율_소득, multiplier)
     사업소득금액 = min(기준경비율_소득, 한도)
 
     판단.append({"항목": "주요경비", "결론": f"매입 {매입:,} + 임차료 {임차료:,} + 인건비 {인건비:,} = {주요경비:,}원 (기타·자산취득 제외)",
@@ -7910,6 +7953,7 @@ def vat_exempt_use_deemed_supply(
     """면세전용 간주공급 과세표준(부가법 제10조①, 부가령 제66조). 언제: 과세사업에 쓰던 재화를 면세사업에 전용할 때 간주공급 과세표준을 계산한다.
 입력: 전용일(YYYY-MM-DD) → use_date, 전용 범위(전부/일부) → mode, 자산 목록 [{구분, 취득일, 취득가액, 매입세액공제, 시가}] → assets, 일부일 때 공급가액 {taxable, exempt} → supplies.
 결과: 과세표준·계산(자산별 경과과세기간수·간주시가·제외사유, 면세비율)·판단, 근거(부가가치세법 제10조①, 시행령 제66조)."""
+    _chk.supported_year("use_date", use_date)
     if mode == "일부" and (supplies is None or not isinstance(supplies, dict) or "taxable" not in supplies or "exempt" not in supplies):
         return {"error": "입력 확인 필요 — 계산하지 않음",
                 "문제": ["일부 전용 시 supplies={taxable, exempt} 필요"]}
@@ -7964,7 +8008,7 @@ def vat_exempt_use_deemed_supply(
         if 경과 < 0:
             return {"error": "입력 확인 필요 — 계산하지 않음",
                     "문제": [f"자산 '{구분}': 전용일이 취득일보다 앞섬"]}
-        간주시가 = int(max(0, 취득가액 * (1 - 체감률 * 경과)))
+        간주시가 = _trunc_won(max(0, _exact(취득가액) * (1 - _exact(체감률) * 경과)))
         자산별.append({"구분": 구분, "경과과세기간수": 경과, "간주시가": 간주시가})
         간주시가_합 += 간주시가
         판단.append({"항목": f"{구분} {취득일} 취득, 취득가액 {취득가액:,}원",
@@ -7984,7 +8028,7 @@ def vat_exempt_use_deemed_supply(
             판단.append({"항목": "면세비율", "결론": f"{면세비율*100:.1f}% < 5% → 과세표준 0 (부가령 제66조③ 단서)",
                          "근거": "부가령 제66조③"})
         else:
-            과세표준 = int(간주시가_합 * 면세비율)
+            과세표준 = _trunc_won(간주시가_합, 면세비율)
             판단.append({"항목": "면세비율", "결론": f"면세 공급가액 {exempt:,} / 총 {total:,} = {면세비율*100:.1f}% ≥ 5%",
                          "근거": "부가령 제66조③"})
 
@@ -9863,6 +9907,7 @@ def unlisted_stock_valuation(valuation_date: Annotated[str, Field(description="�
     증감자(capital_changes)·추정이익(estimated_profit, 요건 판정)·자산별 평가(assets: 시가→기준시가→장부가액 선택, 장부가액 하한)까지 받는다.
     지원하지 않음: 평가심의위원회, 자산별 시가의 평가기간(상속 전후 6개월·증여 전 6개월~후 3개월) 판정(사용자가 기간 안 가액만 넣음), 국외 비상장.
     결과: 1주당 평가액(할증 후·전), 순손익가치·순자산가치·가중평균, 평가방법, 할증률, 판단(사유·하한·확인 필요), 근거."""
+    _chk.supported_year("valuation_date", valuation_date)
     연결 = []
     if incomes:
         new_items = []
@@ -9897,6 +9942,7 @@ def stock_basis_income_tax(transfer_date: Annotated[str, Field(description="양�
     언제: 비상장주식 양도세에서 기준시가가 필요하거나, stock_major_shareholder의 price(1주당 가액)에 넣을 값이 필요할 때.
     입력: 양도일 → transfer_date, 발행주식총수 → shares, 직전 사업연도 순손익액 → prior_year_income, 장부 순자산 → book_net_asset.
     결과: 1주당 기준시가, 순손익가치·순자산가치, 평가방법, 판단(할증 없음·이자율 확인 필요), 근거."""
+    _chk.supported_year("transfer_date", transfer_date)
     return SV.income_tax_unlisted_basis(transfer_date, shares, prior_year_income=prior_year_income, book_net_asset=book_net_asset, real_estate_ratio=real_estate_ratio,
                                         business_start=business_start, status=status, stock_asset_ratio=stock_asset_ratio)
 

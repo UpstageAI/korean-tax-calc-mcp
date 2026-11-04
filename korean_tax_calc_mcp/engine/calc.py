@@ -2,6 +2,8 @@
 세율·이자율은 연도표(calc_cit.YEAR) 기준. hardcode 대신 사업연도별 표(2016~2026)를 경유한다."""
 from datetime import date
 
+from .exact import floor_won
+
 RATE_OVERDRAFT = 0.046  # 당좌대출이자율 (법인세법 시행규칙 제43조제2항) — 연도별 변동 없음, 조문 조회로 확인
 
 
@@ -567,7 +569,7 @@ def disaster_loss_credit(year, assets_before=0, assets_lost=0, current_tax=0,
 
     공제대상_법인세 = unpaid_prior_tax + max(current_tax - other_credits, 0) + penalty
 
-    공제액 = int(공제대상_법인세 * 자산상실비율)
+    공제액 = floor_won(공제대상_법인세, assets_lost, div=assets_before)
     공제액 = min(공제액, assets_lost)
 
     결과 = {
