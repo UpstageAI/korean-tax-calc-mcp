@@ -169,18 +169,20 @@ def _process_income_items(year, income_items, rules):
     if 요약["양도소득금액"] > 0:
         for proc in processing:
             if proc["kind"] == "양도소득금액":
-                proc["처리"] = "양도소득금액 종합 합산"
+                # 양도소득은 분류과세(제4조①3호) — 종합소득에 합산하지 않지만 기본공제의 '소득금액 합계액'에는 들어감
+                proc["처리"] = "양도소득금액 — 종합소득과 별도(양도소득, 분류과세)지만 기본공제 판정용 소득금액 합계에 포함"
                 proc["반영금액"] = 요약["양도소득금액"]
-                proc["근거"] = "소득세법 제14조①"
+                proc["근거"] = "소득세법 제50조①2호·3호(소득금액 합계액), 제4조①3호"
                 소득 += 요약["양도소득금액"]
 
     # 8) 퇴직소득금액
     if 요약["퇴직소득금액"] > 0:
         for proc in processing:
             if proc["kind"] == "퇴직소득금액":
-                proc["처리"] = "퇴직소득금액 종합 합산"
+                # 퇴직소득은 분류과세(제4조①2호) — 종합소득에 합산하지 않지만 기본공제의 '소득금액 합계액'에는 들어감
+                proc["처리"] = "퇴직소득금액 — 종합소득과 별도(퇴직소득, 분류과세)지만 기본공제 판정용 소득금액 합계에 포함"
                 proc["반영금액"] = 요약["퇴직소득금액"]
-                proc["근거"] = "소득세법 제14조①"
+                proc["근거"] = "소득세법 제50조①2호·3호(소득금액 합계액), 제4조①2호"
                 소득 += 요약["퇴직소득금액"]
 
     # 9) 전통주 제조소득
@@ -373,16 +375,29 @@ def converted_pay_deduction(conv):
     return 151_700_000 + (conv - 300_000_000) * _x(0.35)
 
 
+def retirement_tax_steps(income, years, retire_year=2025):
+    """퇴직소득세 계산 단계(분수로 정확히 계산, 표시는 원 미만 버림).
+    ① 근속연수공제(퇴직소득금액 한도, 제48조①1호) → ② 환산급여 = (금액−①)/근속연수×12(제48조①2호)
+    → ③ 환산급여공제(제48조①2호) → ④ 과세표준 = 환산급여 − 환산급여공제 → ⑤ 환산산출세액 = 기본세율(제55조①)(과세표준)
+    → ⑥ 산출세액 = 환산산출세액/12×근속연수(제55조②)."""
+    if income <= 0 or years <= 0:
+        return {"근속연수공제": 0, "환산급여": 0, "환산급여공제": 0, "과세표준": 0, "환산산출세액": 0, "산출세액": 0}
+    sd = min(retirement_service_deduction(years, retire_year), income)
+    conv = _x(income - sd) / years * 12
+    conv_ded = min(converted_pay_deduction(conv), conv)
+    base = max(0, conv - converted_pay_deduction(conv))
+    conv_tax = _tier(base, RATES[_y(retire_year)])   # 기본세율은 퇴직한 해의 표(제55조②1호 "제1항의 세율")
+    return {"근속연수공제": int(sd), "환산급여": int(conv), "환산급여공제": int(conv_ded), "과세표준": int(base),
+            "환산산출세액": int(conv_tax), "산출세액": int(conv_tax / 12 * years)}
+
+
 def retirement_tax(income, years, retire_year=2025):
     """퇴직소득 산출세액. income=퇴직소득금액(비과세 제외), years=근속연수(1년 미만 절상).
     ① 근속연수공제(퇴직소득금액 한도, 제48조②) → ② 환산급여 = (금액−①)/근속연수×12
     → ③ 과세표준 = 환산급여 − 환산급여공제 → ④ 산출세액 = 기본세율(제55조①)(과세표준)/12×근속연수(제55조②).
     원 미만 절사만 적용(원천징수 10원 미만 절사는 국고금관리법 — 호출자 처리)."""
     if income <= 0 or years <= 0: return 0
-    sd = min(retirement_service_deduction(years, retire_year), income)
-    conv = _x(income - sd) / years * 12
-    base = max(0, conv - converted_pay_deduction(conv))
-    return int(_tier(base, RATES[_y(retire_year)]) / 12 * years)   # 기본세율은 퇴직한 해의 표(제55조②1호 "제1항의 세율")
+    return retirement_tax_steps(income, years, retire_year)["산출세액"]
 
 
 # ── 원천징수세율(소득세법 제129조①②, 2025.1.1. 시행 법률 제20615호 기준) ─────────────────

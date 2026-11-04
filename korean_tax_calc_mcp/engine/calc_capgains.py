@@ -389,9 +389,10 @@ def calc_cg(args: dict[str, Any], vocab_on) -> dict:
         "보유기간_년": int(보유년),
         "거주기간_년": int(거주년) if is_주택 and one_house and residence_years is not None else None,
         "장기보유특별공제_적용표": 장기보유특별공제_적용표,
-        "공제율": float(공제율),
-        "보유기간_공제율": float(보유기간_공제율),
-        "거주기간_공제율": float(거주기간_공제율),
+        # 공제율은 100분의 n 단위 — 뺄셈 부동소수 꼬리(0.31999999999999995)를 보이지 않게 소수 넷째 자리로
+        "공제율": round(float(공제율), 4),
+        "보유기간_공제율": round(float(보유기간_공제율), 4),
+        "거주기간_공제율": round(float(거주기간_공제율), 4),
         "장기보유특별공제액": int(장기보유특별공제액),
         "양도소득금액": int(양도소득금액),
     }
