@@ -7,12 +7,12 @@
     "url": "https://github.com/UpstageAI/korean-tax-calc-mcp",
     "source": "github"
   },
-  "version": "0.19.6",
+  "version": "0.19.7",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "korean-tax-calc-mcp",
-      "version": "0.19.6",
+      "version": "0.19.7",
       "transport": {
         "type": "stdio"
       }
