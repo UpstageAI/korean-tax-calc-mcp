@@ -969,7 +969,7 @@ _INVOICE_LINE = {"지연발급": 1, "지연수취": 2, "미발급": 3, "가공":
 _INVOICE_ROWS = 19   # (64)~(82)
 
 
-def merged_form_sources(tool: str, entries: list[tuple[int, dict, dict]]) -> tuple[dict[str, list[dict]], dict[str, Any], list[str]]:
+def merged_form_sources(tool: str, entries: list[tuple[int, dict, dict]], calls: list[dict] | None = None) -> tuple[dict[str, list[dict]], dict[str, Any], list[str]]:
     """entries = [(call_idx, args, data)] (calls 순서) → (표 source, 합계 {계산 키: 값}, 서식에 넣지 않은 call 메모).
     표 칸은 각 call의 '입력·가정' 이름(호출N_…)을 가리키는 수식."""
     src: dict[str, list[dict]] = {}
@@ -999,9 +999,68 @@ def merged_form_sources(tool: str, entries: list[tuple[int, dict, dict]]) -> tup
                              "세액": ("=" + "+".join(tax[k])) if k in tax else None} for k in range(_INVOICE_ROWS)]
     elif tool in ("vat_deemed_supply_items", "vat_exempt_use_deemed_supply"):
         # 신고서 (4) 기타: 간주공급(개인적공급·사업상증여 등)과 면세전용 call 과세표준 합계
-        src["21_간주공급"] = [{"금액": "=" + "+".join(f"호출{i + 1}_간주공급_과세표준" for i, _, _ in entries)}]
-        tot["간주공급_합계"] = sum(next((x.get("값") or 0 for x in d.get("계산식_입력") or [] if x.get("이름") == "간주공급_과세표준"), 0)
-                               for _, _, d in entries)
+        # 면세전용 call의 assets가 같은 파일의 vat_deemed_supply_items call 중 '면세전용' 항목과
+        # 같은 자산(취득일·취득가액 같고 use_date==공급일)이면 중복이므로 (4)란 수식·tot에서 뺌
+        def _asset_key(asset):
+            return (str(asset.get("취득일", "")), int(asset.get("취득가액", 0) or 0))
+
+        # 1) 모든 vat_deemed_supply_items call의 '면세전용' 항목을
+        #    {(취득일, 취득가액, 공급일): entries 내 인덱스} 사전으로 모은다
+        item_asset_map: dict[tuple[str, int, str], int] = {}
+        for i, args, _ in entries:
+            if calls and calls[i].get("tool") == "vat_deemed_supply_items":
+                for it in args.get("items") or []:
+                    if it.get("거래") == "면세전용":
+                        dg = it.get("감가상각") or {}
+                        key = (str(dg.get("취득일", "")),
+                               int(dg.get("취득가액", 0) or 0),
+                               str(dg.get("공급일", "")))
+                        item_asset_map[key] = i
+
+        # 2) 면세전용 call마다 자산 키를 사전에서 찾아 판정
+        exempt_indices: set[int] = set()  # (4)란에서 제외할 면세전용 call 인덱스들
+        for i, args, data in entries:
+            if calls and calls[i].get("tool") == "vat_exempt_use_deemed_supply":
+                use_date = str(args.get("use_date", ""))
+                assets = args.get("assets") or []
+                asset_keys = [_asset_key(a) for a in assets]
+
+                # 이 call 자산 중 item_asset_map에 있는 것 찾기
+                found: list[tuple[tuple[str, int], int]] = []  # ((취득일, 취득가액), 항목별 call idx)
+                for akey in asset_keys:
+                    full_key = (akey[0], akey[1], use_date)
+                    if full_key in item_asset_map:
+                        found.append((akey, item_asset_map[full_key]))
+
+                if len(found) == len(assets) and assets:
+                    # 자산 전부 일치 → 이 call 제외, 각 매칭 항목별 call에 대해 메모
+                    exempt_indices.add(i)
+                    for j in sorted(set(j for _, j in found)):
+                        memo.append(
+                            f"호출 {i + 1}: 면세전용 자산이 호출 {j + 1} 간주공급 항목별 "
+                            f"'면세전용' 항목과 같아 중복 — (4)란에는 한 번만 더함"
+                        )
+                elif found:
+                    # 일부만 일치 → 제외하지 않고 확인 요청 메모(같은 자산의 취득일·취득가액 명시)
+                    details = []
+                    for akey, j in found:
+                        details.append(f"취득일 {akey[0]}·취득가액 {akey[1]}원")
+                    for j in sorted(set(j for _, j in found)):
+                        memo.append(
+                            f"호출 {i + 1}: 면세전용 자산 일부({'·'.join(details)})가 "
+                            f"호출 {j + 1} 간주공급 항목별 '면세전용' 항목과 같은 자산 — "
+                            f"중복이면 한 call에서 빼고 다시 내보내기"
+                        )
+
+        formula_items = []
+        tot_합계 = 0
+        for i, args, data in entries:
+            if i in exempt_indices:
+                continue
+            formula_items.append(f"호출{i + 1}_간주공급_과세표준")
+            tot_합계 += next((x.get("값") or 0 for x in data.get("계산식_입력") or [] if x.get("이름") == "간주공급_과세표준"), 0)
+        src["21_간주공급"] = [{"금액": ("=" + "+".join(formula_items)) if formula_items else None}]
+        tot["간주공급_합계"] = tot_합계
     elif tool == "vat_bad_debt_credit":
         # 신고서 (8) 대손세액 가감: 공제분 △, 회수분 가산
         terms, total = [], 0

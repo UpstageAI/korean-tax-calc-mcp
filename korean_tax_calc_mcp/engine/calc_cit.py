@@ -109,7 +109,9 @@ def entertain(year, sme, general_revenue, related_revenue, expensed, asset_part=
     limit = general_limit + culture_limit + market_limit
     total = expensed + asset_part - no_card_over
     over = max(0, total - limit)
-    return {"직부인(기타사외유출)": no_card_over, f"세무상 {ent_term(year)}": won(total), "일반한도": won(general_limit), "문화한도": won(culture_limit), "전통시장한도": won(market_limit),
+    return {"직부인(기타사외유출)": no_card_over, f"세무상 {ent_term(year)}": won(total),
+            "기본한도": won(base), "수입금액한도": won(rev), "일반한도": won(general_limit),
+            "문화한도": won(culture_limit), "전통시장한도": won(market_limit),
             "한도": won(limit), "한도초과(기타사외유출)": won(over),
             "자산감액": won(max(0, over - (expensed - no_card_over)))}
 

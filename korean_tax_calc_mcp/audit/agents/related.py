@@ -510,9 +510,31 @@ def cite_at(law, on):
                 jo_full = f"{jo}{m.group(1)}"
                 out = (name, jo_full, f"{name} {jo_full}(기준일 {on[:10]} 시행본) — {_clean_quote(t[m.start():])}")
             else:
-                head = t.splitlines()[0]
-                if "특수관계인의 범위" not in head: continue
-                out = (name, f"{jo}①", f"{name} {jo}①(기준일 {on[:10]} 시행본) — {_clean_quote(head)}")
+                # 국기·상증은 첫 줄에 조 제목이 없는 경우(본문 ①부터 시작)도 본문으로 판정
+                lines = t.splitlines()
+                first = lines[0]
+                if law == "국기":
+                    is_target = "특수관계인의 범위" in first or "법 제2조제20호" in first
+                else:  # 상증
+                    is_target = "특수관계인의 범위" in first or "법 제2조제10호" in first or "특수관계인" in first
+                if not is_target:
+                    continue
+                # 첫 줄이 "제X조의Y(…) 제목 …①…" 형태면 제목을 떼고 나머지를 본문으로,
+                # 제목만 있는 별도 첫 줄이면(lines[1]이 본문) lines[1]을 본문으로 쓴다.
+                m_title = re.match(r"제\d+조의\d+\([^\)]*\)", first)
+                if m_title:
+                    rest = first[m_title.end():].lstrip()   # 제목 떼고 앞 공백 제거
+                    if rest.startswith("①"):
+                        body = _clean_quote(rest)            # 한 줄 제목+본문: 제목 떼고 ①부터
+                    elif len(lines) > 1:
+                        body = _clean_quote(lines[1])       # 제목만 별도 줄: 다음 줄이 본문
+                    else:
+                        body = _clean_quote(rest)           # 제목만 한 줄: 나머지(없으면 빈 몸통)
+                elif first.startswith("①"):
+                    body = _clean_quote(first)              # 제목 없이 ①부터 시작
+                else:
+                    body = _clean_quote(first)              # 그 외: 첫 줄 전체
+                out = (name, f"{jo}①", f"{name} {jo}①(기준일 {on[:10]} 시행본) — {body}")
             _CITE_CACHE[key] = out
             return out
     except law_api.NoKey:
