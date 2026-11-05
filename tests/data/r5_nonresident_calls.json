@@ -1,0 +1,153 @@
+[
+ {
+  "label": "일본 사용료 조약세율 10%(신청서 유효)",
+  "tool": "nonresident_withholding",
+  "args": {
+   "income_kind": "사용료",
+   "amount": 55000000,
+   "recipient_type": "법인",
+   "residence_country": "일본",
+   "treaty_rate": 0.1
+  }
+ },
+ {
+  "label": "일본 사용료 국내세율 20%(신청서 무효)",
+  "tool": "nonresident_withholding",
+  "args": {
+   "income_kind": "사용료",
+   "amount": 55000000,
+   "recipient_type": "법인",
+   "residence_country": "일본"
+  }
+ },
+ {
+  "label": "미국 LP 배당 국내세율 20%",
+  "tool": "nonresident_withholding",
+  "args": {
+   "income_kind": "배당",
+   "amount": 100000000,
+   "recipient_type": "법인",
+   "residence_country": "미국"
+  }
+ },
+ {
+  "label": "미국 배당 조약세율 15%(참고)",
+  "tool": "nonresident_withholding",
+  "args": {
+   "income_kind": "배당",
+   "amount": 100000000,
+   "recipient_type": "법인",
+   "residence_country": "미국",
+   "treaty_rate": 0.15
+  }
+ },
+ {
+  "label": "Tan 유지보수 인적용역 20%",
+  "tool": "nonresident_withholding",
+  "args": {
+   "income_kind": "인적용역",
+   "amount": 22000000,
+   "recipient_type": "개인",
+   "residence_country": "싱가포르"
+  }
+ },
+ {
+  "label": "가산세 25Q2(경우A)",
+  "tool": "withholding_late_payment_penalty",
+  "args": {
+   "unpaid_tax": 5000000,
+   "due": "2025-07-10",
+   "until": "2026-06-30"
+  }
+ },
+ {
+  "label": "가산세 25Q2(경우B)",
+  "tool": "withholding_late_payment_penalty",
+  "args": {
+   "unpaid_tax": 11000000,
+   "due": "2025-07-10",
+   "until": "2026-06-30"
+  }
+ },
+ {
+  "label": "가산세 25Q1 부족분(경우B)",
+  "tool": "withholding_late_payment_penalty",
+  "args": {
+   "unpaid_tax": 6000000,
+   "due": "2025-04-10",
+   "until": "2026-06-30"
+  }
+ },
+ {
+  "label": "가산세 배당",
+  "tool": "withholding_late_payment_penalty",
+  "args": {
+   "unpaid_tax": 20000000,
+   "due": "2025-09-10",
+   "until": "2026-06-30"
+  }
+ },
+ {
+  "label": "가산세 Tan 유지보수",
+  "tool": "withholding_late_payment_penalty",
+  "args": {
+   "unpaid_tax": 4400000,
+   "due": "2025-12-10",
+   "until": "2026-06-30"
+  }
+ },
+ {
+  "label": "제척기간 2023 Tan(역외 7년)",
+  "tool": "assessment_limitation",
+  "args": {
+   "due_date": "2024-01-10",
+   "withholding": true,
+   "offshore": true
+  }
+ },
+ {
+  "label": "제척기간 2023 Tan(일반 5년 참고)",
+  "tool": "assessment_limitation",
+  "args": {
+   "due_date": "2024-01-10",
+   "withholding": true,
+   "offshore": false
+  }
+ },
+ {
+  "label": "제척기간 25Q1 부족분",
+  "tool": "assessment_limitation",
+  "args": {
+   "due_date": "2025-04-10",
+   "withholding": true,
+   "offshore": true
+  }
+ },
+ {
+  "label": "제척기간 25Q2",
+  "tool": "assessment_limitation",
+  "args": {
+   "due_date": "2025-07-10",
+   "withholding": true,
+   "offshore": true
+  }
+ },
+ {
+  "label": "제척기간 배당",
+  "tool": "assessment_limitation",
+  "args": {
+   "due_date": "2025-09-10",
+   "withholding": true,
+   "offshore": true
+  }
+ },
+ {
+  "label": "제척기간 Tan 유지보수",
+  "tool": "assessment_limitation",
+  "args": {
+   "due_date": "2025-12-10",
+   "withholding": true,
+   "offshore": true
+  }
+ }
+]
