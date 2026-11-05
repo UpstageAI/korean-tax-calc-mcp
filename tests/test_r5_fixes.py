@@ -356,3 +356,32 @@ def test_related_judge_three_laws_same_format(cite_text):
     for law in ("국기", "법인", "상증"):
         q = quotes[law] if isinstance(quotes[law], str) else json.dumps(quotes[law], ensure_ascii=False)
         assert "시행본) — " in q and "조문 이동 기록" not in q, (law, q)
+
+
+def _line4(tmp_path, calls, name):
+    p, errs = build(tmp_path, calls, name)
+    assert errs == []
+    ws = openpyxl.load_workbook(p)["부가 신고서 간주공급(4)"]
+    r = next(r for r in range(1, ws.max_row + 1) if ws.cell(r, 4).value == "(4)")
+    text = " ".join(str(c.value) for row in ws.iter_rows() for c in row if isinstance(c.value, str))
+    return str(ws.cell(r, 5).value), ws.cell(r, 9).value, text
+
+
+def test_deemed_supply_line4_match_found_in_later_items_call(tmp_path):
+    """면세전용 항목이 없는 간주공급 항목별 call이 앞에 있어도, 뒤 call의 같은 자산을 찾아 한 번만 더한다."""
+    first = {"label": "개인적공급만", "tool": "vat_deemed_supply_items",
+             "args": {"period": "2025-2", "items": [{"항목": "텀블러 고객 증정", "거래": "사업상증여", "매입세액공제": True, "시가": 2_000_000}]}}
+    calls = [first] + json.loads(json.dumps(VAT_RETURN[2:4]))
+    f, tool_value, text = _line4(tmp_path, calls, "later")
+    assert "호출1_간주공급_과세표준" in f and "호출3_간주공급_과세표준" in f and "호출2_간주공급_과세표준" not in f, f
+    assert "호출 2" in text and "중복" in text, text
+
+
+def test_deemed_supply_line4_partial_match_keeps_sum_and_warns(tmp_path):
+    """면세전용 call 자산 둘 중 하나만 항목별 call에 있으면 그대로 더하고 확인을 요청한다."""
+    calls = json.loads(json.dumps(VAT_RETURN[2:4]))
+    calls[0]["args"]["assets"].append({"구분": "기타", "취득일": "2024-06-01", "취득가액": 3_000_000, "매입세액공제": True, "시가": 2_000_000})
+    f, _, text = _line4(tmp_path, calls, "partial")
+    assert "호출1_간주공급_과세표준" in f and "호출2_간주공급_과세표준" in f, f
+    assert re.search(r"호출 1[^\n]{0,80}(일부|같은 자산)", text), text
+
