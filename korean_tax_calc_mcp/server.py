@@ -606,7 +606,7 @@ def deemed_interest(movements: Annotated[list[Movement], Field(description="가�
 @_guard
 def unfair_transaction(market_price: Annotated[float, Field(description="시가(단가, 원)")], actual_price: Annotated[float, Field(description="실제 거래 단가(원)")],
                        quantity: Annotated[int, Field(description="수량")]) -> dict:
-    """부당행위계산 기준(시가와 실제 거래가 차이 3억 원 이상 또는 5% 이상). 언제: 특수관계인 거래 prices가 시가와 크게 차이 나 부당행위계산 부인 대상인지 확인할 때.
+    """부당행위계산 기준(시가와 실제 거래가 차이 3억 원 이상 또는 5% 이상). 언제: 특수관계인과의 거래 가격이 시가와 크게 차이 나 부당행위계산 부인 대상인지 확인할 때.
 입력: 시가(단가, 원) → market_price, 실제 거래 단가(원) → actual_price, 수량 → quantity.
 결과: 시가총액·차액·차액비율·부당행위계산 여부, 근거(법인세법 제52조, 시행령 제88조제3항). 부당행위계산 기준(시가와 실제 거래가 차액이 3억 원 이상 또는 5% 이상이면 부인 대상)."""
     gap = abs(market_price - actual_price) * quantity; base = market_price * quantity
@@ -869,7 +869,7 @@ def refund_claim_deadline(kind: Annotated[Literal["통상", "후발적", "증액
                           abroad: Annotated[bool, Field(description="상속세: 피상속인이나 상속인이 외국에 주소(신고기한 9개월)")] = False) -> dict:
     """경정청구 기한(국세기본법 제45조의2) — 통상 5년·후발적 3개월·증액경정분 3개월, 기한 특례(제5조제1항) 반영. 언제: '경정청구 언제까지 할 수 있나', 경정청구기간 계산, 후발적 경정청구 기한.
 입력: 청구 종류 → kind, 법정신고기한 → due_date(또는 세목 → tax와 기간 → year·fiscal_year_end·period·tax_base_date), 사유를 안 날·통지받은 날 → event_date, 성실신고확인 → sincere_filing, 상속 외국 주소 → abroad.
-계산: 법정신고기한이 토·일·공휴일·대체공휴일·근로자의 날(노동절)이면 다음 날이 기한(제5조제1항) → 그 기한이 지난 후 5년(민법 제157조·제160조, 국세기본법 제4조: 기한의 5년 뒤 같은 날, 없으면 그 달 말일) → 그 날이 다시 토·일·공휴일이면 다음 날.
+계산: 법정신고기한이 토·일·공휴일·대체공휴일·근로자의 날(노동절)이면 다음 날이 기한(제5조제1항) → 그 기한이 지난 후 5년(민법 제157조·제159조·제160조, 국세기본법 제4조: 기한의 5년 뒤 같은 날, 없으면 그 달 말일) → 그 날이 다시 토·일·공휴일이면 다음 날.
   후발적은 안 날의 3개월 뒤 같은 날(제2항, 통상 기간과 별개), 증액경정은 통지받은 날의 3개월 뒤 같은 날(법정신고기한 후 5년 한도). 2024.12.31. 개정(2025.1.1. 시행) 전 증액경정분은 90일 — 시행 당시 3개월이 지나지 않았으면 3개월(부칙 제6조제1항).
 공휴일표: 2016~2027(법정공휴일·대체공휴일·선거일·임시공휴일, data/kr_holidays.json). 표 밖의 해는 토·일·고정 공휴일만 보고 결과에 '확인하지 못함'으로 표시.
 결과: 경정청구_기한·요일, 법정신고기한(법령상·적용·건너뛴 날), 기간_말일, 판정·근거. 원천징수(제45조의2제5항)는 납부기한, 종합부동산세(제6항)는 납부기한 기준.
@@ -1012,11 +1012,11 @@ def nonresident_withholding(income_kind: Annotated[Literal["이자", "배당", "
 @_guard
 def retirement_income_tax(income: Annotated[int, Field(description="퇴직소득금액(퇴직급여, 비과세 제외, 원)")],
                           years_of_service: Annotated[int, Field(description="근속연수(1~60년)")],
-                          retire_year: Annotated[int, Field(description="퇴직한 해(2020~2026). 근속연수공제표(2023 개정)·기본세율표가 이 해 기준", ge=2016, le=2026)] = 2025) -> dict:
+                          retire_year: Annotated[int, Field(description="계산: 2020~2026년 퇴직. 2016~2019년 퇴직은 경과 부칙(법률 제12852호) 대상이라 계산하지 않고 안내. 근속연수공제표(2023 개정)·기본세율표가 이 해 기준", ge=2016, le=2026)] = 2025) -> dict:
     """퇴직소득세(근속연수공제·환산급여 방식). 언제: 퇴직금(퇴직급여)을 지급할 때 퇴직소득세를 계산한다.
 입력: 퇴직소득금액(퇴직급여, 비과세 제외, 원) → income, 근속연수(1~60년) → years_of_service, 퇴직한 해 → retire_year(기본 2025).
+계산: 2020~2026년 퇴직. 2016~2019년 퇴직은 경과 부칙(법률 제12852호) 대상이라 계산하지 않고 안내.
 연도: 근속연수공제는 2023.1.1. 이후 퇴직 개정표(100만·200만·250만·300만), 2022년까지는 구표(30만·50만·80만·120만). 기본세율은 퇴직한 해 표.
-지원하지 않음: 2016~2019년 퇴직(종전·개정 방식 세액을 비율로 섞는 경과 부칙, 법률 제12852호).
 결과: 퇴직소득세(산출세액)와 계산 단계 — 근속연수공제·환산급여·환산급여공제·퇴직소득과세표준·환산산출세액, 산식, 근거(소득세법 제48조·제55조제2항). Retirement income tax (근속연수공제·환산급여 방식)."""
     _chk.int_range("years_of_service", years_of_service, 1, 60, "근속연수(1년 미만의 기간은 1년으로 보아 올려 넣음, 소득세법 제48조① 괄호) ")
     if retire_year < 2020:
@@ -2985,13 +2985,13 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
         judgments.append({"항목": 항목, "결론": 결론, "금액": recognized if recognized else amount, "근거": 근거, "이유": 이유})
         per_item.append({"recognized": recognized, "memo": memo})
 
-    # 세법상 전기말 채권 = 장부 전기말 + 전기부인 유보 − 전기 사유 신고조정 대손(장부 전기말을 넘지 않음)
-    if prior_year_reduced > receivables_prev_end_book:
-        judgments.append({"항목": "세법상 전기말 채권", "결론": f"전기 사유 대손 {prior_year_reduced:,}원 > 장부 전기말 채권 {receivables_prev_end_book:,}원 — 0원으로 봄",
-                          "금액": prior_year_reduced, "근거": "법인세법 시행령 제61조③",
-                          "이유": "전기 사유분은 장부 전기말 채권에 들어 있어야 함 — receivables_prev_end_book 입력 확인"})
     # 법 제19조의2② 채권 잔액은 설정대상에서 뺌(법 제34조②)
     tax_receivables_prev = max(0, receivables_prev_end_book - excluded_receivables_prev_end_book - prior_year_reduced) + prior_yubo_added
+    # 세법상 전기말 채권 판단(전기 사유 대손이 장부 전기말을 넘으면 0원)
+    if prior_year_reduced > receivables_prev_end_book:
+        judgments.append({"항목": "세법상 전기말 채권", "결론": f"전기 사유 대손 {prior_year_reduced:,}원 > 장부 전기말 채권 {receivables_prev_end_book:,}원 — 0원으로 봄",
+                          "금액": tax_receivables_prev, "근거": "법인세법 시행령 제61조③",
+                          "이유": "전기 사유분은 장부 전기말 채권에 들어 있어야 함 — receivables_prev_end_book 입력 확인"})
     # 세법상 당기말 채권 = 장부 당기말 − 설정제외 + 부인 채권(비망가액·전기부인 미인정분 포함)
     reservation_total = memo_total
     tax_receivables_end = receivables_end_book - excluded_receivables_end_book + end_yubo_added
@@ -3133,7 +3133,8 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
     return _ok(unified, "법인세법 제19조의2·제34조, 시행령 제19조의2·제61조",
                세무조정=settlements, 판단=judgments, 계산=calc_dict,
                산식="세법상 당기 대손금 = 인정 대손금 합계(전기부인 채권의 당기 인정분 포함), 세법상 전기말 채권 = 장부 전기말 − 전기 사유 신고조정 대손(0 미만은 0) + 전기부인 유보 채권, 세법상 당기말 채권 = 장부 당기말 + 부인 채권 + 비망가액 + 전기부인 채권 중 미인정분, 실적률 = 당기 대손금 ÷ 전기말 채권(절사), 한도 = 당기말 채권 × max(1%, 실적률), 한도초과 = 장부 기말잔액 − 한도",
-               서식_표=서식_표, 계산식_입력=계산식_입력)
+               서식_표=서식_표, 계산식_입력=계산식_입력,
+               키_설명={"과소환입_과다환입": "별지 제34호서식 ⑮ 과소환입·과다환입(△) = ⑬환입할 금액(장부상 충당금 기초잔액 − 기중 환입 − 충당금 부인 누계액 − 당기 대손금 상계액 − 당기 설정 충당금 보충액) − ⑭회사 환입액. 양수는 과소환입(익금산입), 음수(△)는 과다환입(익금불산입) 뜻. 전기 한도초과 손금산입과 같은 금액이면 따로 조정하지 않음."})
 
 
 @mcp.tool(annotations=CALC)
@@ -3448,7 +3449,8 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
     result = {"한도": limit, "한도초과": over_limit, "직부인_대표자상여": no_receipt_total + private_use_total, "직부인_기타사외유출": no_qual_total, "시부인_대상": si_bu_shin}
     # 지출이 0이어도 그 해 비율을 넘긴다 — 서식 엑셀에서 지출액을 나중에 넣어도 한도 수식이 살아 있게
     전통시장등비율 = C.YEAR[year].get("전통시장등_비율", 0) if 2023 <= year <= 2028 else 0
-    calc_dict = {"기본한도": ent["일반한도"], "문화한도": ent["문화한도"], "전통시장한도": ent["전통시장한도"],
+    calc_dict = {"기본한도": ent["기본한도"], "수입금액한도": ent["수입금액한도"], "일반한도": ent["일반한도"],
+               "문화한도": ent["문화한도"], "전통시장한도": ent["전통시장한도"],
                "시부인 대상": si_bu_shin, "직부인(증빙없음·심사비)": no_receipt_total + no_qual_total,
                "전통시장_지출": (전통시장_총액 if 2023 <= year <= 2028 else 0),
                "지역사랑상품권_지출": (지역사랑상품권_총액 if 2025 <= year <= 2028 else 0),
@@ -6782,6 +6784,21 @@ def _capital_reduction_필요입력(has_taxable_bonus: bool, short_term_event: b
     return 필요
 
 
+def _자본이득_기간키_설명(계산: dict) -> dict:
+    """양도소득 부표 'n년 이상 n+1년 미만' 칸에 들어가는 기간 키(_이상/_미만)의 설명."""
+    d: dict = {}
+    for k, v in 계산.items():
+        if not isinstance(v, int):
+            continue
+        if k.endswith("_이상"):
+            base = k[:-4]                      # "비과세_보유기간" / "비과세_거주기간" / "장기공제_거주기간"
+            d[k] = f"{base} = 보유·거주기간을 연 단위로 내림한 값(양도소득과세표준 신고서 부표의 '{v}년 이상 {v+1}년 미만' 칸에 들어가는 연수)"
+        elif k.endswith("_미만"):
+            base = k[:-4]
+            d[k] = f"{base} = 위 '_이상' 연수({계산.get(base+'_이상','?')})의 다음 해({v}년) — 부표 '{v-1}년 이상 {v}년 미만' 칸에 해당"
+    return d
+
+
 @mcp.tool(annotations=CALC)
 @_guard
 def capital_gains_income(
@@ -7129,8 +7146,10 @@ def capital_gains_income(
         # 서식 칸 입력 + 세액 계산식 단계(엑셀 살아 있는 수식) — 같은 이름은 앞의 것을 쓴다
         _이름 = {x["이름"] for x in 계산식_입력}
         계산식_입력 += [x for x in 식입력 if x["이름"] not in _이름]
-        return _ok(r["결과"], r["근거"], 판단=r.get("판단", []), 산식=r.get("산식", []), 계산=계산, 계산식_입력=계산식_입력, 계산식=식단계)
-    return _ok(r["결과"], r["근거"], 판단=r.get("판단", []), 산식=r.get("산식", []), 계산=계산, 계산식_입력=계산식_입력)
+        return _ok(r["결과"], r["근거"], 판단=r.get("판단", []), 산식=r.get("산식", []), 계산=계산, 계산식_입력=계산식_입력, 계산식=식단계,
+                   키_설명=_자본이득_기간키_설명(계산))
+    return _ok(r["결과"], r["근거"], 판단=r.get("판단", []), 산식=r.get("산식", []), 계산=계산, 계산식_입력=계산식_입력,
+               키_설명=_자본이득_기간키_설명(계산))
 
 
 
@@ -7322,7 +7341,7 @@ def inheritance_gift_valuation(
       secured_debt — {채권최고액?, 채무액?, 임대보증금?} 또는 목록 선택. 채권마다 min(채권최고액, 채무액), 여러 채권·임대보증금은 합계
       lease — {연간임대료 | 월임대료, 임대보증금?} 선택. 시가가 없으면 max(supplementary_value, 연 임대료 ÷ 12% + 임대보증금)
     지원하지 않음: 토지·건물 소유자가 다를 때의 환산가액 안분(영 제50조제8항 — 각자 몫을 계산해 넣음), 공동저당 안분(영 제63조제1항제2호).
-    결과: 평가액, 계산.시가·적용·담보채권액(·임대료_환산가액·보충적_평가액), 판단.
+    결과: 평가액, 계산.시가·적용·담보채권액(·임대료_환산가액·보충적_평가액·제61조_평가액), 판단.
     주의: 평가기간 밖 가액은 시가에서 제외(상속=전후 6개월, 증여=전 6개월~후 3개월)."""
     _chk.supported_year("valuation_date", valuation_date)
     return GG.inheritance_gift_valuation(
@@ -10107,11 +10126,27 @@ def export_workbook(
                     continue
                 처분 = s.get("소득처분", "")
                 if 조정 in ("익금산입", "손금불산입"):
-                    코드 = "400" if 처분 == "유보" else ("100" if 처분 == "△유보" else "500")
+                    # 별지15 작성방법: 익금산입·손금불산입(가산) — 상여 100·배당 200·기타소득 300·유보 400·기타사외유출 500·기타 600
+                    # △유보는 표에 없으나 가산 쪽에 오면 유보와 같은 400; 표에 없는 처분은 ""(잘못된 코드 방지)
+                    if 처분 == "상여":
+                        코드 = "100"
+                    elif 처분 == "배당":
+                        코드 = "200"
+                    elif 처분 == "기타소득":
+                        코드 = "300"
+                    elif 처분 in ("유보", "△유보"):
+                        코드 = "400"
+                    elif 처분 == "기타사외유출":
+                        코드 = "500"
+                    elif 처분 == "기타":
+                        코드 = "600"
+                    else:
+                        코드 = ""
                     add.append({"과목": s.get("구분", ""), "금액": 금액, "처분": 처분, "코드": 코드,
                                 "종류": s.get("종류", s.get("구분", ""))})
                 elif 조정 in ("손금산입", "익금불산입"):
-                    코드 = "100" if 처분 == "△유보" else "200"
+                    # 별지15 작성방법: 손금산입·익금불산입(차감) — 유보·△유보 100·기타 200
+                    코드 = "100" if 처분 in ("유보", "△유보") else ("200" if 처분 == "기타" else "")
                     sub.append({"과목": s.get("구분", ""), "금액": 금액, "처분": 처분, "코드": 코드,
                                 "종류": s.get("종류", s.get("구분", ""))})
             return add, sub
@@ -10256,15 +10291,19 @@ def export_workbook(
             })
         if _재계산_rows:
             source_data["22_재계산"] = _재계산_rows
-        # 배당명세·이자명세 소스: financial_income_aggregate 계산.항목별 → {코드, 일련번호, 항목, 금액} (call마다)
-        def _금융_rows(cd: dict) -> tuple[list[dict], list[dict]]:
+        # 배당명세·이자명세 소스: financial_income_aggregate 계산.항목별 → {코드, 일련번호, 항목, 금액, 대상?, 가산?} (call마다)
+        def _금융_rows(cd: dict) -> tuple[list[dict], list[dict], list[str]]:
             calc_dict = (cd.get("data") or {}).get("계산", {})
             항목별 = calc_dict.get("항목별", [])
             판단목록 = (cd.get("data") or {}).get("판단", [])
             # 판단목록에서 입력 순서 복구 (계산.항목별은 dict라 순서 없음)
             순서맵 = {h["항목"]: idx for idx, h in enumerate(판단목록)}
+            gu_base = calc_dict.get("Gross-up 기준액")          # Gross-up 대상금액(합계 행 ⑥)
+            gu_rate = calc_dict.get("가산율")                    # 가산율
+            gu_target_sum = sum(it.get("금액", 0) for it in 항목별 if it.get("구분") == "GU대상")
             _배당_rows: list[dict] = []
             _이자_rows: list[dict] = []
+            배당_메모: list[str] = []
             # 코드 매핑: 배당 GU대상=21, GU비대상=22, 출자공동=28, 이자=13, 제외는 제외
             코드맵 = {"GU대상": "21", "GU비대상": "22", "출자공동": "28", "이자": "13", "제외": None}
             for item in 항목별:
@@ -10274,8 +10313,14 @@ def export_workbook(
                     continue  # 제외는 넣지 않음
                 항목명 = item.get("항목", "").replace("_", " ")
                 금액 = item.get("금액", 0)
-                row = {"코드": 코드, "일련번호": 0, "항목": 항목명, "금액": 금액,
-                       "_순서": 순서맵.get(item.get("항목", ""), 999)}
+                row: dict = {"코드": 코드, "일련번호": 0, "항목": 항목명, "금액": 금액,
+                             "_순서": 순서맵.get(item.get("항목", ""), 999)}
+                # Gross-up 대상금액이 합계 행에만 있는지 행별 배분 가능한지 판정
+                if 구분 == "GU대상" and gu_base is not None and gu_rate is not None \
+                        and gu_base == gu_target_sum:
+                    # 전액이 가산 대상 → 행별로 대상·가산 채움
+                    row["대상"] = 금액
+                    row["가산"] = int(Fraction(금액) * Fraction(str(gu_rate)))  # 원 미만 절사(정수 연산)
                 if 구분 in ("GU대상", "GU비대상", "출자공동"):
                     _배당_rows.append(row)
                 elif 구분 == "이자":
@@ -10289,11 +10334,18 @@ def export_workbook(
                     last_code = r["코드"]
                     r["일련번호"] = seq
                     del r["_순서"]
-            return _배당_rows, _이자_rows
+            # Gross-up 대상금액이 합계 행에만 있을 때 배당 시트 메모 안내
+            if gu_base is not None and gu_target_sum and gu_base != gu_target_sum \
+                    and any(r["코드"] == "21" for r in _배당_rows):
+                배당_메모.append("Gross-up 대상금액은 합계 행에만(행별 배분 기준 없음)")
+            return _배당_rows, _이자_rows, 배당_메모
 
         for i in _ok_calls.get("financial_income_aggregate", []):
-            b_rows, i_rows = _금융_rows(결과들[i])
+            b_rows, i_rows, b_memo = _금융_rows(결과들[i])
             _call_src.setdefault(i, {}).update({"배당명세": b_rows, "이자명세": i_rows})
+            if b_memo:
+                _call_src[i]["배당명세_메모"] = b_memo
+
         _fid = _last_call("financial_income_aggregate")
         if _fid is not None:
             source_data["배당명세"] = _call_src[_fid]["배당명세"]
@@ -10397,6 +10449,9 @@ def export_workbook(
 
             # 표 source: 본 시트 기준 기본값 + 이 call의 source(별지15·별지16의2·종소배당·부가 등은 그 call 값)
             call_sources = {**source_data, **_call_src.get(tinfo["call_idx"], {})}
+            # 배당명세 행별 메모(행별 배분 기준 없음 안내)를 시트별 메모에 추가
+            for _m in _call_src.get(tinfo["call_idx"], {}).get("배당명세_메모", []):
+                _시트별_메모.setdefault(tinfo["sheet"], []).append(_m)
             form_res = cd.get("data", cd.get("result", {}))
             # 별지26 (갑)·(을): 표 source는 그 call 결과로(같은 도구 call이 여럿이면 call마다 따로)
             if tinfo["tool"] == "nonbusiness_interest_disallowance":
@@ -10410,7 +10465,7 @@ def export_workbook(
             # one_sheet 틀: 같은 도구 call 전부를 표 행으로, 도구 값 합계는 확인 칸용 `계산`에(내보내기 전용)
             if tinfo.get("one_sheet") and tkey in _합친_call:
                 _ents = [(j, (calls[j] or {}).get("args") or {}, 결과들[j].get("data") or {}) for j in _합친_call[tkey]]
-                _src, _tot, _memo = merged_form_sources(tinfo["tool"], _ents)
+                _src, _tot, _memo = merged_form_sources(tinfo["tool"], _ents, calls)
                 call_sources = {**call_sources, **_src}
                 if _tot:
                     form_res = {**form_res, "계산": {**(form_res.get("계산") or {}), **_tot}}

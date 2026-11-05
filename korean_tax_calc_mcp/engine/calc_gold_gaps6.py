@@ -392,7 +392,7 @@ def inheritance_gift_valuation(
     보충적 = supplementary_value
     if lease_연임대료 is not None:
         환산가액 = int(Fraction(lease_연임대료) / Fraction(12, 100)) + (lease_보증금 or 0)
-        보충적 = max(supplementary_value, 환산가액)
+        보충적 = max(supplementary_value, 환산가액)   # 상증법 제61조제5항: 임대료 환산가액과supplementary_value 중 큰 금액(내부 계산용)
 
     # 담보 특례(법 제66조, 영 제63조) — 채권마다 min(채권최고액, 채무액), 여러 채권·임대보증금은 합계(영 제63조②)
     담보채권액 = 0
@@ -468,7 +468,8 @@ def inheritance_gift_valuation(
     }
     if 환산가액 is not None:
         계산["임대료_환산가액"] = 환산가액
-        계산["보충적_평가액"] = 보충적
+        계산["보충적_평가액"] = supplementary_value    # 입력 supplementary_value 그대로
+        계산["제61조_평가액"] = 보충적                  # 상증법 제61조제5항: 임대료 환산가액과 보충적 평가액 중 큰 금액
 
     결과 = {
         "평가액": 평가액,
