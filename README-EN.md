@@ -257,10 +257,43 @@ Click a group to expand its tools.
 
 </details>
 
-- **Excel export**: `export_workbook` re-runs several tool calls and produces a review workbook shaped like the statutory forms (Article 3, Article 15, Article 23 (a)/(b), Article 34, Article 20(1), Article 16-2, Article 26 (a)/(b), Article 50(b); VAT input-tax-not-deductible statement; global-income-tax supplementary statements; capital-gains-tax Article 84 return tax computation and Appendix 1 capital-gains computation statement; etc.).
+- **Excel export**: `export_workbook` re-runs several tool calls and produces a review workbook shaped like the statutory forms (Article 3, Article 15, Article 23 (a)/(b), Article 32, Article 33, Article 34, Article 20(1), Article 16-2, Article 26 (a)/(b), Article 50(b); VAT input-tax-not-deductible statement; global-income-tax supplementary statements; capital-gains-tax Article 84 return tax computation and Appendix 1 capital-gains computation statement; etc.).
 - **Ledger input**: adjustment tools take ledger lines as written (name, amount, receipt, nature) and return item judgments, adjustments and income dispositions.
 - **Issue flags**: non-resident withholding and thin capitalization results list points that may be disputed and what to check (no conclusion).
 - **Years**: corporate tax FY2016–2026, income tax 2016–2026, VAT 2016-1 to 2026-2; penalties and limitation periods follow current law. Other years stop with an error. Local income tax is separate.
+
+## What it does not handle
+
+When a case is out of scope, the tool stops with "input needed" or an error, or flags "확인 필요 (check needed)" in `판단`. Check this list before relying on a result.
+
+**General**
+- Years outside the supported range (corporate FY2016–2026, income tax 2016–2026, VAT 2016-1 to 2026-2) and local income tax
+- Facts that need judgment first (number of houses, related parties, business relevance) are taken as you enter them; the tool does not decide them
+- No dedicated tool for merger or split adjustments
+
+<details>
+<summary>Per-tool limits (collected from tool descriptions)</summary>
+
+| Tool | Not handled |
+|---|---|
+| `retirement_allowance_adjustment` | Pre-conversion retirement allowance of employees moved to defined-contribution plans (Enforcement Rule Art. 31(2)) is only set aside as entered — its calculation, input for DC-only companies, its payout or transfer, and splitting related disallowed balances are not handled. Income inclusion when line ⑧ of Form 33 is negative |
+| `capital_gains_income`·`capital_gains_tax` | Pre-sale rights, union membership rights, shares; designated-area 3+ house surcharge before 2018-04-01; counting houses; holding-period exceptions; residential conversion; partial sale of high-value houses |
+| `stock_capital_gains_tax` | Foreign shares before 2019, derivatives, netting of losses |
+| `housing_rental_income` | Mixed-use house split, counting co-owned houses (computes if you enter the count) |
+| `dividend_tax_credit` | Deductions larger than non-financial income, RSTA Art. 104-27 dividends (2016–2018), other credits and reductions |
+| `religious_income` | Wage-income election, withholding table and year-end tax, non-taxable requirement tests, KRW 3m aggregation with other income |
+| `gift_tax` | Proviso of Inheritance and Gift Tax Act Art. 58(1) |
+| `inheritance_gift_valuation` | Converted-value split when land and building owners differ, joint-mortgage split |
+| `unlisted_stock_valuation` | Valuation review committee, valuation-period tests, foreign unlisted shares |
+| `vat_supply_timing` | Gift cards, processing, vending machines, bonded areas, consignment, deemed supply, exports other than shipment date, real-estate rental and prepaid annual fees, international transport, deemed closure, late-invoice penalties |
+| `vat_deemed_supply_items` | Employee gift limits before 2020-1 |
+| `refund_claim_deadline` | Causes or notices before 2016, transition rules before 2015, whether a later-arising cause applies |
+| `tax_priority_distribution` | Provisional-attachment pro-rating, tax-to-tax absorption, circular priority among security interests, public charges, tax security, etc. (returned as input needed) |
+| `individual_donation_expense` | The donation tax credit amount itself |
+| `stock_major_shareholder` | Market-cap lookup (enter it yourself) |
+
+Each tool's description has the full scope.
+</details>
 
 ## Disclaimers and notices
 
