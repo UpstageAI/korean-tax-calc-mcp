@@ -5996,7 +5996,7 @@ def retirement_allowance_adjustment(
     salary: Annotated[dict | None, Field(description="당기 총급여액(원) {total: 전체 임원·직원 총급여, dc_members?: 확정기여형 퇴직연금 설정자분, not_eligible?: 퇴직급여 지급대상 아닌 자(예: 규정상 1년 미만 근속자)분} — 당기 설정액이 있으면 필수")] = None,
     succeeded_disallowed: Annotated[int, Field(description="other_increase 중 합병 등으로 승계한 부인누계(유보, 원)", ge=0)] = 0,
     conversion_fund: Annotated[int, Field(description="국민연금 퇴직금전환금 기말잔액(원)", ge=0)] = 0,
-    pension: Annotated[dict | None, Field(description="확정급여형 퇴직연금(원) {asset_closing: 퇴직연금운용자산 기말잔액, prior_deducted: 세무상 퇴직연금충당금 기초잔액(이미 손금산입한 부담금 누계, △유보), book_provision?: 결산에 계상한 퇴직연금충당금(신고조정이면 0), book_paid?: 당기 퇴직연금운용자산에서 지급하고 장부 퇴직연금충당금과 상계한 금액(퇴직급여충당금과 상계한 몫은 allowance.paid_pension), dc_transferred_allowance?: 확정기여형 전환자의 설정 전 기계상 퇴직급여충당금} — 없으면 퇴직연금 조정 생략")] = None,
+    pension: Annotated[dict | None, Field(description="확정급여형 퇴직연금(원) {asset_closing: 퇴직연금운용자산 기말잔액, asset_opening?: 퇴직연금운용자산 기초잔액(있으면 운용자산기초·운용자산납입 도출에 사용), deposited?: 당기 납입액(있으면 운용자산납입에 사용, asset_opening과 함께 있으면 둘 다 사용), prior_deducted: 세무상 퇴직연금충당금 기초잔액(이미 손금산입한 부담금 누계, △유보), book_provision?: 결산에 계상한 퇴직연금충당금(신고조정이면 0), book_paid?: 당기 퇴직연금운용자산에서 지급하고 장부 퇴직연금충당금과 상계한 금액(퇴직급여충당금과 상계한 몫은 allowance.paid_pension), dc_transferred_allowance?: 확정기여형 전환자의 설정 전 기계상 퇴직급여충당금} — 없으면 퇴직연금 조정 생략")] = None,
 ) -> dict:
     """퇴직급여충당금·확정급여형 퇴직연금충당금 세무조정(법인세법 제33조, 시행령 제44조의2·제60조, 시행규칙 제24조).
     언제: 법인세 세무조정에서 퇴직급여충당금 한도초과, 퇴직금 지급 시 상계·부인액 추인, 퇴직연금 부담금 손금산입 한도를 함께 계산할 때.
@@ -6007,7 +6007,7 @@ def retirement_allowance_adjustment(
       estimate — 기말 추계액 {lump_sum, actuarial?}, 큰 금액을 씀.
       salary — 총급여 {total, dc_members?, not_eligible?}: 확정기여형 설정자·지급대상 아닌 자 제외.
       conversion_fund — 퇴직금전환금 기말잔액.
-      pension — 확정급여형 {asset_closing, prior_deducted, book_provision?, book_paid?(운용자산 지급 중 장부 퇴직연금충당금 상계분), dc_transferred_allowance?}.
+      pension — 확정급여형 {asset_closing, asset_opening?(운용자산 기초잔액, 있으면 운용자산기초·운용자산납입 도출), deposited?(당기 납입액, 있으면 운용자산납입에 사용), prior_deducted, book_provision?, book_paid?(운용자산 지급 중 장부 퇴직연금충당금 상계분), dc_transferred_allowance?}.
       운용자산에서 퇴직금을 지급한 해에는 장부 퇴직연금충당금 상계분(book_paid)과 퇴직급여충당금 상계분(paid_pension)을 나눠 넣어야 세무상 연금충당금 잔액이 맞는다.
     결과: 세무조정(구분·조정 손금불산입/손금산입·금액·소득처분 유보/△유보), 소득금액_순영향, 계산(세무상 잔액·한도). 입력이 모자라거나 장부 증감이 맞지 않으면 error."""
 
@@ -6058,6 +6058,9 @@ def retirement_allowance_adjustment(
     actuarial = int(estimate.get("actuarial", 0) or 0) if estimate else 0
     추계액 = max(lump_sum, actuarial)
 
+    # DC 전환자 설정 전 기계상 퇴직급여충당금 (pension 없으면 0)
+    dc_transferred = int(pension.get("dc_transferred_allowance", 0) or 0) if has_pension else 0
+
     # ── 대상 총급여 ──
     총급여_전체 = int(salary.get("total", 0) or 0) if salary else 0
     dc_members = int(salary.get("dc_members", 0) or 0) if salary else 0
@@ -6077,8 +6080,8 @@ def retirement_allowance_adjustment(
     # 어휘 '처리'에 상세 산식이 없으므로 계산 규칙대로:
     # 세무상 설정전 잔액 = 기초 − 기초부인누계 − min(지급총액, max(0, 기초 − 기초부인누계)) + other_increase − succeeded_disallowed
 
-    # 세무상 기초 잔액 = opening − prior_disallowed
-    세무_기초_잔액 = opening - prior_disallowed
+    # 세무상 기초 잔액 = opening − prior_disallowed − dc(확정기여형 전환자 설정 전 충당금)
+    세무_기초_잔액 = opening - prior_disallowed - dc_transferred
 
     # 지급액이 세무상 잔액 초과 여부
     # 운용자산 지급분 중 세무상 퇴직연금충당금과 상계되는 몫은 퇴직급여충당금을 쓰지 않는다(2026-10-30 수정: 종전엔 지급총액 전부를 세무상 잔액에서 뺐음)
@@ -6133,13 +6136,11 @@ def retirement_allowance_adjustment(
     #     초과분은 퇴직급여충당금 직접 지급으로 보아 부인누계(유보)와 상계 → 손금산입(△유보) 추인
     연금충당금_상계액 = 0
     연금초과 = max(0, paid_pension - 연금충당금_상계액)   # pension 없으면 paid_pension 전액
-    dc_transferred = 0   # DC 전환자 설정 전 기계상 퇴직급여충당금 (pension 없을 때 0)
     퇴직연금_결과 = None
     if has_pension:
         asset_closing = int(pension.get("asset_closing", 0) or 0)
         prior_deducted = int(pension.get("prior_deducted", 0) or 0)
         book_provision = int(pension.get("book_provision", 0) or 0)
-        dc_transferred = int(pension.get("dc_transferred_allowance", 0) or 0)
 
         # 운용자산 지급분 처리(2026-10-30 수정): 운용자산에서 지급된 금액은 장부에서 퇴직연금충당금과 상계한 몫(book_paid)과
         # 퇴직급여충당금과 상계한 몫(paid_pension)으로 나뉘지만, 세무상으로는 둘 다 먼저 세무상 퇴직연금충당금(prior_deducted)에서 빠진다.
@@ -6154,8 +6155,9 @@ def retirement_allowance_adjustment(
         이미_손금산입한_부담금 = prior_deducted - 세무_연금_감소총
 
         # 기말 세무상 퇴직급여충당금(퇴직연금 반영 전)
-        # 설정 후 세무상 잔액 = 세무상_설정전잔액 + (provision − 한도초과액) = 세무_설정전잔액_하한 + min(provision, 한도)
-        세무상_퇴직급여충당금_기말 = 세무_설정전잔액_하한 + (provision - 한도초과액)
+        # DC 전환자 설정 전 충당금은 세무상 잔액에 그대로 남으므로 더해줌
+        # 설정 후 세무상 잔액 = (dc 제외 설정전잔액) + min(provision, 한도) + dc
+        세무상_퇴직급여충당금_기말 = 세무_설정전잔액_하한 + (provision - 한도초과액) + dc_transferred
 
         # DC 전환자 설정 전 기계상 퇴직급여충당금이 있으면 그만큼 차감(퇴직연금 한도 계산 시)
         # "추계액기준 연금한도 = 추계액 − 세무상 퇴직급여충당금 기말잔액(− dc_transferred_allowance 반영)"
@@ -6295,7 +6297,7 @@ def retirement_allowance_adjustment(
         "누적한도": 누적한도_raw,
         "추계액기준_한도": 추계액을_기준으로_한도,
         "퇴직급여충당금_한도": 퇴직급여_한도,
-        "세무상_퇴직급여충당금_기말": max(0, 세무_설정전잔액_하한 + min(provision, 퇴직급여_한도)),
+        "세무상_퇴직급여충당금_기말": max(0, 세무_설정전잔액_하한 + min(provision, 퇴직급여_한도) + dc_transferred),
         "퇴직급여충당금_유보_기말": prior_disallowed + succeeded_disallowed + max(0, provision - 퇴직급여_한도) - 부인액_추인 - 연금충당금_상계액,
     }
 
@@ -6306,6 +6308,7 @@ def retirement_allowance_adjustment(
             "운용자산기준_연금한도": 퇴직연금_결과["운용자산기준_연금한도"],
             "퇴직연금_손금산입범위액": 퇴직연금_결과["퇴직연금_손금산입범위액"],
             "세무상_퇴직연금충당금_기말": 퇴직연금_결과["세무상_퇴직연금충당금_기말"],
+            "퇴직연금_조정금액": 퇴직연금_결과["퇴직연금_납입_부족"] - 퇴직연금_결과["퇴직연금_납입_초과"],
         })
 
     근거_목록 = vocab.basis("퇴직급여충당금_한도", year)
@@ -6358,7 +6361,7 @@ def retirement_allowance_adjustment(
     산식_str = (
         f"① 장부 증감: opening({opening:,}) + provision({provision:,}) + other_increase({other_increase:,}) "
         f"− paid_cash({paid_cash:,}) − paid_pension({paid_pension:,}) = closing({closing:,}) [일치]\n"
-        f"② 세무상 기초 잔액 = opening − prior_disallowed = {opening:,} − {prior_disallowed:,} = {세무_기초_잔액:,}\n"
+        f"② 세무상 기초 잔액 = opening − prior_disallowed" + (f" − dc(확정기여형 전환자 설정 전 충당금) = {opening:,} − {prior_disallowed:,} − {dc_transferred:,} = {세무_기초_잔액:,}" if dc_transferred > 0 else f" = {opening:,} − {prior_disallowed:,} = {세무_기초_잔액:,}") + "\n"
         f"③ 세무상 충당금 지급 상계: 지급액 {지급총액:,} − 퇴직연금충당금 상계 {연금충당금_상계액:,} = {paid_cash + 연금초과:,}원, min({paid_cash + 연금초과:,}, 세무상 잔액 {세무상_충당금_기초:,}) = {calc['퇴직급여충당금_상계']:,}원 사용\n"
         f"④ 부인액 추인: min(max(0, {paid_cash + 연금초과:,} − 세무상 잔액 {세무상_충당금_기초:,}), prior_disallowed {prior_disallowed:,}) = {부인액_추인:,}원\n"
         f"⑤ 대상 총급여 = {총급여_전체:,} − DC {dc_members:,} − 지급대상 외 {not_eligible:,} = {대상_총급여:,}원\n"
@@ -6377,7 +6380,56 @@ def retirement_allowance_adjustment(
            f"    퇴직연금 지급 초과분: {연금초과:,}원 → 퇴직급여충당금 직접 지급(손금산입·△유보)\n"
            if has_pension and r else "")
     )
-    return _ok(result_data, 근거_문자열, 계산=calc, 판단=판단_목록, 산식=산식_str)
+
+    # ── 계산식_입력 (이름·값·설명 목록) ──
+    기중지급_세무상 = paid_cash + paid_pension - 연금충당금_상계액
+    계산식_입력_목록 = [
+        {"이름": "장부기초", "값": opening, "설명": "장부상 퇴직급여충당금 기초잔액"},
+        {"이름": "DC설정전", "값": dc_transferred, "설명": "확정기여형 전환자 설정 전 기계상 퇴직급여충당금 (pension 없으면 0)"},
+        {"이름": "기초부인누계", "값": prior_disallowed, "설명": "기초 퇴직급여충당금 부인누계(유보)"},
+        {"이름": "기중지급", "값": 기중지급_세무상, "설명": "기중 지급(세무상 퇴직급여충당금에서 지급한 몫: paid_cash + paid_pension − 연금충당금_상계액)"},
+        {"이름": "퇴직금전환금", "값": conversion_fund, "설명": "국민연금 퇴직금전환금 기말잔액"},
+        {"이름": "회사계상", "값": provision, "설명": "당기 퇴직급여충당금 회사 계상액"},
+        {"이름": "장부기말", "값": closing, "설명": "장부상 퇴직급여충당금 기말잔액"},
+        {"이름": "추계액_일시퇴직", "값": lump_sum, "설명": "기말 일시퇴직기준 추계액"},
+        {"이름": "추계액_보험수리", "값": actuarial, "설명": "기말 보험수리기준 추계액"},
+        {"이름": "추계액_적립비율", "값": 적립비율, "설명": "연도별 추계액 적립비율"},
+        {"이름": "퇴직연금여부", "값": has_pension, "설명": "확정급여형 퇴직연금 유무"},
+    ]
+    if has_pension:
+        연금_수령 = book_paid + paid_pension
+        계산식_입력_목록.extend([
+            {"이름": "연금충당금_기초", "값": prior_deducted, "설명": "세무상 퇴직연금충당금 기초잔액(이미 손금산입한 부담금 누계)"},
+            {"이름": "연금_수령", "값": 연금_수령, "설명": "퇴직연금운용자산에서 지급 + 장부 퇴직연금충당금 상계분(book_paid + paid_pension)"},
+            {"이름": "연금_회사계상", "값": book_provision, "설명": "결산에 계상한 퇴직연금충당금"},
+            {"이름": "운용자산기말", "값": asset_closing, "설명": "퇴직연금운용자산 기말잔액"},
+        ])
+        asset_opening = int(pension.get("asset_opening", 0) or 0) if pension else 0
+        deposited = int(pension.get("deposited", 0) or 0) if pension else 0
+        has_asset_opening = pension.get("asset_opening") is not None if pension else False
+        has_deposited = pension.get("deposited") is not None if pension else False
+        if has_asset_opening:
+            계산식_입력_목록.append({"이름": "운용자산기초", "값": asset_opening, "설명": "퇴직연금운용자산 기초잔액"})
+            계산식_입력_목록.append({"이름": "운용자산납입", "값": asset_closing - asset_opening + 연금_수령, "설명": "운용자산 기말잔액 − 기초잔액 + 연금 수령"})
+        elif has_deposited:
+            계산식_입력_목록.append({"이름": "운용자산납입", "값": deposited, "설명": "당기 퇴직연금예치금 등 납입액"})
+            계산식_입력_목록.append({"이름": "운용자산기초", "값": asset_closing - deposited + 연금_수령, "설명": "운용자산 기말잔액 − 납입액 + 연금 수령"})
+        # 둘 다 없으면 운용자산기초·운용자산납입 미포함
+
+    # ── 서식_표 ──
+    서식_표 = {}
+    if salary:
+        서식_표["32_총급여"] = [{
+            "계정명": "총급여",
+            "총급여_인원": "",
+            "총급여": 총급여_전체 - dc_members,
+            "지급대상외_인원": "",
+            "지급대상외": not_eligible,
+            "지급대상_인원": "",
+        }]
+
+    return _ok(result_data, 근거_문자열, 계산=calc, 판단=판단_목록, 산식=산식_str,
+               계산식_입력=계산식_입력_목록, 서식_표=서식_표)
 
 
 def main():
@@ -9830,6 +9882,7 @@ def export_workbook(
         # 부가22, 부가근거63, 부가근거64, 종소배당, 종소근로)로 정렬 — 같은 틀은 본 시트 먼저, 그다음 call 순
         _tpl_render_order = {"별지3": 1, "별지15": 2, "별지23갑": 3, "별지23을": 4,
                              "별지34": 4.5,
+                             "별지32": 4.6, "별지33": 4.7,
                              "별지20정률": 5, "별지20정액": 5.5, "별지16의2": 6, "별지26갑": 6.1, "별지26을": 6.2, "별지50을": 7,
                              "부가22": 8, "부가근거63": 9, "부가근거64": 10, "종소배당": 11, "종소근로": 12,
                              "별지84": 13, "별지84세액": 14, "별지84부표1": 15,
@@ -10457,11 +10510,10 @@ def export_workbook(
             if tinfo["tool"] == "nonbusiness_interest_disallowance":
                 form_res = nonbusiness_form_data(form_res, (calls[tinfo["call_idx"]] or {}).get("args", {}))
                 call_sources = {**call_sources, **nonbusiness_form_sources(form_res)}
-            if tinfo["tool"] in ("bad_debt_adjustment", "common_input_tax"):
-                # 서식_표를 table source로 사용 (34_대손금, 34_채권잔액, 22_정산)
-                서식_표 = form_res.get("서식_표", {}) if isinstance(form_res, dict) else {}
-                if 서식_표:
-                    call_sources = {**call_sources, **서식_표}
+            # 서식_표를 table source로 사용 (도구에 관계없이 결과의 서식_표가 있으면 합침)
+            서식_표 = form_res.get("서식_표", {}) if isinstance(form_res, dict) else {}
+            if 서식_표:
+                call_sources = {**call_sources, **서식_표}
             # one_sheet 틀: 같은 도구 call 전부를 표 행으로, 도구 값 합계는 확인 칸용 `계산`에(내보내기 전용)
             if tinfo.get("one_sheet") and tkey in _합친_call:
                 _ents = [(j, (calls[j] or {}).get("args") or {}, 결과들[j].get("data") or {}) for j in _합친_call[tkey]]
