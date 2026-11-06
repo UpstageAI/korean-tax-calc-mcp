@@ -181,6 +181,37 @@ def test_negative_base_everything_cut_in_order():
     assert [x["코드"] for x in r["배제_내역"]] == ["106", "105", "14Z", "13W", "112", "117"]
 
 
+GEN = {"sme": False, "net_income": 100_000_000, "income_add": 0, "income_deduct": 0, "credits": [{"code": "13W", "current": 3_000_000}]}
+
+
+def test_rate_below_min_tax_2023_2025_note():
+    # 법인세법 제55조① 2억원 이하: 2022 사업연도까지 10%, 2023~2025 9%(법률 제19193호), 2026 10%(2025.12.23. 개정).
+    # 조특법 제132조① 일반법인 100억원 이하 최저한세율 10%(2016~2026 같음).
+    # 2025 일반법인 과세표준 1억: 산출세액 9,000,000 < 최저한세 10,000,000 → 13W 3,000,000 전부 배제해도 9,000,000.
+    r = c(T, dict(GEN, year=2025))
+    k = r["결과"]
+    assert k["최저한세"] == 10_000_000 and k["감면전_산출세액"] == 9_000_000
+    assert k["조정감"]["세액공제"] == 3_000_000 and k["조정"]["차감세액"] == 9_000_000 and k["차감세액"] == 9_000_000
+    note = [j for j in r["판단"] if j["항목"] == "최저한세가 산출세액보다 큼"]
+    assert len(note) == 1
+    assert all(w in note[0]["결론"] for w in ("9,000,000", "10,000,000", "9%", "10%", "2억원 이하", "모두 배제"))
+    assert "법인세법 제55조" in note[0]["근거"] and "제132조" in note[0]["근거"]
+
+
+@pytest.mark.parametrize("year", [2022, 2026])
+def test_rate_equal_no_note(year):
+    # 2022·2026은 2억원 이하 10% = 최저한세율 10% → 산출세액 10,000,000, 13W 배제 후 10,000,000(최저한세와 같음)
+    r = c(T, dict(GEN, year=year))
+    k = r["결과"]
+    assert k["감면전_산출세액"] == 10_000_000 and k["조정"]["차감세액"] == 10_000_000
+    assert not [j for j in r["판단"] if j["항목"] == "최저한세가 산출세액보다 큼"]
+
+
+def test_sme_no_note():
+    r = c(T, dict(GEN, year=2025, sme=True))
+    assert not [j for j in r["판단"] if j["항목"] == "최저한세가 산출세액보다 큼"]
+
+
 def test_not_below_minimum_tax():
     r = _r(dict(CASE_B, reductions=[], credits=[{"code": "13W", "current": 5_000_000}]))
     assert r["최저한세_미달"] is False and r.get("조정") is None
