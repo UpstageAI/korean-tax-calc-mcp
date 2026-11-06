@@ -8,6 +8,7 @@ import re as _re
 from typing import Any
 
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.worksheet.pagebreak import Break
 
 # ── 공통 서식 ──
 MONEY_FMT = "#,##0"
@@ -699,8 +700,11 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
     ws.page_setup.orientation = "portrait"
     ws.page_setup.fitToPage = True
     ws.page_setup.fitToWidth = 1
-    ws.page_setup.fitToHeight = 1
+    ws.page_setup.fitToHeight = tpl.get("fit_height", 1)
     ws.page_setup.paperSize = 9  # A4
+    # 행 페이지 나누기
+    for rb in tpl.get("row_breaks", []):
+        ws.row_breaks.append(Break(id=rb))
     return info
 
 
