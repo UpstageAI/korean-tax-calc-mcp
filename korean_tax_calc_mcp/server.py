@@ -18,6 +18,7 @@ from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
 from .engine import calc as K, calc_cit as C, calc_income as I, calc_vat as V, calc_capgains as CG
+from .engine.calc_cit import min_tax_adjust
 from .engine import calc_inhgift as IG
 from .engine import calc_gold_gaps6 as GG
 from .engine import calc_tax_priority as TP
@@ -630,9 +631,135 @@ def minimum_tax(base_before_incentives: WON, year: YEAR,
                 grace_year: Annotated[int, Field(description="중소기업 졸업 후 경과 연차(0=해당 없음, 0~5)")] = 0) -> dict:
     """최저한세(감면 전 과세표준 × 최저한세율). 언제: 세액감면·공제를 받은 뒤에도 납부해야 할 최저한세를 확인할 때(중소기업 졸업 유예 연차 포함).
 입력: 감면 전 과세표준(원) → base_before_incentives, 사업연도(2016~2026) → year, 중소기업 여부 → sme, 졸업 후 경과 연차(0~5) → grace_year.
-결과: 최저한세액, 근거(조세특례제한법 제132조제1항). Minimum corporate tax = base before incentives × minimum tax rate."""
+결과: 최저한세액, 근거(조세특례제한법 제132조제1항). Minimum corporate tax = base before incentives × minimum tax rate.
+배제 순서·서식은 minimum_tax_adjustment."""
     _chk.int_range("grace_year", grace_year, 0, 5, "중소기업 졸업 후 경과 연차(0=해당 없음) ")
     return _ok({"최저한세": C.min_tax(base_before_incentives, sme=sme, grace_year=grace_year, year=year)}, "조세특례제한법 제132조①")
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def minimum_tax_adjustment(
+    year: YEAR,
+    sme: Annotated[bool, Field(description="중소기업 여부")] = True,
+    grace_year: Annotated[int, Field(description="중소기업 졸업 후 경과 연차 0~5 (127). sme=True면 0이어야 함")] = 0,
+    months: Annotated[int, Field(description="사업연도 월수 1~12")] = 12,
+    *,
+    net_income: Annotated[int, Field(description="101 결산서상 당기순이익(음수 가능)")],
+    income_add: Annotated[int, Field(description="102 익금산입(≥0)")],
+    income_deduct: Annotated[int, Field(description="103 손금산입(익금불산입 포함, ≥0)")],
+    reserve: Annotated[int, Field(description="105 최저한세 적용대상 준비금(103에 포함된 금액)")] = 0,
+    special_depreciation: Annotated[int, Field(description="106 특별상각 및 특례자산 감가상각비(103에 포함)")] = 0,
+    donation_excess: Annotated[int, Field(description="108 기부금 한도초과액")] = 0,
+    donation_carryover: Annotated[int, Field(description="109 기부금 한도초과 이월액 손금산입")] = 0,
+    loss_carryforward: Annotated[int, Field(description="111 이월결손금")] = 0,
+    nontaxable: Annotated[int, Field(description="112 비과세소득")] = 0,
+    nontaxable_mt: Annotated[int, Field(description="113 그중 최저한세 적용대상")] = 0,
+    exclusion_mt: Annotated[int, Field(description="114 최저한세 적용대상 익금불산입·손금산입(103에 포함)")] = 0,
+    income_deduction: Annotated[int, Field(description="116 소득공제")] = 0,
+    income_deduction_mt: Annotated[int, Field(description="117 그중 최저한세 적용대상")] = 0,
+    reductions: Annotated[list, Field(description="세액감면 [{code, amount}]")] = None,
+    credits: Annotated[list, Field(description="세액공제 [{code, current(당기발생, 기본 0), carryforward([{year, amount}], 기본 [])}]")] = None,
+    exclusion_order: Annotated[list, Field(description="신고 때 납세의무자가 고른 배제 순서(코드 또는 \"105\"·\"106\"·\"114\"·\"113\"·\"117\"). 빈 목록이면 시행령 제126조제5항 순서")] = None,
+) -> dict:
+    """법인세 최저한세 조정(조세특례제한법 제132조제1항, 시행령 제126조제5항, 미공제 이월 제144조). 언제: 세액감면·공제 후 세액이 최저한세 미달일 때 배제 내역을 구한다.
+입력:
+  year — 사업연도(2016~2026, 필수).
+  sme — 중소기업 여부(기본 True).
+  grace_year — 중소기업 졸업 후 경과 연차 0~5(127). sme=True면 0이어야 함(기본 0).
+  months — 사업연도 월수 1~12(기본 12).
+  net_income — 101 결산서상 당기순이익(음수 가능, 필수).
+  income_add — 102 익금산입(≥0, 필수).
+  income_deduct — 103 손금산입(익금불산입 포함, ≥0, 필수).
+  reserve — 105 최저한세 적용대상 준비금(103에 포함된 금액, 기본 0).
+  special_depreciation — 106 특별상각 및 특례자산 감가상각비(103에 포함, 기본 0).
+  donation_excess — 108 기부금 한도초과액(기본 0).
+  donation_carryover — 109 기부금 한도초과 이월액 손금산입(기본 0).
+  loss_carryforward — 111 이월결손금(기본 0).
+  nontaxable — 112 비과세소득(기본 0).
+  nontaxable_mt — 113 그중 최저한세 적용대상(기본 0).
+  exclusion_mt — 114 최저한세 적용대상 익금불산입·손금불산입(103에 포함, 기본 0).
+  income_deduction — 116 소득공제(기본 0).
+  income_deduction_mt — 117 그중 최저한세 적용대상(기본 0).
+  reductions — 세액감면 [{code, amount}] 목록(기본 []).
+  credits — 세액공제 [{code, current(당기발생, 기본 0), carryforward([{year, amount}], 기본 [])}] 목록(기본 []).
+  exclusion_order — 신고 때 납세의무자가 고른 배제 순서(코드 또는 "105"·"106"·"114"·"113"·"117"). 빈 목록이면 시행령 제126조제5항 순서(기본 []).
+결과: 별지 제4호서식 감면후·최저한세·조정감·조정후 란과 별지 제8호서식(갑) 공제감면세액, 배제_내역·이월_미공제·최저한세_적용제외·별지8 등.
+  배제 순서 근거: exclusion_order가 있으면 납세의무자 선택 순서, 없으면 시행령 제126조제5항(경정 때 순서 — 신고 때는 납세의무자가 고를 수 있음).
+  소득 항목(105·106·114·113·117) 배제 시 세무조정: 손금불산입(유보)·익금산입 등.
+근거: 조세특례제한법 제132조제1항·제144조, 시행령 제126조제5항, 법인세법 시행규칙 별지 제4호·제8호서식(갑).
+한계: 선박표준이익(119), 법인세법 제59조 감면·공제 순서와 적용제외 항목 한도, 기부금 한도 재계산, 공제감면세액계산서(부표)·추가납부세액(을)은 다루지 않음."""
+    reductions = reductions or []
+    credits = credits or []
+    exclusion_order = exclusion_order or []
+    r = min_tax_adjust(
+        year=year, sme=sme, grace_year=grace_year, months=months,
+        net_income=net_income, income_add=income_add, income_deduct=income_deduct,
+        reserve=reserve, special_depreciation=special_depreciation,
+        donation_excess=donation_excess, donation_carryover=donation_carryover,
+        loss_carryforward=loss_carryforward, nontaxable=nontaxable, nontaxable_mt=nontaxable_mt,
+        exclusion_mt=exclusion_mt, income_deduction=income_deduction, income_deduction_mt=income_deduction_mt,
+        reductions=reductions, credits=credits, exclusion_order=exclusion_order,
+    )
+    if "error" in r:
+        return r
+    calc_inputs = [
+        {"이름": "당기순이익", "값": net_income, "설명": "101 결산서상 당기순이익"},
+        {"이름": "익금산입", "값": income_add, "설명": "102 익금산입"},
+        {"이름": "손금산입", "값": income_deduct, "설명": "103 손금산입(익금불산입 포함)"},
+        {"이름": "준비금", "값": reserve, "설명": "105 최저한세 적용대상 준비금"},
+        {"이름": "특별상각", "값": special_depreciation, "설명": "106 특별상각 및 특례자산 감가상각비"},
+        {"이름": "기부금한도초과", "값": donation_excess, "설명": "108 기부금 한도초과액"},
+        {"이름": "기부금이월손금산입", "값": donation_carryover, "설명": "109 기부금 한도초과 이월액 손금산입"},
+        {"이름": "이월결손금", "값": loss_carryforward, "설명": "111 이월결손금"},
+        {"이름": "비과세소득", "값": nontaxable, "설명": "112 비과세소득"},
+        {"이름": "최저한세대상_비과세", "값": nontaxable_mt, "설명": "113 그중 최저한세 적용대상"},
+        {"이름": "최저한세대상_익금불산입손금산입", "값": exclusion_mt, "설명": "114 최저한세 적용대상 익금불산입·손금산입"},
+        {"이름": "소득공제", "값": income_deduction, "설명": "116 소득공제"},
+        {"이름": "최저한세대상_소득공제", "값": income_deduction_mt, "설명": "117 그중 최저한세 적용대상"},
+        {"이름": "유예연차", "값": grace_year, "설명": "127 중소기업 유예기간 종료 후 연차"},
+    ]
+    산식 = ""
+    if r["최저한세_미달"]:
+        산식 = f"감면후세액 {r['감면후세액']:,}원 < 최저한세 {r['최저한세']:,}원 → 미달 {r['최저한세'] - r['감면후세액']:,}원, 조정 후 차감세액 {r['차감세액']:,}원"
+    else:
+        산식 = f"감면후세액 {r['감면후세액']:,}원 ≥ 최저한세 {r['최저한세']:,}원 → 최저한세 적용 없음"
+    판단목록 = []
+    if r["최저한세_미달"]:
+        판단목록.append({"항목": "최저한세",
+                          "결론": f"미달 {r['최저한세'] - r['감면후세액']:,}원",
+                          "근거": "조세특례제한법 제132조①"})
+    else:
+        판단목록.append({"항목": "최저한세",
+                          "결론": "미달 없음",
+                          "근거": "조세특례제한법 제132조①"})
+    if r["배제_내역"] or exclusion_order:
+        if exclusion_order:
+            판단목록.append({"항목": "배제 순서",
+                              "결론": "납세의무자 선택 순서",
+                              "근거": "시행령 제126조제5항(경정 때 순서) — 신고 때는 납세의무자 선택"})
+        else:
+            판단목록.append({"항목": "배제 순서",
+                              "결론": "법정 순서(손금산입·익금불산입 → 세액공제 → 감면 → 소득공제·비과세)",
+                              "근거": "시행령 제126조제5항"})
+    if r["조정"] and any(v for k, v in r["조정감"].items() if k in ("준비금", "특별상각", "익금불산입손금산입", "비과세", "소득공제")):
+        for bn in r["배제_내역"]:
+            if bn["코드"] in ("105", "106", "114", "113", "117"):
+                판단목록.append({"항목": "세무조정",
+                                  "결론": f"{bn['코드']} {bn['구분']} {bn['배제액']:,}원 {bn['처리']}",
+                                  "근거": "조세특례제한법 제132조①2호"})
+    if r["조정"] and any(v for k, v in r["조정감"].items() if k == "세액공제"):
+        총이월 = sum(x["금액"] for x in r["이월_미공제"])
+        if 총이월 > 0:
+            판단목록.append({"항목": "이월공제",
+                              "결론": f"{총이월:,}원 다음 사업연도부터 10년 이월",
+                              "근거": "조세특례제한법 제144조①"})
+    if r["최저한세_적용제외"]["감면세액"] + r["최저한세_적용제외"]["세액공제"] > r["차감세액"]:
+        판단목록.append({"항목": "적용제외 공제감면",
+                          "결론": "산출세액을 넘음 — 법인세법 제59조 순서·이월공제 확인 필요",
+                          "근거": "법인세법 제59조"})
+    return _ok(r, "조세특례제한법 제132조①·제144조, 시행령 제126조⑤, 법인세법 시행규칙 별지 제4호·제8호서식(갑)",
+               계산={"산식": 산식}, 판단=판단목록, 계산식_입력=calc_inputs)
 
 
 @mcp.tool(annotations=CALC)
@@ -9895,7 +10022,8 @@ def export_workbook(
                              "부가21간주공급": 7.6, "부가21대손": 7.65, "부가21카드": 7.7, "부가21가산세": 7.8, "부가22매입": 8,
                              "부가15": 8.5, "부가15한도없음": 8.5, "부가19": 8.6, "부가25": 8.7,
                              "증여10": 16, "원천23의1": 17, "원천23의1법인": 17, "원천23의1국내": 17.1,
-                             "원천23의5": 18, "원천23의5법인": 18}
+                             "원천23의5": 18, "원천23의5법인": 18,
+                             "별지4": 1.5, "별지8갑": 1.6}
 
         def _tpl_sort_key(t):
             return (_tpl_render_order.get(t["key"], 99), not t.get("main", True), t["call_idx"])
@@ -11302,7 +11430,7 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "퇴직금": ["retirement_income_tax", "retirement_allowance_adjustment"], "퇴직소득": ["retirement_income_tax"],
     "감가상각": ["depreciation_adjustment"], "대손": ["bad_debt_adjustment", "bad_debt_allowance", "vat_bad_debt_credit"],
     "재고자산": ["inventory_valuation_adjustment"], "업무용승용차": ["business_car_expense"], "법인차": ["business_car_expense"],
-    "기부금": ["donation_limit"], "최저한세": ["minimum_tax"], "외국납부세액": ["foreign_tax_credit"],
+    "기부금": ["donation_limit"], "최저한세": ["minimum_tax", "minimum_tax_adjustment"], "외국납부세액": ["foreign_tax_credit"],
     "재해손실": ["disaster_loss_credit"], "부당행위": ["unfair_transaction", "deemed_interest"], "특수관계": ["related_judge", "kinship_check"],
     "친족": ["kinship_check"], "일감몰아주기": ["tunnelling_gift_nts", "tunnelling_gift", "dominant_shareholder"],
     "가산세": ["underreporting_penalty", "late_payment_penalty", "invoice_penalty"], "납부지연": ["late_payment_penalty"],

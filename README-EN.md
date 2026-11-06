@@ -6,7 +6,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/korean-tax-calc-mcp)](https://pypi.org/project/korean-tax-calc-mcp/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-korean--tax--calc--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=korean-tax-calc-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Built with Upstage Solar Pro 4](https://img.shields.io/badge/Built%20with-Upstage%20Solar%20Pro%204-7A3FF2)](https://www.upstage.ai/) · [한국어](README.md)
 
-> **Authorship notice:** Versions 0.3.0–0.12.2 (2026-10-10 to 10-26) were written by **Solar Pro 4** (Solar Work CLI), reviewed by CodeSolar and cross-checked with tests by Claude (parts of 0.8.0 and all of 0.9.2 were fixed/written by Claude). **From 0.13.0 (2026-10-28) on, the existing calculator skeleton remains Solar Pro 4's, while new tools, year-by-year statute checks and bug fixes are written by Claude (Anthropic)** and reviewed by CodeSolar. Each [CHANGELOG](CHANGELOG.md) section states who wrote it. 95 tools.
+> **Authorship notice:** Versions 0.3.0–0.12.2 (2026-10-10 to 10-26) were written by **Solar Pro 4** (Solar Work CLI), reviewed by CodeSolar and cross-checked with tests by Claude (parts of 0.8.0 and all of 0.9.2 were fixed/written by Claude). **From 0.13.0 (2026-10-28) on, the existing calculator skeleton remains Solar Pro 4's, while new tools, year-by-year statute checks and bug fixes are written by Claude (Anthropic)** and reviewed by CodeSolar. Each [CHANGELOG](CHANGELOG.md) section states who wrote it. 96 tools.
 
 **Korean tax calculations for AI agents — code, not guesses.** [한국어](README.md)
 
@@ -26,7 +26,7 @@ flowchart LR
 3. **Calculation** — follows the statute order, e.g. tax base → that year's brackets → tax.
 4. **Result** — tax, intermediate amounts, item-level judgments, adjustments with income dispositions, and citations.
 
-92 of the 95 tools run in code without generative AI (the 2 price lookups only fetch public data from KRX and VWORLD). Only the 3 PDF tools use Upstage, and only when `UPSTAGE_API_KEY` is set.
+93 of the 96 tools run in code without generative AI (the 2 price lookups only fetch public data from KRX and VWORLD). Only the 3 PDF tools use Upstage, and only when `UPSTAGE_API_KEY` is set.
 
 ### How corporate tax adjustments chain
 
@@ -87,7 +87,7 @@ When answering Korean tax questions, use korean-tax-mcp and korean-tax-calc-mcp 
 5. If two values come out (before/after apportionment, total vs. taxable part, etc.), answer only the one the question asks for.
 ```
 
-## Tools (95)
+## Tools (96)
 
 Click a group to expand its tools.
 
@@ -103,6 +103,7 @@ Click a group to expand its tools.
 | `unfair_transaction` | unfair transaction test |
 | `loss_carryforward_limit` | loss carryforward limit |
 | `minimum_tax` | minimum tax |
+| `minimum_tax_adjustment` | minimum tax adjustment (exclusion order, Forms 4 and 8(a)) |
 | `nonbusiness_interest_disallowance` | non-business interest (advance exclusions, day-balances, ordering) |
 | `business_car_expense` | company cars |
 | `donation_limit` | donation limit |
@@ -257,7 +258,7 @@ Click a group to expand its tools.
 
 </details>
 
-- **Excel export**: `export_workbook` re-runs several tool calls and produces a review workbook shaped like the statutory forms (Article 3, Article 15, Article 23 (a)/(b), Article 32, Article 33, Article 34, Article 20(1), Article 16-2, Article 26 (a)/(b), Article 50(b); VAT input-tax-not-deductible statement; global-income-tax supplementary statements; capital-gains-tax Article 84 return tax computation and Appendix 1 capital-gains computation statement; etc.).
+- **Excel export**: `export_workbook` re-runs several tool calls and produces a review workbook shaped like the statutory forms (Article 3, Article 4, Article 8 (a), Article 15, Article 23 (a)/(b), Article 32, Article 33, Article 34, Article 20(1), Article 16-2, Article 26 (a)/(b), Article 50(b); VAT input-tax-not-deductible statement; global-income-tax supplementary statements; capital-gains-tax Article 84 return tax computation and Appendix 1 capital-gains computation statement; etc.).
 - **Ledger input**: adjustment tools take ledger lines as written (name, amount, receipt, nature) and return item judgments, adjustments and income dispositions.
 - **Issue flags**: non-resident withholding and thin capitalization results list points that may be disputed and what to check (no conclusion).
 - **Years**: corporate tax FY2016–2026, income tax 2016–2026, VAT 2016-1 to 2026-2; penalties and limitation periods follow current law. Other years stop with an error. Local income tax is separate.
@@ -291,6 +292,7 @@ When a case is out of scope, the tool stops with "input needed" or an error, or 
 | `tax_priority_distribution` | Provisional-attachment pro-rating, tax-to-tax absorption, circular priority among security interests, public charges, tax security, etc. (returned as input needed) |
 | `individual_donation_expense` | The donation tax credit amount itself |
 | `stock_major_shareholder` | Market-cap lookup (enter it yourself) |
+| `minimum_tax_adjustment` | Ship standard profit (119); Article 59 ordering and limits for excluded items; donation limit recalculation; deduction/credit summary statement (appendix) and additional tax payable (b) |
 
 Each tool's description has the full scope.
 </details>

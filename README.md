@@ -6,7 +6,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/korean-tax-calc-mcp)](https://pypi.org/project/korean-tax-calc-mcp/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-korean--tax--calc--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=korean-tax-calc-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Built with Upstage Solar Pro 4](https://img.shields.io/badge/Built%20with-Upstage%20Solar%20Pro%204-7A3FF2)](https://www.upstage.ai/) · [English](README-EN.md)
 
-> **작성 주체(정확한 고지):** 0.3.0~0.12.2(2026-10-10~10-26)는 **Solar Pro 4**(Solar Work CLI)가 코드를 쓰고 CodeSolar가 리뷰, Claude가 테스트로 교차 검증했습니다(0.8.0 일부 문법 오류와 0.9.2는 Claude가 수정·작성). **0.13.0(2026-10-28)부터는 기존 계산기 뼈대는 Solar Pro 4 그대로이고, 새 도구·연도별 조문 대조·버그 수정은 Claude(Anthropic)가 작성**하며 CodeSolar가 리뷰합니다. 버전별 작성 주체는 [CHANGELOG](CHANGELOG.md) 각 절 머리에 적혀 있습니다. 도구 95개.
+> **작성 주체(정확한 고지):** 0.3.0~0.12.2(2026-10-10~10-26)는 **Solar Pro 4**(Solar Work CLI)가 코드를 쓰고 CodeSolar가 리뷰, Claude가 테스트로 교차 검증했습니다(0.8.0 일부 문법 오류와 0.9.2는 Claude가 수정·작성). **0.13.0(2026-10-28)부터는 기존 계산기 뼈대는 Solar Pro 4 그대로이고, 새 도구·연도별 조문 대조·버그 수정은 Claude(Anthropic)가 작성**하며 CodeSolar가 리뷰합니다. 버전별 작성 주체는 [CHANGELOG](CHANGELOG.md) 각 절 머리에 적혀 있습니다. 도구 96개.
 
 **Korean tax calculations for AI agents — code, not guesses.** [English](README-EN.md)
 
@@ -30,7 +30,7 @@ flowchart LR
 3. **계산** — 조문 순서대로 계산합니다. 예: 과세표준 → 그해 세율 구간 → 산출세액.
 4. **결과** — 세액·중간 계산·항목별 판단·세무조정(소득처분)·근거 조문을 함께 돌려줍니다.
 
-도구 95개 중 92개는 생성형 AI 없이 코드로 동작합니다(시세·공시가격 조회 2개는 KRX·브이월드 공개 데이터만 가져옵니다). PDF 도구 3개만 `UPSTAGE_API_KEY`가 있을 때 Upstage를 씁니다.
+도구 96개 중 93개는 생성형 AI 없이 코드로 동작합니다(시세·공시가격 조회 2개는 KRX·브이월드 공개 데이터만 가져옵니다). PDF 도구 3개만 `UPSTAGE_API_KEY`가 있을 때 Upstage를 씁니다.
 
 ### 법인세 세무조정이 이어지는 모양
 
@@ -91,7 +91,7 @@ AI가 도구를 언제 부르고, 도구의 답을 언제 믿을지 정해 주�
 5. 답이 두 개 나오면(안분 전후, 전체와 과세분 등) 질문이 묻는 하나만 답한다.
 ```
 
-## 도구 (95개)
+## 도구 (96개)
 
 묶음 이름을 누르면 도구 목록이 펼쳐집니다.
 
@@ -107,6 +107,7 @@ AI가 도구를 언제 부르고, 도구의 답을 언제 믿을지 정해 주�
 | `unfair_transaction` | 부당행위 기준 |
 | `loss_carryforward_limit` | 이월결손금 한도 |
 | `minimum_tax` | 최저한세 |
+| `minimum_tax_adjustment` | 최저한세 조정(감면·공제 배제 순서·별지 제4호·제8호서식(갑)) |
 | `nonbusiness_interest_disallowance` | 업무무관 지급이자(가지급금 제외 판정·적수·순위) |
 | `business_car_expense` | 업무용승용차 |
 | `donation_limit` | 기부금 한도 |
@@ -261,7 +262,7 @@ AI가 도구를 언제 부르고, 도구의 답을 언제 믿을지 정해 주�
 
 </details>
 
-- **계산 근거 엑셀**: `export_workbook`은 여러 도구 호출을 다시 실행해 법정서식 모양(별지 제3호·제15호·제23호(갑)(을)·제32호·제33호·제34호·제20호(1)·제16호의2·제26호(갑)(을)·제50호(을), 부가세 공제받지 못할 매입세액 명세서, 종합소득세 부속 명세서, 양도소득세 별지 제84호 신고서 세액 계산·부표1 양도소득금액 계산명세서 등)의 검토용 엑셀로 만듭니다. 금액 칸은 서식 산식 그대로의 수식이고 서식끼리 연결되며, 도구 값과 대조하는 확인 칸이 붙습니다. 계산 과정을 보여 주는 참고 자료이며 세무조정계산서 작성·신고 대리가 아닙니다.
+- **계산 근거 엑셀**: `export_workbook`은 여러 도구 호출을 다시 실행해 법정서식 모양(별지 제3호·제4호·제8호(갑)·제15호·제23호(갑)(을)·제32호·제33호·제34호·제20호(1)·제16호의2·제26호(갑)(을)·제50호(을), 부가세 공제받지 못할 매입세액 명세서, 종합소득세 부속 명세서, 양도소득세 별지 제84호 신고서 세액 계산·부표1 양도소득금액 계산명세서 등)의 검토용 엑셀로 만듭니다. 금액 칸은 서식 산식 그대로의 수식이고 서식끼리 연결되며, 도구 값과 대조하는 확인 칸이 붙습니다. 계산 과정을 보여 주는 참고 자료이며 세무조정계산서 작성·신고 대리가 아닙니다.
 - **원장 그대로 입력**: 세무조정 도구는 장부 항목(이름·금액·증빙·성격)을 그대로 받아 항목 판단 → 세무조정 → 소득처분까지 돌려줍니다.
 - **쟁점 표시**: 비거주자 원천징수·과소자본 결과에는 다툼이 될 수 있는 지점과 확인할 자료를 함께 붙입니다(결론은 내리지 않음).
 - **지원 연도**: 법인세 2016~2026 사업연도, 소득세 2016~2026 귀속연도, 부가가치세 2016년 1기~2026년 2기, 가산세·제척기간은 현행 조문. 그 밖의 연도는 오류로 멈춥니다. 지방소득세는 별도입니다.
@@ -295,6 +296,7 @@ AI가 도구를 언제 부르고, 도구의 답을 언제 믿을지 정해 주�
 | `tax_priority_distribution` | 가압류채권 안분·흡수배당, 조세 상호간 흡수배당, 담보권 순환관계, 공과금, 납세담보 등(입력 확인 필요로 반환) |
 | `individual_donation_expense` | 기부금 세액공제 금액 자체 |
 | `stock_major_shareholder` | 시가총액 조회(사용자가 계산해 넣음) |
+| `minimum_tax_adjustment` | 선박표준이익(119), 법인세법 제59조 감면·공제 순서와 적용제외 항목 한도, 기부금 한도 재계산, 공제감면세액계산서(부표)·추가납부세액(을) |
 
 각 도구의 설명에 자세한 범위가 있습니다.
 </details>

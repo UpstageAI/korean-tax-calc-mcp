@@ -684,6 +684,570 @@ def apply_min_tax(calc_tax, reductions_subject, reductions_exempt, min_tax_amt):
             "결정세액": max(0, calc_tax - allowed - reductions_exempt)}
 
 
+def _load_code_table():
+    """cit_credit_codes.json 로드 → {코드: 항목} 맵. 모듈 수준 캐시."""
+    import json as _json
+    import os as _os
+    if hasattr(_load_code_table, "_cache"):
+        return _load_code_table._cache
+    p = _os.path.join(_os.path.dirname(__file__), "..", "data", "cit_credit_codes.json")
+    with open(p, encoding="utf-8") as f:
+        data = _json.load(f)
+    tbl = {e["코드"]: e for e in data["코드"]}
+    _load_code_table._cache = tbl
+    return tbl
+
+
+def _min_tax_rate(sme, grace_year, year):
+    """최저한세율(소수). sme면 중소, grace_year 1~3이면 유예1_3, 4~5면 유예4_5, 아니면 일반 구간표에서 과세표준 기준 상단 세율."""
+    t = YEAR[year]["최저한세"]
+    if sme:
+        return t["중소"]
+    if grace_year:
+        return t["유예1_3"] if grace_year <= 3 else t["유예4_5"]
+    return None  # 일반은 과세표준별 구간 → _tier로 계산
+
+
+def _min_tax_amount(base, sme, grace_year, year, months):
+    """최저한세 금액(원). months < 12면 연 환산(corp_tax와 같은 식)."""
+    if months >= 12:
+        if sme or grace_year:
+            rate = _min_tax_rate(sme, grace_year, year)
+            return won(base * rate)
+        return won(_tier(base, YEAR[year]["최저한세"]["일반"]))
+    # 연 환산: 과세표준 × 12/월수 → 세율 → × 월수/12
+    if sme or grace_year:
+        rate = _min_tax_rate(sme, grace_year, year)
+        return won(_tier(base * 12 / months, [(math.inf, rate)]) * months / 12)
+    return won(_tier(base * 12 / months, YEAR[year]["최저한세"]["일반"]) * months / 12)
+
+
+def _top_rate_for_base(base, year, months):
+    """과세표준(연 환산 시)에 걸린 가장 높은 구간 세율(float) — 법인세율 표."""
+    if months < 12:
+        base = base * 12 / months
+    tiers = YEAR[year]["세율"]
+    prev = 0
+    top = 0.0
+    for cap, r in tiers:
+        if base > prev:
+            top = r
+        prev = cap
+    return top
+
+
+def _min_tax_top_rate(base, year, months):
+    """최저한세 세율 표시: 과세표준(연 환산 시)에 걸린 가장 높은 최저한세 구간 세율(float)."""
+    if months < 12:
+        base = base * 12 / months
+    tiers = YEAR[year]["최저한세"]["일반"]
+    prev = 0
+    top = 0.0
+    for cap, r in tiers:
+        if base > prev:
+            top = r
+        prev = cap
+    return top
+
+
+def _exclude_order_codegen(codes, code_tbl):
+    """코드 목록(소득/세액 항목)을 법정 배제 순서로 정렬: 조문순서 오름차순 → 번호 오름차순. 같은 공제 코드는 당기분 먼저, 이월분은 발생연도 내림차순(나중 발생분부터 배제)."""
+    enriched = []
+    for c in codes:
+        ct = code_tbl.get(c["코드"])
+        if ct is None:
+            continue
+        order = tuple(ct["조문순서"])
+        enriched.append((order, ct["번호"], c))
+    enriched.sort(key=lambda x: (x[0], x[1]))
+    return [e[2] for e in enriched]
+
+
+def min_tax_adjust(
+    year, sme=True, grace_year=0, months=12, *,
+    net_income, income_add, income_deduct,
+    reserve=0, special_depreciation=0,
+    donation_excess=0, donation_carryover=0,
+    loss_carryforward=0, nontaxable=0, nontaxable_mt=0,
+    exclusion_mt=0, income_deduction=0, income_deduction_mt=0,
+    reductions=None, credits=None, exclusion_order=None,
+):
+    """최저한세 조정(조세특례제한법 제132조제1항, 시행령 제126조제5항, 미공제 이월 제144조).
+    반환: {결과, 계산, 근거} — 도구에서 _ok로 감싼다."""
+    import json as _json
+    문제 = []
+    # ── 입력 확인 ──
+    if reserve + special_depreciation + exclusion_mt > income_deduct:
+        문제.append("income_deduct")
+    if nontaxable_mt > nontaxable:
+        문제.append("nontaxable")
+    if income_deduction_mt > income_deduction:
+        문제.append("income_deduction")
+    if sme and grace_year != 0:
+        문제.append("sme=True면 grace_year는 0이어야 함")
+    if not (1 <= months <= 12):
+        문제.append("months")
+    코드표 = _load_code_table()
+    참고코드 = {"183", "189", "1E5"}
+    reductions = reductions or []
+    credits = credits or []
+    codes_used = set()
+    red_codes = []
+    cred_codes = []
+    for rd in reductions:
+        코드 = rd.get("code", "")
+        if 코드 not in 코드표:
+            문제.append("코드")
+            continue
+        ct = 코드표[코드]
+        if ct["묶음"] not in ("제외감면", "대상감면"):
+            if ct["묶음"] == "참고":
+                문제.append("101")
+            else:
+                문제.append(f"{코드}는 세액공제 코드 — reductions가 아니라 credits에 넣을 것(감면 아님)")
+            continue
+        if 코드 in codes_used:
+            문제.append("코드")
+            continue
+        codes_used.add(코드)
+        red_codes.append(코드)
+    for cr in credits:
+        코드 = cr.get("code", "")
+        if 코드 not in 코드표:
+            문제.append("코드")
+            continue
+        ct = 코드표[코드]
+        if ct["묶음"] not in ("제외공제", "대상공제"):
+            if ct["묶음"] == "참고":
+                문제.append("101")
+            else:
+                문제.append(f"{코드}는 세액감면 코드 — credits가 아니라 reductions에 넣을 것(공제 아님)")
+            continue
+        if 코드 in codes_used:
+            문제.append("코드")
+            continue
+        codes_used.add(코드)
+        cred_codes.append(코드)
+        # carryforward 검증
+        for cf in (cr.get("carryforward") or []):
+            cy = cf.get("year")
+            ca = cf.get("amount")
+            if cy is not None and (ca is None or ca < 0):
+                문제.append("10년")
+                continue
+            if cy is not None and (ca is None or ca >= 0):
+                if cy < year - 10 or cy >= year:
+                    문제.append("10년")
+        # current 음수 검증은 아래에서
+    # sme 여부 검증: 적용제외 코드
+    if sme:
+        for 코드 in list(codes_used):
+            ct = 코드표.get(코드)
+            if ct and ct["코드"] in ("13L", "10E", "13M"):
+                문제.append("중소기업")
+    if not sme:
+        for 코드 in list(codes_used):
+            ct = 코드표.get(코드)
+            if ct and ct["코드"] in ("16A", "10D", "16B"):
+                문제.append("중소기업")
+    # exclusion_order 검증
+    if exclusion_order:
+        ex_set = set()
+        for eo in exclusion_order:
+            if eo in ("105", "106", "114", "113", "117"):
+                항목금액 = {"105": reserve, "106": special_depreciation,
+                            "114": exclusion_mt, "113": nontaxable_mt, "117": income_deduction_mt}.get(eo, 0)
+                if 항목금액 <= 0:
+                    문제.append("exclusion_order")
+                continue
+            if eo not in 코드표:
+                문제.append("exclusion_order")
+                continue
+            ct = 코드표[eo]
+            if ct["묶음"] not in ("대상감면", "대상공제"):
+                문제.append("exclusion_order")
+                continue
+            if ct["묶음"] == "대상감면" and eo not in red_codes:
+                문제.append("exclusion_order")
+                continue
+            if ct["묶음"] == "대상공제" and eo not in cred_codes:
+                문제.append("exclusion_order")
+                continue
+            if eo in ex_set:
+                문제.append("exclusion_order")
+                continue
+            ex_set.add(eo)
+    # 음수 검증 (net_income 제외)
+    for name, val in [("income_add", income_add), ("income_deduct", income_deduct),
+                      ("reserve", reserve), ("special_depreciation", special_depreciation),
+                      ("donation_excess", donation_excess), ("donation_carryover", donation_carryover),
+                      ("loss_carryforward", loss_carryforward), ("nontaxable", nontaxable),
+                      ("nontaxable_mt", nontaxable_mt), ("exclusion_mt", exclusion_mt),
+                      ("income_deduction", income_deduction), ("income_deduction_mt", income_deduction_mt)]:
+        if val < 0:
+            문제.append(name)
+    for rd in reductions:
+        if rd.get("amount", 0) < 0:
+            문제.append("감면세액")
+    for cr in credits:
+        if cr.get("current", 0) < 0:
+            문제.append("세액공제")
+        for cf in (cr.get("carryforward") or []):
+            if cf.get("amount", 0) < 0:
+                문제.append("세액공제")
+    if 문제:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제}
+
+    # ── ② 감면 후 ──
+    c101 = net_income
+    c102 = income_add
+    c103 = income_deduct
+    c104 = c101 + c102 - c103
+    c105 = reserve
+    c106 = special_depreciation
+    c107 = c104 + c105 + c106
+    c108 = donation_excess
+    c109 = donation_carryover
+    c110_2 = c104 + c108 - c109  # ② 110
+    c111 = loss_carryforward
+    c112 = nontaxable
+    c113 = nontaxable_mt
+    c114 = exclusion_mt
+    c115_2 = c110_2 - c111 - c112  # ② 115
+    c116 = income_deduction
+    c117 = income_deduction_mt
+    c118_2 = c115_2 - c116  # ② 118
+
+    # ③ 최저한세
+    c110_3 = c107 + c108 - c109  # ③ 110
+    c115_3 = c110_3 - c111 - c112 + c113 + c114  # ③ 115
+    c118_3 = c115_3 - c116 + c117  # ③ 118
+
+    # 산출세액
+    base_tax = max(0, c118_2)
+    calc_tax = corp_tax(base_tax, year, months)
+    # 최저한세
+    min_tax_amt = _min_tax_amount(c118_3, sme, grace_year, year, months)
+
+    # 대상 감면·공제 합계
+    대상감면합계 = 0
+    for rd in reductions:
+        코드 = rd.get("code", "")
+        ct = 코드표.get(코드)
+        if ct and ct["묶음"] == "대상감면":
+            대상감면합계 += rd.get("amount", 0)
+    대상공제합계 = 0
+    for cr in credits:
+        코드 = cr.get("code", "")
+        ct = 코드표.get(코드)
+        if ct and ct["묶음"] == "대상공제":
+            대상공제합계 += cr.get("current", 0)
+            for cf in (cr.get("carryforward") or []):
+                대상공제합계 += cf.get("amount", 0)
+
+    after_tax = calc_tax - 대상감면합계 - 대상공제합계
+    미달 = after_tax < min_tax_amt
+
+    조정감 = {"준비금": 0, "특별상각": 0, "익금불산입손금산입": 0, "소득공제": 0, "비과세": 0,
+              "세액공제": 0, "감면세액": 0}
+    조정 = None
+    배제내역 = []
+    이월미공제 = []
+    적용제외감면 = 0
+    적용제외공제 = 0
+
+    if 미달:
+        # 배제 순서 구성
+        # 법정 순서: (2의2) 106 → 105 → 114, (3) 대상 공제, (4) 대상 감면, (5) 117 → 113
+        # 105·106·114·113·117은 서식 줄 번호이지 감면·공제 코드가 아니므로 코드표로 정렬하지 않는다.
+        소득맵 = {"106": "특별상각 및 특례자산 감가상각비", "105": "준비금",
+                  "114": "최저한세 적용대상 익금불산입·손금산입",
+                  "113": "최저한세 적용대상 비과세소득", "117": "최저한세 적용대상 소득공제"}
+        소득순서 = ["106", "105", "114", "117", "113"]
+        # 대상 공제·감면 정렬
+        대상공제목록 = [cr for cr in credits
+                        if 코드표.get(cr.get("code", ""), {}).get("묶음") == "대상공제"]
+        대상감면목록 = [rd for rd in reductions
+                        if 코드표.get(rd.get("code", ""), {}).get("묶음") == "대상감면"]
+        대상공제정렬 = _exclude_order_codegen(
+            [{"코드": cr.get("code", ""), "현재": cr.get("current", 0),
+              "이월": [(cf.get("year", 0), cf.get("amount", 0)) for cf in (cr.get("carryforward") or [])]}
+             for cr in 대상공제목록], 코드표)
+        대상감면정렬 = _exclude_order_codegen(
+            [{"코드": rd.get("code", ""), "amount": rd.get("amount", 0)} for rd in 대상감면목록], 코드표)
+
+        # exclusion_order 우선 적용
+        우선배제 = []
+        남은대상공제 = list(대상공제정렬)
+        남은대상감면 = list(대상감면정렬)
+        남은소득 = dict((c, 소득맵[c]) for c in 소득순서 if c in ("105", "106", "114", "113", "117"))
+        # exclusion_order 항목 처리
+        if exclusion_order:
+            for eo in exclusion_order:
+                if eo == "106":
+                    if eo in 남은소득:
+                        우선배제.append(("소득", eo, 남은소득.pop(eo)))
+                elif eo == "105":
+                    if eo in 남은소득:
+                        우선배제.append(("소득", eo, 남은소득.pop(eo)))
+                elif eo == "114":
+                    if eo in 남은소득:
+                        우선배제.append(("소득", eo, 남은소득.pop(eo)))
+                elif eo == "117":
+                    if eo in 남은소득:
+                        우선배제.append(("소득", eo, 남은소득.pop(eo)))
+                elif eo == "113":
+                    if eo in 남은소득:
+                        우선배제.append(("소득", eo, 남은소득.pop(eo)))
+                else:
+                    ct = 코드표.get(eo, {})
+                    if ct.get("묶음") in ("대상공제", "제외공제"):
+                        # 세액공제 — 당기/이월 찾기 (내부 형식으로 변환)
+                        cr_found = None
+                        for cr in credits:
+                            if cr.get("code") == eo:
+                                cr_found = cr
+                                break
+                        if cr_found:
+                            우선배제.append(("공제", eo, {
+                                "코드": eo,
+                                "현재": cr_found.get("current", 0),
+                                "이월": [(cf.get("year", 0), cf.get("amount", 0))
+                                         for cf in (cr_found.get("carryforward") or [])]}))
+                    elif ct.get("묶음") in ("대상감면", "제외감면"):
+                        rd_found = None
+                        for rd in reductions:
+                            if rd.get("code") == eo:
+                                rd_found = rd
+                                break
+                        if rd_found:
+                            우선배제.append(("감면", eo, {"코드": eo, "amount": rd_found.get("amount", 0)}))
+        # 법정 순서로 이어가기: (2의2) 106→105→114 → 대상공제 → 대상감면 → (5) 117→113
+        법정배제 = []
+        소득_2의2 = ["106", "105", "114"]
+        소득_5 = ["117", "113"]
+        for c in 소득_2의2:
+            if c in 남은소득:
+                법정배제.append(("소득", c, 남은소득[c]))
+        for cr in 남은대상공제:
+            법정배제.append(("공제", cr.get("코드"), cr))
+        for rd in 남은대상감면:
+            법정배제.append(("감면", rd.get("코드"), rd))
+        for c in 소득_5:
+            if c in 남은소득:
+                법정배제.append(("소득", c, 남은소득[c]))
+        # 순서 결합: 우선배제 → 법정배제 (이미 배제된 건 건너뜀)
+        모두배제 = []
+        배제된코드 = set()
+        for 항목 in 우선배제:
+            모두배제.append(항목)
+            배제된코드.add(항목[1])
+        for 항목 in 법정배제:
+            if 항목[1] not in 배제된코드:
+                모두배제.append(항목)
+                배제된코드.add(항목[1])
+
+        # 미달액 채우기
+        남은미달 = min_tax_amt - after_tax
+        총소득배제 = 0
+        총감면배제 = 0
+        총공제배제 = 0
+        배제내역목록 = []
+        이월미공제목록 = []
+
+        for 항목 in 모두배제:
+            종류 = 항목[0]
+            코드 = 항목[1]
+            if 종류 == "소득":
+                항목금액 = {"105": reserve, "106": special_depreciation,
+                            "114": exclusion_mt, "113": nontaxable_mt, "117": income_deduction_mt}.get(코드, 0)
+                if 항목금액 <= 0 or 남은미달 <= 0:
+                    continue
+                ct = 코드표.get(코드, {})
+                # 이분 탐색: X만큼 추가 → corp_tax(base + 총소득배제 + X) - 남은 감면 - 남은 공제 ≥ min_tax_amt
+                # X 상한 = 항목금액. 전부 배제해도 모자라면 항목 전부를 배제하고 남은 미달을 다음 항목으로 넘긴다.
+                # mid=0이 조건을 만족하면 best=0(찾음). 못 찾았을 때만 항목금액 전부로 대체.
+                lo, hi = 0, 항목금액
+                best = 0
+                found = False
+                while lo <= hi:
+                    mid = (lo + hi) // 2
+                    시험세액 = corp_tax(max(0, c118_2 + 총소득배제 + mid), year, months)
+                    if 시험세액 - (대상감면합계 - 총감면배제) - (대상공제합계 - 총공제배제) >= min_tax_amt:
+                        best = mid
+                        found = True
+                        hi = mid - 1
+                    else:
+                        lo = mid + 1
+                if not found:
+                    best = 항목금액
+                if best <= 0:
+                    continue
+                총소득배제 += best
+                조정감["준비금" if 코드 == "105" else
+                       "특별상각" if 코드 == "106" else
+                       "익금불산입손금산입" if 코드 == "114" else
+                       "비과세" if 코드 == "113" else
+                       "소득공제"] += best
+                처리 = {"105": "손금불산입(유보)", "106": "손금불산입(유보)",
+                        "114": "익금산입·손금불산입", "113": "과세표준에 포함(적용 배제)",
+                        "117": "과세표준에 포함(적용 배제)"}.get(코드, "")
+                배제내역목록.append({"코드": 코드, "구분": 소득맵.get(코드, ct.get("구분", "")),
+                                     "배제액": best, "처리": 처리})
+                # 남은미달 재계산 (한 번만)
+                현재세액 = corp_tax(max(0, c118_2 + 총소득배제), year, months)
+                현재후 = 현재세액 - (대상감면합계 - 총감면배제) - (대상공제합계 - 총공제배제)
+                남은미달 = max(0, min_tax_amt - 현재후)
+            elif 종류 == "감면":
+                rd = 항목[2]
+                금액 = rd.get("amount", 0)
+                if 금액 <= 0 or 남은미달 <= 0:
+                    continue
+                배제액 = min(금액, 남은미달)
+                총감면배제 += 배제액
+                조정감["감면세액"] += 배제액
+                ct = 코드표.get(코드, {})
+                배제내역목록.append({"코드": 코드, "구분": ct.get("구분", ""),
+                                     "배제액": 배제액, "처리": "소멸(이월 없음)"})
+                남은미달 -= 배제액
+            elif 종류 == "공제":
+                cr = 항목[2]
+                현재분 = cr.get("현재", 0)
+                이월분 = sorted(cr.get("이월", []), key=lambda x: x[0], reverse=True)
+                총공제금액 = 현재분 + sum(cf[1] for cf in 이월분)
+                if 총공제금액 <= 0 or 남은미달 <= 0:
+                    continue
+                # 당기분 먼저 배제
+                배제액 = 0
+                잔여 = 남은미달
+                if 현재분 > 0:
+                    d = min(현재분, 잔여)
+                    배제액 += d
+                    잔여 -= d
+                    당기배제 = d
+                else:
+                    당기배제 = 0
+                이월배제내역 = []
+                이월배제합계 = 0
+                for cf in 이월분:
+                    if 잔여 <= 0:
+                        break
+                    d = min(cf[1], 잔여)
+                    배제액 += d
+                    이월배제합계 += d
+                    잔여 -= d
+                    이월배제내역.append((cf[0], d))
+                if 배제액 > 0:
+                    총공제배제 += 배제액
+                    조정감["세액공제"] += 배제액
+                    ct = 코드표.get(코드, {})
+                    통합처리 = "이월(조세특례제한법 제144조)"
+                    # 배제내역: 당기+이월 합쳐서 한 줄 (이월_미공제는 연도별)
+                    배제내역목록.append({"코드": 코드, "구분": ct.get("구분", ""),
+                                         "배제액": 배제액, "처리": 통합처리})
+                    if 당기배제 > 0:
+                        이월미공제목록.append({"코드": 코드, "발생연도": year, "금액": 당기배제})
+                    for cy, amt in 이월배제내역:
+                        이월미공제목록.append({"코드": 코드, "발생연도": cy, "금액": amt})
+                    남은미달 -= 배제액
+
+        # ⑤ 조정 후
+        adj_base = c118_2 + 총소득배제
+        adj_tax = corp_tax(max(0, adj_base), year, months)
+        adj_reductions = 대상감면합계 - 총감면배제
+        adj_credits = 대상공제합계 - 총공제배제
+        adj_after = adj_tax - adj_reductions - adj_credits
+        조정 = {"과세표준": adj_base, "세율": _top_rate_for_base(adj_base, year, months),
+                "산출세액": adj_tax, "감면세액": adj_reductions, "세액공제": adj_credits,
+                "차감세액": adj_after}
+        조정감 = {"준비금": 조정감["준비금"], "특별상각": 조정감["특별상각"],
+                  "익금불산입손금산입": 조정감["익금불산입손금산입"], "소득공제": 조정감["소득공제"],
+                  "비과세": 조정감["비과세"], "세액공제": 조정감["세액공제"], "감면세액": 조정감["감면세액"]}
+        배제내역 = 배제내역목록
+        이월미공제 = 이월미공제목록
+
+    # ── 적용제외 ──
+    for rd in reductions:
+        코드 = rd.get("code", "")
+        ct = 코드표.get(코드, {})
+        if ct.get("묶음") == "제외감면":
+            적용제외감면 += rd.get("amount", 0)
+    for cr in credits:
+        코드 = cr.get("code", "")
+        ct = 코드표.get(코드, {})
+        if ct.get("묶음") == "제외공제":
+            적용제외공제 += cr.get("current", 0) + sum(cf.get("amount", 0) for cf in (cr.get("carryforward") or []))
+
+    차감세액 = (조정["차감세액"] if 조정 else after_tax)
+    적용제외차감후세액 = max(0, 차감세액 - 적용제외감면 - 적용제외공제)
+
+    # ── 별지8 ──
+    별지8 = {}
+    for rd in reductions:
+        코드 = rd.get("code", "")
+        if 코드 not in 코드표:
+            continue
+        ct = 코드표[코드]
+        if ct["묶음"] in ("제외감면", "대상감면"):
+            amount = rd.get("amount", 0)
+            if ct["묶음"] == "제외감면":
+                별지8[코드] = {"대상세액": amount, "감면세액": amount}
+            else:
+                배제 = 0
+                for bn in 배제내역:
+                    if bn["코드"] == 코드:
+                        배제 = bn["배제액"]
+                        break
+                별지8[코드] = {"대상세액": amount, "감면세액": amount - 배제}
+    for cr in credits:
+        코드 = cr.get("code", "")
+        if 코드 not in 코드표:
+            continue
+        ct = 코드표[코드]
+        if ct["묶음"] in ("제외공제", "대상공제"):
+            current = cr.get("current", 0)
+            carryforward = cr.get("carryforward") or []
+            이월합계 = sum(cf.get("amount", 0) for cf in carryforward)
+            총공제 = current + 이월합계
+            if ct["묶음"] == "제외공제":
+                별지8[코드] = {"대상세액": 총공제, "감면세액": 총공제}
+            else:
+                배제 = 0
+                for bn in 배제내역:
+                    if bn["코드"] == 코드:
+                        배제 = bn["배제액"]
+                        break
+                별지8[코드] = {"전기이월액": 이월합계, "당기발생액": current, "공제세액": 총공제 - 배제}
+
+    공제감면세액총계 = 적용제외감면 + 적용제외공제
+    if 조정:
+        공제감면세액총계 += adj_reductions + adj_credits
+    else:
+        공제감면세액총계 += 대상감면합계 + 대상공제합계
+
+    결과 = {
+        "최저한세_미달": 미달,
+        "과세표준": {"감면후": c118_2, "최저한세": c118_3},
+        "세율": {"감면후": _top_rate_for_base(c118_2, year, months),
+                 "최저한세": _min_tax_rate(sme, grace_year, year) if (sme or grace_year) else _min_tax_top_rate(c118_3, year, months)},
+        "산출세액": {"감면후": calc_tax, "최저한세": min_tax_amt},
+        "최저한세": min_tax_amt,
+        "감면세액": 대상감면합계,
+        "세액공제": 대상공제합계,
+        "감면후세액": after_tax,
+        "조정감": 조정감,
+        "조정": 조정,
+        "차감세액": 조정["차감세액"] if 조정 else after_tax,
+        "배제_내역": 배제내역,
+        "이월_미공제": 이월미공제,
+        "최저한세_적용제외": {"감면세액": 적용제외감면, "세액공제": 적용제외공제},
+        "적용제외_차감후세액": 적용제외차감후세액,
+        "별지8": 별지8,
+        "공제감면세액_총계": 공제감면세액총계,
+    }
+    return 결과
+
+
 def deemed_interest_check(rate_market, rate_charged, balance_jeoksu, days=365):
     """가지급금 인정이자(시행령 제89조③, 제88조③): 시가(가중평균차입이자율 원칙, 예외 당좌대출이자율)와의 차액이
     3억 이상 또는 시가의 5% 이상이면 부당행위 → 차액 익금산입."""
