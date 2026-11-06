@@ -773,7 +773,9 @@ def min_tax_adjust(
     reductions=None, credits=None, exclusion_order=None,
 ):
     """최저한세 조정(조세특례제한법 제132조제1항, 시행령 제126조제5항, 미공제 이월 제144조).
-    반환: {결과, 계산, 근거} — 도구에서 _ok로 감싼다."""
+    반환: {결과, 계산, 근거} — 도구에서 _ok로 감싼다.
+    결과 키: 감면전_산출세액(감면 등을 모두 배제했을 때의 산출세액, corp_tax(max(0,③118), year, months)),
+    감면전_산출세액 < 최저한세이면 server.py minimum_tax_adjustment가 판단에 "최저한세가 산출세액보다 큼" 항목을 추가."""
     import json as _json
     문제 = []
     # ── 입력 확인 ──
@@ -1225,6 +1227,7 @@ def min_tax_adjust(
     else:
         공제감면세액총계 += 대상감면합계 + 대상공제합계
 
+    감면전_산출세액 = corp_tax(max(0, c118_3), year, months)
     결과 = {
         "최저한세_미달": 미달,
         "과세표준": {"감면후": c118_2, "최저한세": c118_3},
@@ -1232,6 +1235,7 @@ def min_tax_adjust(
                  "최저한세": _min_tax_rate(sme, grace_year, year) if (sme or grace_year) else _min_tax_top_rate(c118_3, year, months)},
         "산출세액": {"감면후": calc_tax, "최저한세": min_tax_amt},
         "최저한세": min_tax_amt,
+        "감면전_산출세액": 감면전_산출세액,
         "감면세액": 대상감면합계,
         "세액공제": 대상공제합계,
         "감면후세액": after_tax,
