@@ -1332,12 +1332,12 @@ def donation_limit(year: YEAR, base_income: WON,
                    carried_loss: WON = 0,
                    special_carry: WON = 0, general_carry: WON = 0,
                    sme: Annotated[bool, Field(description="중소기업 여부")] = True,
-                   social_enterprise: Annotated[bool, Field(description="사회적기업 여부(일반한도 20% 적용)")] = False) -> dict:
+                   social_enterprise: Annotated[bool, Field(description="사회적기업 여부 — 일반한도율을 연도별 적용: 2017 이전 10%, 2018~2025 사업연도 20%, 2026 사업연도부터 30%")] = False) -> dict:
     """기부금 손금산입 한도(특례기부금 50%, 일반기부금 10%)와 한도초과·이월. 언제: 기부금을 손금산입할 때 한도와 한도초과액을 구한다.
 입력: 기준소득(과세표준 계산 전 소득금액, 원) → base_income, 특례기부금 지출액(원) → special, 일반기부금 지출액(원) → general, 결손금(원) → carried_loss, 특례 이월액(원) → special_carry, 일반 이월액(원) → general_carry, 중소기업 여부 → sme, 사회적기업 여부 → social_enterprise, 사업연도(2016~2026) → year.
 결과: 한도·한도초과·이월 손금산입, 근거(법인세법 제24조)."""
     return _ok(C.donation(base_income, carried_loss, special, general, special_carry, general_carry, sme, social_enterprise, year=year),
-               "법인세법 제24조", 산식="특례 = (기준소득 − 결손금) × 50%, 일반 = (기준소득 − 결손금 − 특례 손금산입) × 10%(사회적기업 20%)")
+               "법인세법 제24조", 산식="특례 = (기준소득 − 결손금) × 50%, 일반 = (기준소득 − 결손금 − 특례 손금산입) × 10%(사회적기업: 2018~2025 사업연도 20%, 2026 사업연도부터 30%)")
 
 
 @mcp.tool(annotations=CALC)

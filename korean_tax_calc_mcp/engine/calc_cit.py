@@ -36,7 +36,7 @@ def _year(y):
          "기부금_명칭": ("법정", "지정") if y <= 2022 else ("특례", "일반"),                  # 법률 19193
          "기부금_이월기간": 5 if y <= 2017 else 10,                                          # 제24조⑤ 법률 16008 부칙§4②(2019.1.1. 이후 신고분)
          "기부금_이월우선": y >= 2019,                                                       # 제24조⑥ 법률 16833 부칙§4(2020.1.1. 이후 신고분)
-         "기부금_사회적기업_20": y >= 2018,                                                  # 제24조② 표(법률 16008 부칙§4①, 2019.1.1. 이후 신고분)
+         "기부금_사회적기업_비율": 0.3 if y >= 2026 else (0.2 if y >= 2018 else None),     # 제24조③2호: 2018~(법률 16008 부칙§4①) 20%, 2026~(법률 21217 부칙§3) 30%, 그 전 None(10%)
          "기부금_결손금한도": y >= 2021,                                                     # 제24조②2호(법률 17652 부칙§6: 2021.1.1. 이후 개시 사업연도 지출분)
          }
     if y == 2020: d["접대비_수입_법"] = _REV_NEW                                             # 조특§136⑤ 일할 안분용(법 제25조④2호 표)
@@ -642,13 +642,13 @@ def donation(base_income, carried_loss, special, general, special_carry=0, gener
     """기부금 손금산입 한도(법인세법 제24조). base_income=기준소득금액(기부금 손금산입 전 소득, 양도손익 제외).
     year=None(종전 호출): 결손금 차감 비중소 기준소득 80% 한도, 이월분 먼저, 사회적기업 20%.
     year 지정: 연도표 — 결손금 차감 한도는 2021 이후 개시 사업연도만(제13조 한도율 60%/80%, 그 전은 전액 차감),
-    이월분 먼저 공제는 2019 사업연도부터(그 전은 당기분 먼저, 남은 한도에서 이월분), 사회적기업 20%는 2018 사업연도부터."""
+    이월분 먼저 공제는 2019 사업연도부터(그 전은 당기분 먼저, 남은 한도에서 이월분), 사회적기업 일반한도율은 연도별(2017 이전 없음→10%, 2018~2025 20%, 2026~ 30%)."""
     if year is None:
         cap_ratio, carry_first, social_ok = (1.0 if sme else 0.8), True, True
     else:
         y = YEAR[year]
         cap_ratio = loss_limit_ratio(year, sme) if y["기부금_결손금한도"] else 1.0
-        carry_first, social_ok = y["기부금_이월우선"], y["기부금_사회적기업_20"]
+        carry_first, social_ratio = y["기부금_이월우선"], y["기부금_사회적기업_비율"]
     loss = min(carried_loss, base_income * cap_ratio)
 
     def use(carry, cur, lim):
@@ -657,7 +657,7 @@ def donation(base_income, carried_loss, special, general, special_carry=0, gener
         u = min(cur, lim); return min(carry, lim - u), u
     sp_limit = won(max(0, (base_income - loss) * 0.5))          # 한도는 원 단위로 먼저 확정 — 한도와 한도초과가 지출액과 맞도록
     sp_carry_used, sp_used = use(special_carry, special, sp_limit)
-    gen_limit = won(max(0, (base_income - loss - sp_carry_used - sp_used) * (0.2 if social_enterprise and social_ok else 0.1)))
+    gen_limit = won(max(0, (base_income - loss - sp_carry_used - sp_used) * (social_ratio if social_enterprise and social_ratio else 0.1)))
     gen_carry_used, gen_used = use(general_carry, general, gen_limit)
     return {"특례한도": won(sp_limit), "일반한도": won(gen_limit),
             "이월분 손금산입": won(sp_carry_used + gen_carry_used),

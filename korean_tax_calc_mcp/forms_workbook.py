@@ -514,6 +514,9 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
         f = s.get("f", "")
         if not f or not _slot_on(s):
             continue
+        # merge 키 처리 (슬롯용 병합 셀)
+        if s.get("merge"):
+            ws.merge_cells(s["merge"])
         s_idx, s_res = _slot_res(s)
         if s_idx is not None:
             f_rendered = resolve_formula(f, res=s_res, call_idx=s_idx,
@@ -958,12 +961,157 @@ def export_form_inputs(tool: str, args: dict | None, data: dict | None) -> dict 
             {"이름": "가산세", "식": f"ROUNDDOWN(MIN(미납세액*3/100+{daily},미납세액/10),0)", "값": res.get("가산세"),
              "설명": "min(1호 + 2호, 10% 한도), 원 미만 절사(국세기본법 제47조의5①)"},
         ]
+    elif tool == "donation_limit":
+        from .engine.calc_cit import loss_limit_ratio, YEAR
+        y = a.get("year")
+        year = int(y) if y is not None else None
+        sme = a.get("sme", True)
+        social = a.get("social_enterprise", False)
+        if year is not None:
+            ytbl = YEAR[year]
+            loss_ratio = loss_limit_ratio(year, sme) if ytbl.get("기부금_결손금한도") else 1.0
+            carry_first = ytbl.get("기부금_이월우선", False)
+            social_ratio = ytbl.get("기부금_사회적기업_비율")
+        else:
+            loss_ratio = 1.0 if sme else 0.8
+            carry_first = True
+            social_ratio = 0.2 if social else None
+        gen_rate = social_ratio if (social and social_ratio is not None) else 0.1
+        out = [_inp("소득금액계", a.get("base_income", 0), "기준소득금액(기부금 손금산입 전 소득)"),
+               _inp("이월결손금", min(a.get("carried_loss", 0), int(a.get("base_income", 0) * loss_ratio)),
+                        "적용 이월결손금(한도 적용 후)"),
+               _inp("특례기부금", a.get("special", 0), "특례기부금 지출액"),
+               _inp("일반기부금", a.get("general", 0), "일반기부금 지출액"),
+               _inp("특례이월잔액", a.get("special_carry", 0), "특례기부금 이월잔액"),
+               _inp("일반이월잔액", a.get("general_carry", 0), "일반기부금 이월잔액"),
+               _inp("이월우선", 1 if carry_first else 0, "이월분 먼저 공제 여부(2019 사업연도부터)"),
+               _inp("일반한도율", gen_rate, "일반기부금 한도율(사회적기업 연도별: 2017 이전 10%, 2018~2025 20%, 2026~ 30%)")]
+        carry_next = res.get("차기이월", {})
+        carry_sum = carry_next.get("특례", 0) + carry_next.get("일반", 0)
+        # 결과에 별칭 추가 (서식 확인 칸용)
+        result = dict(res)
+        result["한도초과"] = res.get("한도초과(기타사외유출)")
+        result["차기이월_합계"] = carry_sum
+        steps = [
+            {"이름": "한도초과", "식": str(res.get("한도초과(기타사외유출)")), "값": res.get("한도초과(기타사외유출)"),
+             "설명": "한도초과액(기타사외유출)"},
+            {"이름": "차기이월_합계", "식": str(carry_sum), "값": carry_sum,
+             "설명": "차기이월 특례+일반 합계"},
+        ]
+        # 계산 단계 값 추가 (계산 시트용)
+        calc_steps = dict(calc)
+        calc_steps["한도초과"] = res.get("한도초과(기타사외유출)")
+        calc_steps["차기이월_합계"] = carry_sum
+    elif tool == "business_car_expense":
+        plate_text = ""
+        acc = a.get("acquisition_cost")
+        if acc is not None and acc < 80_000_000:
+            plate_text = "해당 없음"
+        elif a.get("plate_ok", True):
+            plate_text = "부착"
+        else:
+            plate_text = "미부착"
+        from .engine.calc_cit import YEAR
+        ytbl = YEAR[a.get("year", 2026)]
+        cap = ytbl.get("승용차_상각한도_임대" if a.get("rental_corp") and "승용차_상각한도_임대" in ytbl else "승용차_상각한도", 8_000_000)
+        out = [_inp("업무사용비율", res.get("업무사용비율"), "운행기록부 기준 업무사용비율(미작성 시 기준비율)"),
+               _inp("취득가액", acc if acc is not None else "", "차량 취득가액(임차는 기준가액)"),
+               _inp("보유월수", a.get("months", 12), "해당 사업연도 보유·임차 월수"),
+               _inp("감가상각비", a.get("depreciation", 0), "세법상 감가상각비(5년 정액)"),
+               _inp("유지비", a.get("upkeep", 0), "유지비(유류·보험·수선 등 합계)"),
+               _inp("상각한도", cap, "업무용승용차 감가상각비 한도(임대법인 400만원, 일반 800만원)"),
+               _inp("차량번호", "", "차량 번호(빈칸)"),
+               _inp("차종", "", "차종(빈칸)"),
+               _inp("임차여부", "", "임차 여부(빈칸)"),
+               _inp("보험가입", "", "의무보험 가입 여부(빈칸)"),
+               _inp("번호판", plate_text, "법인업무용 번호판 부착 여부"),
+               _inp("운행기록", "여" if a.get("log_kept") else "부", "운행기록부 작성 여부"),
+               _inp("임대법인_해당", "[√]" if a.get("rental_corp") else "[ ]", "부동산임대업 주업 등 특정법인 해당"),
+               _inp("임대법인_미해당", "[ ]" if a.get("rental_corp") else "[√]", "부동산임대업 주업 등 특정법인 미해당")]
+        # 결과에 별칭 추가 (서식 확인 칸용)
+        result = dict(res)
+        result["감가상각_사적사용"] = res.get("감가상각 사적사용 손금불산입(상여)")
+        result["유지비_업무외사용"] = res.get("유지비 손금불산입(상여)")
+        result["감가상각_한도초과"] = res.get("감가상각 한도초과(유보)")
+        steps = [
+            {"이름": "감가상각_사적사용", "식": str(res.get("감가상각 사적사용 손금불산입(상여)")), "값": res.get("감가상각 사적사용 손금불산입(상여)"),
+             "설명": "감가상각비 사적사용분(상여)"},
+            {"이름": "유지비_업무외사용", "식": str(res.get("유지비 손금불산입(상여)")), "값": res.get("유지비 손금불산입(상여)"),
+             "설명": "유지비 업무외 사용금액(상여)"},
+            {"이름": "감가상각_한도초과", "식": str(res.get("감가상각 한도초과(유보)")), "값": res.get("감가상각 한도초과(유보)"),
+             "설명": "감가상각비 한도초과액(유보)"},
+        ]
+    elif tool == "entertainment_limit":
+        from .engine.calc_cit import YEAR, ent_term
+        y = a.get("year")
+        year = int(y) if y is not None else 2026
+        ytbl = YEAR[year]
+        base_sme = ytbl["접대비_기본"]["중소"]
+        base_gen = ytbl["접대비_기본"]["일반"]
+        rev_tiers = ytbl["접대비_수입"]
+        import_total_limit = 0.3                                     # 계산.전통시장_지출 참고용(실제 값은 market 그대로)
+        out = [_inp("중소기업여부", 1 if a.get("sme") else 0, "중소기업 여부"),
+               _inp("기본한도_중소", base_sme, "기본한도(중소기업)"),
+               _inp("기본한도_일반", base_gen, "기본한도(일반)"),
+               _inp("월수", a.get("months", 12), "사업연도 월수"),
+               _inp("문화금액", a.get("culture", 0), "문화 기업업무추진비 지출액"),
+               _inp("일반수입금액", a.get("general_revenue", 0), "일반수입금액(매출액)"),
+               _inp("특수관계수입금액", a.get("related_revenue", 0), "특수관계 수입금액"),
+               _inp("수입구간1_한도", rev_tiers[0][0], "수입구간1 한도(100억원)"),
+               _inp("수입구간1_비율", rev_tiers[0][1], "수입구간1 비율(일반수입금액 기준)"),
+               _inp("수입구간2_한도", rev_tiers[1][0], "수입구간2 한도(500억원)"),
+               _inp("수입구간2_비율", rev_tiers[1][1], "수입구간2 비율(일반수입금액 기준)"),
+               _inp("수입구간3_비율", rev_tiers[2][1], "수입구간3 비율(일반수입금액 기준)"),
+               _inp("전통시장등비율", ytbl.get("전통시장등_비율", 0), "전통시장등 추가한도 비율"),
+               _inp("전통시장등금액", a.get("market", 0), "전통시장·지역사랑상품권·온누리상품권 지출액")]
+        # 결과에 별칭 추가 (서식 확인 칸용)
+        result = dict(res)
+        result["시부인_대상"] = res.get(f"세무상 {ent_term(year)}")
+        result["직부인_기타사외유출"] = res.get("직부인(기타사외유출)")
+        result["직부인_대표자상여"] = 0
+        result["한도초과"] = res.get("한도초과(기타사외유출)")
+        result["전통시장_지출"] = a.get("market", 0)
+        result["지역사랑상품권_지출"] = 0
+        result["온누리상품권_지출"] = 0
+        # 계산에도 별칭 추가 (서식 확인 칸용)
+        calc_dict = dict(calc)
+        calc_dict["기본한도"] = res.get("기본한도")
+        calc_dict["수입금액한도"] = res.get("수입금액한도")
+        calc_dict["일반한도"] = res.get("일반한도")
+        calc_dict["문화한도"] = res.get("문화한도")
+        calc_dict["전통시장한도"] = res.get("전통시장한도")
+        steps = [
+            {"이름": "기본한도", "식": str(res.get("기본한도")), "값": res.get("기본한도"), "설명": "기본한도(월수 반영)"},
+            {"이름": "수입금액한도", "식": str(res.get("수입금액한도")), "값": res.get("수입금액한도"), "설명": "수입금액 기준 한도"},
+            {"이름": "일반한도", "식": str(res.get("일반한도")), "값": res.get("일반한도"), "설명": "일반한도(기본+수입금액)"},
+            {"이름": "문화한도", "식": str(res.get("문화한도")), "값": res.get("문화한도"), "설명": "문화한도초과"},
+            {"이름": "전통시장한도", "식": str(res.get("전통시장한도")), "값": res.get("전통시장한도"), "설명": "전통시장등 추가한도"},
+            {"이름": "시부인_대상", "식": f"결과.시부인_대상", "값": res.get(f"세무상 {ent_term(year)}"),
+             "설명": "세무상 기업업무추진비(직부인 차감 전)"},
+            {"이름": "직부인_기타사외유출", "식": str(res.get("직부인_기타사외유출")), "값": res.get("직부인(기타사외유출)"),
+             "설명": "직부인(기타사외유출)"},
+            {"이름": "직부인_대표자상여", "식": str(res.get("직부인_대표자상여")), "값": 0, "설명": "직위인 대표자상여(0)"},
+            {"이름": "한도초과", "식": str(res.get("한도초과")), "값": res.get("한도초과(기타사외유출)"),
+             "설명": "한도초과액(기타사외유출)"},
+            {"이름": "전통시장_지출", "식": str(res.get("전통시장_지출")), "값": a.get("market", 0),
+             "설명": "전통시장·지역사랑상품권·온누리상품권 지출액"},
+            {"이름": "지역사랑상품권_지출", "식": str(res.get("지역사랑상품권_지출")), "값": 0, "설명": "지역사랑상품권 지출액(0)"},
+            {"이름": "온누리상품권_지출", "식": str(res.get("온누리상품권_지출")), "값": 0, "설명": "온누리상품권 지출액(0)"},
+        ]
     if not out:
         return data
-    new = {**data, "계산식_입력": out}
+    new_data = dict(data)
+    new_data["계산식_입력"] = out
     if steps:
-        new["계산식"] = steps
-    return new
+        new_data["계산식"] = steps
+    # 결과에 별칭 추가 (donation_limit, entertainment_limit, business_car_expense)
+    if tool in ("donation_limit", "entertainment_limit", "business_car_expense") and isinstance(new_data.get("결과"), dict):
+        new_data["결과"] = result
+        if tool == "entertainment_limit":
+            new_data["계산"] = calc_dict
+        elif tool == "donation_limit":
+            new_data["계산"] = calc_steps
+    return new_data
 
 
 # 같은 서식 한 장에 여러 call을 행으로 모으는 틀(틀 `one_sheet`) — 표 source와 합계(도구 값 대조용)
