@@ -446,6 +446,9 @@
   "F",
   "G"
  ],
+ "formats": {
+  "A18": "#,##0"
+ },
  "print_area": "A1:G27",
  "check_col": "I",
  "slots": [
