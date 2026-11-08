@@ -299,5 +299,9 @@
    "f": "=SUM(C23:E23)"
   }
  ],
- "per_return": true
+ "per_return": true,
+ "tools": [
+  "entertainment_adjustment",
+  "entertainment_limit"
+ ]
 }

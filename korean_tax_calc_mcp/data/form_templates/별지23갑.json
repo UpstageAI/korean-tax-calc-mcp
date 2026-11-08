@@ -365,5 +365,9 @@
    "f": "=MIN({③},{⑮})"
   }
  ],
- "per_return": true
+ "per_return": true,
+ "tools": [
+  "entertainment_adjustment",
+  "entertainment_limit"
+ ]
 }
