@@ -3289,7 +3289,8 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
                              months: Annotated[int, Field(description="사업연도 월수(1~12)")] = 12,
                              include_vat: Annotated[bool, Field(description="현물 접대비 평가 시 부가가치세 포함 여부(기본 True — 사업상 증여는 매출세액 포함, 영 제42조제6항·법 제36조제1항제3호 준용)")] = True,
                              ledger: Annotated[list, Field(description="원장형 입력 [{항목, 금액, 증빙:'없음'|'영수증 등'|'적격'(기본 '적격'), 성격?:'교제목적'|'직원단체_법인'|'직원단체_비법인'|'임직원부담'|'현물'|'경조금'|'문화'|'사적사용', 시가?, 장부가액?, 건당기준초과?}] — 성격별 포함·제외는 어휘 기업업무추진비_포함항목으로 판단. '사적사용'은 시부인 대상 제외, 직접 손금불산입(상여") ] = ...,
-                             revenue: Annotated[dict | None, Field(description="수입금액 원장형 입력 {매출액, 특수관계매출?(기본 0), 매출할인등:{일반?, 특수관계?}(기본 0)} — 기업회계기준 매출액 기준(영 제42조제1항). 없으면 수입금액 0")] = None) -> dict:
+                             revenue: Annotated[dict | None, Field(description="수입금액 원장형 입력 {매출액, 특수관계매출?(기본 0), 매출할인등:{일반?, 특수관계?}(기본 0)} — 기업회계기준 매출액 기준(영 제42조제1항). 없으면 수입금액 0")] = None,
+                             ledger_total: Annotated[int | None, Field(description="원장(계정) 합계(원) — 주면 ledger 금액 합계와 대조해 다르면 '확인 필요' 판단을 붙임(행을 옮기다 빠지거나 더하다 틀린 경우). ledger는 원장 행을 합치지 말고 한 줄씩 넣는다", ge=0)] = None) -> dict:
     """기업업무추진비 세무조정 — 2023년 이전 사업연도의 "접대비"와 같은 항목(2024.1.1. 명칭 변경, 법률 19193). 접대비 문제·장부도 이 도구로 계산한다(법인세법 제25조, 시행령 제40조·제41조·제42조).
     언제: 법인세 신고에서 기업업무추진비 손금불산입을 항목별로 계산할 때.
     입력:
@@ -3307,7 +3308,8 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
         · 전통시장 → 포함(「전통시장 및 상점가 육성을 위한 특별법」상 전통시장에서 쓴 적격 기업업무추진비, 조특법 제136조제6항, 전통시장등 추가한도 대상)
         · 지역사랑상품권 → 포함(지역사랑상품권으로 지급한 적격 기업업무추진비, 조특법 제136조제6항, 2025 사업연도부터 전통시장등 추가한도 대상)
         · 온누리상품권 → 포함(온누리상품권으로 지급한 적격 기업업무추진비, 조특법 제136조제6항, 2026 사업연도 지출분부터 전통시장등 추가한도 대상)
-    결과: 판단(항목별·근거)·결과(한도·한도초과)·세무조정(구분·금액·소득처분)·소득처분별_합계·손금불산입_합계·계산. 기업업무추진비 세액공제."""
+      · 원장 합계: ledger_total(원장·계정 합계)을 주면 ledger 금액 합계와 대조. ledger는 원장 행을 직접 더해 한 줄로 합치지 말고 행마다 넣는다.
+    결과: 판단(항목별·근거)·결과(한도·한도초과)·세무조정(구분·금액·소득처분)·소득처분별_합계·손금불산입_합계·계산(원장 합계 대조 포함). 기업업무추진비 세액공제."""
 
     _용어 = C.ent_term(year)   # 2024.1.1. 이후 개시 사업연도부터 '기업업무추진비'(법률 제19193호), 그 전은 '접대비'
 
@@ -3605,6 +3607,14 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
     근거_목록 = vocab.basis("기업업무추진비_적격수취", year)
     근거_문자열 = ", ".join(f"{조문[0]} {조문[1]} {조문[2]} {조문[3]}" if 조문[3] else f"{조문[0]} {조문[1]} {조문[2]}" for 조문 in 근거_목록)
     unified = _build_tax_adjustment_result(settlements, result, calc_dict)
+    if ledger_total is not None:
+        넘긴합계 = sum(int(it.get("금액", 0) or 0) for it in ledger if isinstance(it, dict))
+        차이 = int(ledger_total) - 넘긴합계
+        calc_dict["원장합계"] = int(ledger_total)
+        calc_dict["원장합계_대조"] = "일치" if 차이 == 0 else "확인 필요"
+        if 차이:
+            judgments.append({"항목": "원장 합계 대조", "성격": "", "결론": f"확인 필요 — 원장 합계 {int(ledger_total):,}원 ≠ ledger 합계 {넘긴합계:,}원(차이 {차이:,}원)",
+                              "금액": 차이, "근거": "", "이유": "원장 행을 옮기다 빠졌거나 직접 더하다 틀렸을 수 있음 — 원장 행을 한 줄씩 다시 넣어 확인"})
     return _ok(unified, 근거_문자열, 세무조정=settlements, 판단=judgments, 계산=calc_dict,
                산식=f"기본한도 = 중소 {기본한도_중소:,}원·일반 {기본한도_일반:,}원 × 월수/12, 수입금액 한도 = 수입금액 구간별 비율을 적용한 금액(+ 특수관계 10%), 문화한도 = min(문화비, 일반한도 × 20%), 전통시장등한도 = min(전통시장등 지출, (기본한도+수입금액한도) × {C.YEAR[year].get('전통시장등_비율', 0)}) [2023~2028, 연도별 대상·비율 다름], 한도 = 기본 + 수입금액 + 문화 + 전통시장등, 한도초과 = 시부인 대상 − 한도",
                계산식_입력=계산식_입력, 계산식=계산식)
@@ -10284,7 +10294,7 @@ def export_workbook(
             for s in tpl.get("slots", []):
                 adj = s.get("adjustment")
                 if adj:
-                    adj_slots.setdefault(adj, []).append((tinfo["sheet"], s["cell"], s.get("check", ""),
+                    adj_slots.setdefault(adj, []).append((tinfo["sheet"], s["cell"], s.get("adjustment_check", s.get("check", "")),
                                                           tinfo["call_idx"]))
 
         # 2단계: {틀key!id} cross 참조 파싱 (slot 수식 + table 열 수식)
@@ -10581,21 +10591,43 @@ def export_workbook(
             source_data["이자명세"] = _call_src[_fid]["이자명세"]
 
         # connection: adjustment 소스 행의 금액을 렌더된 서식 slot 참조로 치환(도구 값이 같은 시트만)
+        # 1) 종류가 slot adjustment 이름과 같으면 그 칸, 2) 아니면 같은 계정 묶음(기업업무추진비·업무용승용차·기부금 등)
+        #    adjustment 칸 중 도구 값이 금액과 같은 칸이 하나뿐일 때 그 칸 — 과목 이름을 자유롭게 적어도 서식 칸을 가리킴
+        _가족어 = ("기업업무추진비", "접대비", "업무용승용차", "기부금", "감가상각", "대손", "퇴직", "수입배당금")
+
+        def _adj_tv(call_idx: int, check_path: str):
+            res = 결과들[call_idx].get("data") or {}   # cd["data"]에는 nested "결과"가 있음
+            paths = check_path.split("+") if check_path else []
+            vals = [tool_value(res, p) for p in paths]
+            if not vals or any(not isinstance(v, (int, float)) for v in vals):
+                return None
+            return sum(vals)
+
         _조정_소스들 = [source_data] + [v for v in _call_src.values() if "조정_가산" in v]
         for src in _조정_소스들:
+            _쓴_칸: set = set()   # 한 별지15(소스) 안에서 한 칸을 두 행이 가리키지 않게
             for src_name in ("조정_가산", "조정_차감"):
                 for row in src.get(src_name, []):
                     kind = row.get("종류", row.get("과목", ""))
                     amount = row.get("금액", 0)
-                    if isinstance(amount, (int, float)) and kind in adj_slots:
-                        for 시트명, 셀, check_path, call_idx in adj_slots[kind]:
-                            cd = 결과들[call_idx]
-                            # cd["data"]에는 nested "결과"가 있음 (템플릿 [결과.경로] 참조용)
-                            res = cd.get("data") or {}
-                            tv = tool_value(res, check_path)
-                            if tv == amount:
-                                row["금액"] = f"='{시트명}'!{셀}"
-                                break
+                    if not isinstance(amount, (int, float)) or not amount:
+                        continue
+                    hit = None
+                    for 시트명, 셀, check_path, call_idx in adj_slots.get(kind, []):
+                        if _adj_tv(call_idx, check_path) == amount:
+                            hit = (시트명, 셀)
+                            break
+                    if hit is None:
+                        글 = f"{row.get('과목', '')} {row.get('종류', '')}"
+                        fam = {w for w in _가족어 if w in 글}
+                        cand = [(시트명, 셀) for label, lst in adj_slots.items() if fam & {w for w in _가족어 if w in label}
+                                for 시트명, 셀, check_path, call_idx in lst
+                                if (시트명, 셀) not in _쓴_칸 and _adj_tv(call_idx, check_path) == amount]
+                        if len(set(cand)) == 1:
+                            hit = cand[0]
+                    if hit is not None:
+                        row["금액"] = f"='{hit[0]}'!{hit[1]}"
+                        _쓴_칸.add(hit)
 
         # 서식 머리 개정일: 그 과세기간 신고기한보다 뒤에 개정된 서식이면 개정일 표기를 뺀다
         import datetime as _dt

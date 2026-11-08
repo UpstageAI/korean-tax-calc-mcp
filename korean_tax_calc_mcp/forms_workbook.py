@@ -703,6 +703,8 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
             ws.cell(first_r - 1, cci).alignment = Alignment(horizontal="center", vertical="center")
             ws.cell(first_r - 1, cci + 1, "확인").font = Font(name="맑은 고딕", size=9, bold=True)
             ws.cell(first_r - 1, cci + 1).alignment = Alignment(horizontal="center", vertical="center")
+            # 도구 값 열은 억 단위 금액도 "####"로 가리지 않게
+            ws.column_dimensions[cc].width = max(ws.column_dimensions[cc].width or 0, 16)
         # 각 슬롯마다 해당 check_col 위치에 도구 값·확인 수식 작성
         for s in check_rows:
             cell_addr = s["cell"]
