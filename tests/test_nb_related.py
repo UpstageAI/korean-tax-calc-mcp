@@ -108,10 +108,11 @@ def test_export_workbook_form_26(tmp_path):
                              "args": {"loans": LOANS, "advances": adv, "year": 2025, "company": CO, "relations": REL}}])
     wb = openpyxl.load_workbook(path)
     eul = wb["별지26(을) 업무무관 적수"]
-    rows = [(eul.cell(r, 3).value, eul.cell(r, 4).value, eul.cell(r, 5).value, eul.cell(r, 8).value) for r in range(12, 14)]
-    assert rows[0] == ("2025.10.01", "김배우 증가", 10_000_000, 92) and rows[1][0] in (None, "")
     from test_form_26 import Evaluator, GAP
     ev = Evaluator(wb)
+    rows = [(eul.cell(r, 3).value, eul.cell(r, 4).value, eul.cell(r, 5).value, eul.cell(r, 8).value) for r in range(12, 14)]
+    assert rows[0][:3] == ("2025.10.01", "김배우 증가", 10_000_000) and rows[1][0] in (None, "")
+    assert str(rows[0][3]).startswith("=DATE(") and ev.v("별지26(을) 업무무관 적수", "H12") == 92   # 경과일수 수식
     assert ev.v(GAP, "E8") == 920_000_000 and ev.v(GAP, "I8") == 252_054
 
 

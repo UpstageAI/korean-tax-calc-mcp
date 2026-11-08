@@ -46,12 +46,17 @@ class Evaluator:
         def ext(m):
             refs.append((m.group(1), m.group(2)))
             return f"__R{len(refs) - 1}__"
+        # '입력·가정' 정의된 이름(호출N_…) → 그 칸
+        for nm, dn in self.wb.defined_names.items():
+            if nm in f:
+                sh_, cell_ = dn.attr_text.split("!")
+                f = re.sub(rf"(?<![\w]){re.escape(nm)}(?![\w])", f"'{sh_.strip(chr(39))}'!{cell_.replace('$', '')}", f)
         f = re.sub(r"'([^']+)'!([A-Z]+\d+)", ext, f)
         f = re.sub(r"\b([A-Z]+\d+):([A-Z]+\d+)\b", lambda m: f"self.rng(SH,{m.group(1)!r},{m.group(2)!r})", f)
         f = re.sub(r"(?<![\w'])([A-Z]{1,2}\d+)\b", lambda m: f"self.v(SH,{m.group(1)!r})", f)
         f = re.sub(r"__R(\d+)__", lambda m: f"self.v({refs[int(m.group(1))][0]!r},{refs[int(m.group(1))][1]!r})", f)
         f = re.sub(r"(?<![<>=!])=(?!=)", "==", f)
-        f = re.sub(r"\b(SUM|N|MIN|MAX|IF|ROUND|ROUNDDOWN|ISNUMBER)\(", lambda m: f"F_{m.group(1)}(", f)
+        f = re.sub(r"\b(SUM|N|MIN|MAX|IF|ROUND|ROUNDDOWN|ISNUMBER|DATE|VALUE|LEFT|MID|RIGHT)\(", lambda m: f"F_{m.group(1)}(", f)
         num = lambda x: isinstance(x, (int, float)) and not isinstance(x, bool)
         flat = lambda a: [y for x in a for y in (x if isinstance(x, list) else [x])]
         env = {"self": self, "SH": sheet,
@@ -62,7 +67,11 @@ class Evaluator:
                "F_IF": lambda c_, a, b: a if c_ else b,
                "F_ROUND": lambda x, n: round(x, int(n)),
                "F_ROUNDDOWN": lambda x, n: int(x) if int(n) == 0 else int(x * 10 ** n) / 10 ** n,
-               "F_ISNUMBER": num}
+               "F_ISNUMBER": num,
+               "F_DATE": lambda y, m, d: __import__("datetime").date(int(y), int(m), int(d)).toordinal(),
+               "F_VALUE": lambda x: float(x) if "." in str(x) else int(x),
+               "F_LEFT": lambda x, n: str(x)[:int(n)], "F_RIGHT": lambda x, n: str(x)[-int(n):],
+               "F_MID": lambda x, a, n: str(x)[int(a) - 1:int(a) - 1 + int(n)]}
         return eval(f, env)
 
 
@@ -92,16 +101,21 @@ def test_gap_layout_and_formulas(hand):
     assert ws["F8"].value == "=C8+D8+E8" and ws["G8"].value == "=I26" and ws["H8"].value == "=MIN(F8,G8)"
     assert "ROUNDDOWN(A8*H8/G8,0)" in ws["I8"].value                   # ⑧ = ①×⑦÷⑥, 원 미만 절사
     # 채권자불분명 차입금 행: ⑩ = ⑬ 상단 = 1,500,000, <18> = ⑩-⑬-<16>
-    assert (ws["B12"].value, ws["D12"].value) == (1_500_000, 1_500_000)
+    # ⑬ = 같은 줄 ⑩(숫자를 박지 않음), ⑪ 적수 = '입력·가정' 이름(입력 적수)
+    ev = Evaluator(wb)
+    assert (ws["B12"].value, ws["D12"].value, ev.v(GAP, "D12")) == (1_500_000, "=B12", 1_500_000)
     assert ws["H12"].value == "=N(B12)-N(D12)-N(D13)-N(F12)-N(F13)"
-    assert (ws["B14"].value, ws["C14"].value) == (3_250_000, 23_725_000_000)
+    assert (ws["B14"].value, ws["C14"].value, ev.v(GAP, "C14")) == (3_250_000, "=호출1_차입금1_적수", 23_725_000_000)
     assert ws["B16"].value in (None, "")                               # 기업구매자금대출(영 제53조④2호)은 적지 않음
 
 
 def test_eul_ledger_rows(hand):
     _, wb, _ = hand
     ws = wb[EUL]
-    rows = [(ws.cell(r, 3).value, ws.cell(r, 4).value, ws.cell(r, 5).value, ws.cell(r, 8).value) for r in range(12, 16)]
+    ev = Evaluator(wb)
+    # 경과일수 = 사업연도 종료일 − 일자 + 1(그 사람 마지막 행) — 수식
+    assert all(str(ws.cell(r, 8).value).startswith("=DATE(") for r in range(12, 16))
+    rows = [(ws.cell(r, 3).value, ws.cell(r, 4).value, ws.cell(r, 5).value, ev.v(EUL, f"H{r}")) for r in range(12, 16)]
     assert rows == [("2025.05.01", "영업부장 증가", 2_000_000, 245), ("2025.07.01", "직원갑 증가", 1_000_000, 184),
                     ("2025.09.01", "직원을 증가", 2_000_000, 122), ("2025.11.22", "대표이사 증가", 12_637_500, 40)]
     assert ws["G12"].value == "=N(E12)-N(F12)" and ws["I12"].value == "=G12*H12"
@@ -129,9 +143,11 @@ def test_deposit_offset(tmp_path):
     path = build(tmp_path, [{"label": "상계", "tool": T, "args": {"loans": LOANS, "advances": ADV, "deposits": dep, "year": 2025}}])
     wb = openpyxl.load_workbook(path)
     ws = wb[EUL]
-    assert [ws.cell(29, cc).value for cc in (3, 4, 6, 8)] == ["2025.12.01", "대표이사 가수금 증가", 1_000_000, 19]
-    assert ws["G29"].value == "=N(F29)-N(E29)" and ws["G30"].value == "=G29+N(F30)-N(E30)"
     ev = Evaluator(wb)
+    # 같은 사람 다음 행이 있으면 경과일수 = 다음 행 일자 − 이 행 일자(12/20 − 12/1 = 19)
+    assert [ws.cell(29, cc).value for cc in (3, 4, 6)] + [ev.v(EUL, "H29")] == ["2025.12.01", "대표이사 가수금 증가", 1_000_000, 19]
+    assert ws["H29"].value.count("DATE(") == 2 and "C30" in ws["H29"].value
+    assert ws["G29"].value == "=N(F29)-N(E29)" and ws["G30"].value == "=G29+N(F30)-N(E30)"
     assert ev.v(EUL, "I35") == 19_000_000
     assert ev.v(GAP, "E8") == 1_404_500_000 and ev.v(GAP, "I8") == 192_397
     checks = [ev.v(s, x.coordinate) for s in (GAP, EUL) for row in wb[s].iter_rows() for x in row

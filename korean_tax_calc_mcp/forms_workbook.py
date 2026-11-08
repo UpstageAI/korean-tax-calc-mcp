@@ -5,6 +5,7 @@ SPEC_form_templates.md 3절: 틀 JSON 형식·렌더 규칙.
 from __future__ import annotations
 
 import re as _re
+from datetime import date as _date
 from typing import Any
 
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -249,10 +250,40 @@ def resolve_formula(f: str, *, res: dict | None, call_idx: int,
         return local[rest]
 
     out = _re.sub(r"\{([^}]+)\}", _replace_slot, out)
+    # [식.단계;이름=칸;…] → 계산식 단계의 식을 입력 이름(호출N_이름)으로 펼친 수식(다른 단계는 괄호로 펼침, ;이름=칸은 그 이름을 칸으로)
+    out = _re.sub(r"\[식\.([^]]+)\]", lambda m: expand_step(m.group(1), res=res, call_idx=call_idx), out)
     # 그다음 [입력...]·[계산...]·[결과...] 치환
     out = _re.sub(r"\[입력\.([^]]+)\]", _replace_input, out)
     out = _re.sub(r"\[(계산|결과)\.([^]]+)\]", _replace_calc_result, out)
     return out
+
+
+def expand_step(spec: str, *, res: dict | None, call_idx: int) -> str:
+    """`단계;이름=칸;…` → res['계산식']의 그 단계 식을 엑셀 수식으로. 입력 이름은 호출N_이름, 다른 단계는 (펼친 식),
+    `이름=칸`으로 준 이름은 그 칸 주소로 바꾼다. 단계가 없으면 KeyError."""
+    res = res if isinstance(res, dict) else {}
+    name, *pairs = spec.split(";")
+    subst = dict(p.split("=", 1) for p in pairs if "=" in p)
+    steps = {s["이름"]: s["식"] for s in res.get("계산식") or [] if isinstance(s, dict) and s.get("식") is not None}
+    inputs = {i["이름"] for i in res.get("계산식_입력") or [] if isinstance(i, dict)}
+    if name not in steps:
+        raise KeyError(f"계산식 단계 '{name}' 없음")
+    names = sorted(set(steps) | inputs | set(subst), key=len, reverse=True)
+    pat = _re.compile(r"(?<![가-힣A-Za-z0-9_.])(" + "|".join(map(_re.escape, names)) + r")(?![가-힣A-Za-z0-9_])")
+
+    def _ex(n: str, depth: int) -> str:
+        if depth > 20:
+            raise KeyError(f"계산식 단계 '{name}' 순환 참조")
+
+        def _one(m: _re.Match) -> str:
+            k = m.group(1)
+            if k in subst:
+                return subst[k]
+            if k in steps and k != n:
+                return f"({_ex(k, depth + 1)})"
+            return f"호출{call_idx + 1}_{k}"
+        return pat.sub(_one, str(steps[n]))
+    return _ex(name, 0)
 
 
 def fill_text(t: str | None, *, res: dict | None, meta: dict[str, Any]) -> str:
@@ -738,8 +769,8 @@ def nonbusiness_form_data(data: dict | None, args: dict | None) -> dict:
     if isinstance(data.get("계산"), dict):
         return data
     args = args or {}
-    loans = [{"구분": "일반", "지급이자": int(l.get("interest", 0)), "적수": int(l.get("jeoksu") or 0)}
-             for l in args.get("loans", []) or [] if isinstance(l, dict)]
+    loans = [{"차입금": i, "구분": "일반", "지급이자": int(l.get("interest", 0)), "적수": int(l.get("jeoksu") or 0)}
+             for i, l in enumerate(args.get("loans", []) or []) if isinstance(l, dict)]
     calc = {"차입금": loans, "업무무관자산적수": int(args.get("nonbusiness_jeoksu") or 0),
             "가지급금적수_합계": 0, "가수금적수_합계": 0, "가수금_상계초과적수": 0, "불분명이자_합계": 0,
             "적수표": {"가지급금": [], "가수금": []}}
@@ -755,6 +786,7 @@ def nonbusiness_form_sources(data: dict | None) -> dict[str, list[dict]]:
     - `26_가지급금`·`26_가수금`(을 3. ⑧·⑨): 계산.적수표 행. ⑤잔액은 사람별 첫 행부터 이어지는 수식.
     """
     calc = (data or {}).get("계산") or {}
+    names = {i.get("이름"): i.get("값") for i in (data or {}).get("계산식_입력") or [] if isinstance(i, dict)}
     loans: list[dict] = []
     for row in calc.get("차입금", []) or []:
         kind = row.get("구분", "일반")
@@ -762,15 +794,24 @@ def nonbusiness_form_sources(data: dict | None) -> dict[str, list[dict]]:
             continue
         it = row.get("지급이자", 0)
         j = row.get("적수")
-        out = {"이자율": row.get("이자율"), "지급이자": it, "적수": j,
+        n = row.get("차입금")
+        # ⑪ 적수: 입력 적수 또는 원금 × 일수('입력·가정' 이름) — 값이 같을 때만
+        if j is not None and names.get(f"차입금{n}_적수") == j:
+            jf = f"=[입력.차입금{n}_적수]"
+        elif j is not None and f"차입금{n}_원금" in names and names[f"차입금{n}_원금"] * names.get(f"차입금{n}_일수", 0) == j:
+            jf = f"=[입력.차입금{n}_원금]*[입력.차입금{n}_일수]"
+        else:
+            jf = j
+        out = {"이자율": row.get("이자율"), "지급이자": it, "적수": jf,
                "불분명_이자": None, "불분명_적수": None, "비실명_이자": None, "비실명_적수": None,
                "건설_이자": None, "건설_적수": None}
+        # ⑬·⑭(<16>·<17>): 같은 줄 ⑩ 지급이자·⑪ 적수(비실명은 서식 아래 칸 → 위 행 참조)
         if kind == "채권자불분명":
-            out["불분명_이자"], out["불분명_적수"] = it, j
+            out["불분명_이자"], out["불분명_적수"] = "=B{r}", ("=C{r}" if j is not None else None)
         elif kind == "비실명":
-            out["비실명_이자"], out["비실명_적수"] = it, j
+            out["비실명_이자"], out["비실명_적수"] = "=B{p}", ("=C{p}" if j is not None else None)
         elif kind == "건설자금":
-            out["건설_이자"], out["건설_적수"] = it, j
+            out["건설_이자"], out["건설_적수"] = "=B{r}", ("=C{r}" if j is not None else None)
         loans.append(out)
 
     assets: list[dict] = []
@@ -778,16 +819,34 @@ def nonbusiness_form_sources(data: dict | None) -> dict[str, list[dict]]:
     if nb:
         assets.append({"일자": "", "적요": "업무무관자산 적수(직접 입력)", "적수": nb})
 
+    end = names.get("사업연도종료일")
+
+    def _d(ref: str) -> str:
+        return f"DATE(VALUE(LEFT({ref},4)),VALUE(MID({ref},6,2)),VALUE(RIGHT({ref},2)))"
+
     def _ledger(rows: list[dict], deposit: bool) -> list[dict]:
         out, prev = [], None
-        for r in rows or []:
+        rows = list(rows or [])
+        for k, r in enumerate(rows):
             who = r.get("이름")
             inc, dec = ("F", "E") if deposit else ("E", "F")
             head = "G{p}+" if who == prev else ""   # 사람이 바뀌면 그 사람 첫 행부터 잔액을 새로 쌓음
+            # 경과일수: 같은 사람 다음 행 일자 − 이 행 일자, 그 사람 마지막 행은 사업연도 종료일 − 일자 + 1 (도구 값과 같을 때만)
+            days = r.get("일수", 0)
+            nxt = rows[k + 1] if k + 1 < len(rows) and rows[k + 1].get("이름") == who else None
+            try:
+                d0 = _date.fromisoformat(r.get("일자", ""))
+                if nxt is not None:
+                    if (_date.fromisoformat(nxt.get("일자", "")) - d0).days == days:
+                        days = f"={_d('C{n}')}-{_d('C{r}')}"
+                elif end and (_date.fromisoformat(end.replace(".", "-")) - d0).days + 1 == days:
+                    days = f"={_d('[입력.사업연도종료일]')}-{_d('C{r}')}+1"
+            except (TypeError, ValueError):
+                pass
             out.append({"일자": _nb_date(r.get("일자", "")), "적요": r.get("적요", ""),
                         "차변": r.get("차변") or None, "대변": r.get("대변") or None,
                         "잔액": f"={head}N({inc}{{r}})-N({dec}{{r}})",
-                        "일수": r.get("일수", 0)})
+                        "일수": days})
             prev = who
         return out
 
@@ -1111,6 +1170,124 @@ def export_form_inputs(tool: str, args: dict | None, data: dict | None) -> dict 
             new_data["계산"] = calc_dict
         elif tool == "donation_limit":
             new_data["계산"] = calc_steps
+    return new_data
+
+
+def _bp(r: float) -> int:
+    """세율(소수) → 만분율 정수(0.19 → 1900). 서식 세액 수식은 만분율 정수로 곱해 부동소수 오차 없이 원 단위로 맞춘다."""
+    return int(round(r * 10000))
+
+
+def _tier_inputs(prefix: str, tiers: list, n: int, what: str) -> list[dict]:
+    """구간표 [(상한, 세율)…] → n구간 입력(상한 n−1개·세율 n개, 만분율). 구간이 n보다 적으면 마지막 구간을 되풀이(차이 0)."""
+    caps = [c for c, _ in tiers][:-1]
+    rates = [r for _, r in tiers]
+    while len(rates) < n:
+        caps.append(caps[-1] if caps else 0)
+        rates.append(rates[-1])
+    out = [_inp(f"{prefix}_구간{k + 1}_상한", caps[k], f"{what} {k + 1}구간 상한(원)") for k in range(n - 1)]
+    out += [_inp(f"{prefix}율{k + 1}_만분율", _bp(rates[k]), f"{what} {k + 1}구간 세율 {rates[k] * 100:g}% (만분율)") for k in range(n)]
+    return out
+
+
+def tier_tax_formula(base: str, prefix: str, n: int, months: str | None = None) -> str:
+    """구간 누진 세액 수식(원 미만 반올림, 도구 won()과 같음). months가 있으면 1년 미만 연 환산(과세표준×12/월수 → 세율 → ×월수/12)."""
+    x = f"{base}*12/{months}" if months else base
+    terms = [f"MAX(0,{x})*[입력.{prefix}율1_만분율]"]
+    for k in range(1, n):
+        terms.append(f"MAX(0,{x}-[입력.{prefix}_구간{k}_상한])*([입력.{prefix}율{k + 1}_만분율]-[입력.{prefix}율{k}_만분율])")
+    body = f"({'+'.join(terms)})/10000"
+    return f"=ROUND({body}*{months}/12,0)" if months else f"=ROUND({body},0)"
+
+
+def form_cell_inputs(tool: str, args: dict | None, data: dict | None) -> dict | None:
+    """내보내기 전용: 서식 금액 칸이 숫자 대신 '입력·가정' 이름·앞 칸을 가리키도록 `계산식_입력`에 이름을 덧붙인 사본
+    (export_form_inputs 뒤에 부름. 이미 있는 이름은 그대로). 법정 세율·구간은 그 사업연도 연도표 값. 도구 출력은 그대로."""
+    if not isinstance(data, dict) or "error" in data:
+        return data
+    a = args or {}
+    res = data.get("결과") if isinstance(data.get("결과"), dict) else {}
+    calc = data.get("계산") if isinstance(data.get("계산"), dict) else {}
+    add: list[dict] = []
+    new_data = dict(data)
+    if tool in ("corporate_tax", "minimum_tax_adjustment"):
+        from .engine.calc_cit import YEAR as _CY
+        y = a.get("year")
+        if y in _CY:
+            if tool == "corporate_tax":
+                add.append(_inp("과세표준", a.get("base", res.get("과세표준", 0)), "법인세 과세표준(별지3 112)"))
+            add.append(_inp("사업연도월수", a.get("months", 12) or 12, "사업연도 월수(1년 미만이면 연 환산)"))
+            add += _tier_inputs("법인세", _CY[y]["세율"], 4, f"{y} 사업연도 법인세율(법인세법 제55조①)")
+            if tool == "minimum_tax_adjustment":
+                mt = _CY[y]["최저한세"]
+                sme, grace = a.get("sme", True), int(a.get("grace_year") or 0)
+                if sme or grace:
+                    r = mt["중소"] if sme else (mt["유예1_3"] if grace <= 3 else mt["유예4_5"])
+                    tiers, what = [(mt["일반"][0][0], r), (mt["일반"][1][0], r), (float("inf"), r)], "최저한세율(중소·유예, 단일)"
+                else:
+                    tiers, what = mt["일반"], "최저한세율(일반, 조특법 제132조①)"
+                add += _tier_inputs("최저한세", tiers, 3, f"{y} {what}")
+                sr = res.get("세율") if isinstance(res.get("세율"), dict) else {}
+                add += [_inp("세율_감면후", sr.get("감면후"), "121② 세율(과세표준에 걸린 가장 높은 구간)"),
+                        _inp("세율_최저한세", sr.get("최저한세"), "121③ 최저한세율")]
+                배제 = {}
+                for b in res.get("배제_내역") or []:
+                    배제.setdefault(b.get("코드"), b.get("배제액", 0))       # 도구와 같게 코드별 첫 배제액
+                for code, v in (res.get("별지8") or {}).items():
+                    for k in ("대상세액", "전기이월액", "당기발생액"):
+                        if k in v:
+                            add.append(_inp(f"별지8_{code}_{k}", v[k], f"별지8(갑) 코드 {code} {k}"))
+                    add.append(_inp(f"별지8_{code}_배제액", 배제.get(code, 0), f"별지8(갑) 코드 {code} 최저한세 배제액(조특법 제132조)"))
+    elif tool == "entertainment_adjustment":
+        for k, d in (("전통시장_지출", "⑪ 전통시장 지출"), ("지역사랑상품권_지출", "⑫ 지역사랑상품권 지출"),
+                     ("온누리상품권_지출", "⑬ 온누리상품권 지출")):
+            if isinstance(calc.get(k), (int, float)):
+                add.append(_inp(k, calc[k], f"별지23(갑) {d}(장부 항목 중 그 성격 합계)"))
+    elif tool == "retirement_allowance_adjustment":
+        if a.get("succeeded_disallowed"):
+            add.append(_inp("승계부인누계", a["succeeded_disallowed"], "합병 등으로 승계한 부인누계(유보)"))
+        if calc.get("퇴직연금충당금_상계"):
+            add.append(_inp("연금충당금_상계", calc["퇴직연금충당금_상계"], "퇴직연금충당금 상계액(퇴직급여충당금 유보에서 뺌)"))
+    elif tool == "common_input_tax":
+        if isinstance(calc.get("공통매입세액_과세기간합계"), (int, float)):
+            add.append(_inp("공통매입세액", calc["공통매입세액_과세기간합계"], "⑪ 공통매입세액(장부 사용처 '공통' 매입세액 합계)"))
+    elif tool == "nonbusiness_interest_disallowance":
+        for i, l in enumerate(a.get("loans") or []):
+            if not isinstance(l, dict):
+                continue
+            if l.get("jeoksu") is not None:
+                add.append(_inp(f"차입금{i}_적수", int(l["jeoksu"]), f"차입금 {i + 1} 적수(입력)"))
+            elif l.get("principal") is not None and l.get("days") is not None:
+                add += [_inp(f"차입금{i}_원금", int(l["principal"]), f"차입금 {i + 1} 원금"),
+                        _inp(f"차입금{i}_일수", int(l["days"]), f"차입금 {i + 1} 일수")]
+        fy = str(calc.get("사업연도") or "")
+        if "~" in fy:
+            add.append(_inp("사업연도종료일", _nb_date(fy.split("~")[1].strip()), "사업연도 종료일(별지26(을) 경과일수)"))
+    elif tool == "bad_debt_adjustment":
+        rows = (data.get("서식_표") or {}).get("34_대손금")
+        if rows:
+            add.append(_inp("비망가액", 1000, "부도어음·수표 비망가액 1,000원(법인세법 시행령 제19조의2②)"))
+            new_rows = []
+            for r in rows:
+                r = dict(r)
+                amt, cs, cb = r.get("금액", 0), r.get("상계_시인", 0), r.get("상계_부인", 0)
+                js, jb = r.get("손비_시인", 0), r.get("손비_부인", 0)
+                인정 = cs + js
+                if 인정 == amt:
+                    r["손비_시인"] = "=E{r}-G{r}"
+                elif 인정 == amt - 1000 and r.get("비고") == "1천원 비망":
+                    r["손비_시인"] = "=E{r}-[입력.비망가액]-G{r}"
+                else:
+                    new_rows.append(r)
+                    continue
+                if jb == amt - cs - cb - js:
+                    r["손비_부인"] = "=E{r}-F{r}-J{r}"
+                new_rows.append(r)
+            new_data["서식_표"] = {**data["서식_표"], "34_대손금": new_rows}
+    if not add and new_data == data:
+        return data
+    have = {i.get("이름") for i in data.get("계산식_입력") or [] if isinstance(i, dict)}
+    new_data["계산식_입력"] = list(data.get("계산식_입력") or []) + [x for x in add if x["이름"] not in have]
     return new_data
 
 
