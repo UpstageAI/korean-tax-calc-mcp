@@ -1,0 +1,3062 @@
+[
+{
+"calls": [
+{
+"tool": "common_input_tax",
+"args": {
+"year": 2026,
+"period": "2기",
+"filing": "확정",
+"supplies": {},
+"ledger": [],
+"settlements": [
+{
+"항목": "신축 건물",
+"총공통매입세액": 60000000,
+"면적": {
+"과세": 650,
+"면세": 350
+},
+"기불공제": 13200000
+},
+{
+"항목": "구축물",
+"총공통매입세액": 10000000,
+"면세비율": 0.1,
+"기불공제": 2000000
+}
+]
+}
+}
+],
+"kw": {},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"tool": "common_input_tax",
+"args": {
+"year": 2026,
+"period": "2기",
+"filing": "확정",
+"supplies": {},
+"ledger": [],
+"settlements": [
+{
+"항목": "신축 건물",
+"총공통매입세액": 60000000,
+"면적": {
+"과세": 650,
+"면세": 350
+},
+"기불공제": 13200000
+},
+{
+"항목": "구축물",
+"총공통매입세액": 10000000,
+"공급가액": {
+"과세": 2,
+"면세": 1
+},
+"기불공제": 2000000
+}
+]
+}
+}
+],
+"kw": {},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"tool": "common_input_tax",
+"args": {
+"year": 2026,
+"period": "2기",
+"filing": "확정",
+"supplies": {
+"확정": {
+"taxable": 700,
+"exempt": 300
+}
+},
+"ledger": [
+{
+"항목": "임차료",
+"매입세액": 1000000,
+"사용처": "공통"
+}
+]
+}
+}
+],
+"kw": {},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"tool": "bundled_supply_split",
+"args": {
+"total_price": 240000000,
+"vat_included": false,
+"book_value": {
+"building": 10000000,
+"land": 40000000
+},
+"standard_value": {
+"building": 15000000,
+"land": 85000000
+},
+"other_assets": [
+{
+"name": "기계장치",
+"book_value": 10000000
+}
+]
+}
+}
+],
+"kw": {},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"tool": "minimum_tax_adjustment",
+"args": {
+"year": 2025,
+"sme": true,
+"net_income": 400000000,
+"income_add": 50000000,
+"income_deduct": 50000000,
+"reductions": [
+{
+"code": "112",
+"amount": 10000000
+}
+],
+"credits": [
+{
+"code": "14Z",
+"current": 6000000
+},
+{
+"code": "13W",
+"current": 12000000,
+"carryforward": [
+{
+"year": 2022,
+"amount": 3000000
+},
+{
+"year": 2023,
+"amount": 4000000
+}
+]
+},
+{
+"code": "16B",
+"current": 8000000
+}
+]
+}
+}
+],
+"kw": {},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"tool": "minimum_tax_adjustment",
+"args": {
+"year": 2025,
+"sme": true,
+"net_income": 400000000,
+"income_add": 50000000,
+"income_deduct": 50000000,
+"reductions": [],
+"credits": [
+{
+"code": "13W",
+"current": 5000000
+}
+]
+}
+}
+],
+"kw": {},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"tool": "minimum_tax_adjustment",
+"args": {
+"year": 2025,
+"sme": true,
+"net_income": 500000000,
+"income_add": 120000000,
+"income_deduct": 70000000,
+"special_depreciation": 30000000,
+"donation_excess": 10000000,
+"donation_carryover": 5000000,
+"loss_carryforward": 55000000,
+"reductions": [
+{
+"code": "112",
+"amount": 20000000
+}
+],
+"credits": [
+{
+"code": "13W",
+"current": 20000000
+}
+]
+}
+}
+],
+"kw": {},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"label": "지급이자",
+"tool": "nonbusiness_interest_disallowance",
+"args": {
+"loans": [
+{
+"interest": 1500000,
+"kind": "채권자불분명"
+},
+{
+"interest": 3250000,
+"jeoksu": 23725000000
+},
+{
+"interest": 400000,
+"jeoksu": 3650000000,
+"kind": "기업구매자금대출"
+}
+],
+"advances": [
+{
+"대상": "직원",
+"이름": "영업부장",
+"사유": "미지급소득세대납",
+"금액": 5000000,
+"지급일": "2025-05-01",
+"총결정세액": 1200000,
+"미지급소득": 50000000,
+"종합소득금액": 20000000
+},
+{
+"대상": "직원",
+"이름": "직원갑",
+"사유": "급료가불",
+"금액": 3000000,
+"지급일": "2025-07-01",
+"월정급여": 2000000
+},
+{
+"대상": "직원",
+"이름": "직원을",
+"사유": "우리사주취득자금",
+"금액": 2000000,
+"지급일": "2025-09-01",
+"해당법인주식": false
+},
+{
+"대상": "대표이사",
+"사유": "업무무관대여",
+"금액": 12637500,
+"지급일": "2025-11-22"
+}
+],
+"year": 2025
+}
+}
+],
+"kw": {},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"label": "상계",
+"tool": "nonbusiness_interest_disallowance",
+"args": {
+"loans": [
+{
+"interest": 1500000,
+"kind": "채권자불분명"
+},
+{
+"interest": 3250000,
+"jeoksu": 23725000000
+},
+{
+"interest": 400000,
+"jeoksu": 3650000000,
+"kind": "기업구매자금대출"
+}
+],
+"advances": [
+{
+"대상": "직원",
+"이름": "영업부장",
+"사유": "미지급소득세대납",
+"금액": 5000000,
+"지급일": "2025-05-01",
+"총결정세액": 1200000,
+"미지급소득": 50000000,
+"종합소득금액": 20000000
+},
+{
+"대상": "직원",
+"이름": "직원갑",
+"사유": "급료가불",
+"금액": 3000000,
+"지급일": "2025-07-01",
+"월정급여": 2000000
+},
+{
+"대상": "직원",
+"이름": "직원을",
+"사유": "우리사주취득자금",
+"금액": 2000000,
+"지급일": "2025-09-01",
+"해당법인주식": false
+},
+{
+"대상": "대표이사",
+"사유": "업무무관대여",
+"금액": 12637500,
+"지급일": "2025-11-22"
+}
+],
+"deposits": [
+{
+"이름": "대표이사",
+"금액": 1000000,
+"일자": "2025-12-01",
+"반환일": "2025-12-20"
+}
+],
+"year": 2025
+}
+}
+],
+"kw": {},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"label": "직접",
+"tool": "nonbusiness_interest_disallowance",
+"args": {
+"loans": [
+{
+"interest": 30000000,
+"jeoksu": 3650000000
+}
+],
+"nonbusiness_jeoksu": 876000000
+}
+}
+],
+"kw": {},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"tool": "retirement_allowance_adjustment",
+"args": {
+"year": 2025,
+"allowance": {
+"opening": 300000000,
+"provision": 30000000,
+"paid_cash": 40000000,
+"closing": 290000000
+},
+"prior_disallowed": 280000000,
+"estimate": {
+"lump_sum": 600000000,
+"actuarial": 650000000
+},
+"salary": {
+"total": 1000000000,
+"dc_members": 100000000,
+"not_eligible": 50000000
+},
+"conversion_fund": 2000000,
+"pension": {
+"asset_closing": 500000000,
+"prior_deducted": 400000000,
+"book_provision": 0,
+"book_paid": 20000000,
+"asset_opening": 450000000
+}
+}
+}
+],
+"kw": {},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"tool": "retirement_allowance_adjustment",
+"args": {
+"year": 2025,
+"allowance": {
+"opening": 300000000,
+"provision": 30000000,
+"paid_cash": 40000000,
+"closing": 290000000
+},
+"prior_disallowed": 280000000,
+"estimate": {
+"lump_sum": 600000000,
+"actuarial": 650000000
+},
+"salary": {
+"total": 1000000000,
+"dc_members": 100000000,
+"not_eligible": 50000000
+},
+"conversion_fund": 2000000,
+"pension": {
+"asset_closing": 500000000,
+"prior_deducted": 400000000,
+"book_provision": 0,
+"book_paid": 20000000,
+"asset_opening": 450000000
+}
+}
+}
+],
+"kw": {},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"tool": "retirement_allowance_adjustment",
+"args": {
+"year": 2025,
+"allowance": {
+"opening": 300000000,
+"provision": 30000000,
+"paid_cash": 40000000,
+"closing": 290000000
+},
+"prior_disallowed": 280000000,
+"estimate": {
+"lump_sum": 600000000,
+"actuarial": 650000000
+},
+"salary": {
+"total": 1000000000,
+"dc_members": 100000000,
+"not_eligible": 50000000
+},
+"conversion_fund": 2000000
+}
+}
+],
+"kw": {},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"tool": "bad_debt_adjustment",
+"args": {
+"year": 2025,
+"sme": true,
+"prior_excess": 5000000,
+"book": {
+"opening": 30000000,
+"offset": 8000000,
+"provision": 20000000,
+"closing": 42000000
+},
+"receivables_prev_end_book": 1000000000,
+"receivables_end_book": 1300000000,
+"writeoffs": [
+{
+"kind": "소멸시효완성",
+"amount": 8000000,
+"arose_in": "당기",
+"date": "2025-03-31",
+"account": "외상매출금",
+"detail": "가나상사",
+"booked": "상계"
+},
+{
+"kind": "부도6개월",
+"amount": 3000000,
+"arose_in": "당기",
+"instrument": "받을어음",
+"months_since_default": 7,
+"date": "2025-12-31",
+"account": "받을어음",
+"detail": "다라상사",
+"booked": "손비"
+}
+]
+}
+}
+],
+"kw": {},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"tool": "bad_debt_adjustment",
+"args": {
+"year": 2025,
+"sme": true,
+"prior_excess": 5000000,
+"book": {
+"opening": 30000000,
+"offset": 8000000,
+"provision": 20000000,
+"closing": 42000000
+},
+"receivables_prev_end_book": 1000000000,
+"receivables_end_book": 1300000000,
+"writeoffs": [
+{
+"kind": "소멸시효완성",
+"amount": 8000000,
+"arose_in": "당기",
+"date": "2025-03-31",
+"account": "외상매출금",
+"detail": "가나상사",
+"booked": "상계"
+},
+{
+"kind": "부도6개월",
+"amount": 3000000,
+"arose_in": "당기",
+"instrument": "받을어음",
+"months_since_default": 7,
+"date": "2025-12-31",
+"account": "받을어음",
+"detail": "다라상사",
+"booked": "손비"
+}
+]
+}
+}
+],
+"kw": {},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"label": "기업업무추진비",
+"tool": "entertainment_adjustment",
+"args": {
+"year": 2025,
+"sme": true,
+"ledger": [
+{
+"항목": "일반 접대비",
+"금액": 52000000,
+"증빙": "적격"
+},
+{
+"항목": "체육활동 입장권",
+"금액": 20000000,
+"증빙": "적격",
+"성격": "문화"
+},
+{
+"항목": "직원단체(법인) 복리시설비",
+"금액": 4000000,
+"증빙": "적격",
+"성격": "직원단체_법인"
+},
+{
+"항목": "거래처 증정 제품",
+"금액": 9000000,
+"증빙": "적격",
+"성격": "현물",
+"시가": 10000000,
+"장부가액": 8000000
+}
+],
+"revenue": {
+"매출액": 15000000000,
+"특수관계매출": 3000000000
+}
+}
+},
+{
+"label": "기계장치 감가상각",
+"tool": "depreciation_adjustment",
+"args": {
+"year": 2025,
+"method": "무신고",
+"asset_class": "건축물외_유형자산",
+"acquisition_cost": 100000000,
+"booked_depreciation": 15000000,
+"accumulated_dep_begin": 72500000,
+"rate": 0.3,
+"expensed_capex": 1000000,
+"prior_book_value": 27500000,
+"prior_disallowed": 4000000
+}
+},
+{
+"label": "수입배당금",
+"tool": "dividend_received_deduction",
+"args": {
+"year": 2025,
+"investees": [
+{
+"name": "B",
+"listed": false,
+"ratio": 0.4,
+"dividend": 15000000,
+"book_value_jeoksu": 219000000000
+}
+],
+"interest_paid": 30000000,
+"interest_excluded": 10000000,
+"total_assets_jeoksu": 730000000000
+}
+},
+{
+"label": "차가감소득금액",
+"tool": "income_adjustment_total",
+"args": {
+"net_income": 300000000,
+"items": [
+{
+"항목": "법인세비용",
+"종류": "법인세비용",
+"금액": 20000000
+},
+{
+"항목": "기업업무추진비 한도초과",
+"종류": "기업업무추진비 한도초과",
+"금액": 2280000
+},
+{
+"항목": "기계장치 감가상각비 한도초과",
+"종류": "감가상각비 한도초과",
+"금액": 5550000
+},
+{
+"항목": "㈜B 수입배당금 익금불산입",
+"종류": "수입배당금 익금불산입",
+"금액": 7200000
+}
+]
+}
+},
+{
+"label": "부가세 공통사용재화",
+"tool": "common_input_tax",
+"args": {
+"year": 2025,
+"period": "1기",
+"filing": "확정",
+"supplies": {
+"확정": {
+"taxable": 60,
+"exempt": 40
+}
+},
+"prior_period_supplies": {
+"taxable": 50,
+"exempt": 50
+},
+"common_asset_sales": [
+{
+"sale_price": 20000000,
+"input_tax": 0
+},
+{
+"sale_price": 400000,
+"input_tax": 0
+}
+],
+"ledger": [
+{
+"항목": "당기 매입 없음",
+"매입세액": 0,
+"사용처": "과세"
+}
+]
+}
+},
+{
+"label": "부가세 토지·건물 일괄양도",
+"tool": "bundled_supply_split",
+"args": {
+"total_price": 500000000,
+"vat_included": false,
+"standard_value": {
+"building": 240000000,
+"land": 160000000
+},
+"book_value": {
+"building": 200000000,
+"land": 200000000
+}
+}
+},
+{
+"label": "대표 갑 총급여",
+"tool": "earned_income_gross_pay",
+"args": {
+"year": 2025,
+"items": [
+{
+"kind": "급여",
+"amount": 100000000,
+"facts": {}
+},
+{
+"kind": "사회보험료_사용자부담분",
+"amount": 3000000,
+"facts": {
+"insurance": "건강보험"
+}
+},
+{
+"kind": "인정상여",
+"amount": 5000000,
+"facts": {
+"work_year": 2025,
+"settlement_date": "2026-03-30"
+}
+},
+{
+"kind": "자가운전보조금",
+"amount": 2400000,
+"facts": {
+"months": 12,
+"vehicle": "기타",
+"business_use": false,
+"actual_travel_reimbursed": false
+}
+},
+{
+"kind": "실비변상여비",
+"amount": 4000000,
+"facts": {
+"actual_cost": false
+}
+},
+{
+"kind": "직무발명보상금",
+"amount": 7000000,
+"facts": {
+"retired": false,
+"related_party": true
+}
+},
+{
+"kind": "사택제공이익",
+"amount": 20000000,
+"facts": {
+"position": "지배주주인 대표자"
+}
+}
+]
+}
+},
+{
+"label": "대표 갑 금융소득",
+"tool": "financial_income_aggregate",
+"args": {
+"year": 2025,
+"items": [
+{
+"kind": "출자공동사업자배당",
+"amount": 6000000
+},
+{
+"kind": "의제배당_잉여금자본전입",
+"amount": 10000000,
+"source": "이익잉여금"
+},
+{
+"kind": "상장법인현금배당",
+"amount": 7000000
+},
+{
+"kind": "비상장법인현금배당",
+"amount": 8000000
+},
+{
+"kind": "직장공제회초과반환금",
+"amount": 1000000
+},
+{
+"kind": "법원보증금이자",
+"amount": 2000000
+}
+]
+}
+}
+],
+"kw": {},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"label": "기업업무추진비",
+"tool": "entertainment_adjustment",
+"args": {
+"year": 2025,
+"sme": true,
+"ledger": [
+{
+"항목": "일반 접대비",
+"금액": 52000000,
+"증빙": "적격"
+},
+{
+"항목": "체육활동 입장권",
+"금액": 20000000,
+"증빙": "적격",
+"성격": "문화"
+},
+{
+"항목": "직원단체(법인) 복리시설비",
+"금액": 4000000,
+"증빙": "적격",
+"성격": "직원단체_법인"
+},
+{
+"항목": "거래처 증정 제품",
+"금액": 9000000,
+"증빙": "적격",
+"성격": "현물",
+"시가": 10000000,
+"장부가액": 8000000
+}
+],
+"revenue": {
+"매출액": 15000000000,
+"특수관계매출": 3000000000
+}
+}
+},
+{
+"label": "기계장치 감가상각",
+"tool": "depreciation_adjustment",
+"args": {
+"year": 2025,
+"method": "무신고",
+"asset_class": "건축물외_유형자산",
+"acquisition_cost": 100000000,
+"booked_depreciation": 15000000,
+"accumulated_dep_begin": 72500000,
+"rate": 0.3,
+"expensed_capex": 1000000,
+"prior_book_value": 27500000,
+"prior_disallowed": 4000000
+}
+},
+{
+"label": "수입배당금",
+"tool": "dividend_received_deduction",
+"args": {
+"year": 2025,
+"investees": [
+{
+"name": "B",
+"listed": false,
+"ratio": 0.4,
+"dividend": 15000000,
+"book_value_jeoksu": 219000000000
+}
+],
+"interest_paid": 30000000,
+"interest_excluded": 10000000,
+"total_assets_jeoksu": 730000000000
+}
+},
+{
+"label": "차가감소득금액",
+"tool": "income_adjustment_total",
+"args": {
+"net_income": 300000000,
+"items": [
+{
+"항목": "법인세비용",
+"종류": "법인세비용",
+"금액": 20000000
+},
+{
+"항목": "기업업무추진비 한도초과",
+"종류": "기업업무추진비 한도초과",
+"금액": 2280000
+},
+{
+"항목": "기계장치 감가상각비 한도초과",
+"종류": "감가상각비 한도초과",
+"금액": 5550000
+},
+{
+"항목": "㈜B 수입배당금 익금불산입",
+"종류": "수입배당금 익금불산입",
+"금액": 7200000
+}
+]
+}
+},
+{
+"label": "부가세 공통사용재화",
+"tool": "common_input_tax",
+"args": {
+"year": 2025,
+"period": "1기",
+"filing": "확정",
+"supplies": {
+"확정": {
+"taxable": 60,
+"exempt": 40
+}
+},
+"prior_period_supplies": {
+"taxable": 50,
+"exempt": 50
+},
+"common_asset_sales": [
+{
+"sale_price": 20000000,
+"input_tax": 0
+},
+{
+"sale_price": 400000,
+"input_tax": 0
+}
+],
+"ledger": [
+{
+"항목": "당기 매입 없음",
+"매입세액": 0,
+"사용처": "과세"
+}
+]
+}
+},
+{
+"label": "부가세 토지·건물 일괄양도",
+"tool": "bundled_supply_split",
+"args": {
+"total_price": 500000000,
+"vat_included": false,
+"standard_value": {
+"building": 240000000,
+"land": 160000000
+},
+"book_value": {
+"building": 200000000,
+"land": 200000000
+}
+}
+},
+{
+"label": "대표 갑 총급여",
+"tool": "earned_income_gross_pay",
+"args": {
+"year": 2025,
+"items": [
+{
+"kind": "급여",
+"amount": 100000000,
+"facts": {}
+},
+{
+"kind": "사회보험료_사용자부담분",
+"amount": 3000000,
+"facts": {
+"insurance": "건강보험"
+}
+},
+{
+"kind": "인정상여",
+"amount": 5000000,
+"facts": {
+"work_year": 2025,
+"settlement_date": "2026-03-30"
+}
+},
+{
+"kind": "자가운전보조금",
+"amount": 2400000,
+"facts": {
+"months": 12,
+"vehicle": "기타",
+"business_use": false,
+"actual_travel_reimbursed": false
+}
+},
+{
+"kind": "실비변상여비",
+"amount": 4000000,
+"facts": {
+"actual_cost": false
+}
+},
+{
+"kind": "직무발명보상금",
+"amount": 7000000,
+"facts": {
+"retired": false,
+"related_party": true
+}
+},
+{
+"kind": "사택제공이익",
+"amount": 20000000,
+"facts": {
+"position": "지배주주인 대표자"
+}
+}
+]
+}
+},
+{
+"label": "대표 갑 금융소득",
+"tool": "financial_income_aggregate",
+"args": {
+"year": 2025,
+"items": [
+{
+"kind": "상장법인현금배당",
+"amount": 8000000
+}
+]
+}
+}
+],
+"kw": {},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"label": "고가주택 양도",
+"tool": "capital_gains_income",
+"args": {
+"asset_type": "주택",
+"acquisition_date": "2015-03-10",
+"transfer_date": "2025-06-20",
+"transfer_price": 2000000000,
+"acquisition_price": 800000000,
+"transfer_expenses": 20000000,
+"one_house": true,
+"exempt_met": true,
+"residence_years": 10,
+"apply_basic_deduction": true
+}
+},
+{
+"label": "중과 주택 양도",
+"tool": "capital_gains_income",
+"args": {
+"asset_type": "주택",
+"acquisition_date": "2019-03-10",
+"transfer_date": "2026-07-20",
+"transfer_price": 900000000,
+"acquisition_price": 500000000,
+"transfer_expenses": 10000000,
+"one_house": false,
+"houses_count": 3,
+"adjusted_area": true,
+"apply_basic_deduction": true
+}
+},
+{
+"label": "세율 적용",
+"tool": "capital_gains_tax",
+"args": {
+"base": 91900000,
+"asset_type": "주택",
+"acquisition_date": "2015-03-10",
+"transfer_date": "2025-06-20"
+}
+}
+],
+"kw": {
+"period": ""
+},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"label": "고가주택",
+"tool": "capital_gains_income",
+"args": {
+"asset_type": "주택",
+"acquisition_date": "2015-03-10",
+"transfer_date": "2025-06-20",
+"transfer_price": 2000000000,
+"acquisition_price": 800000000,
+"transfer_expenses": 20000000,
+"one_house": true,
+"exempt_met": true,
+"residence_years": 10,
+"apply_basic_deduction": false
+}
+}
+],
+"kw": {},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"label": "기업업무추진비",
+"tool": "entertainment_adjustment",
+"args": {
+"year": 2025,
+"sme": true,
+"ledger": [
+{
+"항목": "일반 접대비",
+"금액": 52000000,
+"증빙": "적격"
+},
+{
+"항목": "체육활동 입장권",
+"금액": 20000000,
+"증빙": "적격",
+"성격": "문화"
+},
+{
+"항목": "직원단체(법인) 복리시설비",
+"금액": 4000000,
+"증빙": "적격",
+"성격": "직원단체_법인"
+},
+{
+"항목": "거래처 증정 제품",
+"금액": 9000000,
+"증빙": "적격",
+"성격": "현물",
+"시가": 10000000,
+"장부가액": 8000000
+}
+],
+"revenue": {
+"매출액": 15000000000,
+"특수관계매출": 3000000000
+}
+}
+},
+{
+"label": "기계장치 감가상각",
+"tool": "depreciation_adjustment",
+"args": {
+"year": 2025,
+"method": "무신고",
+"asset_class": "건축물외_유형자산",
+"acquisition_cost": 100000000,
+"booked_depreciation": 15000000,
+"accumulated_dep_begin": 72500000,
+"rate": 0.3,
+"expensed_capex": 1000000,
+"prior_book_value": 27500000,
+"prior_disallowed": 4000000
+}
+},
+{
+"label": "수입배당금",
+"tool": "dividend_received_deduction",
+"args": {
+"year": 2025,
+"investees": [
+{
+"name": "B",
+"listed": false,
+"ratio": 0.4,
+"dividend": 15000000,
+"book_value_jeoksu": 219000000000
+}
+],
+"interest_paid": 30000000,
+"interest_excluded": 10000000,
+"total_assets_jeoksu": 730000000000
+}
+},
+{
+"label": "차가감소득금액",
+"tool": "income_adjustment_total",
+"args": {
+"net_income": 300000000,
+"items": [
+{
+"항목": "법인세비용",
+"종류": "법인세비용",
+"금액": 20000000
+},
+{
+"항목": "기업업무추진비 한도초과",
+"종류": "기업업무추진비 한도초과",
+"금액": 2280000
+},
+{
+"항목": "기계장치 감가상각비 한도초과",
+"종류": "감가상각비 한도초과",
+"금액": 5550000
+},
+{
+"항목": "㈜B 수입배당금 익금불산입",
+"종류": "수입배당금 익금불산입",
+"금액": 7200000
+}
+]
+}
+},
+{
+"label": "부가세 공통사용재화",
+"tool": "common_input_tax",
+"args": {
+"year": 2025,
+"period": "1기",
+"filing": "확정",
+"supplies": {
+"확정": {
+"taxable": 60,
+"exempt": 40
+}
+},
+"prior_period_supplies": {
+"taxable": 50,
+"exempt": 50
+},
+"common_asset_sales": [
+{
+"sale_price": 20000000,
+"input_tax": 0
+},
+{
+"sale_price": 400000,
+"input_tax": 0
+}
+],
+"ledger": [
+{
+"항목": "당기 매입 없음",
+"매입세액": 0,
+"사용처": "과세"
+}
+]
+}
+},
+{
+"label": "부가세 토지·건물 일괄양도",
+"tool": "bundled_supply_split",
+"args": {
+"total_price": 500000000,
+"vat_included": false,
+"standard_value": {
+"building": 240000000,
+"land": 160000000
+},
+"book_value": {
+"building": 200000000,
+"land": 200000000
+}
+}
+},
+{
+"label": "대표 갑 총급여",
+"tool": "earned_income_gross_pay",
+"args": {
+"year": 2025,
+"items": [
+{
+"kind": "급여",
+"amount": 100000000,
+"facts": {}
+},
+{
+"kind": "사회보험료_사용자부담분",
+"amount": 3000000,
+"facts": {
+"insurance": "건강보험"
+}
+},
+{
+"kind": "인정상여",
+"amount": 5000000,
+"facts": {
+"work_year": 2025,
+"settlement_date": "2026-03-30"
+}
+},
+{
+"kind": "자가운전보조금",
+"amount": 2400000,
+"facts": {
+"months": 12,
+"vehicle": "기타",
+"business_use": false,
+"actual_travel_reimbursed": false
+}
+},
+{
+"kind": "실비변상여비",
+"amount": 4000000,
+"facts": {
+"actual_cost": false
+}
+},
+{
+"kind": "직무발명보상금",
+"amount": 7000000,
+"facts": {
+"retired": false,
+"related_party": true
+}
+},
+{
+"kind": "사택제공이익",
+"amount": 20000000,
+"facts": {
+"position": "지배주주인 대표자"
+}
+}
+]
+}
+},
+{
+"label": "대표 갑 금융소득",
+"tool": "financial_income_aggregate",
+"args": {
+"year": 2025,
+"items": [
+{
+"kind": "출자공동사업자배당",
+"amount": 6000000
+},
+{
+"kind": "의제배당_잉여금자본전입",
+"amount": 10000000,
+"source": "이익잉여금"
+},
+{
+"kind": "상장법인현금배당",
+"amount": 7000000
+},
+{
+"kind": "비상장법인현금배당",
+"amount": 8000000
+},
+{
+"kind": "직장공제회초과반환금",
+"amount": 1000000
+},
+{
+"kind": "법원보증금이자",
+"amount": 2000000
+}
+]
+}
+}
+],
+"kw": {},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"label": "업추",
+"tool": "entertainment_adjustment",
+"args": {
+"year": 2025,
+"sme": true,
+"ledger": [
+{
+"항목": "일반 기업업무추진비",
+"금액": 95000000,
+"증빙": "적격"
+},
+{
+"항목": "임직원 단합대회",
+"금액": 10000000,
+"증빙": "적격",
+"성격": "직원단체_비법인"
+},
+{
+"항목": "관광공연장 입장권",
+"금액": 6000000,
+"증빙": "적격",
+"성격": "문화"
+},
+{
+"항목": "전통시장 과일",
+"금액": 9000000,
+"증빙": "적격",
+"성격": "전통시장"
+}
+],
+"revenue": {
+"매출액": 18000000000,
+"특수관계매출": 2000000000
+}
+}
+}
+],
+"kw": {},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"label": "업추",
+"tool": "entertainment_adjustment",
+"args": {
+"year": 2024,
+"sme": true,
+"ledger": [
+{
+"항목": "일반 기업업무추진비",
+"금액": 95000000,
+"증빙": "적격"
+},
+{
+"항목": "임직원 단합대회",
+"금액": 10000000,
+"증빙": "적격",
+"성격": "직원단체_비법인"
+},
+{
+"항목": "관광공연장 입장권",
+"금액": 6000000,
+"증빙": "적격",
+"성격": "문화"
+},
+{
+"항목": "전통시장 과일",
+"금액": 9000000,
+"증빙": "적격",
+"성격": "전통시장"
+}
+],
+"revenue": {
+"매출액": 18000000000,
+"특수관계매출": 2000000000
+}
+}
+}
+],
+"kw": {},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"label": "업추",
+"tool": "entertainment_adjustment",
+"args": {
+"year": 2026,
+"sme": true,
+"ledger": [
+{
+"항목": "일반 기업업무추진비",
+"금액": 95000000,
+"증빙": "적격"
+},
+{
+"항목": "지역사랑상품권 선물",
+"금액": 4000000,
+"증빙": "적격",
+"성격": "지역사랑상품권"
+},
+{
+"항목": "온누리상품권 선물",
+"금액": 3000000,
+"증빙": "적격",
+"성격": "온누리상품권"
+}
+],
+"revenue": {
+"매출액": 18000000000,
+"특수관계매출": 2000000000
+}
+}
+}
+],
+"kw": {},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"label": "업추",
+"tool": "entertainment_adjustment",
+"args": {
+"year": 2022,
+"sme": true,
+"ledger": [
+{
+"항목": "일반 기업업무추진비",
+"금액": 95000000,
+"증빙": "적격"
+},
+{
+"항목": "임직원 단합대회",
+"금액": 10000000,
+"증빙": "적격",
+"성격": "직원단체_비법인"
+},
+{
+"항목": "관광공연장 입장권",
+"금액": 6000000,
+"증빙": "적격",
+"성격": "문화"
+},
+{
+"항목": "전통시장 과일",
+"금액": 9000000,
+"증빙": "적격",
+"성격": "전통시장"
+}
+],
+"revenue": {
+"매출액": 18000000000,
+"특수관계매출": 2000000000
+}
+}
+}
+],
+"kw": {},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"label": "기업업무추진비",
+"tool": "entertainment_adjustment",
+"args": {
+"year": 2025,
+"sme": true,
+"ledger": [
+{
+"항목": "일반 접대비",
+"금액": 52000000,
+"증빙": "적격"
+},
+{
+"항목": "체육활동 입장권",
+"금액": 20000000,
+"증빙": "적격",
+"성격": "문화"
+},
+{
+"항목": "직원단체(법인) 복리시설비",
+"금액": 4000000,
+"증빙": "적격",
+"성격": "직원단체_법인"
+},
+{
+"항목": "거래처 증정 제품",
+"금액": 9000000,
+"증빙": "적격",
+"성격": "현물",
+"시가": 10000000,
+"장부가액": 8000000
+}
+],
+"revenue": {
+"매출액": 15000000000,
+"특수관계매출": 3000000000
+}
+}
+}
+],
+"kw": {
+"layout": "steps"
+},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"label": "기업업무추진비",
+"tool": "entertainment_adjustment",
+"args": {
+"year": 2025,
+"sme": true,
+"ledger": [
+{
+"항목": "일반 접대비",
+"금액": 52000000,
+"증빙": "적격"
+},
+{
+"항목": "체육활동 입장권",
+"금액": 20000000,
+"증빙": "적격",
+"성격": "문화"
+},
+{
+"항목": "직원단체(법인) 복리시설비",
+"금액": 4000000,
+"증빙": "적격",
+"성격": "직원단체_법인"
+},
+{
+"항목": "거래처 증정 제품",
+"금액": 9000000,
+"증빙": "적격",
+"성격": "현물",
+"시가": 10000000,
+"장부가액": 8000000
+}
+],
+"revenue": {
+"매출액": 15000000000,
+"특수관계매출": 3000000000
+}
+}
+},
+{
+"label": "기계장치 감가상각",
+"tool": "depreciation_adjustment",
+"args": {
+"year": 2025,
+"method": "무신고",
+"asset_class": "건축물외_유형자산",
+"acquisition_cost": 100000000,
+"booked_depreciation": 15000000,
+"accumulated_dep_begin": 72500000,
+"rate": 0.3,
+"expensed_capex": 1000000,
+"prior_book_value": 27500000,
+"prior_disallowed": 4000000
+}
+},
+{
+"label": "수입배당금",
+"tool": "dividend_received_deduction",
+"args": {
+"year": 2025,
+"investees": [
+{
+"name": "B",
+"listed": false,
+"ratio": 0.4,
+"dividend": 15000000,
+"book_value_jeoksu": 219000000000
+}
+],
+"interest_paid": 30000000,
+"interest_excluded": 10000000,
+"total_assets_jeoksu": 730000000000
+}
+},
+{
+"label": "차가감소득금액",
+"tool": "income_adjustment_total",
+"args": {
+"net_income": 300000000,
+"items": [
+{
+"항목": "법인세비용",
+"종류": "법인세비용",
+"금액": 20000000
+},
+{
+"항목": "기업업무추진비 한도초과",
+"종류": "기업업무추진비 한도초과",
+"금액": 2280000
+},
+{
+"항목": "기계장치 감가상각비 한도초과",
+"종류": "감가상각비 한도초과",
+"금액": 5550000
+},
+{
+"항목": "㈜B 수입배당금 익금불산입",
+"종류": "수입배당금 익금불산입",
+"금액": 7200000
+}
+]
+}
+},
+{
+"label": "부가세 공통사용재화",
+"tool": "common_input_tax",
+"args": {
+"year": 2025,
+"period": "1기",
+"filing": "확정",
+"supplies": {
+"확정": {
+"taxable": 60,
+"exempt": 40
+}
+},
+"prior_period_supplies": {
+"taxable": 50,
+"exempt": 50
+},
+"common_asset_sales": [
+{
+"sale_price": 20000000,
+"input_tax": 0
+},
+{
+"sale_price": 400000,
+"input_tax": 0
+}
+],
+"ledger": [
+{
+"항목": "당기 매입 없음",
+"매입세액": 0,
+"사용처": "과세"
+}
+]
+}
+},
+{
+"label": "부가세 토지·건물 일괄양도",
+"tool": "bundled_supply_split",
+"args": {
+"total_price": 500000000,
+"vat_included": false,
+"standard_value": {
+"building": 240000000,
+"land": 160000000
+},
+"book_value": {
+"building": 200000000,
+"land": 200000000
+}
+}
+},
+{
+"label": "대표 갑 총급여",
+"tool": "earned_income_gross_pay",
+"args": {
+"year": 2025,
+"items": [
+{
+"kind": "급여",
+"amount": 100000000,
+"facts": {}
+},
+{
+"kind": "사회보험료_사용자부담분",
+"amount": 3000000,
+"facts": {
+"insurance": "건강보험"
+}
+},
+{
+"kind": "인정상여",
+"amount": 5000000,
+"facts": {
+"work_year": 2025,
+"settlement_date": "2026-03-30"
+}
+},
+{
+"kind": "자가운전보조금",
+"amount": 2400000,
+"facts": {
+"months": 12,
+"vehicle": "기타",
+"business_use": false,
+"actual_travel_reimbursed": false
+}
+},
+{
+"kind": "실비변상여비",
+"amount": 4000000,
+"facts": {
+"actual_cost": false
+}
+},
+{
+"kind": "직무발명보상금",
+"amount": 7000000,
+"facts": {
+"retired": false,
+"related_party": true
+}
+},
+{
+"kind": "사택제공이익",
+"amount": 20000000,
+"facts": {
+"position": "지배주주인 대표자"
+}
+}
+]
+}
+},
+{
+"label": "대표 갑 금융소득",
+"tool": "financial_income_aggregate",
+"args": {
+"year": 2025,
+"items": [
+{
+"kind": "출자공동사업자배당",
+"amount": 6000000
+},
+{
+"kind": "의제배당_잉여금자본전입",
+"amount": 10000000,
+"source": "이익잉여금"
+},
+{
+"kind": "상장법인현금배당",
+"amount": 7000000
+},
+{
+"kind": "비상장법인현금배당",
+"amount": 8000000
+},
+{
+"kind": "직장공제회초과반환금",
+"amount": 1000000
+},
+{
+"kind": "법원보증금이자",
+"amount": 2000000
+}
+]
+}
+}
+],
+"kw": {},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"label": "기업업무추진비",
+"tool": "entertainment_adjustment",
+"args": {
+"year": 2025,
+"sme": true,
+"ledger": [
+{
+"항목": "일반 접대비",
+"금액": 52000000,
+"증빙": "적격"
+},
+{
+"항목": "체육활동 입장권",
+"금액": 20000000,
+"증빙": "적격",
+"성격": "문화"
+},
+{
+"항목": "직원단체(법인) 복리시설비",
+"금액": 4000000,
+"증빙": "적격",
+"성격": "직원단체_법인"
+},
+{
+"항목": "거래처 증정 제품",
+"금액": 9000000,
+"증빙": "적격",
+"성격": "현물",
+"시가": 10000000,
+"장부가액": 8000000
+}
+],
+"revenue": {
+"매출액": 15000000000,
+"특수관계매출": 3000000000
+}
+}
+},
+{
+"label": "기계장치 감가상각",
+"tool": "depreciation_adjustment",
+"args": {
+"year": 2025,
+"method": "무신고",
+"asset_class": "건축물외_유형자산",
+"acquisition_cost": 100000000,
+"booked_depreciation": 5000000,
+"accumulated_dep_begin": 72500000,
+"rate": 0.3,
+"expensed_capex": 1000000,
+"prior_book_value": 27500000,
+"prior_disallowed": 4000000
+}
+},
+{
+"label": "수입배당금",
+"tool": "dividend_received_deduction",
+"args": {
+"year": 2025,
+"investees": [
+{
+"name": "B",
+"listed": false,
+"ratio": 0.4,
+"dividend": 15000000,
+"book_value_jeoksu": 219000000000
+},
+{
+"name": "C",
+"listed": true,
+"ratio": 0.1,
+"dividend": 4000000,
+"book_value_jeoksu": 36500000000
+}
+],
+"interest_paid": 30000000,
+"interest_excluded": 10000000,
+"total_assets_jeoksu": 730000000000
+}
+},
+{
+"label": "차가감소득금액",
+"tool": "income_adjustment_total",
+"args": {
+"net_income": 300000000,
+"items": [
+{
+"항목": "법인세비용",
+"종류": "법인세비용",
+"금액": 20000000
+},
+{
+"항목": "기업업무추진비 한도초과",
+"종류": "기업업무추진비 한도초과",
+"금액": 2280000
+},
+{
+"항목": "수입배당금 익금불산입",
+"종류": "수입배당금 익금불산입",
+"금액": 8100000
+}
+]
+}
+},
+{
+"label": "부가세 공통사용재화",
+"tool": "common_input_tax",
+"args": {
+"year": 2025,
+"period": "1기",
+"filing": "확정",
+"supplies": {
+"확정": {
+"taxable": 60,
+"exempt": 40
+}
+},
+"prior_period_supplies": {
+"taxable": 50,
+"exempt": 50
+},
+"common_asset_sales": [
+{
+"sale_price": 20000000,
+"input_tax": 0
+},
+{
+"sale_price": 400000,
+"input_tax": 0
+}
+],
+"ledger": [
+{
+"항목": "당기 매입 없음",
+"매입세액": 0,
+"사용처": "과세"
+}
+]
+}
+},
+{
+"label": "부가세 토지·건물 일괄양도",
+"tool": "bundled_supply_split",
+"args": {
+"total_price": 500000000,
+"vat_included": false,
+"standard_value": {
+"building": 240000000,
+"land": 160000000
+},
+"book_value": {
+"building": 200000000,
+"land": 200000000
+}
+}
+},
+{
+"label": "대표 갑 총급여",
+"tool": "earned_income_gross_pay",
+"args": {
+"year": 2025,
+"items": [
+{
+"kind": "급여",
+"amount": 100000000,
+"facts": {}
+},
+{
+"kind": "사회보험료_사용자부담분",
+"amount": 3000000,
+"facts": {
+"insurance": "건강보험"
+}
+},
+{
+"kind": "인정상여",
+"amount": 5000000,
+"facts": {
+"work_year": 2025,
+"settlement_date": "2026-03-30"
+}
+},
+{
+"kind": "자가운전보조금",
+"amount": 2400000,
+"facts": {
+"months": 12,
+"vehicle": "기타",
+"business_use": false,
+"actual_travel_reimbursed": false
+}
+},
+{
+"kind": "실비변상여비",
+"amount": 4000000,
+"facts": {
+"actual_cost": false
+}
+},
+{
+"kind": "직무발명보상금",
+"amount": 7000000,
+"facts": {
+"retired": false,
+"related_party": true
+}
+},
+{
+"kind": "사택제공이익",
+"amount": 20000000,
+"facts": {
+"position": "지배주주인 대표자"
+}
+}
+]
+}
+},
+{
+"label": "대표 갑 금융소득",
+"tool": "financial_income_aggregate",
+"args": {
+"year": 2025,
+"items": [
+{
+"kind": "출자공동사업자배당",
+"amount": 6000000
+},
+{
+"kind": "의제배당_잉여금자본전입",
+"amount": 10000000,
+"source": "이익잉여금"
+},
+{
+"kind": "상장법인현금배당",
+"amount": 7000000
+},
+{
+"kind": "비상장법인현금배당",
+"amount": 8000000
+},
+{
+"kind": "직장공제회초과반환금",
+"amount": 1000000
+},
+{
+"kind": "법원보증금이자",
+"amount": 2000000
+}
+]
+}
+}
+],
+"kw": {},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"label": "청산소득",
+"tool": "liquidation_income",
+"args": {
+"assets_realized": 900000000,
+"liabilities_paid": 300000000,
+"capital": 200000000,
+"surplus": 100000000
+}
+}
+],
+"kw": {},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"label": "청산소득",
+"tool": "liquidation_income",
+"args": {
+"assets_realized": 900000000,
+"liabilities_paid": 300000000,
+"capital": 200000000,
+"surplus": 100000000
+}
+}
+],
+"kw": {
+"layout": "steps"
+},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"label": "기업업무추진비",
+"tool": "entertainment_adjustment",
+"args": {
+"year": 2025,
+"sme": true,
+"ledger": [
+{
+"항목": "일반 접대비",
+"금액": 52000000,
+"증빙": "적격"
+},
+{
+"항목": "체육활동 입장권",
+"금액": 20000000,
+"증빙": "적격",
+"성격": "문화"
+},
+{
+"항목": "직원단체(법인) 복리시설비",
+"금액": 4000000,
+"증빙": "적격",
+"성격": "직원단체_법인"
+},
+{
+"항목": "거래처 증정 제품",
+"금액": 9000000,
+"증빙": "적격",
+"성격": "현물",
+"시가": 10000000,
+"장부가액": 8000000
+}
+],
+"revenue": {
+"매출액": 15000000000,
+"특수관계매출": 3000000000
+}
+}
+},
+{
+"label": "기계장치 감가상각",
+"tool": "depreciation_adjustment",
+"args": {
+"year": 2025,
+"method": "무신고",
+"asset_class": "건축물외_유형자산",
+"acquisition_cost": 100000000,
+"booked_depreciation": 15000000,
+"accumulated_dep_begin": 72500000,
+"rate": 0.3,
+"expensed_capex": 1000000,
+"prior_book_value": 27500000,
+"prior_disallowed": 4000000
+}
+},
+{
+"label": "수입배당금",
+"tool": "dividend_received_deduction",
+"args": {
+"year": 2025,
+"investees": [
+{
+"name": "B",
+"listed": false,
+"ratio": 0.4,
+"dividend": 15000000,
+"book_value_jeoksu": 219000000000
+}
+],
+"interest_paid": 30000000,
+"interest_excluded": 10000000,
+"total_assets_jeoksu": 730000000000
+}
+},
+{
+"label": "차가감소득금액",
+"tool": "income_adjustment_total",
+"args": {
+"net_income": 300000000,
+"items": [
+{
+"항목": "법인세비용",
+"종류": "법인세비용",
+"금액": 20000000
+},
+{
+"항목": "기업업무추진비 한도초과",
+"종류": "기업업무추진비 한도초과",
+"금액": 2280000
+},
+{
+"항목": "기계장치 감가상각비 한도초과",
+"종류": "감가상각비 한도초과",
+"금액": 5550000
+},
+{
+"항목": "㈜B 수입배당금 익금불산입",
+"종류": "수입배당금 익금불산입",
+"금액": 7200000
+}
+]
+}
+},
+{
+"label": "부가세 공통사용재화",
+"tool": "common_input_tax",
+"args": {
+"year": 2025,
+"period": "1기",
+"filing": "확정",
+"supplies": {
+"확정": {
+"taxable": 60,
+"exempt": 40
+}
+},
+"prior_period_supplies": {
+"taxable": 50,
+"exempt": 50
+},
+"common_asset_sales": [
+{
+"sale_price": 20000000,
+"input_tax": 0
+},
+{
+"sale_price": 400000,
+"input_tax": 0
+}
+],
+"ledger": [
+{
+"항목": "당기 매입 없음",
+"매입세액": 0,
+"사용처": "과세"
+}
+]
+}
+},
+{
+"label": "부가세 토지·건물 일괄양도",
+"tool": "bundled_supply_split",
+"args": {
+"total_price": 500000000,
+"vat_included": false,
+"standard_value": {
+"building": 240000000,
+"land": 160000000
+},
+"book_value": {
+"building": 200000000,
+"land": 200000000
+}
+}
+},
+{
+"label": "대표 갑 총급여",
+"tool": "earned_income_gross_pay",
+"args": {
+"year": 2025,
+"items": [
+{
+"kind": "급여",
+"amount": 100000000,
+"facts": {}
+},
+{
+"kind": "사회보험료_사용자부담분",
+"amount": 3000000,
+"facts": {
+"insurance": "건강보험"
+}
+},
+{
+"kind": "인정상여",
+"amount": 5000000,
+"facts": {
+"work_year": 2025,
+"settlement_date": "2026-03-30"
+}
+},
+{
+"kind": "자가운전보조금",
+"amount": 2400000,
+"facts": {
+"months": 12,
+"vehicle": "기타",
+"business_use": false,
+"actual_travel_reimbursed": false
+}
+},
+{
+"kind": "실비변상여비",
+"amount": 4000000,
+"facts": {
+"actual_cost": false
+}
+},
+{
+"kind": "직무발명보상금",
+"amount": 7000000,
+"facts": {
+"retired": false,
+"related_party": true
+}
+},
+{
+"kind": "사택제공이익",
+"amount": 20000000,
+"facts": {
+"position": "지배주주인 대표자"
+}
+}
+]
+}
+},
+{
+"label": "대표 갑 금융소득",
+"tool": "financial_income_aggregate",
+"args": {
+"year": 2025,
+"items": [
+{
+"kind": "출자공동사업자배당",
+"amount": 6000000
+},
+{
+"kind": "의제배당_잉여금자본전입",
+"amount": 10000000,
+"source": "이익잉여금"
+},
+{
+"kind": "상장법인현금배당",
+"amount": 7000000
+},
+{
+"kind": "비상장법인현금배당",
+"amount": 8000000
+},
+{
+"kind": "직장공제회초과반환금",
+"amount": 1000000
+},
+{
+"kind": "법원보증금이자",
+"amount": 2000000
+}
+]
+}
+}
+],
+"kw": {},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"label": "기업업무추진비",
+"tool": "entertainment_adjustment",
+"args": {
+"year": 2025,
+"sme": true,
+"ledger": [
+{
+"항목": "일반 접대비",
+"금액": 52000000,
+"증빙": "적격"
+},
+{
+"항목": "체육활동 입장권",
+"금액": 20000000,
+"증빙": "적격",
+"성격": "문화"
+},
+{
+"항목": "직원단체(법인) 복리시설비",
+"금액": 4000000,
+"증빙": "적격",
+"성격": "직원단체_법인"
+},
+{
+"항목": "거래처 증정 제품",
+"금액": 9000000,
+"증빙": "적격",
+"성격": "현물",
+"시가": 10000000,
+"장부가액": 8000000
+}
+],
+"revenue": {
+"매출액": 15000000000,
+"특수관계매출": 3000000000
+}
+}
+},
+{
+"label": "기계장치 감가상각",
+"tool": "depreciation_adjustment",
+"args": {
+"year": 2025,
+"method": "정액법",
+"asset_class": "건축물외_유형자산",
+"acquisition_cost": 100000000,
+"booked_depreciation": 12000000,
+"accumulated_dep_begin": 72500000,
+"rate": 0.1,
+"expensed_capex": 0,
+"prior_book_value": 27500000,
+"prior_disallowed": 0
+}
+},
+{
+"label": "수입배당금",
+"tool": "dividend_received_deduction",
+"args": {
+"year": 2025,
+"investees": [
+{
+"name": "B",
+"listed": false,
+"ratio": 0.4,
+"dividend": 15000000,
+"book_value_jeoksu": 219000000000
+}
+],
+"interest_paid": 30000000,
+"interest_excluded": 10000000,
+"total_assets_jeoksu": 730000000000
+}
+},
+{
+"label": "차가감소득금액",
+"tool": "income_adjustment_total",
+"args": {
+"net_income": 300000000,
+"items": [
+{
+"항목": "법인세비용",
+"종류": "법인세비용",
+"금액": 20000000
+},
+{
+"항목": "기업업무추진비 한도초과",
+"종류": "기업업무추진비 한도초과",
+"금액": 2280000
+},
+{
+"항목": "기계장치 감가상각비 한도초과",
+"종류": "감가상각비 한도초과",
+"금액": 5550000
+},
+{
+"항목": "㈜B 수입배당금 익금불산입",
+"종류": "수입배당금 익금불산입",
+"금액": 7200000
+}
+]
+}
+},
+{
+"label": "부가세 공통사용재화",
+"tool": "common_input_tax",
+"args": {
+"year": 2025,
+"period": "1기",
+"filing": "확정",
+"supplies": {
+"확정": {
+"taxable": 60,
+"exempt": 40
+}
+},
+"prior_period_supplies": {
+"taxable": 50,
+"exempt": 50
+},
+"common_asset_sales": [
+{
+"sale_price": 20000000,
+"input_tax": 0
+},
+{
+"sale_price": 400000,
+"input_tax": 0
+}
+],
+"ledger": [
+{
+"항목": "당기 매입 없음",
+"매입세액": 0,
+"사용처": "과세"
+}
+]
+}
+},
+{
+"label": "부가세 토지·건물 일괄양도",
+"tool": "bundled_supply_split",
+"args": {
+"total_price": 500000000,
+"vat_included": false,
+"standard_value": {
+"building": 240000000,
+"land": 160000000
+},
+"book_value": {
+"building": 200000000,
+"land": 200000000
+}
+}
+},
+{
+"label": "대표 갑 총급여",
+"tool": "earned_income_gross_pay",
+"args": {
+"year": 2025,
+"items": [
+{
+"kind": "급여",
+"amount": 100000000,
+"facts": {}
+},
+{
+"kind": "사회보험료_사용자부담분",
+"amount": 3000000,
+"facts": {
+"insurance": "건강보험"
+}
+},
+{
+"kind": "인정상여",
+"amount": 5000000,
+"facts": {
+"work_year": 2025,
+"settlement_date": "2026-03-30"
+}
+},
+{
+"kind": "자가운전보조금",
+"amount": 2400000,
+"facts": {
+"months": 12,
+"vehicle": "기타",
+"business_use": false,
+"actual_travel_reimbursed": false
+}
+},
+{
+"kind": "실비변상여비",
+"amount": 4000000,
+"facts": {
+"actual_cost": false
+}
+},
+{
+"kind": "직무발명보상금",
+"amount": 7000000,
+"facts": {
+"retired": false,
+"related_party": true
+}
+},
+{
+"kind": "사택제공이익",
+"amount": 20000000,
+"facts": {
+"position": "지배주주인 대표자"
+}
+}
+]
+}
+},
+{
+"label": "대표 갑 금융소득",
+"tool": "financial_income_aggregate",
+"args": {
+"year": 2025,
+"items": [
+{
+"kind": "출자공동사업자배당",
+"amount": 6000000
+},
+{
+"kind": "의제배당_잉여금자본전입",
+"amount": 10000000,
+"source": "이익잉여금"
+},
+{
+"kind": "상장법인현금배당",
+"amount": 7000000
+},
+{
+"kind": "비상장법인현금배당",
+"amount": 8000000
+},
+{
+"kind": "직장공제회초과반환금",
+"amount": 1000000
+},
+{
+"kind": "법원보증금이자",
+"amount": 2000000
+}
+]
+}
+}
+],
+"kw": {},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"label": "기업업무추진비",
+"tool": "entertainment_adjustment",
+"args": {
+"year": 2025,
+"sme": true,
+"ledger": [
+{
+"항목": "일반 접대비",
+"금액": 52000000,
+"증빙": "적격"
+},
+{
+"항목": "체육활동 입장권",
+"금액": 20000000,
+"증빙": "적격",
+"성격": "문화"
+},
+{
+"항목": "직원단체(법인) 복리시설비",
+"금액": 4000000,
+"증빙": "적격",
+"성격": "직원단체_법인"
+},
+{
+"항목": "거래처 증정 제품",
+"금액": 9000000,
+"증빙": "적격",
+"성격": "현물",
+"시가": 10000000,
+"장부가액": 8000000
+}
+],
+"revenue": {
+"매출액": 15000000000,
+"특수관계매출": 3000000000
+}
+}
+},
+{
+"label": "기계장치 감가상각",
+"tool": "depreciation_adjustment",
+"args": {
+"year": 2025,
+"method": "무신고",
+"asset_class": "건축물외_유형자산",
+"acquisition_cost": 100000000,
+"booked_depreciation": 15000000,
+"accumulated_dep_begin": 72500000,
+"rate": 0.3,
+"expensed_capex": 1000000,
+"prior_book_value": 27500000,
+"prior_disallowed": 4000000
+}
+},
+{
+"label": "수입배당금",
+"tool": "dividend_received_deduction",
+"args": {
+"year": 2025,
+"investees": [
+{
+"name": "B",
+"listed": false,
+"ratio": 0.4,
+"dividend": 15000000,
+"book_value_jeoksu": 219000000000
+}
+],
+"interest_paid": 30000000,
+"interest_excluded": 10000000,
+"total_assets_jeoksu": 730000000000
+}
+},
+{
+"label": "차가감소득금액",
+"tool": "income_adjustment_total",
+"args": {
+"net_income": 300000000,
+"items": [
+{
+"항목": "법인세비용",
+"종류": "법인세비용",
+"금액": 20000000
+},
+{
+"항목": "기업업무추진비 한도초과",
+"종류": "기업업무추진비 한도초과",
+"금액": 2280000
+},
+{
+"항목": "기계장치 감가상각비 한도초과",
+"종류": "감가상각비 한도초과",
+"금액": 5550000
+},
+{
+"항목": "㈜B 수입배당금 익금불산입",
+"종류": "수입배당금 익금불산입",
+"금액": 7200000
+}
+]
+}
+},
+{
+"label": "부가세 공통사용재화",
+"tool": "common_input_tax",
+"args": {
+"year": 2025,
+"period": "1기",
+"filing": "확정",
+"supplies": {
+"확정": {
+"taxable": 60,
+"exempt": 40
+}
+},
+"prior_period_supplies": {
+"taxable": 50,
+"exempt": 50
+},
+"common_asset_sales": [
+{
+"sale_price": 20000000,
+"input_tax": 0
+},
+{
+"sale_price": 400000,
+"input_tax": 0
+}
+],
+"ledger": [
+{
+"항목": "당기 매입 없음",
+"매입세액": 0,
+"사용처": "과세"
+}
+]
+}
+},
+{
+"label": "부가세 토지·건물 일괄양도",
+"tool": "bundled_supply_split",
+"args": {
+"total_price": 500000000,
+"vat_included": false,
+"standard_value": {
+"building": 240000000,
+"land": 160000000
+},
+"book_value": {
+"building": 200000000,
+"land": 200000000
+}
+}
+},
+{
+"label": "대표 갑 총급여",
+"tool": "earned_income_gross_pay",
+"args": {
+"year": 2025,
+"items": [
+{
+"kind": "급여",
+"amount": 100000000,
+"facts": {}
+},
+{
+"kind": "사회보험료_사용자부담분",
+"amount": 3000000,
+"facts": {
+"insurance": "건강보험"
+}
+},
+{
+"kind": "인정상여",
+"amount": 5000000,
+"facts": {
+"work_year": 2025,
+"settlement_date": "2026-03-30"
+}
+},
+{
+"kind": "자가운전보조금",
+"amount": 2400000,
+"facts": {
+"months": 12,
+"vehicle": "기타",
+"business_use": false,
+"actual_travel_reimbursed": false
+}
+},
+{
+"kind": "실비변상여비",
+"amount": 4000000,
+"facts": {
+"actual_cost": false
+}
+},
+{
+"kind": "직무발명보상금",
+"amount": 7000000,
+"facts": {
+"retired": false,
+"related_party": true
+}
+},
+{
+"kind": "사택제공이익",
+"amount": 20000000,
+"facts": {
+"position": "지배주주인 대표자"
+}
+}
+]
+}
+},
+{
+"label": "대표 갑 금융소득",
+"tool": "financial_income_aggregate",
+"args": {
+"year": 2025,
+"items": [
+{
+"kind": "출자공동사업자배당",
+"amount": 6000000
+},
+{
+"kind": "의제배당_잉여금자본전입",
+"amount": 10000000,
+"source": "이익잉여금"
+},
+{
+"kind": "상장법인현금배당",
+"amount": 7000000
+},
+{
+"kind": "비상장법인현금배당",
+"amount": 8000000
+},
+{
+"kind": "직장공제회초과반환금",
+"amount": 1000000
+},
+{
+"kind": "법원보증금이자",
+"amount": 2000000
+}
+]
+}
+}
+],
+"kw": {},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"label": "지급이자",
+"tool": "nonbusiness_interest_disallowance",
+"args": {
+"loans": [
+{
+"interest": 10000000,
+"jeoksu": 36500000000
+}
+],
+"advances": [
+{
+"상대방": "김배우",
+"금액": 10000000,
+"지급일": "2025-10-01"
+},
+{
+"상대방": "박거래",
+"금액": 5000000,
+"지급일": "2025-10-01"
+}
+],
+"year": 2025,
+"company": "㈜가람정밀",
+"relations": {
+"people": {
+"㈜가람정밀": {
+"구분": "법인"
+},
+"김대표": {
+"구분": "개인"
+},
+"김배우": {
+"구분": "개인"
+},
+"박거래": {
+"구분": "개인"
+},
+"㈜모회사": {
+"구분": "법인"
+},
+"이직원": {
+"구분": "개인"
+}
+},
+"family": [
+[
+"김대표",
+"김배우",
+"배우자"
+]
+],
+"stakes": [
+[
+"김대표",
+"㈜가람정밀",
+0.6
+],
+[
+"㈜모회사",
+"㈜가람정밀",
+0.3
+]
+],
+"officers": {
+"㈜가람정밀": [
+"김대표"
+]
+},
+"employees": {
+"㈜가람정밀": [
+"이직원"
+]
+}
+}
+}
+}
+],
+"kw": {},
+"file": "서식.xlsx"
+},
+{
+"calls": [
+{
+"tool": "income_adjustment_total",
+"args": {
+"net_income": 320000000,
+"items": [
+{
+"항목": "기업업무추진비 적격증빙 미수취",
+"종류": "기업업무추진비 적격증빙 미수취",
+"금액": 1200000
+},
+{
+"항목": "업무용승용차 업무외사용",
+"금액": 15000000,
+"조정": "손금불산입",
+"소득처분": "상여"
+},
+{
+"항목": "업무용승용차 감가상각비 한도초과",
+"금액": 1000000,
+"조정": "손금불산입",
+"소득처분": "유보"
+}
+]
+}
+},
+{
+"tool": "corporate_tax",
+"args": {
+"base": 337200000,
+"year": 2025
+}
+},
+{
+"tool": "entertainment_limit",
+"args": {
+"year": 2025,
+"sme": true,
+"general_revenue": 8500000000,
+"expensed": 46800000
+}
+},
+{
+"tool": "business_car_expense",
+"args": {
+"year": 2025,
+"upkeep": 12000000,
+"depreciation": 18000000,
+"booked_depreciation": 18000000,
+"log_kept": false,
+"acquisition_cost": 90000000
+}
+},
+{
+"tool": "donation_limit",
+"args": {
+"year": 2025,
+"base_income": 347200000,
+"general": 10000000
+}
+}
+],
+"kw": {}
+}
+]
