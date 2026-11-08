@@ -110,7 +110,17 @@ def test_forms_take_values_from_the_call_that_made_them(corp):
     assert w15a["B9"].value == f"='{SL}'!E28"                              # 같은 금액이면 그 서식 칸을 가리킴
     # 별지50(을): 대손충당금 한도초과는 세무조정 call 금액(12,600,000) — 대손 call의 한도초과가 아님
     w50 = wb[S50]
-    rows = {w50.cell(r, 1).value: (w50.cell(r, 3).value, w50.cell(r, 4).value) for r in range(8, 28)}
+    # ③감소·④증가 = '입력·가정' 세무조정 유보 표의 과목·구분별 SUMIFS(숫자를 박지 않음)
+    def _v50(r, c):
+        f = w50.cell(r, c).value
+        m = re.match(r"=SUMIFS\('입력·가정'!\$D\$(\d+):\$D\$(\d+),.*\"(감소|증가)\"\)$", str(f))
+        if not m:
+            return f
+        wi = wb["입력·가정"]
+        return sum(wi.cell(k, 4).value for k in range(int(m.group(1)), int(m.group(2)) + 1)
+                   if wi.cell(k, 1).value == w50.cell(r, 1).value and wi.cell(k, 2).value == m.group(3))
+    assert str(w50["C10"].value).startswith("=SUMIFS(")
+    rows = {w50.cell(r, 1).value: (_v50(r, 3), _v50(r, 4)) for r in range(8, 28)}
     # 같은 과목(대손충당금)의 유보·△유보는 한 줄 — △유보(전기 한도초과 추인)는 감소, 유보는 증가
     assert rows["대손충당금 한도초과"] == (2_000_000, 12_600_000)
     r50 = next(r for r in range(8, 28) if w50.cell(r, 1).value == "대손충당금 한도초과")
@@ -152,7 +162,12 @@ def test_byeolji3_checks_below_form_and_tax_lines_filled(corp):
     assert labels == ["104 차가감소득금액 (F8)", "107 각 사업연도소득금액 (F11)",
                       "112 과세표준 (법인세 산출세액 call) (F16)", "115 산출세액 (법인세 산출세액 call) (F20)"]
     ct = run("corporate_tax", {"base": 250_000_000, "year": 2025})["결과"]
-    assert ws["F16"].value == "=250000000" and ws["F20"].value == f"={ct['산출세액']}"
+    # 112 = 법인세 산출세액 call의 과세표준(입력 이름), 115 = 113 × 그해 세율 구간(입력 이름) 수식 — 숫자를 박지 않음
+    assert ws["F16"].value == "=호출8_과세표준" and ws["F20"].value.startswith("=ROUND((MAX(0,F18*12/호출8_사업연도월수)*호출8_법인세율1_만분율")
+    wi = wb["입력·가정"]
+    inp = {wi.cell(r, 1).value: wi.cell(r, 2).value for r in range(1, wi.max_row + 1)}
+    assert inp["호출8_과세표준"] == 250_000_000 and ct["산출세액"] == 250_000_000 * 9 // 100 + (250_000_000 - 200_000_000) * 10 // 100
+    assert (inp["호출8_법인세_구간1_상한"], inp["호출8_법인세율1_만분율"], inp["호출8_법인세율2_만분율"]) == (200_000_000, 900, 1900)
     assert ws["F13"].value == "=F12-F14-F15-F16"                            # 109 = 108 − 110 − 111 − 112
     assert ws["F18"].value == "=F16+F17" and ws["F24"].value == "=F20+F23" and ws["F25"].value == "=F24"
     assert ws["J44"].value.startswith("=IF(ROUND(F16,0)")

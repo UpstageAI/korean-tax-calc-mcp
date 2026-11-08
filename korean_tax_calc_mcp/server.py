@@ -33,7 +33,7 @@ from .engine.exact import floor_won as _floor_won, trunc_won as _trunc_won, exac
 from .engine import inputs as _chk
 from . import vocab
 from .forms_workbook import render_form_sheet, _load_form_templates, tool_value, nonbusiness_form_sources, nonbusiness_form_data
-from .forms_workbook import export_form_inputs, merged_form_sources, vat_period_text
+from .forms_workbook import export_form_inputs, form_cell_inputs, merged_form_sources, vat_period_text
 
 # ── 세무조사 판정 도구 (audit 패키지) ──
 from .audit.agents import related as _R
@@ -9650,6 +9650,7 @@ def export_workbook(
         else:
             # 부가·증여·원천징수 도구: 서식 칸 수식이 가리킬 '입력·가정' 이름을 내보내기에서만 덧붙임(도구 출력은 그대로)
             data = export_form_inputs(tool, args, data)
+            data = form_cell_inputs(tool, args, data)   # 서식 금액 칸이 가리킬 이름(세율 구간·별지8 코드별 금액 등)
             결과들.append({"label": label, "tool": tool,
                            "error": "",
                            "basis": data.get("근거", ""),
@@ -10401,6 +10402,7 @@ def export_workbook(
         # 기초를 준 call이 없으면 0이 아니라 빈칸 + 비고 안내, 감소가 있으면 ⑤기말도 빈칸(기초 없이 감소만 빼 음수가 되지 않게).
         _기초 = _유보_기초(_last_call, calls, 결과들)
         _묶음: dict[str, dict] = {}
+        _유보_내역: list[tuple[str, str, int, str]] = []   # (과목, 감소|증가, 금액, 출처) — '입력·가정' 아래 표, ③·④는 이 표의 SUMIFS
         for i in _유보_src:
             _tool_i = 결과들[i].get("tool", "")
             for s in _세무조정(i):
@@ -10421,6 +10423,8 @@ def export_workbook(
                 key = fam or (이름 if i == _유보_call else adj_key)
                 g = _묶음.setdefault(key, {"과목": _유보_과목명.get(fam, key), "가족": fam, "감소": 0, "증가": 0})
                 g["감소" if 감소 else "증가"] += int(금액)
+                _유보_내역.append((g["과목"], "감소" if 감소 else "증가", int(금액),
+                                 f"{결과들[i].get('label') or _tool_i} — {이름} ({s.get('조정', '')}, {처분})"))
         for fam, v in _기초.items():   # 기초만 있고 당기 증감이 없는 과목도 줄로(기말 = 기초)
             if v and fam not in _묶음:
                 _묶음[fam] = {"과목": _유보_과목명.get(fam, fam), "가족": fam, "감소": 0, "증가": 0}
@@ -10435,6 +10439,25 @@ def export_workbook(
             else:
                 _유보_rows.append({"과목": g["과목"], "기초": None, "감소": 0, "증가": g["증가"],
                                   "기말": "=B{r}-C{r}+D{r}", "비고": "②기초잔액 자료 없음(전기 유보가 있으면 ②에 넣음)"})
+        # ③감소·④증가: 세무조정 유보·△유보 한 줄씩 '입력·가정' 아래 표에 두고 과목·구분별 SUMIFS(숫자를 박지 않음)
+        if any(not str(r.get("감소", "")).startswith("=") for r in _유보_rows):
+            r0 = ws_inp.max_row + 2
+            for cc, h in enumerate(["별지50(을) 과목", "구분", "출처(세무조정)", "금액"], 1):
+                c = ws_inp.cell(r0, cc, h); c.font = bold; c.fill = header_fill
+            for k, (과목, 구분, 금액, 출처) in enumerate(_유보_내역, 1):
+                ws_inp.cell(r0 + k, 1, 과목); ws_inp.cell(r0 + k, 2, 구분); ws_inp.cell(r0 + k, 3, 출처)
+                _set_money(ws_inp.cell(r0 + k, 4), 금액)
+            r1, r2 = r0 + 1, r0 + max(1, len(_유보_내역))
+            def _sumifs(구분: str) -> str:
+                return (f"=SUMIFS('입력·가정'!$D${r1}:$D${r2},'입력·가정'!$A${r1}:$A${r2},A{{r}},"
+                        f"'입력·가정'!$B${r1}:$B${r2},\"{구분}\")")
+            for r in _유보_rows:
+                if str(r.get("감소", "")).startswith("="):
+                    continue   # 감가상각 서식 시트 칸을 가리키는 행
+                if sum(x[2] for x in _유보_내역 if x[0] == r["과목"] and x[1] == "감소") == (r.get("감소") or 0):
+                    r["감소"] = _sumifs("감소")
+                if sum(x[2] for x in _유보_내역 if x[0] == r["과목"] and x[1] == "증가") == (r.get("증가") or 0):
+                    r["증가"] = _sumifs("증가")
         source_data["유보"] = _유보_rows
 
         # 공통사용재화 소스: common_input_tax args common_asset_sales → {순번: 1..} (call마다)
@@ -10617,9 +10640,10 @@ def export_workbook(
                 return _dt.date(y, mth, 1) - _dt.timedelta(days=1)
             return None
 
-        # 본 별지3에 채울 다른 도구 call(과세표준·산출세액): 마지막 corporate_tax call
+        # 본 별지3에 채울 다른 도구 call: 마지막 corporate_tax call(112 과세표준·115 산출세액),
+        # 마지막 minimum_tax_adjustment call(110 비과세소득·111 소득공제 — 없으면 빈칸)
         _other_calls: dict[str, tuple[int, dict]] = {}
-        for _t in ("corporate_tax",):
+        for _t in ("corporate_tax", "minimum_tax_adjustment"):
             _ci = _last_call(_t)
             if _ci is not None:
                 _other_calls[_t] = (_ci, 결과들[_ci].get("data") or {})
@@ -10987,6 +11011,8 @@ def export_workbook(
         _들어간_곳: dict[int, list[str]] = {}
         if "corporate_tax" in _other_calls and "별지3" in sheet_name_map:
             _들어간_곳.setdefault(_other_calls["corporate_tax"][0], []).append(sheet_name_map["별지3"] + " 112·115")
+        if "minimum_tax_adjustment" in _other_calls and "별지3" in sheet_name_map:
+            _들어간_곳.setdefault(_other_calls["minimum_tax_adjustment"][0], []).append(sheet_name_map["별지3"] + " 110·111")
         if "부가22" in sheet_name_map:
             if source_data.get("22_불공제") and _vid is not None:
                 _들어간_곳.setdefault(_vid, []).append(sheet_name_map["부가22"] + " 2.절")
