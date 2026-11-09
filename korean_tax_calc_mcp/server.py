@@ -199,6 +199,19 @@ class Movement(BaseModel):
     date: str       # YYYY-MM-DD
     amount: int     # 원 (대여 +, 회수 -)
 
+class Deposit(BaseModel):
+    date: str       # YYYY-MM-DD
+    amount: int     # 원 (가수금 입금 +, 반환 -)
+    offset_blocked: bool = False   # 상환기간·이자율 약정으로 상계 불가
+    name: str | None = None   # 가수금 소유자 이름 (동일인 상계용)
+
+class Borrowing(BaseModel):
+    borrowed_on: str       # YYYY-MM-DD
+    amount: int           # 원
+    rate: float           # 이자율(소수)
+    repaid_on: str | None = None   # YYYY-MM-DD (상환일, 없으면 계속 보유)
+    related: bool = False         # 특수관계인 차입금
+    unclear_creditor: bool = False  # 채권자불분명 사채·매입자불분명 채권
 
 class Loan(BaseModel):
     interest: int   # 지급이자(원)
@@ -208,6 +221,75 @@ class Loan(BaseModel):
     principal: int | None = None  # 원금(원) — days와 함께 적수 = 원금 × 일수
     days: int | None = None
     withholding: int | None = None  # 채권자불분명·비실명 이자의 원천징수세액(소득처분 분리용)
+
+
+def _weighted_average_rate(movements, fy_movements, fs, fe, days, borrowings, gajib_jeoksu_before,
+                           gajib_jeoksu_after, gupum_jeoksu, offset_blocked_jeoksu):
+    """가중평균차입이자율 계산(규칙 제43조①). movements의 증가(+) 하나하나를 대여 건으로 보고(날짜순), 감소(-)는 선입선출로 회수
+    — 개시일 전 회수도 대여 건 잔액을 줄인다. 대여 건의 이자율 = 대여일 현재 잔액이 있는 차입금(borrowed_on ≤ 대여일 < repaid_on) 중
+    related·unclear_creditor가 아닌 것의 Σ(금액×rate) ÷ Σ금액(규칙 제43조①·⑥). 그런 차입금이 없으면 당좌 4.6%(③1·2호).
+    대여일부터 사업연도 종료일(그 사업연도에 다 회수되면 회수일)까지 5년 초과면 당좌 4.6%(영 제89조③1호의2, 규칙 제43조④, 민법 기간 계산).
+    시가이자 = Σ(대여 건 적수 × 그 건 이자율) ÷ days, deposits 보정 = × (상계 후 적수 ÷ 상계 전 적수). 합계에서 한 번만 원 미만 절사.
+    결과: (시가이자(원), 대여건별 목록)."""
+    from fractions import Fraction
+    from datetime import date as _date
+    from .engine.calc_deadline import add_months
+    overdraft = _exact(K.RATE_OVERDRAFT)
+    ordered = sorted(movements, key=lambda x: x[0])
+    tranches = [{"대여일": d, "대여금액": a, "잔액": a, "회수": []} for d, a in ordered if a > 0]
+    for d, a in ordered:
+        if a >= 0:
+            continue
+        left = -a
+        for tx in tranches:
+            if left <= 0:
+                break
+            if tx["잔액"] > 0 and tx["대여일"] <= d:
+                cut = min(tx["잔액"], left)
+                tx["잔액"] -= cut; left -= cut
+                tx["회수"].append((_date.fromisoformat(d), cut))
+    rows, total = [], Fraction(0)
+    for tx in tranches:
+        lent = _date.fromisoformat(tx["대여일"])
+        eligible = [(Fraction(b.amount), _exact(b.rate)) for b in borrowings
+                    if not (b.related or b.unclear_creditor)
+                    and _date.fromisoformat(b.borrowed_on) <= lent
+                    and (not b.repaid_on or lent < _date.fromisoformat(b.repaid_on))]
+        if eligible:
+            amt = sum(a for a, _ in eligible)
+            rate = sum(a * r for a, r in eligible) / amt
+            basis = f"가중평균차입이자율(대여일 현재 적격 차입금 {int(amt):,}원, 규칙 제43조①)"
+        else:
+            rate = overdraft
+            basis = "대여일 현재 적격 차입금 없음 — 당좌대출이자율(규칙 제43조③1·2호)"
+        # 적수: 개시일 잔액(개시일 전 회수 반영) → 사업연도 중 회수일 불산입, 말일 산입
+        amount = tx["대여금액"] - sum(c for dt, c in tx["회수"] if dt < fs)
+        cur = max(lent, fs)
+        jeoksu = 0
+        last_day = fe
+        for dt, c in sorted(tx["회수"]):
+            if dt < fs:
+                continue
+            if dt > fe:
+                break
+            jeoksu += amount * (dt - cur).days
+            amount -= c; cur = dt
+            if amount == 0:
+                last_day = dt
+        if amount > 0:
+            jeoksu += amount * ((fe - cur).days + 1)
+        if add_months(lent, 60) < last_day:
+            rate = overdraft
+            basis = "대여일부터 5년 초과 — 당좌대출이자율(영 제89조③1호의2, 규칙 제43조④)"
+        if jeoksu <= 0:
+            continue
+        total += Fraction(jeoksu) * rate
+        rows.append({"대여일": tx["대여일"], "금액": tx["대여금액"], "적수": jeoksu, "이자율": float(rate),
+                     "이자율_근거": basis, "시가이자": f"{float(Fraction(jeoksu) * rate / days):.2f}"})
+    market = total / days
+    if gupum_jeoksu > 0 and gajib_jeoksu_before > 0:
+        market = market * Fraction(gajib_jeoksu_after, gajib_jeoksu_before)
+    return _trunc_won(market), rows
 
 
 class ReceiptItem(BaseModel):
@@ -541,14 +623,18 @@ def entertainment_limit(year: YEAR, sme: Annotated[bool, Field(description="중�
 @_guard
 def deemed_interest(movements: Annotated[list[Movement], Field(description="가지급금 증감 목록 [{date:'YYYY-MM-DD', amount:원(대여 +, 회수 -)}]")],
                     year_end: Annotated[str, Field(description="사업연도 종료일(YYYY-MM-DD)")],
-                    market_rate: Annotated[float, Field(description="시가 이자율(소수, 예: 0.046 = 4.6%). 가중평균차입이자율 원칙, 예외 시 당좌대출이자율 0.046")] = 0.046,
+                    market_rate: Annotated[float, Field(description="시가 이자율(소수, 예: 0.046 = 4.6%). 가중평균차입이자율 원칙, 예외 시 당좌대출이자율 0.046. rate_mode='입력'일 때 사용")] = 0.046,
                     charged_rate: Annotated[float, Field(description="실제 받은 이자율(소수, 예: 0.0 = 무수익)")] = 0.0,
                     received_interest: Annotated[int | None, Field(description="실제 받은 이자 금액(원, ge=0). 주면 charged_rate 계산 대신 이 금액을 수령이자로 사용")] = None,
-                    fiscal_start: Annotated[str | None, Field(description="사업연도 개시일(YYYY-MM-DD). 생략 시 year_end의 1년 전 다음 날")] = None) -> dict:
+                    fiscal_start: Annotated[str | None, Field(description="사업연도 개시일(YYYY-MM-DD). 생략 시 year_end의 1년 전 다음 날")] = None,
+                    deposits: Annotated[list[Deposit] | None, Field(description="동일인 가수금 [{date, amount(원, 입금 +, 반환 -), offset_blocked(상계 불가 여부), 이름?}]")] = None,
+                    rate_mode: Annotated[Literal["입력", "가중평균", "당좌선택"], Field(description="이자율 계산 방식: '입력'(기본, market_rate 사용) | '가중평균'(borrowings로 가중평균차입이자율) | '당좌선택'(당좌대출이자율 4.6%, 이후 2개 사업연도 적용)")] = "입력",
+                    borrowings: Annotated[list[Borrowing] | None, Field(description="차입금 [{borrowed_on, amount, rate, repaid_on?, related?, unclear_creditor?}] (rate_mode='가중평균'일 때)")] = None) -> dict:
     """가지급금 인정이자(적수 × 시가 이자율)와 부당행위계산 여부. 언제: 특수관계인 가지급금 이자와 부당행위 3억·5% 판정을 함께 구할 때.
-입력: 가지급금 증감 [{date, amount(원, 대여 +, 회수 -)}] → movements, 사업연도 종료일(YYYY-MM-DD) → year_end, 시가 이자율(소수) → market_rate, 실제 이자율(소수) → charged_rate, 실제 받은 이자 금액(원) → received_interest, 사업연도 개시일(YYYY-MM-DD, 생략 시 year_end 기준 자동 계산) → fiscal_start.
-결과: 적수·시가이자·수령이자·차액·익금산입액·부당행위 여부, 근거(법인세법 제52조, 시행령 제88조제3항·제89조제3항, 시행규칙 제43조)."""
+    입력: 가지급금 증감 [{date, amount(원, 대여 +, 회수 -)}] → movements, 사업연도 종료일(YYYY-MM-DD) → year_end, 시가 이자율(소수) → market_rate(rate_mode='입력'일 때), 실제 이자율(소수) → charged_rate, 실제 받은 이자 금액(원) → received_interest, 사업연도 개시일(YYYY-MM-DD, 생략 시 year_end 기준 자동 계산) → fiscal_start, 동일인 가수금 [{date, amount(원, 입금 +, 반환 -), offset_blocked(상계 불가 여부), 이름?}] → deposits, 이자율 계산 방식('입력'|'가중평균'|'당좌선택') → rate_mode, 차입금 [{borrowed_on, amount, rate, repaid_on?, related?, unclear_creditor?}] → borrowings(rate_mode='가중평균'일 때).
+    결과: 적수(가수금 상계 후)·가지급금적수(상계 전)·가수금적수·시가이자·수령이자·차액·익금산입액·부당행위 여부·계산(대여건별, rate_mode='가중평균'일 때), 근거(법인세법 제52조, 시행령 제88조제3항·제89조제3항, 시행규칙 제43조)."""
     from datetime import date as _date, timedelta
+    from fractions import Fraction
     if received_interest is not None and charged_rate != 0.0:
         return {"error": "입력 확인 필요 — 계산하지 않음",
                 "문제": ["received_interest와 charged_rate를 함께 입력할 수 없음 — 둘 중 하나만 사용"]}
@@ -566,7 +652,8 @@ def deemed_interest(movements: Annotated[list[Movement], Field(description="가�
             fs_dt = y_end.replace(year=y_end.year - 1, day=28) + timedelta(days=1)
         fiscal_start = fs_dt.isoformat()
     fs = _date.fromisoformat(fiscal_start)
-    days = 366 if y_end.year % 4 == 0 else 365
+    _chk.need(fs <= y_end, f"fiscal_start={fiscal_start}가 year_end={year_end}보다 뒤")
+    days = (y_end - fs).days + 1
     # 개시일 전 증감은 모두 개시일 잔액으로 합산
     opening = 0
     fy_movements = []
@@ -578,7 +665,6 @@ def deemed_interest(movements: Annotated[list[Movement], Field(description="가�
             fy_movements.append((d_str, amt))
     if opening != 0:
         fy_movements.insert(0, (fiscal_start, opening))
-    _chk.need(fs <= y_end, f"fiscal_start={fiscal_start}가 year_end={year_end}보다 뒤")
     by_day: dict[str, int] = {}
     for d_str, amt in fy_movements:
         by_day[d_str] = by_day.get(d_str, 0) + amt
@@ -586,21 +672,113 @@ def deemed_interest(movements: Annotated[list[Movement], Field(description="가�
     for d_str in sorted(by_day):
         bal += by_day[d_str]
         _chk.need(bal >= 0, f"{d_str} 가지급금 잔액 {bal:,}원 — 회수(−)가 그때까지의 대여 잔액보다 큼. 날짜·부호 확인(대여 +, 회수 −)")
-    j = C.jeoksu(fy_movements, year_end)
+    j = C.jeoksu(fy_movements, year_end)  # 가지급금적수(상계 전)
+    # ── 가수금 상계 (deposits) ──
+    gupum_jeoksu = 0
+    offset_blocked_jeoksu = 0
+    if deposits:
+        gupum_moves = {}
+        blocked_moves = {}
+        for d in deposits:
+            who = d.name or "동일인"
+            if d.offset_blocked:
+                blocked_moves.setdefault(who, []).append((d.date, int(d.amount)))
+            else:
+                gupum_moves.setdefault(who, []).append((d.date, int(d.amount)))
+        for who, moves in gupum_moves.items():
+            info = {"잔액": 0}
+            for d_str, amt in moves:
+                dg = _chk.to_date("deposits.date", d_str)
+                if dg < fs:
+                    info["잔액"] += amt
+            cur = fs
+            bal = info["잔액"]
+            for d_str, amt in sorted(moves):
+                dg = _date.fromisoformat(d_str)
+                if dg < fs: continue
+                if dg > y_end: break
+                gupum_jeoksu += bal * (dg - cur).days
+                bal += amt
+                cur = dg
+            gupum_jeoksu += bal * ((y_end - cur).days + 1)
+        for who, moves in blocked_moves.items():
+            info = {"잔액": 0}
+            for d_str, amt in moves:
+                dg = _chk.to_date("deposits.date", d_str)
+                if dg < fs:
+                    info["잔액"] += amt
+            cur = fs
+            bal = info["잔액"]
+            for d_str, amt in sorted(moves):
+                dg = _date.fromisoformat(d_str)
+                if dg < fs: continue
+                if dg > y_end: break
+                offset_blocked_jeoksu += bal * (dg - cur).days
+                bal += amt
+                cur = dg
+            offset_blocked_jeoksu += bal * ((y_end - cur).days + 1)
+    net_jeoksu = max(0, j - gupum_jeoksu)
+    # ── 이자율 결정 ──
+    if rate_mode == "당좌선택":
+        rate_used = Fraction(K.RATE_OVERDRAFT).limit_denominator(10**7)
+        note = "선택한 사업연도와 이후 2개 사업연도 적용(영 제89조③2호, 규칙 제43조②)"
+        loan_tranches = None
+    elif rate_mode == "가중평균":
+        market, loan_tranches = _weighted_average_rate(mv, fy_movements, fs, y_end, days,
+                                                          borrowings or [], j, net_jeoksu, gupum_jeoksu, offset_blocked_jeoksu)
+        note = None
+    else:
+        rate_used = Fraction(market_rate).limit_denominator(10**7)
+        note = None
+        loan_tranches = None
+    # ── 시가이자·수령이자·차액 (원 미만 절사) ──
+    if rate_mode == "가중평균":
+        market_exact = Fraction(market)
+    elif received_interest is not None:
+        market_exact = Fraction(net_jeoksu) * rate_used / days
+    else:
+        market_exact = Fraction(net_jeoksu) * rate_used / days
     if received_interest is not None:
-        market = _trunc_won(j, market_rate, div=days)
         charged = received_interest
-        diff = market - charged
-        hit = diff >= 300_000_000 or (market and diff >= market * 0.05)
-        return _ok({"적수": j,
-                    "시가이자": market,
-                    "수령이자": charged,
-                    "차액": diff if diff > 0 else 0,
-                    "부당행위": bool(hit),
-                    "익금산입": diff if hit else 0},
-                   "법인세법 제52조, 시행령 제88조③·제89조③, 시행규칙 제43조(이자율)")
-    return _ok({"적수": j, **C.deemed_interest_check(market_rate, charged_rate, j, days)},
-               "법인세법 제52조, 시행령 제88조③·제89조③, 시행규칙 제43조(이자율)")
+        diff_exact = market_exact - Fraction(charged)
+        market = _trunc_won(market_exact)
+    else:
+        charged_exact = Fraction(net_jeoksu) * Fraction(charged_rate).limit_denominator(10**7) / days
+        diff_exact = market_exact - charged_exact
+        market = _trunc_won(market_exact)
+        charged = _trunc_won(charged_exact)
+    diff = _trunc_won(diff_exact)
+    hit = diff_exact >= 300_000_000 or (market_exact > 0 and diff_exact >= market_exact * Fraction(5, 100))
+    result = {"적수": net_jeoksu,
+              "가지급금적수": j,
+              "가수금적수": gupum_jeoksu,
+              "시가이자": market,
+              "수령이자": charged if received_interest is None else received_interest,
+              "차액": diff if diff > 0 else 0,
+              "부당행위": bool(hit),
+              "익금산입": diff if hit else 0}
+    if rate_mode == "가중평균" and loan_tranches:
+        result["계산"] = {"대여건별": loan_tranches}
+        result["대여건별"] = loan_tranches
+    judge_notes = []
+    if deposits:
+        if offset_blocked_jeoksu > 0:
+            judge_notes.append(f"상계 불가 약정 — 상계 안 함(가수금 적수 중 {offset_blocked_jeoksu:,}원 제외). 근거: 규칙 제28조②(상환기간·이자율 약정으로 상계 불가)")
+        if gupum_jeoksu > 0:
+            judge_notes.append(f"동일인 가지급금 적수 {j:,}원에서 가수금 적수 {gupum_jeoksu:,}원을 연간 적수 합계로 상계(영 제53조③ 후단) → 상계 후 적수 {net_jeoksu:,}원. 근거: 질의회신 법인46012-2035(1997.7.23)·법인세과-476(2010.5.25)")
+        if net_jeoksu == 0 and j > 0:
+            judge_notes.append("가수금 적수가 가지급금 적수보다 커서 인정이자 없음")
+    if rate_mode == "당좌선택" and note:
+        judge_notes.append(note)
+    if rate_mode == "가중평균" and loan_tranches and deposits and gupum_jeoksu > 0 and j > 0:
+        judge_notes.append("가수금 상계분은 대여 건 이자율의 가중평균으로 안분(가정)")
+    basis_notes = []
+    if rate_mode == "가중평균" and loan_tranches:
+        basis_notes = [tx["이자율_근거"] for tx in loan_tranches if tx.get("이자율_근거")]
+    all_notes = judge_notes + basis_notes
+    if all_notes:
+        result["판단"] = "; ".join(all_notes)
+    return _ok(result, "법인세법 제52조, 시행령 제88조③·제89조③, 시행규칙 제43조(이자율)")
 
 
 @mcp.tool(annotations=CALC)

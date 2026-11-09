@@ -7,7 +7,7 @@ import re
 from datetime import date, timedelta
 
 from .calc import won
-from .exact import exact as _x, floor_won as _floor, round_won as _round
+from .exact import exact as _x, floor_won as _floor, round_won as _round, trunc_won
 
 # 키 = 사업연도(개시일이 속하는 연도). 값은 모두 법제처 efYd=그해1231 원문 + 개정 부칙 적용시기 대조(2026-09-30, knowledge/16 §법인 연도표).
 _T_OLD = [(200_000_000, 0.10), (20_000_000_000, 0.20), (math.inf, 0.22)]                                   # 제55조 2016·2017
@@ -576,11 +576,15 @@ def nonbusiness_interest_judge(loans, advances=None, deposits=None, nonbusiness_
              "적수표": {"가지급금": ledger_adv, "가수금": ledger_dep},
              "순위_근거": f"{law_order}, 시행령 제55조(채권자불분명 → 비실명 → 건설자금 → 업무무관)"}
     pointer = None
-    if any(v for v in di_moves.values()):
+    has_gajib = any(v for v in di_moves.values())
+    has_gupum = any(v for v in dep_moves.values())
+    if has_gajib or has_gupum:
         pointer = {"도구": "deemed_interest",
                    "안내": "같은 가지급금 등(규칙 제44조 제외분은 영 제89조⑤ 단서로 인정이자에서도 제외)에 인정이자를 계산하려면 "
-                         "사람별 movements를 deemed_interest에 넣는다. 이자율은 가중평균차입이자율 원칙, 예외 시 당좌대출이자율(영 제89조③).",
+                         "사람별 movements를 deemed_interest에 넣는다. 이자율은 가중평균차입이자율 원칙, 예외 시 당좌대출이자율(영 제89조③). "
+                         "가수금이 있으면 deposits에도 사람별 가수금[{date, amount(원, 입금 +, 반환 -), offset_blocked(상계 불가 여부), 이름?}]을 넣는다.",
                    "movements_사람별": {k: v for k, v in di_moves.items() if v},
+                   "deposits_사람별": {k: v for k, v in dep_moves.items() if v} if has_gupum else {},
                    "year_end": fe.isoformat(), "fiscal_start": fs.isoformat()}
     return r, calc_, judge, pointer
 
@@ -1254,11 +1258,16 @@ def min_tax_adjust(
 
 def deemed_interest_check(rate_market, rate_charged, balance_jeoksu, days=365):
     """가지급금 인정이자(시행령 제89조③, 제88조③): 시가(가중평균차입이자율 원칙, 예외 당좌대출이자율)와의 차액이
-    3억 이상 또는 시가의 5% 이상이면 부당행위 → 차액 익금산입."""
-    market = balance_jeoksu * rate_market / days; charged = balance_jeoksu * rate_charged / days
-    diff = market - charged
-    hit = diff >= 300_000_000 or (market and diff >= market * 0.05)
-    return {"시가이자": won(market), "수령이자": won(charged), "차액": won(diff), "부당행위": bool(hit), "익금산입": won(diff) if hit else 0}
+    3억 이상 또는 시가의 5% 이상이면 부당행위 → 차액 익금산입.
+    시가이자·수령이자·차액은 원 미만 절사(trunc_won), 부당행위 판정(3억·5%)은 절사 전 정확값(Fraction) 기준."""
+    from fractions import Fraction
+    market_exact = Fraction(balance_jeoksu) * Fraction(rate_market) / days
+    charged_exact = Fraction(balance_jeoksu) * Fraction(rate_charged) / days
+    diff_exact = market_exact - charged_exact
+    hit = diff_exact >= 300_000_000 or (market_exact > 0 and diff_exact >= market_exact * Fraction(5, 100))
+    return {"시가이자": trunc_won(market_exact), "수령이자": trunc_won(charged_exact),
+            "차액": trunc_won(diff_exact), "부당행위": bool(hit),
+            "익금산입": trunc_won(diff_exact) if hit else 0}
 
 
 def loss_limit_ratio(year, sme):
