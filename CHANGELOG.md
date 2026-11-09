@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.24.0 (2026-11-09)
+
+인정이자(deemed_interest) 보강 — 원 미만 절사 통일, 동일인 가수금 연간 적수 상계(deposits), 가중평균차입이자율 계산(rate_mode·borrowings), 사업연도 일수 정정, nonbusiness_interest_disallowance 연결 안내 deposits 포함.
+
+- **원 미만 절사 통일**: `deemed_interest_check`(calc_cit)와 `deemed_interest`(server) 모두 시가이자·수령이자·차액을 trunc_won(원 미만 절사)으로 계산. 부당행위 판정(3억·5%)은 절사 전 정확값(Fraction) 기준. charged_rate 경로와 received_interest 경로 결과가 같아짐. `engine/calc_cit.py` `deemed_interest_check`.
+- **동일인 가수금 상계 — 새 인자 deposits**: [{date, amount(가수금 입금 +, 반환 −), offset_blocked?(bool, 상환기간·이자율 약정으로 상계 불가)}]. 동일인 가지급금 적수에서 가수금 적수를 연간 적수 합계끼리 상계(일별 차감 아님, 영 제53조③ 후단). 가수금 적수가 더 크면 인정이자 없음. 약정으로 상계 불가면 상계하지 않음(규칙 제28조②). 가수금 적수는 가지급금과 같은 방식(입금일 산입·반환일 불포함·사업연도 말일 산입, 개시일 전 증감은 개시일 잔액). 결과에 가지급금적수(상계 전)·가수금적수·적수(상계 후, 0 미만이면 0) 추가. 근거: 질의회신 법인46012-2035(1997.7.23)·법인세과-476(2010.5.25). `server.py` `deemed_interest`.
+- **가중평균차입이자율 계산 — 새 인자 rate_mode·borrowings**: rate_mode: '입력'(기본, market_rate) | '가중평균' | '당좌선택'. '당좌선택'(영 제89조③2호): 전 대여금에 당좌대출이자율 4.6%(규칙 제43조②) — 판단에 "선택한 사업연도와 이후 2개 사업연도 적용" 기재. '가중평균'(규칙 제43조①): borrowings: [{borrowed_on, amount, rate, repaid_on?, related?(특수관계인 차입금), unclear_creditor?(채권자불분명 사채·매입자불분명 채권)}]. 가지급금 movements의 증가(+) 하나하나를 '대여 건'으로 본다(개시일 전 날짜도 그 날짜가 대여일). 감소(−)는 먼저 대여한 건부터 줄인다(선입선출). 대여 건의 이자율 = 대여일 현재 잔액이 있는 차입금(borrowed_on ≤ 대여일 < repaid_on) 중 related·unclear_creditor가 아닌 것의 Σ(금액×rate) ÷ Σ금액. 그런 차입금이 없으면 그 대여 건은 당좌 4.6%(규칙 제43조③1·2호). 대여일부터 사업연도 종료일(그 사업연도에 다 회수되면 회수일)까지 5년 초과인 대여 건은 당좌 4.6%(영 제89조③1호의2, 규칙 제43조④). 시가이자 = Σ(대여 건 적수 × 그 건 이자율) ÷ 사업연도 일수, 합계에서 한 번만 원 미만 절사. deposits도 있으면: 시가이자 × (상계 후 적수 ÷ 상계 전 적수). 계산에 대여건별: [{대여일, 금액, 적수, 이자율, 이자율_근거, 시가이자(절사 전 표시용 소수 2자리 문자열)}]. 지원하지 않음(입력에 기재): 규칙 제43조① 후단(차입 법인 쪽 평균과의 비교), 변동금리(⑥ 전단). `server.py` `deemed_interest`·`_weighted_average_rate`.
+- **사업연도 일수 정정**: days = (year_end − fiscal_start).days + 1(365 또는 366). 종전 year_end 연도 윤년 판정(366 if year%4==0 else 365)을 대체. `server.py` `deemed_interest`.
+- **nonbusiness_interest_disallowance 연결 안내**: '인정이자_연결'에 사람별 deposits도 넣는다(가수금이 있는 동일인만, 상계불가 표시 포함). `engine/calc_cit.py` `nonbusiness_interest_judge`.
+
+코드 Solar Pro 4, 정답 테스트·검수 Claude.
+
+- **문서·버전**: deemed_interest docstring에 새 인자·근거 추가. CHANGELOG 0.24.0 절, 버전 0.24.0(__init__·server.json).
+
+
+Claude 보완: 가중평균 모드가 Fraction 서식 오류로 멈추던 것을 다시 작성(대여 건 날짜순 정렬, 개시일 전 회수도 선입선출 반영, 5년 초과는 민법 기간·회수일 기준), rate_mode 값 검사(Literal), 검수 테스트 4개 추가.
 ## 0.23.0 (2026-11-09)
 
 부가세 확정신고 시나리오 결함 4건 수정.

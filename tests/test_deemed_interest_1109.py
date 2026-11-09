@@ -106,3 +106,40 @@ def test_nonbusiness_pointer_includes_deposits():
     ptr = d["인정이자_연결"]
     assert "김대표" in json.dumps(ptr.get("deposits_사람별", ptr), ensure_ascii=False)
     assert "deposits" in json.dumps(ptr, ensure_ascii=False)
+
+
+# ── 검수 추가 ──
+def test_weighted_recovery_before_fiscal_start_reduces_tranche():
+    """개시일 전 회수도 선입선출로 대여 건 잔액을 줄인다 — 2024 대여 1억, 2025 회수 6천만 → 2026 잔액 4천만."""
+    mv = [{"date": "2024-01-02", "amount": 100_000_000}, {"date": "2025-06-01", "amount": -60_000_000}]
+    d = call("deemed_interest", {"movements": mv, "year_end": "2026-12-31", "fiscal_start": "2026-01-01",
+                                 "rate_mode": "가중평균", "borrowings": [{"borrowed_on": "2023-01-01", "amount": 1_000_000_000, "rate": 0.05}]})
+    assert R(d)["적수"] == 40_000_000 * 365
+    assert R(d)["시가이자"] == 2_000_000
+
+
+def test_weighted_fifo_unsorted_input():
+    mv = [{"date": "2026-04-10", "amount": 100_000_000}, {"date": "2026-09-30", "amount": -200_000_000},
+          {"date": "2025-12-31", "amount": 300_000_000}]
+    r = R(call("deemed_interest", {"movements": mv, "year_end": "2026-12-31", "fiscal_start": "2026-01-01",
+                                   "rate_mode": "가중평균", "borrowings": BORROW}))
+    assert r["시가이자"] == 15_679_452
+
+
+def test_five_years_civil_boundary():
+    """대여일 2021-12-31 → 2026-12-31은 정확히 5년(초과 아님) → 가중평균, 2021-12-30이면 5년 초과 → 당좌."""
+    b = [{"borrowed_on": "2019-01-01", "amount": 1_000_000_000, "rate": 0.05}]
+    a = R(call("deemed_interest", {"movements": [{"date": "2021-12-31", "amount": 100_000_000}], "year_end": "2026-12-31",
+                                   "fiscal_start": "2026-01-01", "rate_mode": "가중평균", "borrowings": b}))
+    c = R(call("deemed_interest", {"movements": [{"date": "2021-12-30", "amount": 100_000_000}], "year_end": "2026-12-31",
+                                   "fiscal_start": "2026-01-01", "rate_mode": "가중평균", "borrowings": b}))
+    assert a["시가이자"] == 5_000_000 and c["시가이자"] == 4_600_000
+
+
+def test_rate_mode_invalid_rejected():
+    d = None
+    try:
+        d = call("deemed_interest", {**BASE, "rate_mode": "가중 평균"})
+    except Exception:
+        return
+    assert "error" in d
