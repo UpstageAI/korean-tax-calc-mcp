@@ -186,3 +186,35 @@ def test_summary_warns_when_unknown():
 
 def test_other_kind_ignores_flag():
     assert R(ip("지연수취", e_invoice_transmitted=True))["가산세"] == 100_000
+
+
+# ── 검수 추가(배치를 바꾼 경우) ─────────────────────────────
+def test_late_receipt_deadline_follows_supply_period_in_preliminary_filing():
+    """예정신고에서도 '확정신고기한'은 공급시기가 속한 과세기간의 확정신고기한(2기 → 다음 해 1/25)."""
+    it = _item("예정·확정 사이", "2026-07-20", "2026-11-02")
+    d = call("vat_input_tax_deduction", {"period": "2026-2", "filing": "예정", "items": [it]})
+    assert R(d)["공제매입세액"] == 1_000_000 and R(d)["지연수취_가산세"] == 50_000
+    it2 = _item("확정기한+1년 이내", "2026-07-20", "2027-12-01")
+    d2 = call("vat_input_tax_deduction", {"period": "2026-2", "filing": "예정", "items": [it2]})
+    assert R(d2)["공제매입세액"] == 1_000_000 and R(d2)["지연수취_가산세"] == 50_000
+
+
+def test_late_receipt_supply_in_other_period():
+    """입력 period와 공급시기 과세기간이 달라도 공급시기 기준 확정신고기한(1기 → 7/25)으로 판정."""
+    it = _item("1기 공급", "2026-05-10", "2026-07-20")
+    d = call("vat_input_tax_deduction", {"period": "2026-2", "filing": "확정", "items": [it]})
+    assert R(d)["지연수취_가산세"] == 50_000
+    it2 = _item("1기 공급 1년 초과", "2026-05-10", "2027-07-26")
+    d2 = call("vat_input_tax_deduction", {"period": "2026-2", "filing": "확정", "items": [it2]})
+    assert R(d2)["공제매입세액"] == 0
+
+
+def test_reduction_integer_floor():
+    r = up(tax=3_333_330, reduction="수정신고", due="2026-03-31", amended_on="2026-10-01")
+    assert r["감면전_가산세"] == 333_333
+    assert r["감면액"] == 99_999 and r["가산세"] == 233_334
+
+
+def test_bad_debt_waiting_label():
+    r = bd(reason="부도", reason_date="2026-08-20", receivable="어음", period="2026-2")
+    assert r["대손세액"] == 0 and "공제 —" not in r["구분"]

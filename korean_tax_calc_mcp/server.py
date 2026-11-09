@@ -782,11 +782,79 @@ def minimum_tax_adjustment(
 
 
 @mcp.tool(annotations=CALC)
-def underreporting_penalty(additional_tax: WON, fraud: Annotated[bool, Field(description="부정행위로 인한 과소신고 여부")]) -> dict:
-    """과소신고가산세(일반 과소신고 10%, 부정행위 40%). 언제: 신고한 세액보다 실제 세액이 더 클 때 가산세 금액을 구한다.
-입력: 과소신고한 세액(원) → additional_tax, 부정행위 여부 → fraud.
-결과: 가산세·적용 세율, 근거(국세기본법 제47조의3). Under-reporting penalty: 10% general, 40% for fraud."""
-    return _ok({"가산세": K.penalty_underreport(additional_tax, fraud), "세율": 0.4 if fraud else 0.1}, "국세기본법 제47조의3")
+def underreporting_penalty(additional_tax: WON, fraud: Annotated[bool, Field(description="부정행위로 인한 과소신고 여부")] = False,
+                           reduction: Annotated[Literal["수정신고", "예정신고_확정수정"] | None, Field(description="수정신고 감면 종류 — '수정신고'|'예정신고_확정수정'(없으면 감면 없음)")] = None,
+                           due: Annotated[str | None, Field(description="법정신고기한 YYYY-MM-DD")] = None,
+                           amended_on: Annotated[str | None, Field(description="수정신고일 YYYY-MM-DD")] = None,
+                           foreknown: Annotated[bool, Field(description="경정할 것을 미리 알았는지 여부(기본 False)")] = False) -> dict:
+    """과소신고가산세(일반 과소신고 10%, 부정행위 40%)와 국세기본법 제48조제2항 수정신고 감면. 언제: 신고한 세액보다 실제 세액이 더 클 때 가산세 금액을 구하고, 수정신고를 했으면 감면을 적용한다.
+입력: 과소신고한 세액(원) → additional_tax, 부정행위 여부 → fraud(기본 False), 감면 종류 → reduction, 법정신고기한 → due, 수정신고일 → amended_on, 미리 알았는지 → foreknown(기본 False).
+결과: 가산세·감면전_가산세·감면율·감면액, 근거(국세기본법 제47조의3, 감면은 제48조제2항). Under-reporting penalty with amended-return reduction under Article 48(2)."""
+    감면전 = K.penalty_underreport(additional_tax, fraud)
+    가산세 = 감면전
+    감면율 = 0.0
+    감면액 = 0
+
+    if reduction and not (due and amended_on):
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["reduction을 주면 due(법정신고기한)와 amended_on(수정신고일)이 둘 다 필요"]}
+    # 감면 적용
+    if reduction and due and amended_on:
+        from datetime import date
+        from .engine.calc_deadline import add_months
+
+        due_d = date.fromisoformat(due)
+        amended_d = date.fromisoformat(amended_on)
+
+        # foreknown=True면 감면 없음
+        if not foreknown:
+            # 수정신고일 기준: 2020-01-01 이후(2019.12.31 개정 부칙)
+            if amended_d >= date(2020, 1, 1):
+                if amended_d <= add_months(due_d, 1):
+                    감면율 = 0.9
+                elif amended_d <= add_months(due_d, 3):
+                    감면율 = 0.75
+                elif amended_d <= add_months(due_d, 6):
+                    감면율 = 0.5
+                elif amended_d <= add_months(due_d, 12):
+                    감면율 = 0.3
+                elif amended_d <= add_months(due_d, 18):
+                    감면율 = 0.2
+                elif amended_d <= add_months(due_d, 24):
+                    감면율 = 0.1
+                else:
+                    감면율 = 0.0
+            else:
+                # 수정신고일 2019-12-31 이전
+                if amended_d <= add_months(due_d, 6):
+                    감면율 = 0.5
+                elif amended_d <= add_months(due_d, 12):
+                    감면율 = 0.2
+                elif amended_d <= add_months(due_d, 24):
+                    감면율 = 0.1
+                else:
+                    감면율 = 0.0
+
+            # 예정신고_확정수정(제48조②3호다목): 위 1호 비율과 50% 중 큰 값
+            if reduction == "예정신고_확정수정":
+                감면율 = max(감면율, 0.5)
+
+        # 감면액 = floor(감면전 가산세 × 감면율)
+        감면액 = 감면전 * round(감면율 * 100) // 100
+        가산세 = 감면전 - 감면액
+
+    근거 = ["국세기본법 제47조의3"]
+    if reduction and due and amended_on:
+        근거.append("국세기본법 제48조②")
+        if foreknown:
+            근거.append("— foreknown=True로 감면 제외")
+
+    결과 = {"가산세": 가산세, "세율": 0.4 if fraud else 0.1}
+    if reduction and due and amended_on:
+        결과["감면전_가산세"] = 감면전
+        결과["감면율"] = 감면율
+        결과["감면액"] = 감면액
+
+    return _ok(결과, ", ".join(근거))
 
 
 @mcp.tool(annotations=CALC)
@@ -885,12 +953,27 @@ def withholding_late_payment_penalty(unpaid_tax: WON,
 def invoice_penalty(supply_amount: WON, kind: Annotated[Literal["가공", "지연발급", "미발급", "미발급_종이", "지연전송", "미전송", "지연수취",
                                                                "매출처별합계표_미제출", "매출처별합계표_예정분확정제출", "신용카드매입공제"],
                                                        Field(description="가산세 유형 — 가공=실물 없는 발급·수취")],
-                    supplied_on: Annotated[str, Field(description="공급일(발급·수취일) YYYY-MM-DD — 세율 기준 연도")] = "") -> dict:
-    """세금계산서 가산세(가공 2%·3%·4%, 미발급 2%, 지연발급 1% 등, 공급일 기준 세율 적용). 언제: 세금계산서 발급·수취 의무를 위반했을 때 가산세 금액을 구한다.
-입력: 공급가액(원) → supply_amount, 가산세 유형 → kind, 공급일(YYYY-MM-DD, 세율 기준) → supplied_on.
-결과: 가산세·적용 세율, 근거(부가가치세법 제60조제2항·제5항·제6항·제7항, 가공은 제60조제3항). VAT invoice penalties by type and supply date."""
+                    supplied_on: Annotated[str, Field(description="공급일(발급·수취일) YYYY-MM-DD — 세율 기준 연도")] = "",
+                    e_invoice_transmitted: Annotated[bool | None, Field(description="전자세금계산서 발급명세 전송 여부 — True면 전송함, False면 미전송, None이면 미확인")] = None) -> dict:
+    """세금계산서 가산세(가공 2%·3%·4%, 미발급 2%, 지연발급 1% 등, 공급일 기준 세율 적용)와 합계표 가산세·전자세금계산서 전송 면제. 언제: 세금계산서 발급·수취 의무를 위반했을 때 가산세 금액을 구한다.
+입력: 공급가액(원) → supply_amount, 가산세 유형 → kind, 공급일(YYYY-MM-DD, 세율 기준) → supplied_on, 전자세금계산서 전송 여부 → e_invoice_transmitted.
+결과: 가산세·적용 세율, 근거(부가가치세법 제60조제2항·제5항·제6항·제7항, 가공은 제60조제3항). 매출처별합계표 미제출·예정분확정제출은 e_invoice_transmitted로 면제 여부 확인.
+  True → 가산세 0(제54조제2항), None → 주의 메시지, False → 기존 금액."""
     if kind == "가공":
         return _ok({"가산세": K.penalty_fake_invoice(supply_amount, supplied_on), "세율": K.fake_invoice_rate(supplied_on)}, "부가가치세법 제60조③")
+
+    # 매출처별합계표 관련 종류 + 전자세금계산서 전송 확인
+    if kind in ("매출처별합계표_미제출", "매출처별합계표_예정분확정제출"):
+        if e_invoice_transmitted is True:
+            return _ok({"가산세": 0, "세율": 0.0}, "부가가치세법 제54조② — 전자세금계산서 발급명세를 기한 내 전송하면 합계표 제출 의무 없음")
+        elif e_invoice_transmitted is None:
+            # 기존 금액 계산 + 주의 메시지
+            penalty = V.invoice_penalties(supply_amount, kind, supplied_on or None)
+            rate = V.invoice_penalty_rate(kind, supplied_on or None)
+            result = _ok({"가산세": penalty, "세율": rate}, "부가가치세법 제60조②⑤⑥⑦")
+            result["주의"] = "전자세금계산서를 발급하고 과세기간(예정은 예정신고기간) 끝 다음 달 11일까지 전송했으면 합계표 제출 의무가 없어 가산세 0(부가가치세법 제54조②) — e_invoice_transmitted로 확인"
+            return result
+
     return _ok({"가산세": V.invoice_penalties(supply_amount, kind, supplied_on or None), "세율": V.invoice_penalty_rate(kind, supplied_on or None)}, "부가가치세법 제60조②⑤⑥⑦")
 
 
@@ -1837,19 +1920,110 @@ def vat_card_sales_credit(amount: Annotated[int, Field(description="신용카드
 @mcp.tool(annotations=CALC)
 def vat_bad_debt_credit(bad_debt_incl_vat: Annotated[int, Field(description="대손금액(부가세 포함, 원). 회수분이면 회수한 대손금액")],
                         supply_receivable: Annotated[bool, Field(description="재화·용역 공급 대가 채권 여부(True면 대손세액 공제 대상)")] = True,
-                        recovered: Annotated[bool, Field(description="대손세액을 공제받은 대손금을 회수한 경우 True — 회수한 대손금액의 대손세액을 회수일이 속하는 과세기간 매출세액에 더함(부가가치세법 제45조제1항 단서)")] = False) -> dict:
-    """대손세액공제(대손금액 × 10/110)와 대손금 회수 시 가산. 언제: 외상 매출이 대손되었을 때 부가가치세 대손세액공제를, 공제받은 대손금을 회수했을 때 매출세액 가산액을 계산한다.
-입력: 대손금액(부가세 포함, 원) → bad_debt_incl_vat, 재화·용역 공급 대가 채권 여부 → supply_receivable(기본 True), 회수분 여부 → recovered(기본 False).
-결과: 대손세액(공급 대가 아니면 0), 구분(공제 또는 회수 가산), 회수(bool), 근거(부가가치세법 제45조제1항, 회수는 같은 항 단서).
+                        recovered: Annotated[bool, Field(description="대손세액을 공제받은 대손금을 회수한 경우 True — 회수한 대손금액의 대손세액을 회수일이 속하는 과세기간 매출세액에 더함(부가가치세법 제45조제1항 단서)")] = False,
+                        reason: Annotated[Literal["부도", "소멸시효", "파산", "강제집행", "회생인가", "사망·실종", "기타"] | None, Field(description="대손 사유 — '부도'|'소멸시효'|'파산'|'강제집행'|'회생인가'|'사망·실종'|'기타'(없으면 대손 사유·확정일을 확인하지 않음)")] = None,
+                        reason_date: Annotated[str | None, Field(description="사유 발생일 YYYY-MM-DD — 부도는 부도발생일, 소멸시효는 시효 완성일, 그 밖에는 확정일")] = None,
+                        receivable: Annotated[Literal["외상매출금", "어음", "수표", "미수금"], Field(description="채권 종류 — '외상매출금'(기본)|'어음'|'수표'|'미수금'")] = "외상매출금",
+                        sme: Annotated[bool, Field(description="중소기업 여부(기본 False)")] = False,
+                        mortgage: Annotated[bool, Field(description="채무자 재산에 저당권 설정 여부(기본 False)")] = False,
+                        supply_date: Annotated[str | None, Field(description="공급일 YYYY-MM-DD — 있으면 부가령 제87조제2항 기간 요건 검사")] = None,
+                        period: Annotated[str | None, Field(description="신고하려는 과세기간 'YYYY-1'|'YYYY-2'(확정신고)")] = None) -> dict:
+    """대손세액공제(대손금액 × 10/110)와 대손금 회수 시 가산, 대손 확정 시기 판정. 언제: 외상 매출이 대손되었을 때 부가가치세 대손세액공제를, 공제받은 대손금을 회수했을 때 매출세액 가산액을 계산한다.
+입력: 대손금액(부가세 포함, 원) → bad_debt_incl_vat, 재화·용역 공급 대가 채권 여부 → supply_receivable(기본 True), 회수분 여부 → recovered(기본 False),
+  대손 사유 → reason, 사유 발생일 → reason_date, 채권 종류 → receivable(기본 '외상매출금'), 중소기업 여부 → sme(기본 False),
+  저당권 설정 여부 → mortgage(기본 False), 공급일 → supply_date, 신고 과세기간 → period.
+결과: 대손세액, 대손확정일, 공제_과세기간, 공제가능, 구분, 회수, 근거. 대손 사유·확정일이 없으면 "대손 사유·확정일을 확인하지 않음" 문장 추가.
 엑셀(export_workbook): 공제분은 별지 제19호서식(1) 2., 회수분은 신고서 (8) 대손세액 가감에 가산(공제분은 △). VAT bad debt credit."""
     if not supply_receivable:
         return _ok({"대손세액": 0, "구분": "대상 아님", "회수": bool(recovered), "공급_대가_채권_여부": False},
                    "부가가치세법 제45조① — 재화·용역의 공급 대가가 아닌 채권은 대손세액공제 대상 아님")
-    세액 = V.bad_debt_vat(bad_debt_incl_vat)
     if recovered:
+        세액 = V.bad_debt_vat(bad_debt_incl_vat)
         return _ok({"대손세액": 세액, "구분": "회수 — 매출세액에 가산", "회수": True, "매출세액_가산": 세액, "공급_대가_채권_여부": True},
                    "부가가치세법 제45조① 단서(회수한 대손금액에 관련된 대손세액은 회수한 날이 속하는 과세기간 매출세액에 더함)")
-    return _ok({"대손세액": 세액, "구분": "공제 — 매출세액에서 뺌", "회수": False, "공급_대가_채권_여부": True},
+
+    # 대손 사유·확정일 확인
+    if reason is None or reason_date is None:
+        return _ok({"대손세액": V.bad_debt_vat(bad_debt_incl_vat), "구분": "공제 — 매출세액에서 뺌", "회수": False, "공급_대가_채권_여부": True,
+                    "대손확정일": None, "공제_과세기간": None, "공제가능": None},
+                   "부가가치세법 제45조① — 대손 사유·확정일을 확인하지 않음 — reason·reason_date를 주면 공제 과세기간을 판정")
+
+    from datetime import date, timedelta
+    from .engine.calc_deadline import add_months
+
+    # 대손확정일 계산
+    if reason == "부도":
+        부도발생일 = date.fromisoformat(reason_date)
+        대손확정일 = add_months(부도발생일, 6) + timedelta(days=1)  # 6개월 이상 지난 다음 날(법인령 제19조의2①9호)
+    else:
+        대손확정일 = date.fromisoformat(reason_date)
+
+    # 공제_과세기간 = 대손확정일이 속하는 과세기간
+    d = 대손확정일
+    if d.month <= 6:
+        공제_과세기간 = f"{d.year}-1"
+    else:
+        공제_과세기간 = f"{d.year}-2"
+
+    # 부도 사유 제한 검사
+    if reason == "부도":
+        if mortgage:
+            # mortgage=True면 부도 사유 불가
+            return _ok({"대손세액": 0, "구분": "공제 불가 — 대상 아님", "회수": False, "공급_대가_채권_여부": True,
+                        "대손확정일": 대손확정일.isoformat(), "공제_과세기간": 공제_과세기간, "공제가능": False,
+                        "사유": "저당권 설정(mortgage=True) — 부도 사유 불가"},
+                       "부가가치세법 제45조① — 채무자 재산에 저당권이 설정된 경우 부도 사유로 대손세액 공제 불가")
+        if receivable in ("외상매출금", "미수금") and not sme:
+            # 외상매출금·미수금은 sme=True일 때만 부도 사유 인정
+            return _ok({"대손세액": 0, "구분": "공제 불가 — 대상 아님", "회수": False, "공급_대가_채권_여부": True,
+                        "대손확정일": 대손확정일.isoformat(), "공제_과세기간": 공제_과세기간, "공제가능": False,
+                        "사유": "외상매출금·미수금은 중소기업(sme=True)일 때만 부도 사유 인정 — sme=False"},
+                       "부가가치세법 제45조① — 외상매출금·미수금은 중소기업일 때만 부도 사유로 대손세액 공제 가능")
+
+    # supply_date가 있으면 부가령 제87조② 기간 요건 검사
+    공제가능 = True
+    if supply_date:
+        eligibility = V.bad_debt_eligible(supply_date, 공제_과세기간)
+        if not eligibility["공제가능"]:
+            공제가능 = False
+
+    # period를 줬고 공제_과세기간과 다르면 대손세액 0 (단, period < 공제_과세기간이면 공제가능은 True 유지)
+    대손세액 = 0
+    사유 = None
+    if 공제가능:
+        if period is not None and period != 공제_과세기간:
+            if period < 공제_과세기간:
+                사유 = f"아직 대손 확정 전 — {공제_과세기간} 확정신고에서 공제"
+            else:
+                사유 = f"대손 확정 과세기간은 {공제_과세기간} — 그 기간 확정신고에서 공제했어야 함(경정청구 검토)"
+                공제가능 = False
+        else:
+            대손세액 = V.bad_debt_vat(bad_debt_incl_vat)
+
+    if not 공제가능:
+        msg = "부가가치세법 제45조① — "
+        if 사유:
+            msg += 사유
+        elif supply_date:
+            msg += f"공급일부터 {eligibility['기간(년)']}년 경과 과세기간 안에 대손 확정되어야 함(부가령 제87조②)"
+        else:
+            msg += "공제 요건 미충족"
+        return _ok({"대손세액": 0, "구분": "공제 불가 — 대상 아님", "회수": False, "공급_대가_채권_여부": True,
+                    "대손확정일": 대손확정일.isoformat(), "공제_과세기간": 공제_과세기간, "공제가능": False,
+                    "사유": 사유} if 사유 else
+                   {"대손세액": 0, "구분": "공제 불가 — 대상 아님", "회수": False, "공급_대가_채권_여부": True,
+                    "대손확정일": 대손확정일.isoformat(), "공제_과세기간": 공제_과세기간, "공제가능": False},
+                   msg)
+
+    # period 불일치로 대손세액 0이지만 공제가능은 True인 경우
+    if 사유:
+        return _ok({"대손세액": 0, "구분": "공제 대기 — 대손 확정 전", "회수": False, "공급_대가_채권_여부": True,
+                    "대손확정일": 대손확정일.isoformat(), "공제_과세기간": 공제_과세기간, "공제가능": True,
+                    "사유": 사유},
+                   "부가가치세법 제45조① — " + 사유)
+
+    return _ok({"대손세액": 대손세액, "구분": "공제 — 매출세액에서 뺌", "회수": False, "공급_대가_채권_여부": True,
+                "대손확정일": 대손확정일.isoformat(), "공제_과세기간": 공제_과세기간, "공제가능": True},
                "부가가치세법 제45조①")
 
 
