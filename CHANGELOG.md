@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.25.0 (2026-11-09)
+
+부가세 시나리오 2탄 결함 4건 수정 — 간이과세자 면제·환산·겸영, 세금계산서 가산세 묶음(중복 배제), 간주공급 대상 재화(사업양수·수출영세율), 공통사용재화 매입세액(규칙 제54조③).
+
+- **간이과세자 납부의무 면제 판정(`vat_simplified_taxpayer`)**: 새 인자 business_start(사업 개시일)·closed_on(휴업·폐업·유형전환일) — YYYY-MM-DD, 선택. 제69조③: 해당 과세기간(1.1~12.31) 중 business_start가 있으면 개시일~12.31, closed_on이 있으면 1.1~closed_on(둘 다면 개시일~closed_on)의 공급대가를 12개월로 환산해 면제 판정. 개월 수 = 기간을 개월로 셀 때 1개월 미만 끝수는 1개월(예: 4.10~12.31 → 9개월). 환산액 = 공급대가 × 12 ÷ 개월 수(원 미만 절사). 결과에 면제_판정_공급대가(환산액)·환산_개월수 추가. 환산은 면제 판정에만 쓰고 납부세액 계산은 실제 공급대가로. 새 인자 industries: [{value_added_rate, supply_incl_vat}] (선택, 겸영). 주면 supply_incl_vat·value_added_rate 대신 업종별 납부세액 = Σ(공급대가 × 부가가치율 × 10%)(제63조② 후문, 원 미만 절사), 면제 판정·카드공제 등은 공급대가 합계로. supply_incl_vat와 industries를 같이 주면 error. 납부의무_면제 True면 차가감_납부세액 0(부가법 제69조①), 판단에 "납부의무 면제 — 납부세액 0(재고납부세액은 별도)" 기재. `server.py` `vat_simplified_taxpayer`.
+- **세금계산서 가산세 묶음 계산 — 새 도구 `invoice_penalty_bundle`**: 입력 items: [{deal(거래 이름), kind(invoice_penalty의 kind와 같은 값), supply_amount, supplied_on?}]. 같은 deal 안에서 중복 배제(부가법 제60조② 후문·⑨, 조문 원문 확인): 지연발급(②1)·미발급·미발급_종이(②2)가 있으면 그 deal의 지연전송·미전송(②3·4)은 0. 미발급·미발급_종이(②2)·가공(③)이 있으면 그 deal의 매출처별합계표_*(⑥)·지연수취·신용카드매입공제(⑦·⑤ — ⑨3호는 ①⑥⑦)는 0. 단 ⑤(신용카드매입공제)는 ⑨에 없으므로 그대로. 지연발급(②1)·지연전송·미전송(②3·4)이 있으면 그 deal의 매출처별합계표_*(⑥)는 0(⑨2호). 결과: 가산세_합계, 계산.항목별: [{deal, kind, 가산세, 배제사유?}]. `server.py` `invoice_penalty_bundle`.
+- **invoice_penalty(단건) 주의 문구**: kind가 매출처별합계표_*·지연전송·미전송이면 주의 한 줄: "같은 공급가액에 지연발급·미발급이 있으면 이 가산세는 적용 안 함(제60조② 후문·⑨) — 여러 건은 invoice_penalty_bundle". `server.py` `invoice_penalty`.
+- **간주공급 대상 재화 — 취득구분**: `engine/calc_vat.py` `vat_deemed_supply_items`·`server.py` `vat_deemed_supply_items`·`vat_exempt_use_deemed_supply` 항목에 '취득구분'(선택): '자기매입'(기본) | '사업양수'(사업양도로 취득, 양도자가 매입세액 공제받은 재화 — 제10조①2호) | '수출영세율'(영세율 적용받은 재화 — 제10조①3호). '사업양수'·'수출영세율'이면 매입세액공제가 False여도 간주공급 대상(시가·감가상각 간주시가 그대로). 판단 근거에 해당 호 표시. 양수 재화의 경과 과세기간은 입력한 취득일 기준(판단에 "양수 재화 취득일 기준 — 해석 확인 필요" 기재).
+- **공통사용재화 매입세액 — acquired_period**: `server.py` `common_input_tax` common_asset_sales 항목에 acquired_period(선택, 'YYYY-1'|'YYYY-2' — 그 재화를 공급받은 과세기간). acquired_period가 이번 신고 과세기간(year·period)과 다르면 그 재화의 매입세액은 이번에 공제하지 않음(0). 판단 "공급받은 과세기간에 이미 안분 — 이번 공제 없음(시행규칙 제54조③)". 같으면 직전 과세기간 비율로 안분 공제(지금처럼). acquired_period가 없으면 지금처럼 하되 주의 "공급받은 과세기간과 공급한 과세기간이 같을 때만 안분 공제(규칙 제54조③) — acquired_period로 확인". 근거 표기 "영 제81조④" → "시행규칙 제54조③"으로 정정(공통사용재화 매입세액 공제 부분).
+
+코드 Solar Pro 4, 정답 테스트·검수 Claude.
+
+- **문서·버전**: invoice_penalty_bundle docstring(언제·입력·결과·근거). CHANGELOG 0.25.0 절, 버전 0.25.0(__init__·server.json·README 도구 개수).
+
+
+
+Claude 보완: 간이과세 면제여도 세금계산서 미수취 가산세는 남김(제69조①②), 12개월 환산 개월 수를 초일 산입 기간 계산으로 바로잡고 simplified_vat_return에도 연결, 가산세 묶음의 가공 계산·kind 값 검사, 취득구분 값 검사, 옛 정답 테스트의 공통사용재화 근거 표기(영 제81조④ → 규칙 제54조③, 조문 원문 확인), README 도구 수, pyproject 버전.
 ## 0.24.0 (2026-11-09)
 
 인정이자(deemed_interest) 보강 — 원 미만 절사 통일, 동일인 가수금 연간 적수 상계(deposits), 가중평균차입이자율 계산(rate_mode·borrowings), 사업연도 일수 정정, nonbusiness_interest_disallowance 연결 안내 deposits 포함.

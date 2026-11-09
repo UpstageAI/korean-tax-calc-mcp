@@ -1152,7 +1152,104 @@ def invoice_penalty(supply_amount: WON, kind: Annotated[Literal["가공", "지�
             result["주의"] = "전자세금계산서를 발급하고 과세기간(예정은 예정신고기간) 끝 다음 달 11일까지 전송했으면 합계표 제출 의무가 없어 가산세 0(부가가치세법 제54조②) — e_invoice_transmitted로 확인"
             return result
 
-    return _ok({"가산세": V.invoice_penalties(supply_amount, kind, supplied_on or None), "세율": V.invoice_penalty_rate(kind, supplied_on or None)}, "부가가치세법 제60조②⑤⑥⑦")
+    result = _ok({"가산세": V.invoice_penalties(supply_amount, kind, supplied_on or None), "세율": V.invoice_penalty_rate(kind, supplied_on or None)}, "부가가치세법 제60조②⑤⑥⑦")
+
+    # 중복 배제 주의: 매출처별합계표_*·지연전송·미전송은 같은 공급가액에 지연발급·미발급이 있으면 적용 안 함
+    if kind in ("매출처별합계표_미제출", "매출처별합계표_예정분확정제출", "지연전송", "미전송"):
+        result["주의"] = "같은 공급가액에 지연발급·미발급이 있으면 이 가산세(매출처별합계표·전송)는 적용 안 함(부가가치세법 제60조② 후문·⑨) — 여러 건은 invoice_penalty_bundle"
+
+    return result
+
+
+# ── 세금계산서 가산세 묶음 계산 (중복 배제) ──
+# 중복 배제 규칙 (부가법 제60조② 후문·⑨):
+# - 같은 deal에서 지연발급(②1)·미발급·미발급_종이(②2)가 있으면 그 deal의 지연전송·미전송(②3·4)은 0
+# - 같은 deal에서 미발급·미발급_종이(②2)·가공(③)이 있으면 그 deal의 매출처별합계표_*(⑥)·지연수취·신용카드매입공제(⑦·⑤)는 0
+#   단 ⑤(신용카드매입공제)는 ⑨에 없으므로 그대로
+# - 같은 deal에서 지연발급(②1)·지연전송·미전송(②3·4)이 있으면 그 deal의 매출처별합계표_*(⑥)는 0(⑨2호)
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def invoice_penalty_bundle(items: Annotated[list, Field(description="[{deal(거래 이름), kind(invoice_penalty의 kind와 같은 값), supply_amount, supplied_on?}] — 같은 거래(deal) 안에서 중복 배제 적용")]) -> dict:
+    """세금계산서 가산세 묶음 계산(부가가치세법 제60조2항 후문·9항 중복 배제 적용). 언제: 하나의 거래(공급건)에 여러 가산세 사유가 함께 있을 때 중복을 배제하고 합계를 구한다.
+입력: items=[{deal(거래 이름), kind(invoice_penalty의 kind와 같은 값), supply_amount(공급가액, 원), supplied_on?(공급일 YYYY-MM-DD, 선택)}].
+  kind: 지연발급·미발급·미발급_종이·지연전송·미전송·지연수취·매출처별합계표_미제출·매출처별합계표_예정분확정제출·신용카드매입공제·가공.
+  같은 deal 안에서:
+    · 지연발급(제60조2항1호)·미발급·미발급_종이(2호)가 있으면 그 deal의 지연전송·미전송(3·4호)은 0
+    · 미발급·미발급_종이(2호)·가공(3호)이 있으면 그 deal의 매출처별합계표_*(6호)·지연수취·신용카드매입공제(7·5호)는 0 (단 5호 신용카드매입공제는 9항에 없으므로 그대로)
+    · 지연발급(1호)·지연전송·미전송(3·4호)이 있으면 그 deal의 매출처별합계표_*(6호)는 0(9항2호)
+결과: 가산세_합계, 계산.항목별: [{deal, kind, 가산세, 배제사유?}], 근거(부가가치세법 제60조2항 후문·9항)."""
+    from .engine.calc_vat import invoice_penalties, invoice_penalty_rate
+
+    # 종류별 분류 (중복 배제용)
+    # key kind가 deal에 있으면 value kind들을 0으로 만듦 (제60조2항 후문·9항)
+    kind_배제대상_매핑 = {
+        "지연발급": ["지연전송", "미전송", "매출처별합계표_미제출", "매출처별합계표_예정분확정제출"],  # 1호 → 3·4호, 9항2호 → 6호
+        "미발급": ["지연전송", "미전송", "매출처별합계표_미제출", "매출처별합계표_예정분확정제출", "지연수취"],  # 2호 → 3·4호, 9항3호 → 6·7호 (5호 제외)
+        "미발급_종이": ["지연전송", "미전송", "매출처별합계표_미제출", "매출처별합계표_예정분확정제출", "지연수취"],  # 2호 → 3·4호, 9항3호 → 6·7호 (5호 제외)
+        "가공": ["매출처별합계표_미제출", "매출처별합계표_예정분확정제출", "지연수취"],  # 3호 → 9항3호 → 6·7호 (5호 제외)
+        "지연전송": ["매출처별합계표_미제출", "매출처별합계표_예정분확정제출"],  # 3호 → 9항2호 → 6호
+        "미전송": ["매출처별합계표_미제출", "매출처별합계표_예정분확정제출"],  # 4호 → 9항2호 → 6호
+    }
+
+    # deal별로 묶어서 계산
+    deal_items: dict[str, list] = {}
+    for it in items:
+        deal = it.get("deal", "")
+        if deal not in deal_items:
+            deal_items[deal] = []
+        deal_items[deal].append(it)
+
+    결과_항목별 = []
+    total_penalty = 0
+
+    for deal, deal_list in deal_items.items():
+        # deal 안에서 각 kind가 있는지 확인
+        kinds_in_deal = {it.get("kind") for it in deal_list}
+
+        for it in deal_list:
+            kind = it.get("kind")
+            supply_amount = int(it.get("supply_amount", 0))
+            supplied_on = it.get("supplied_on")
+
+            # 중복 배제 체크: 이 kind를 배제하는 원인 종류가 deal에 있는지 확인
+            배제사유 = None
+            for 원인_종류, 배제대상_종류들 in kind_배제대상_매핑.items():
+                if 원인_종류 in kinds_in_deal and kind in 배제대상_종류들:
+                    if kind == "신용카드매입공제":
+                        # ⑤ 신용카드매입공제는 ⑨에 없으므로 배제하지 않음
+                        continue
+                    배제사유 = f"같은 공급가액에 {원인_종류}가 있어 제60조② 후문·⑨에 따라 배제"
+                    break
+
+            if kind not in _BUNDLE_KINDS:
+                return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"kind '{kind}' — 허용값: {', '.join(sorted(_BUNDLE_KINDS))}"]}
+            if 배제사유:
+                penalty = 0
+            elif kind == "가공":
+                penalty = K.penalty_fake_invoice(supply_amount, supplied_on or "")
+            else:
+                penalty = invoice_penalties(supply_amount, kind, supplied_on)
+
+            결과_항목별.append({
+                "deal": deal,
+                "kind": kind,
+                "supply_amount": supply_amount,
+                "가산세": penalty,
+            })
+            if 배제사유:
+                결과_항목별[-1]["배제사유"] = 배제사유
+            total_penalty += penalty
+
+    return _ok({"가산세_합계": total_penalty},
+               "부가가치세법 제60조② 후문·⑨",
+               계산={"항목별": 결과_항목별},
+               산식="같은 거래(deal) 안 중복 가산세 배제 후 합계")
+
+
+_BUNDLE_KINDS = {"가공", "지연발급", "미발급", "미발급_종이", "지연전송", "미전송", "지연수취",
+                 "매출처별합계표_미제출", "매출처별합계표_예정분확정제출", "신용카드매입공제"}
 
 
 @mcp.tool(annotations=CALC)
@@ -1494,17 +1591,19 @@ def vat_input_tax_deduction(period: Annotated[str, Field(description="과세기�
 @mcp.tool(annotations=CALC)
 @_guard
 def vat_deemed_supply_items(period: Annotated[str, Field(description="과세기간('YYYY-1' 또는 'YYYY-2')")],
-                            items: Annotated[list, Field(description="[{항목, 거래, 매입세액공제(bool), 금액?|시가?|감가상각?, 사용인_구분?('경조사'|'설날·추석'|'창립기념일·생일'), 인원?, 1인당_연간금액?, 견본_광고선전물?}]")]) -> dict:
+                            items: Annotated[list, Field(description="[{항목, 거래, 매입세액공제(bool), 금액?|시가?|감가상각?, 사용인_구분?('경조사'|'설날·추석'|'창립기념일·생일'), 인원?, 1인당_연간금액?, 견본_광고선전물?, 취득구분?('자기매입'|'사업양수'|'수출영세율')}]")]) -> dict:
     """간주공급·판매 과세표준 판정(부가가치세법 제10조, 시행령 제19조의2·제20조·제66조). 언제: 재화의 판매·간주공급에 대한 부가가치세 과세표준을 항목별로 판정할 때.
-    입력: period=과세기간('YYYY-1'|'YYYY-2'), items=[{항목, 거래, 매입세액공제(bool), 금액?|시가?|감가상각?, 사용인_구분?, 인원?, 1인당_연간금액?, 견본_광고선전물?}].
+    입력: period=과세기간('YYYY-1'|'YYYY-2'), items=[{항목, 거래, 매입세액공제(bool), 금액?|시가?|감가상각?, 사용인_구분?, 인원?, 1인당_연간금액?, 견본_광고선전물?, 취득구분?}].
       거래: '판매'|'면세전용'|'비영업용승용차전용'|'타사업장반출'|'개인적공급'|'사업상증여'|'폐업시잔존'.
       감가상각: {구분:'건물'|'구축물'|'기타', 취득가액, 취득일, 공급일} → 간주시가 = 취득가액 × (1 − 체감률 × 경과과세기간수), 체감률 건물·구축물 5%·기타 25%.
+      취득구분(선택): '자기매입'(기본) | '사업양수'(사업양도로 취득, 양도자가 매입세액 공제받은 재화 — 제10조1항2호) | '수출영세율'(영세율 적용받은 재화 — 제10조1항3호).
+        '사업양수'·'수출영세율'이면 매입세액공제가 False여도 간주공급 대상(시가·감가상각 간주시가 그대로). 양수 재화의 경과 과세기간은 입력한 취득일 기준(판단에 "양수 재화 취득일 기준 — 해석 확인 필요" 기재).
       개인적공급: 시가(감가상각 간주시가) 전액 과세. 사용인에게 준 경조사·설날·추석·창립기념일·생일 등 재화만(영 제19조의2 3호) 목별로 사용인 1명당 연간 10만원 한도,
         초과액만 과세 — 사용인_구분('경조사'|'설날·추석'|'창립기념일·생일', '명절'·'생일' 등도 됨), 인원(선물 받은 사용인 수, 시가는 그 합계), 1인당_연간금액(이 선물을 포함한 그 목의 1인당 연간 누계,
         앞서 준 같은 목 선물 포함)을 넣는다. 목: 2024년 제2기부터 가 경조사·나 설날·추석·다 창립기념일·생일 등, 2020년 제2기~2024년 제1기는 설날·추석·창립기념일·생일이 한 목. 2020년 제1기 이전은 미지원.
       사업상증여: 견본_광고선전물이 True면 0(법 제10조제5항 단서).
     결과: {결과: {과세표준}, 계산: {항목별: [{항목, 거래, 과세표준, 제외사유?}], 판단: [{항목, 결론, 근거}]}}.
-    규칙: '판매'·'타사업장반출'은 금액 그대로 과세(매입세액 공제 여부와 무관). 나머지 간주공급은 매입세액 공제 여부가 False면 0, True면 시가(또는 감가상각 간주시가) 과세."""
+    규칙: '판매'·'타사업장반출'은 금액 그대로 과세(매입세액 공제 여부와 무관). 나머지 간주공급은 매입세액 공제 여부가 False면 0(자기매입만, 사업양수·수출영세율은 제외), True면 시가(또는 감가상각 간주시가) 과세."""
     r = V.vat_deemed_supply_items(period, items)
     if "error" in r:
         return r
@@ -2001,28 +2100,73 @@ def vat_common_input_allocation(common_tax: WON, total_supply: WON, exempt_suppl
     return _ok(V.common_input_allocation(common_tax, total_supply, exempt_supply), "부가가치세법 시행령 제81조", 산식="불공제 = 공통매입세액 × 면세공급가액 ÷ 총공급가액")
 
 
+
+def _simplified_annualize(supply, year, business_start=None, closed_on=None):
+    """부가법 제69조③ — 신규 개시(개시일~12.31)·휴폐업·유형전환(1.1~해당일) 과세기간이면 공급대가를 12개월로 환산(1개월 미만 끝수 1개월, 원 미만 절사).
+    반환 (면제 판정 공급대가, 환산 개월수 또는 None)."""
+    from datetime import date as _d
+    from .engine.calc_deadline import add_months
+    start = _d(year, 1, 1); end = _d(year, 12, 31)
+    if business_start:
+        bs = _d.fromisoformat(business_start)
+        if bs.year == year:
+            start = bs
+    if closed_on:
+        co = _d.fromisoformat(closed_on)
+        if co.year == year and co >= start:
+            end = co
+    if start == _d(year, 1, 1) and end == _d(year, 12, 31):
+        return supply, None
+    # 초일 산입(start 포함) n개월 기간의 마지막 날 = add_months(start, n) 전날 → end를 덮는 가장 작은 n(끝수는 1개월)
+    months = 1
+    while add_months(start, months) <= end:
+        months += 1
+    return int(supply * 12 // months), months
+
 @mcp.tool(annotations=CALC)
 @_guard
-def vat_simplified_taxpayer(supply_incl_vat: Annotated[int, Field(description="공급대가(부가세 포함, 원)")],
-                            value_added_rate: Annotated[float, Field(description="업종별 부가가치율(소수, 예: 0.15 = 15%, 0 초과 1 미만)")],
+def vat_simplified_taxpayer(supply_incl_vat: Annotated[int, Field(description="공급대가(부가세 포함, 원)")] = 0,
+                            value_added_rate: Annotated[float, Field(description="업종별 부가가치율(소수, 예: 0.15 = 15%, 0 초과 1 미만)")] = 0.15,
                             invoice_purchase_incl_vat: Annotated[int, Field(description="세금계산서 등 수취 매입 공급대가(원)")] = 0,
                             mileage_supply_incl_vat: Annotated[int, Field(description="자기적립마일리지 등 결제분 공급대가(원) — 과세표준에서 제외")] = 0,
                             card_cash_receipt_supply_incl_vat: Annotated[int, Field(description="신용카드매출전표·현금영수증 등 발급분 공급대가(원)")] = 0,
                             no_invoice_purchase_incl_vat: Annotated[int, Field(description="세금계산서 발급 의무자로부터 미수취한 매입 공급대가(원)")] = 0,
                             prior_year_supply_incl_vat: Annotated[int, Field(description="직전 연도 공급대가(원) — 납부의무 면제 판정 참조")] = 0,
                             prepaid_tax: Annotated[int, Field(description="예정부과 고지·수시부과세액(원)")] = 0,
-                            year: Annotated[int, Field(description="적용 연도(2016~2026)")] = 2026) -> dict:
+                            year: Annotated[int, Field(description="적용 연도(2016~2026)")] = 2026,
+                            business_start: Annotated[str | None, Field(description="사업 개시일(YYYY-MM-DD) — 제69조3항 12개월 환산 면제 판정에 사용")] = None,
+                            closed_on: Annotated[str | None, Field(description="휴업·폐업·유형전환일(YYYY-MM-DD) — 제69조3항 12개월 환산 면제 판정에 사용")] = None,
+                            industries: Annotated[list | None, Field(description="겸영 업종 목록 [{value_added_rate, supply_incl_vat}] — 제63조2항 후문, 공급대가·부가가치율 대신 업종별로 납부세액 계산")] = None) -> dict:
     """간이과세자 납부세액 전 과정(과세표준·납부세액·매입공제·카드 발행세액공제·가산세·납부의무 면제 판정·차가감 납부세액). 언제: 간이과세자 부가가치세 신고 시 납부세액을 단계별로 계산한다.
 입력: 공급대가(부가세 포함, 원) → supply_incl_vat, 업종별 부가가치율(소수, 예: 0.15 = 15%) → value_added_rate, 세금계산서 등 수취 매입 공급대가(원) → invoice_purchase_incl_vat, 자기적립마일리지 등 결제분 공급대가(원) → mileage_supply_incl_vat, 신용카드매출전표·현금영수증 등 발급분 공급대가(원) → card_cash_receipt_supply_incl_vat, 세금계산서 미수취 매입 공급대가(원) → no_invoice_purchase_incl_vat, 직전 연도 공급대가(원) → prior_year_supply_incl_vat, 예정부과 고지·수시부과세액(원) → prepaid_tax, 적용 연도(2016~2026) → year.
-결과: 과세표준·납부세액·매입공제·카드공제·가산세·공제합계·차가감 납부세액·납부의무 면제 여부·단계별 계산, 근거(부가가치세법 제46조·제63조·제68조의2·제69조)."""
+  business_start(사업 개시일, YYYY-MM-DD, 선택): 제69조3항 — 해당 과세기간 중 개업했으면 개시일~12.31 공급대가를 12개월로 환산해 면제 판정.
+  closed_on(휴업·폐업·유형전환일, YYYY-MM-DD, 선택): 제69조3항 — 해당 과세기간 중 휴업·폐업·유형전환이 있으면 1.1~closed_on 공급대가를 12개월로 환산해 면제 판정.
+  industries(겸영 업종 목록, 선택): [{value_added_rate, supply_incl_vat}] — 제63조2항 후문, 공급대가·부가가치율 대신 업종별 납부세액 = Σ(공급대가 × 부가가치율 × 10%). supply_incl_vat와 industries를 같이 주면 error.
+결과: 과세표준·납부세액·매입공제·카드공제·가산세·공제합계·차가감 납부세액·납부의무 면제 여부·면제_판정_공급대가·환산_개월수·단계별 계산, 근거(부가가치세법 제46조·제63조·제68조의2·제69조)."""
     from .engine.calc_vat import simplified_exempt_threshold, card_sales_credit
-    from .engine.calc_vat import simplified_exempt_threshold, card_sales_credit
+    from datetime import date
 
-    # 과세표준 = 공급대가 − 마일리지
-    tax_base = supply_incl_vat - mileage_supply_incl_vat
+    # 입력 검증: supply_incl_vat와 industries 동시 제공 시 error
+    if industries is not None and supply_incl_vat != 0:
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": ["supply_incl_vat와 industries를 같이 입력할 수 없음 — 둘 중 하나만 사용"]}
 
-    # 납부세액 = 과세표준 × 부가가치율 × 10%
-    tax_due = _floor_won(tax_base, value_added_rate, 0.1)
+    # industries 제공 시: 공급대가 합계, 업종별 납부세액 계산(제63조2항 후문)
+    if industries is not None:
+        total_supply = 0
+        tax_due = 0
+        for ind in industries:
+            ind_supply = int(ind.get("supply_incl_vat", 0))
+            ind_var = float(ind.get("value_added_rate", 0.15))
+            total_supply += ind_supply
+            tax_due += _floor_won(ind_supply, ind_var, 0.1)
+        tax_base = total_supply - mileage_supply_incl_vat
+        supply_incl_vat = total_supply  # 면제 판정 등에 사용
+    else:
+        # 과세표준 = 공급대가 − 마일리지
+        tax_base = supply_incl_vat - mileage_supply_incl_vat
+        # 납부세액 = 과세표준 × 부가가치율 × 10%
+        tax_due = _floor_won(tax_base, value_added_rate, 0.1)
 
     # 매입세금계산서 등 공제 = 수취 매입 × 0.5%
     input_credit = _floor_won(invoice_purchase_incl_vat, 0.005)
@@ -2039,30 +2183,52 @@ def vat_simplified_taxpayer(supply_incl_vat: Annotated[int, Field(description="�
     # 가산세 합계
     total_penalties = no_invoice_penalty
 
-    # 차가감 납부세액 = 납부세액 − 공제 합계 + 가산세 (공제는 납부세액 한도, 음수이면 0)
-    net_tax = max(0, tax_due - total_credits) + total_penalties
-
-    # 납부의무 면제 여부 (제69조, 과세기간 공급대가 4,800만원 미만)
+    # ── 납부의무 면제 판정 (제69조) ──
     exempt_threshold = simplified_exempt_threshold(year)
-    exempt = supply_incl_vat < exempt_threshold
+
+    # 제69조3항: 사업 개시일·휴업·폐업·유형전환일이 있으면 12개월 환산
+    면제_판정_공급대가, 환산_개월수 = _simplified_annualize(supply_incl_vat, year, business_start, closed_on)
+
+    exempt = 면제_판정_공급대가 < exempt_threshold
+
+    # 차가감 납부세액 = 납부세액 − 공제 합계 + 가산세 (공제는 납부세액 한도, 음수이면 0)
+    # 제69조①: 납부의무 면제면 차가감_납부세액 0 (납부세액은 계산된 값 유지, 판단에만 0 기재)
+    if exempt:
+        # 제69조①: 면제되는 것은 제63조② 납부세액뿐 — 가산세(제68조의2 등)는 남고, 제60조①(미등록)만 적용 안 함(제69조②)
+        net_tax = total_penalties
+        tax_due_display = tax_due  # 계산된 납부세액은 유지
+    else:
+        net_tax = max(0, tax_due - total_credits) + total_penalties
+        tax_due_display = tax_due
+
+    # 판단 문구
+    exempt_reason = "납부의무 면제 — 납부세액 0, 가산세는 남음(제69조①②, 재고납부세액은 별도)" if exempt else None
 
     steps = [
         {"항목": "공급대가(부가세 포함)", "금액": supply_incl_vat, "근거": "부가법 제63조"},
         {"항목": "자기적립마일리지 등 차감", "금액": mileage_supply_incl_vat, "근거": "부가가치세법 제63조"},
         {"항목": "과세표준(공급대가 − 마일리지)", "금액": tax_base, "근거": "부가법 제63조"},
-        {"항목": f"납부세액(과세표준 × 부가가치율 {value_added_rate} × 10%)", "금액": tax_due, "근거": "부가가치세법 제63조"},
+        {"항목": f"납부세액(과세표준 × 부가가치율 {value_added_rate} × 10%)", "금액": tax_due_display, "근거": "부가가치세법 제63조"},
         {"항목": "매입세금계산서 등 공제(수취 매입 × 0.5%)", "금액": input_credit, "근거": "부가가치세법 제63조"},
         {"항목": "신용카드매출전표등 발행세액공제(1.3%, 한도 1,000만원)", "금액": card_credit, "근거": "부가가치세법 제46조"},
         {"항목": "공제 합계(납부세액 한도)", "금액": total_credits, "근거": "부가가치세법 제63조"},
         {"항목": "세금계산서 미수취 가산세(0.5%)", "금액": no_invoice_penalty, "근거": "부가가치세법 제68조의2"},
         {"항목": "가산세 합계", "금액": total_penalties, "근거": "부가가치세법 제68조의2"},
         {"항목": "차가감 납부세액(납부세액 − 공제 + 가산세, 음수 0)", "금액": net_tax, "근거": "부가가치세법 제63조"},
-        {"항목": f"납부의무 면제 여부(해당 과세기간 공급대가 {supply_incl_vat:,}원, 기준 {exempt_threshold:,}원 미만)", "금액": "면제" if exempt else "해당없음", "근거": "부가가치세법 제69조"},
     ]
+
+    if business_start is not None or closed_on is not None:
+        steps.append({"항목": f"면제 판정용 환산 공급대가(12개월 환산, {환산_개월수}개월)", "금액": 면제_판정_공급대가, "근거": "부가가치세법 제69조3항"})
+        if exempt:
+            steps.append({"항목": f"납부의무 면제 여부(환산 공급대가 {면제_판정_공급대가:,}원, 기준 {exempt_threshold:,}원 미만)", "금액": "면제", "근거": "부가가치세법 제69조3항"})
+        else:
+            steps.append({"항목": f"납부의무 면제 여부(환산 공급대가 {면제_판정_공급대가:,}원, 기준 {exempt_threshold:,}원 미만)", "금액": "해당없음", "근거": "부가가치세법 제69조3항"})
+    else:
+        steps.append({"항목": f"납부의무 면제 여부(해당 과세기간 공급대가 {supply_incl_vat:,}원, 기준 {exempt_threshold:,}원 미만)", "금액": "면제" if exempt else "해당없음", "근거": "부가가치세법 제69조"})
 
     result = {
         "과세표준": tax_base,
-        "납부세액": tax_due,
+        "납부세액": tax_due_display,
         "매입세금계산서등_공제": input_credit,
         "카드발행세액공제": card_credit,
         "가산세": total_penalties,
@@ -2071,10 +2237,15 @@ def vat_simplified_taxpayer(supply_incl_vat: Annotated[int, Field(description="�
         "납부의무_면제": exempt,
         "직전_연도_공급대가": prior_year_supply_incl_vat,
         "면제_기준": exempt_threshold,
+        "면제_판정_공급대가": 면제_판정_공급대가,
+        "환산_개월수": 환산_개월수,
         "단계별_계산": steps,
     }
+    if exempt_reason:
+        result["판단"] = exempt_reason
     return _ok(result, "부가가치세법 제46조·제63조·제68조의2·제69조",
-               산식="과세표준 = 공급대가 − 마일리지, 납부세액 = 과세표준 × 부가가치율 × 10%, 차가감 = max(0, 납부세액 − min(매입공제+카드공제, 납부세액)) + 가산세")
+               산식="과세표준 = 공급대가 − 마일리지, 납부세액 = 과세표준 × 부가가치율 × 10%, 차가감 = max(0, 납부세액 − min(매입공제+카드공제, 납부세액)) + 가산세" +
+               (" (면제 — 납부세액 0)" if exempt else ""))
 
 
 @mcp.tool(annotations=CALC)
@@ -5223,6 +5394,8 @@ def simplified_vat_return(year: YEAR,
                          prior_year_supplies: Annotated[int | None, Field(description="직전연도 공급대가 합계(원) — 세금계산서 미수취 가산세 판정에만 씀. 미수취 매입이 없으면 생략 가능")] = None,
                          bad_debt_confirmed: Annotated[int, Field(description="대손 확정액(기본 0, 납부세액에 영향 없음 — 판단에 명시)")] = 0,
                          prepaid_assessed: Annotated[int, Field(description="예정부과 고지세액")] = 0,
+                         business_start: Annotated[str | None, Field(description="사업 개시일 YYYY-MM-DD — 해당 과세기간 신규 개시면 개시일~12.31 공급대가를 12개월 환산해 면제 판정(제69조제3항제1호)")] = None,
+                         closed_on: Annotated[str | None, Field(description="휴업·폐업·유형전환일 YYYY-MM-DD — 1.1~그날 공급대가를 12개월 환산해 면제 판정(제69조제3항제2호)")] = None,
                          ledger: Annotated[dict, Field(description="원장형 입력 {공급: [{항목, 금액}], 매입: [{항목, 금액}]} — 금액은 공급대가(부가세 포함). 공급 항목이 없으면 error. 항목명은 어휘 간이과세자_원장항목의 키워드로 역할을 정함")] = ...) -> dict:
     """간이과세자 부가가치세 확정신고 차가감납부세액 계산(부가가치세법 제63조·제68조의2·제69조·제46조).
     언제: 간이과세자의 과세기간(1.1~12.31) 부가가치세 확정신고 시 차가감납부세액을 원래 사실관계에서 계산한다.
@@ -5234,7 +5407,8 @@ def simplified_vat_return(year: YEAR,
         공급 금액 전부 합(total), 공제 대상 합(카드발급), 마일리지 합(자기마일리지)으로 변환.
         매입도 같은 식으로 변환.
       대손 확정액(기본 0) → bad_debt_confirmed, 직전연도 합계 → prior_year_supplies,
-      예정부과 고지세액 → prepaid_assessed.
+      예정부과 고지세액 → prepaid_assessed,
+      사업 개시일 → business_start, 휴업·폐업·유형전환일 → closed_on(있으면 그 기간 공급대가를 12개월로 환산해 면제 판정, 제69조제3항).
     결과: 판단(항목·결론·근거)·계산(과세표준·부가가치율·납부세액·공제·가산세)·결과(납부의무면제·차가감납부세액)·산식·근거."""
 
     # 2021-07-01 이전 체계 미지원
@@ -5347,7 +5521,8 @@ def simplified_vat_return(year: YEAR,
     면제기준_rule = vocab.rule("간이과세자_납부의무면제", year)
     면제기준 = 면제기준_rule["기준"]
     # 기본 판단 기준과 적용 기간 기준 중 연도별로 vocab.basis에서 정함 — rule이 이미 적용 블록 기준으로 덮어쓴 값을 반환
-    납부의무면제 = 총공급대가 < 면제기준
+    면제판정_공급대가, 환산_개월수 = _simplified_annualize(총공급대가, year, business_start, closed_on)
+    납부의무면제 = 면제판정_공급대가 < 면제기준
 
     # 공제·가산에 필요한 규칙(면제 여부와 무관하게 연도별로 vocab에서 읽기)
     세금계산서수취공제_rule = vocab.rule("세금계산서등수취세액공제", year)
@@ -5450,6 +5625,7 @@ def simplified_vat_return(year: YEAR,
         "결과": {
             "납부의무면제": 납부의무면제,
             "차가감납부세액": 차가감납부세액,
+            **({"면제판정_공급대가": 면제판정_공급대가, "환산_개월수": 환산_개월수} if 환산_개월수 else {}),
         },
         "산식": 산식,
         "근거": vocab.basis("간이과세자_납부세액", year) + vocab.basis("세금계산서등수취세액공제", year) +
@@ -5508,14 +5684,18 @@ def common_input_tax(year: YEAR,                     period: Annotated[str, Fiel
                      new_business: Annotated[bool, Field(description="신규 사업 여부(기본 False)")] = False,
                      prior_nondeductible: Annotated[int | None, Field(description="예정신고 때 불공제한 공통매입세액. 없으면(null) 예정 기간 비율로 계산")] = None,
                      prior_period_supplies: Annotated[dict | None, Field(description="직전 과세기간 {taxable, exempt} — 공통사용재화 공급 과세표준용")] = None,
-                     common_asset_sales: Annotated[list | None, Field(description="공통사용재화 공급 목록 [{sale_price(공급가액), input_tax(그 재화의 매입세액 — ledger에 넣지 말고 여기만 입력, 신규 사업 아니면 직전 과세기간 비율로 안분 공제)}]")] = None,
+                     common_asset_sales: Annotated[list | None, Field(description="공통사용재화 공급 목록 [{sale_price(공급가액), input_tax(그 재화의 매입세액 — ledger에 넣지 말고 여기만 입력, 신규 사업 아니면 직전 과세기간 비율로 안분 공제), acquired_period?('YYYY-1'|'YYYY-2' — 그 재화를 공급받은 과세기간)}]")] = None,
                      ledger: Annotated[list, Field(description="원장형 입력 당기 매입 항목 [{항목, 매입세액 | 매입가액(×10%, 둘 중 하나), 사용처:'과세'|'면세'|'공통'|'실지귀속'|'불공제', 과세비율(0~1) | 횟수:{과세,면세} | 면적:{과세,면세} | 신축건물(bool, 기본 False) — 둘 중 하나: 매입세액 또는 매입가액. 공통+신축건물+면적 있으면 예정사용면적비율 우선 적용")] = ...,
                      prior_common_input_tax: Annotated[int | None, Field(description="ledger로 확정신고할 때 예정신고 기간의 공통매입세액")] = None,
                      settlements: Annotated[list | None, Field(description="영 제82조 정산(제81조제4항로 안분한 뒤 공급가액·사용면적이 확정된 과세기간, 확정신고만) [{항목?, 총공통매입세액, 면적:{과세,면세} | 공급가액:{과세,면세} | 면세비율(0~1), 기불공제 | 이미공제세액}]. 예: 신축 건물. 이 매입세액은 ledger에 다시 넣지 않음. 있으면 ledger는 빈 목록 가능")] = None) -> dict:
-    """겸영사업자 공통매입세액 안분·정산 + 공통사용재화 공급(부가법 제40조, 영 제81조~제83조·제63조).
+    """겸영사업자 공통매입세액 안분·정산 + 공통사용재화 공급(부가법 제40조, 영 제81조~제83조·제63조, 규칙 제54조3항).
     언제: 과세·면세 겸영 사업자의 예정·확정신고에서 공통매입세액 공제액과 공통사용재화 공급 시 추가 매출세액을 계산한다.
     입력:
       · 공급가액(예정·확정별 과세·면세), 예정 불공제액, 직전 과세기간 공급가액, 공통사용재화 공급 목록.
+      · 공통사용재화 공급 항목 acquired_period(선택): 그 재화를 공급받은 과세기간('YYYY-1'|'YYYY-2').
+        - 이번 신고 과세기간과 다르면 그 재화의 매입세액은 이번에 공제하지 않음(0). 판단 "공급받은 과세기간에 이미 안분 — 이번 공제 없음(시행규칙 제54조3항)".
+        - 같으면 직전 과세기간 비율로 안분 공제(지금처럼).
+        - 없으면 지금처럼 하되 주의 "공급받은 과세기간과 공급한 과세기간이 같을 때만 안분 공제(규칙 제54조3항) — acquired_period로 확인".
       · 원장: ledger=[{항목, 매입세액 | 매입가액(→×10%, 둘 중 하나), 사용처:'과세'|'면세'|'공통'|'실지귀속'|'불공제',
         과세비율(0~1) | 횟수:{과세,면세} | 면적:{과세,면세}}].
         사용처별 처리는 어휘 공통매입세액_귀속.판단.사용처별에서 읽음.
@@ -5752,6 +5932,8 @@ def common_input_tax(year: YEAR,                     period: Annotated[str, Fiel
     공통사용재화_공급_과세표준 = 0
     공통사용재화_매입세액_공제 = 0
     추가_매출세액 = 0
+    현재_과세기간 = f"{year}-{period[0]}"  # "2026-1" 또는 "2026-2"
+    공통사용재화_주의 = []  # acquired_period 관련 주의 메시지
 
     if common_asset_sales:
         직전_과세 = int((prior_period_supplies or {}).get("taxable", 0))
@@ -5763,6 +5945,7 @@ def common_input_tax(year: YEAR,                     period: Annotated[str, Fiel
         for sale in common_asset_sales:
             sale_price = int(sale.get("sale_price", 0))
             sale_input_tax = int(sale.get("input_tax", 0))
+            acquired_period = sale.get("acquired_period")  # 선택: 'YYYY-1' 또는 'YYYY-2'
 
             # 전액 과세표준 여부 판단 (영 제63조③)
             if new_business:
@@ -5803,14 +5986,33 @@ def common_input_tax(year: YEAR,                     period: Annotated[str, Fiel
                                   "근거": "부가가치세법 시행령 제81조②3호"})
                 산식_목록.append(f"신규 사업 재화 매입세액 {sale_input_tax:,}원 전액 공제 (영 제81조②3호)")
             else:
-                # 신규 사업이 아니면 그 재화의 매입세액은 ledger(공통)에 넣지 말고
-                # common_asset_sales.input_tax에만 입력 — 직전 과세기간 과세비율로 안분 공제 (영 제81조④)
-                if prior_period_supplies is not None and 직전_총계 > 0:
-                    공제액 = _floor_won(sale_input_tax, 직전_과세, div=직전_총계)
-                    공통사용재화_매입세액_공제 += 공제액
-                    판단_목록.append({"항목": f"공통사용재화 매입세액(입력세액 {sale_input_tax:,}원)", "결론": f"공통사용재화 매입세액 {sale_input_tax:,}원 × 직전 과세비율 {직전_과세비율:.4f} = {공제액:,}원 공제 (영 제81조④)",
-                                      "근거": "부가가치세법 시행령 제81조④"})
-                    산식_목록.append(f"공통사용재화 매입세액 {sale_input_tax:,}원 × 직전 과세비율 {직전_과세비율:.4f} = {공제액:,}원 공제 (영 제81조④)")
+                # acquired_period 확인: 공급받은 과세기간과 공급한 과세기간이 같을 때만 안분 공제 (규칙 제54조③)
+                if acquired_period is not None:
+                    if acquired_period != 현재_과세기간:
+                        # 공급받은 과세기간이 다르면 이미 그 과세기간에 안분했으므로 이번 공제 0
+                        공통사용재화_매입세액_공제 += 0
+                        판단_목록.append({"항목": f"공통사용재화 매입세액(입력세액 {sale_input_tax:,}원, 공급받은 과세기간 {acquired_period})",
+                                          "결론": f"공급받은 과세기간에 이미 안분 — 이번 공제 없음(시행규칙 제54조③)",
+                                          "근거": "부가가치세법 시행규칙 제54조③"})
+                        산식_목록.append(f"공통사용재화 매입세액 {sale_input_tax:,}원: 공급받은 과세기간 {acquired_period} ≠ 이번 과세기간 {현재_과세기간} → 공제 0 (규칙 제54조③)")
+                    else:
+                        # 같은 과세기간: 직전 과세기간 비율로 안분 공제
+                        if prior_period_supplies is not None and 직전_총계 > 0:
+                            공제액 = _floor_won(sale_input_tax, 직전_과세, div=직전_총계)
+                            공통사용재화_매입세액_공제 += 공제액
+                            판단_목록.append({"항목": f"공통사용재화 매입세액(입력세액 {sale_input_tax:,}원)", "결론": f"공통사용재화 매입세액 {sale_input_tax:,}원 × 직전 과세비율 {직전_과세비율:.4f} = {공제액:,}원 공제 (시행규칙 제54조③)",
+                                              "근거": "부가가치세법 시행규칙 제54조③"})
+                            산식_목록.append(f"공통사용재화 매입세액 {sale_input_tax:,}원 × 직전 과세비율 {직전_과세비율:.4f} = {공제액:,}원 공제 (규칙 제54조③)")
+                else:
+                    # acquired_period 없음: 직전 과세기간 비율로 안분 공제하되 주의 표시
+                    if prior_period_supplies is not None and 직전_총계 > 0:
+                        공제액 = _floor_won(sale_input_tax, 직전_과세, div=직전_총계)
+                        공통사용재화_매입세액_공제 += 공제액
+                        판단_목록.append({"항목": f"공통사용재화 매입세액(입력세액 {sale_input_tax:,}원)", "결론": f"공통사용재화 매입세액 {sale_input_tax:,}원 × 직전 과세비율 {직전_과세비율:.4f} = {공제액:,}원 공제 (시행규칙 제54조③)",
+                                          "근거": "부가가치세법 시행규칙 제54조③"})
+                        산식_목록.append(f"공통사용재화 매입세액 {sale_input_tax:,}원 × 직전 과세비율 {직전_과세비율:.4f} = {공제액:,}원 공제 (규칙 제54조③)")
+                    # 주의: acquired_period가 없으면 공급받은 과세기간 확인 필요
+                    공통사용재화_주의.append("공급받은 과세기간과 공급한 과세기간이 같을 때만 안분 공제(규칙 제54조③) — acquired_period로 확인")
 
     # ── 5. 공제매입세액 합계 ──
     공제매입세액 = (taxable_only - taxable_only_nondeductible) + 실지귀속_공제 + 공통매입세액_공제 + 공통사용재화_매입세액_공제
@@ -5983,6 +6185,8 @@ def common_input_tax(year: YEAR,                     period: Annotated[str, Fiel
         "계산식_입력": 계산식_입력,
         "계산식": 계산식,
     }
+    if 공통사용재화_주의:
+        공통_결과["주의"] = 공통사용재화_주의
     if 정산_행:
         공통_결과["계산"]["정산_명세"] = 정산_행
         공통_결과["결과"]["정산_가산또는공제"] = 정산_합계
@@ -9029,11 +9233,13 @@ def estimated_business_income(
 def vat_exempt_use_deemed_supply(
     use_date: Annotated[str, Field(description="면세사업에 쓰기 시작한 날(YYYY-MM-DD)")],
     mode: Annotated[Literal["전부", "일부"], Field(description="전용 범위: '전부'=전액 면세전용, '일부'=과세·면세 공통 사용")],
-    assets: Annotated[list, Field(description="[{구분:'건물'|'구축물'|'기타'|'토지'|'비상각', 취득일(YYYY-MM-DD), 취득가액(원), 매입세액공제?(기본True, bool), 시가?(비상각시 필수, 원)}]")],
+    assets: Annotated[list, Field(description="[{구분:'건물'|'구축물'|'기타'|'토지'|'비상각', 취득일(YYYY-MM-DD), 취득가액(원), 매입세액공제?(기본True, bool), 시가?(비상각시 필수, 원), 취득구분?('자기매입'|'사업양수'|'수출영세율')}]")],
     supplies: Annotated[dict | None, Field(description="일부일 때 필수: {taxable: 과세 공급가액(원), exempt: 면세 공급가액(원)}")]=None,
 ) -> dict:
     """면세전용 간주공급 과세표준(부가법 제10조제1항, 부가령 제66조). 언제: 과세사업에 쓰던 재화를 면세사업에 전용할 때 간주공급 과세표준을 계산한다.
-입력: 전용일(YYYY-MM-DD) → use_date, 전용 범위(전부/일부) → mode, 자산 목록 [{구분, 취득일, 취득가액, 매입세액공제, 시가}] → assets, 일부일 때 공급가액 {taxable, exempt} → supplies.
+입력: 전용일(YYYY-MM-DD) → use_date, 전용 범위(전부/일부) → mode, 자산 목록 [{구분, 취득일, 취득가액, 매입세액공제, 시가, 취득구분}] → assets, 일부일 때 공급가액 {taxable, exempt} → supplies.
+  취득구분(선택): '자기매입'(기본) | '사업양수'(사업양도로 취득, 양도자가 매입세액 공제받은 재화 — 제10조1항2호) | '수출영세율'(영세율 적용받은 재화 — 제10조1항3호).
+    '사업양수'·'수출영세율'이면 매입세액공제가 False여도 간주공급 대상(시가·감가상각 간주시가 그대로).
 결과: 과세표준·계산(자산별 경과과세기간수·간주시가·제외사유, 면세비율)·판단, 근거(부가가치세법 제10조제1항, 시행령 제66조)."""
     _chk.supported_year("use_date", use_date)
     if mode == "일부" and (supplies is None or not isinstance(supplies, dict) or "taxable" not in supplies or "exempt" not in supplies):
@@ -9050,6 +9256,7 @@ def vat_exempt_use_deemed_supply(
         취득가액 = int(a.get("취득가액", 0) or 0)
         매입세액공제 = bool(a.get("매입세액공제", True))
         시가 = a.get("시가")
+        취득구분 = a.get("취득구분", "자기매입")  # 기본: 자기매입
 
         if 구분 not in ("건물", "구축물", "기타", "토지", "비상각"):
             return {"error": "입력 확인 필요 — 계산하지 않음",
@@ -9063,13 +9270,21 @@ def vat_exempt_use_deemed_supply(
                          "근거": "부가법 제10조①"})
             continue
 
-        # 매입세액공제 받지 않은 자산 제외
-        if not 매입세액공제:
+        # 매입세액공제 받지 않은 자산 제외 (자기매입만 해당, 사업양수·수출영세율은 제외)
+        if not 매입세액공제 and 취득구분 == "자기매입":
             자산별.append({"구분": 구분, "제외사유": "매입세액공제 받지 않은 자산(부가법 제10조① 괄호)",
                            "근거": "부가법 제10조①"})
             판단.append({"항목": f"{구분} {취득일} 취득가액 {취득가액:,}원", "결론": "제외 — 매입세액공제 미수령 자산",
                          "근거": "부가법 제10조①"})
             continue
+
+        # 취득구분에 따른 근거 표시
+        if 취득구분 == "사업양수":
+            판단.append({"항목": f"{구분} {취득일} 취득가액 {취득가액:,}원", "결론": "사업양수 재화 — 양도자가 매입세액 공제받은 재화(제10조①2호), 양수 재화 취득일 기준 — 해석 확인 필요",
+                         "근거": "부가가치세법 제10조①2호"})
+        elif 취득구분 == "수출영세율":
+            판단.append({"항목": f"{구분} {취득일} 취득가액 {취득가액:,}원", "결론": "수출영세율 재화 — 영세율 적용받은 재화(제10조①3호)",
+                         "근거": "부가가치세법 제10조①3호"})
 
         # 비상각 재화
         if 구분 == "비상각":

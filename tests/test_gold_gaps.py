@@ -19,7 +19,7 @@ def test_common_asset_sale_input_tax_prorated_by_prior_period_ratio():
                                           {"항목": "기계장치 공통", "매입세액": 10000000, "사용처": "공통"}]})
     assert r["계산"]["공통사용재화_매입세액_공제"] == 1400000
     assert r["결과"]["공제매입세액"] == 69400000
-    assert any("직전" in p["결론"] and "81조④" in p["근거"] for p in r["판단"])
+    assert any("직전" in p["결론"] and "제54조③" in p["근거"] for p in r["판단"])
 
 
 def test_dividend_excluded_within_3m_is_not_charged_interest():
