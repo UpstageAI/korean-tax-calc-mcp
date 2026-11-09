@@ -26,7 +26,7 @@ flowchart LR
 3. **Calculation** — follows the statute order, e.g. tax base → that year's brackets → tax.
 4. **Result** — tax, intermediate amounts, item-level judgments, adjustments with income dispositions, and citations.
 
-93 of the 96 tools run in code without generative AI (the 2 price lookups only fetch public data from KRX and VWORLD). Only the 3 PDF tools use Upstage, and only when `UPSTAGE_API_KEY` is set.
+94 of the 97 tools run in code without generative AI (the 2 price lookups only fetch public data from KRX and VWORLD). Only the 3 PDF tools use Upstage, and only when `UPSTAGE_API_KEY` is set.
 
 ### How corporate tax adjustments chain
 
@@ -87,7 +87,7 @@ When answering Korean tax questions, use korean-tax-mcp and korean-tax-calc-mcp 
 5. If two values come out (before/after apportionment, total vs. taxable part, etc.), answer only the one the question asks for.
 ```
 
-## Tools (96)
+## Tools (97)
 
 Click a group to expand its tools.
 

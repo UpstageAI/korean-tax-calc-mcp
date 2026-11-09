@@ -131,3 +131,37 @@ def test_common_asset_input_tax_unknown_period_warns():
     d = _cit(None)
     assert d["계산"]["공통사용재화_매입세액_공제"] == 4_794_520
     assert "acquired_period" in json.dumps(d, ensure_ascii=False)
+
+
+# ── 검수 추가 ──
+def test_exempt_keeps_invoice_penalty():
+    """면제는 제63조② 납부세액만 — 세금계산서 미수취 가산세(제68조의2)는 남음(제69조①②)."""
+    r = R(call(S, {"supply_incl_vat": 10_000_000, "value_added_rate": 0.15, "no_invoice_purchase_incl_vat": 1_000_000, "year": 2026}))
+    assert r["납부의무_면제"] is True and r["차가감_납부세액"] == 5_000
+
+
+def test_month_count_boundary():
+    a = R(call(S, {"supply_incl_vat": 40_000_000, "value_added_rate": 0.15, "year": 2026, "business_start": "2026-04-10", "closed_on": "2026-12-09"}))
+    b = R(call(S, {"supply_incl_vat": 40_000_000, "value_added_rate": 0.15, "year": 2026, "business_start": "2026-04-10", "closed_on": "2026-12-10"}))
+    assert a["환산_개월수"] == 8 and b["환산_개월수"] == 9
+
+
+def test_simplified_vat_return_annualizes():
+    d = call("simplified_vat_return", {"year": 2026, "business_type": "소매업", "business_start": "2026-04-10",
+                                       "ledger": {"공급": [{"항목": "카드매출", "금액": 40_000_000}], "매입": []}})
+    r = R(d)
+    assert r["납부의무면제"] is False and r["환산_개월수"] == 9 and r["면제판정_공급대가"] == 53_333_333
+
+
+def test_bundle_fake_invoice_and_bad_kind():
+    d = call("invoice_penalty_bundle", {"items": [
+        {"deal": "X", "kind": "가공", "supply_amount": 10_000_000, "supplied_on": "2026-10-01"},
+        {"deal": "X", "kind": "매출처별합계표_미제출", "supply_amount": 10_000_000, "supplied_on": "2026-10-01"}]})
+    single = R(call("invoice_penalty", {"supply_amount": 10_000_000, "kind": "가공", "supplied_on": "2026-10-01"}))["가산세"]
+    assert R(d)["가산세_합계"] == single
+    assert "error" in call("invoice_penalty_bundle", {"items": [{"deal": "Y", "kind": "없는종류", "supply_amount": 1}]})
+
+
+def test_acquisition_kind_typo_rejected():
+    it = {"항목": "비품", "거래": "폐업시잔존", "매입세액공제": False, "시가": 1_000_000, "취득구분": "사업 양수"}
+    assert "error" in call("vat_deemed_supply_items", {"period": "2026-2", "items": [it]})
