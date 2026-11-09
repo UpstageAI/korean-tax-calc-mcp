@@ -79,9 +79,17 @@ def bad_debt_vat(amount_incl_vat):
 def bad_debt_eligible(supply_date, confirmed_period):
     """대손세액공제 기간 요건(부가령 제87조②): 공급일부터 N년이 지난 날이 속하는 과세기간 확정신고기한까지 대손 확정.
     N = 5년(2015.2.3.), 10년(2020.2.11. 개정, 부칙 제5조: 2020년 제1기에 대손 확정되는 분부터)."""
-    cp = _period(confirmed_period); n = 10 if cp >= (2020, 1) else 5
-    last = _period(f"{int(supply_date[:4]) + n}{supply_date[4:10]}") if int(supply_date[:4]) + n <= VAT_LAST[0] else (9999, 2)
-    return {"공제가능": cp <= last, "기간(년)": n, "근거": "부가령 제87조②" + (" (2020.2.11. 개정 10년)" if n == 10 else " (5년)")}
+    # confirmed_period를 파싱(연도표 범위 검사 없이)
+    s = str(confirmed_period).strip()
+    if len(s) >= 10:
+        cp_y, cp_h = int(s[:4]), 1 if int(s[5:7]) <= 6 else 2
+    else:
+        a, b = s.split("-")
+        cp_y, cp_h = int(a), int(b)
+    n = 10 if (cp_y, cp_h) >= (2020, 1) else 5
+    last_y = int(supply_date[:4]) + n
+    last = (last_y, _period(f"{last_y}{supply_date[4:10]}")[1]) if last_y <= VAT_LAST[0] else (9999, 2)
+    return {"공제가능": (cp_y, cp_h) <= last, "기간(년)": n, "근거": "부가령 제87조②" + (" (2020.2.11. 개정 10년)" if n == 10 else " (5년)")}
 
 
 # 의제매입세액 공제율(부가법 제42조① 표 — 2017.12.19. 법률 개정 전에는 부가령 제84조① 표)
@@ -311,32 +319,59 @@ _VALID_EVIDENCE = {"세금계산서", "신용카드", "현금영수증", "영수
 _VALID_SUPPLIER = {"일반과세자", "간이과세자_세금계산서", "간이과세자_영수증"}
 
 
-def _is_late_invoice_deduction(supply_date, issue_date, period, filing):
+def _is_late_invoice_deduction(supply_date, issue_date, period, filing, 발급특례=True):
     """발급일 기준 공제 여부 판정(영 제75조3호·7호).
     supply_date·issue_date는 'YYYY-MM-DD'. period='YYYY-1'|'YYYY-2', filing='예정'|'확정'.
-    반환: (공제여부, 판단메시지)."""
-    y, h = _period(period)
-    if filing == "예정":
-        deadline = f"{y}-04-25" if h == 1 else f"{y}-10-25"
-    else:
-        deadline = f"{y}-07-25" if h == 1 else f"{y + 1}-01-25"
-    # 기한 후 1년 계산(월 말일 보정 포함)
+    발급특례=True면 발급기한=공급시기 다음 달 10일(법 제34조③), False면 공급시기 당일.
+    반환: (공제여부, 판단메시지, 지연수취여부)."""
     from datetime import date, timedelta
-    dl = date.fromisoformat(deadline)
-    oya = (dl.replace(year=dl.year + 1) + timedelta(days=1)) - timedelta(seconds=1)
+    from .calc_deadline import roll as _roll
+
+    sd = date.fromisoformat(supply_date)
     id_ = date.fromisoformat(issue_date)
-    if id_ <= dl:
-        return True, None
-    if id_ <= oya:
-        return True, f"지연수취 — 가산세 대상(법 제60조⑦, 영 제75조7호)"
-    return False, f"발급일이 확정신고기한({deadline})으로부터 1년 초과 — 불공제(법 제39조①2호, 영 제75조)"
+
+    # 발급기한 계산
+    if 발급특례:
+        # 공급시기의 다음 달 10일
+        m = sd.month + 1
+        y = sd.year
+        if m > 12:
+            m = 1
+            y += 1
+        발급기한 = date(y, m, 10)
+    else:
+        # 공급시기 당일
+        발급기한 = sd
+
+    # 발급기한이 토·일·공휴일이면 다음 날로 이월(국세기본법 제5조①)
+    rolled = _roll(발급기한)
+    발급기한 = rolled["날짜"]
+
+    # 확정신고기한 — 공급시기가 속하는 과세기간의 확정신고기한(예정신고에서도 같음, 영 제75조3호·7호)
+    확정신고기한 = date(sd.year, 7, 25) if sd.month <= 6 else date(sd.year + 1, 1, 25)
+
+    # 기한 후 1년 말일과 지연수취 구간(확정신고기한까지) 판정
+    oya = 확정신고기한.replace(year=확정신고기한.year + 1)  # 확정신고기한 + 1년
+
+    if id_ <= sd or id_ <= 발급기한:
+        # 정상: 발급일 ≤ 공급시기(선발급 포함) 또는 발급일 ≤ 발급기한
+        return True, None, False
+    elif 발급기한 < id_ <= 확정신고기한:
+        # 지연수취(법 제60조⑦1호, 영 제75조3호): 발급기한 < 발급일 ≤ 확정신고기한
+        return True, f"지연수취 — 가산세 대상(법 제60조⑦1호, 영 제75조3호)", True
+    elif 확정신고기한 < id_ <= oya:
+        # 지연수취(영 제75조7호): 확정신고기한 < 발급일 ≤ 확정신고기한 + 1년
+        return True, f"지연수취 — 가산세 대상(법 제60조⑦, 영 제75조7호)", True
+    else:
+        # 불공제(법 제39조①2호, 영 제75조)
+        return False, f"발급일이 확정신고기한({확정신고기한.isoformat()})으로부터 1년 초과 — 불공제(법 제39조①2호, 영 제75조)", False
 
 
 def vat_input_tax_deduction(period, filing, items):
     """매입세액 공제 판정(부가법 제38조·제39조·제46조, 영 제75조).
     입력: period='YYYY-1'|'YYYY-2', filing='예정'|'확정', items=[{항목, 증빙, 공급가액?|공급대가?, 성격,
-           공급자?, 공급시기?, 발급일?, 실제공급가액?}].
-    결과: {공제매입세액, 불공제매입세액}, 계산.항목별: [{항목, 세액, 공제세액, 불공제사유?}], 판단: [{항목, 결론, 근거}]."""
+           공급자?, 공급시기?, 발급일?, 발급특례?, 실제공급가액?}].
+    결과: {공제매입세액, 불공제매입세액, 지연수취_가산세}, 계산.항목별: [{항목, 세액, 공제세액, 불공제사유?}], 판단: [{항목, 결론, 근거}]."""
     if filing not in ("예정", "확정"):
         return {"error": "입력 확인 필요 — 계산하지 않음",
                 "문제": [f"filing='{filing}'은(는) 지원하지 않음 — '예정' 또는 '확정'"]}
@@ -352,6 +387,7 @@ def vat_input_tax_deduction(period, filing, items):
         공급자 = it.get("공급자", "일반과세자")
         공급시기 = it.get("공급시기")
         발급일 = it.get("발급일")
+        발급특례 = it.get("발급특례", True)
         실제공급가액 = it.get("실제공급가액")
         공급가액 = it.get("공급가액")
         공급대가 = it.get("공급대가")
@@ -377,6 +413,7 @@ def vat_input_tax_deduction(period, filing, items):
     판단 = []
     공제합계 = 0
     불공제합계 = 0
+    지연수취_가산세_합계 = 0
 
     for it in 항목들:
         항목 = it["항목"]
@@ -385,12 +422,15 @@ def vat_input_tax_deduction(period, filing, items):
         공급자 = it.get("공급자", "일반과세자")
         공급시기 = it.get("공급시기")
         발급일 = it.get("발급일")
+        발급특례 = it.get("발급특례", True)
         실제공급가액 = it.get("실제공급가액")
         공급가액 = it.get("공급가액")
         공급대가 = it.get("공급대가")
 
         불공제사유 = None
         판단문 = ""
+        지연수취 = False
+        항목_공급가액 = None  # 지연수취 가산세 계산을 위한 공급가액
 
         # 1. 성격별 불공제
         if 성격 == "접대":
@@ -414,7 +454,7 @@ def vat_input_tax_deduction(period, filing, items):
 
         # 4. 세금계산서 + 공급시기·발급일 있는 경우
         if not 불공제사유 and 증빙 == "세금계산서" and 공급시기 and 발급일:
-            공제, msg = _is_late_invoice_deduction(공급시기, 발급일, period, filing)
+            공제, msg, 지연수취 = _is_late_invoice_deduction(공급시기, 발급일, period, filing, 발급특례)
             if not 공제:
                 불공제사유 = msg
             elif msg:
@@ -430,17 +470,27 @@ def vat_input_tax_deduction(period, filing, items):
                 # 실제공급가액으로 공제되는 착오 기재 항목 — 불공제사유는 None, 판단문만 그 문장
                 판단문 = "착오 기재 — 그 밖의 증빙으로 실제 거래 확인 시 실제분 공제 (영 제75조2호)"
                 공제세액 = 실제공급가액 * 10 // 100
+                항목_공급가액 = 실제공급가액
         elif 공급가액 is not None:
             세액 = 공급가액 * 10 // 100
             공제세액 = 세액 if not 불공제사유 else 0
+            항목_공급가액 = 공급가액
         else:
             세액 = int(공급대가 * 10 / 110)
             공제세액 = 세액 if not 불공제사유 else 0
+            # 공급대가인 경우 공급가액 = 공급대가 × 100/110 (원 미만 버림)
+            항목_공급가액 = int(공급대가 * 100 / 110)
 
         if 불공제사유:
             불공제합계 += 세액 - 공제세액
 
         공제합계 += 공제세액
+
+        # 지연수취 가산세 계산
+        if 지연수취 and 항목_공급가액 is not None:
+            rate = invoice_penalty_rate("지연수취", 공급시기)
+            지연수취_가산세_합계 += _floor(항목_공급가액, rate)
+
         calc_items.append({
             "항목": 항목,
             "세액": 세액,
@@ -457,7 +507,7 @@ def vat_input_tax_deduction(period, filing, items):
     계산 = {
         "항목별": 계산_항목별(calc_items),
     }
-    return {"공제매입세액": 공제합계, "불공제매입세액": 불공제합계, "계산": 계산, "판단": 판단}
+    return {"공제매입세액": 공제합계, "불공제매입세액": 불공제합계, "지연수취_가산세": 지연수취_가산세_합계, "계산": 계산, "판단": 판단}
 
 
 def 계산_항목별(items):
