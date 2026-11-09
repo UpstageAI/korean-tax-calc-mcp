@@ -16,7 +16,7 @@
 
 
 
-Claude 보완: 간이과세 면제여도 세금계산서 미수취 가산세는 남김(제69조①②), 12개월 환산 개월 수를 초일 산입 기간 계산으로 바로잡고 simplified_vat_return에도 연결, 가산세 묶음의 가공 계산·kind 값 검사, 취득구분 값 검사, 옛 정답 테스트의 공통사용재화 근거 표기(영 제81조④ → 규칙 제54조③, 조문 원문 확인), README 도구 수, pyproject 버전.
+Claude 보완: 간이과세 면제여도 세금계산서 미수취 가산세는 남김(제69조①②), 12개월 환산 개월 수를 초일 산입 기간 계산으로 바로잡고 simplified_vat_return에도 연결, 가산세 묶음의 가공 계산·kind 값 검사, 취득구분 값 검사(vat_exempt_use_deemed_supply 포함 — CodeSolar 지적), 옛 정답 테스트의 공통사용재화 근거 표기(영 제81조④ → 규칙 제54조③, 조문 원문 확인), README 도구 수, pyproject 버전.
 ## 0.24.0 (2026-11-09)
 
 인정이자(deemed_interest) 보강 — 원 미만 절사 통일, 동일인 가수금 연간 적수 상계(deposits), 가중평균차입이자율 계산(rate_mode·borrowings), 사업연도 일수 정정, nonbusiness_interest_disallowance 연결 안내 deposits 포함.

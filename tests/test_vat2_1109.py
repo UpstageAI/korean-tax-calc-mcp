@@ -165,3 +165,8 @@ def test_bundle_fake_invoice_and_bad_kind():
 def test_acquisition_kind_typo_rejected():
     it = {"항목": "비품", "거래": "폐업시잔존", "매입세액공제": False, "시가": 1_000_000, "취득구분": "사업 양수"}
     assert "error" in call("vat_deemed_supply_items", {"period": "2026-2", "items": [it]})
+
+
+def test_exempt_use_acquisition_kind_typo_rejected():
+    a = {"구분": "기타", "취득일": "2025-03-01", "취득가액": 10_000_000, "매입세액공제": False, "취득구분": "사업 양수"}
+    assert "error" in call("vat_exempt_use_deemed_supply", {"use_date": "2026-08-01", "mode": "전부", "assets": [a]})
