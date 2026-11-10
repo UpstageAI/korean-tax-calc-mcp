@@ -618,15 +618,22 @@ def deemed_bonus_resettlement(gross, base, bonus, other_credits=0, prev_decided=
     """상여 처분액을 귀속연도 총급여에 가산해 연말정산을 다시 한 결정세액과 추가 원천징수세액.
     base=당초 과세표준(근로소득공제 차감 후). 근로소득공제만 총급여 증가분으로 재계산하고, 그 밖의
     소득공제·세액공제(other_credits=근로소득세액공제 외 세액공제 합계)는 당초 금액 유지(총급여 연동
-    공제가 있으면 수기 보정). prev_decided 미입력 시 당초 결정세액도 같은 방식으로 재계산."""
+    공제가 있으면 수기 보정). prev_decided 미입력 시 당초 결정세액도 같은 방식으로 재계산.
+    결정세액 = 산출세액 − 감면 − 근로소득세액공제 − 표준세액공제 − other_credits. 표준세액공제 13만 원(소득세법 제59조의4⑨,
+    재정산 때 본인 기본공제·표준세액공제만 적용 — 제137조③)은 other_credits=0일 때 적용(wage_income_tax 결정세액(참고)와 같은 기준,
+    산출세액 − 근로소득세액공제 한도). other_credits>0이면 특별세액공제 등을 직접 넣은 것으로 보아 표준세액공제는 더하지 않음(택일).
+    prev_decided는 표준세액공제까지 뺀 당초 결정세액(0.25.5)."""
     def decided(g, b):
         t = income_tax(b, year)
-        return max(0, t - reduced_tax - earned_tax_credit(t, g, reduced_tax, year) - other_credits)
+        after = max(0, t - reduced_tax - earned_tax_credit(t, g, reduced_tax, year))
+        std = min(130_000, after) if not other_credits else 0
+        return max(0, after - std - other_credits), std
     g2 = gross + bonus
     b2 = base + bonus - (earned_deduction(g2, year) - earned_deduction(gross, year))
-    new = decided(g2, b2)
-    old = decided(gross, base) if prev_decided is None else prev_decided
-    return {"재정산총급여": g2, "재정산과세표준": b2, "재정산결정세액": new, "당초결정세액": old, "추가원천징수세액": max(0, new - old)}
+    new, std_new = decided(g2, b2)
+    old, std_old = decided(gross, base) if prev_decided is None else (prev_decided, None)
+    return {"재정산총급여": g2, "재정산과세표준": b2, "재정산결정세액": new, "당초결정세액": old, "추가원천징수세액": max(0, new - old),
+            "표준세액공제": {"재정산": std_new, "당초": std_old if prev_decided is None else "prev_decided에 반영된 것으로 봄"}}
 
 
 # ── 임원 퇴직소득 한도(소득세법 제22조③④, 소령 제42조의2⑤⑥) ────────────────────────

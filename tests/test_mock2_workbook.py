@@ -156,7 +156,7 @@ def test_byeolji3_checks_below_form_and_tax_lines_filled(corp):
                       "112 과세표준 (법인세 산출세액 call) (F16)", "115 산출세액 (법인세 산출세액 call) (F20)"]
     ct = run("corporate_tax", {"base": 250_000_000, "year": 2025})["결과"]
     # 112 = 법인세 산출세액 call의 과세표준(입력 이름), 115 = 113 × 그해 세율 구간(입력 이름) 수식 — 숫자를 박지 않음
-    assert ws["F16"].value == "=호출8_과세표준" and ws["F20"].value.startswith("=ROUND((MAX(0,F18*12/호출8_사업연도월수)*호출8_법인세율1_만분율")
+    assert ws["F16"].value == "=호출8_과세표준" and ws["F20"].value.startswith("=ROUNDDOWN((MAX(0,F18*12/호출8_사업연도월수)*호출8_법인세율1_만분율")  # 0.25.5 원 미만 절사(국고금 관리법 제47조)
     wi = wb["입력·가정"]
     inp = {wi.cell(r, 1).value: wi.cell(r, 2).value for r in range(1, wi.max_row + 1)}
     assert inp["호출8_과세표준"] == 250_000_000 and ct["산출세액"] == 250_000_000 * 9 // 100 + (250_000_000 - 200_000_000) * 10 // 100
