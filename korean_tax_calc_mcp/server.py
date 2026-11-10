@@ -789,7 +789,7 @@ def unfair_transaction(market_price: Annotated[float, Field(description="시가(
 결과: 시가총액·차액·차액비율·부당행위계산 여부, 근거(법인세법 제52조, 시행령 제88조제3항). 부당행위계산 기준(시가와 실제 거래가 차액이 3억 원 이상 또는 5% 이상이면 부인 대상).
 wholly_owned_capital_increase=True이고 시가가 액면 미만(액면=0 포함)인 법인의 신주를 100% 단독 출자 법인이 전부 인수한 경우 부당행위계산 부인 대상 아님(서이46012-12126, 조심-2014-전-0041, 대구지법 2013구합10573)."""
     gap = abs(market_price - actual_price) * quantity; base = market_price * quantity
-    if wholly_owned_capital_increase and market_price == 0 and base == 0 and gap > 0:
+    if wholly_owned_capital_increase and gap > 0:          # 100% 단독 인수 액면 증자 — 시가 0이든 액면 미만이든 부당행위 아님
         return _ok({"시가총액": int(base), "차액": int(gap), "차액비율": None,
                     "부당행위계산": False}, "법인세법 제52조, 시행령 제88조③",
                    판단=["100% 자회사 액면 증자 단독 인수 — 부당행위계산 부인 대상 아님(서이46012-12126, 조심-2014-전-0041)"])
@@ -1549,7 +1549,8 @@ def nonresident_withholding(income_kind: Annotated[Literal["이자", "배당", "
     r = I.nonresident_withholding(income_kind, amount, recipient_type, residence_country, treaty_rate, bond_interest, related_party,
                                   treaty_includes_local_tax, service_location)
     판단 = r.pop("판단", None)
-    return _ok({k: v for k, v in r.items() if k != "쟁점"}, r["근거"], 쟁점=r["쟁점"], 판단=판단 if 판단 else None)
+    extra = {"판단": 판단} if 판단 else {}
+    return _ok({k: v for k, v in r.items() if k != "쟁점"}, r["근거"], 쟁점=r["쟁점"], **extra)
 
 
 @mcp.tool(annotations=CALC)
@@ -2478,9 +2479,9 @@ def vat_bad_debt_credit(bad_debt_incl_vat: Annotated[int, Field(description="대
 def vat_supply_timing(
     transactions: Annotated[list, Field(description=(
         "거래 목록 [{이름?, 종류, 인도일?(재화 인도·이용가능일, 용역은 완료일), 대가?: [{약정일, 금액, 구분?('계약금'|'중도금'|'잔금')}], "
-        "공급가액?(대가 목록이 없을 때), 선적일?(수출), 확정일?(조건부·기한부 판매), 국고_선금급?(bool), "
+        "공급가액?(대가 목록이 없을 때), 선적일?(수출), 확정일?(조건부·기한부 판매, 위탁판매수출은 공급가액 확정일), 인도일?(외국인도수출·위탁가공무역·원료반출은 외국에서 인도되는 날), 국고_선금급?(bool), "
         "세금계산서?: [{발급일, 금액?, 수령일?(대가 받은 날), 청구지급시기_별도기재?(bool), 지급시기?(계약서상 지급일), 공급받는자_조기환급?(bool)}]}]. "
-        "종류: 일반판매·할부·장기할부·중간지급조건부·완성도기준지급·계속적공급(전력 등)·조건부판매·수출, 용역·용역_장기할부·용역_중간지급조건부·용역_완성도기준지급·용역_계속적공급"))],
+        "종류: 수출(직수출, 선적일)·중계무역·보세구역반출(선적일)·위탁판매수출(확정일)·외국인도수출·위탁가공무역·원료반출(인도일)·일반판매·할부·장기할부·중간지급조건부·완성도기준지급·계속적공급(전력 등)·조건부판매·수출, 용역·용역_장기할부·용역_중간지급조건부·용역_완성도기준지급·용역_계속적공급"))],
     business: Annotated[Literal["일반", "간이"], Field(description="사업자 구분 — '일반'(과세기간 1·2기, 예정신고기간 1.1~3.31·7.1~9.30) 또는 '간이'(과세기간 1년, 예정부과기간 1.1~6.30)")] = "일반",
     period: Annotated[str | None, Field(description="조회 기간(선택). 일반: 'YYYY-1기 예정'·'YYYY-1기 확정'(4.1~6.30)·'YYYY-2기'(과세기간 전체). 간이: 'YYYY' 또는 'YYYY 예정부과'")] = None,
 ) -> dict:
