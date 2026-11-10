@@ -2203,6 +2203,8 @@ def vat_simplified_taxpayer(supply_incl_vat: Annotated[int, Field(description="�
 
     # 판단 문구
     exempt_reason = "납부의무 면제 — 납부세액 0, 가산세는 남음(제69조①②, 재고납부세액은 별도)" if exempt else None
+    if exempt and prepaid_tax > 0:
+        exempt_reason += f"; 자진 납부한 예정부과세액 {prepaid_tax:,}원은 환급(제69조④)" + (f" — 남은 가산세 {total_penalties:,}원 충당 뒤 {refund:,}원" if total_penalties else "")
 
     steps = [
         {"항목": "공급대가(부가세 포함)", "금액": supply_incl_vat, "근거": "부가법 제63조"},
