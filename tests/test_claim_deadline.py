@@ -13,11 +13,7 @@ import json
 import re
 
 from korean_tax_calc_mcp import server as S
-
-
-def run(name, args):
-    r = asyncio.run(S.mcp.call_tool(name, args))
-    return json.loads(r.content[0].text if hasattr(r, "content") else r[0][0].text)
+from tests._helpers import call as run
 
 
 def res(r):

@@ -5,12 +5,8 @@
 기준일은 facts_vocab.json 적용 블록(부터·까지는 양도일 기준)에서 확인.
 """
 import asyncio
-import json
 from korean_tax_calc_mcp.server import mcp
-
-
-def c(n, a):
-    return json.loads(asyncio.run(mcp.call_tool(n, a)).content[0].text)
+from tests._helpers import call as c
 
 
 def test_tool_registered():

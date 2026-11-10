@@ -1,15 +1,11 @@
 """수식 이름 치환·차가감 식 정답 테스트. 작성 Claude 2026-10-25 (docs/SPEC_export_workbook_e.md)."""
-import asyncio, json, pathlib, re, shutil, subprocess
+import pathlib, re, shutil, subprocess
 import pytest
-from korean_tax_calc_mcp.server import mcp, _이름_치환
+from korean_tax_calc_mcp.server import _이름_치환
+from tests._helpers import call as c
 
 SRC = pathlib.Path(__file__).resolve().parents[1] / "korean_tax_calc_mcp" / "server.py"
 M = {"항목1": "호출1_항목1", "항목2": "호출1_항목2", "EBIT": "호출1_EBIT"}
-
-
-def c(tool, a):
-    r = asyncio.run(mcp.call_tool(tool, a))
-    return json.loads((r.content[0] if hasattr(r, "content") else r[0][0]).text)
 
 
 @pytest.mark.parametrize("식, 기대", [

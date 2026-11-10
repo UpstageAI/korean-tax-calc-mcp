@@ -6,12 +6,8 @@
   1호 투표권 환급금: 권면 합계 10만원 이하 + (가) 개별투표당 10만원 이하 또는 (나) 100배 이하·200만원 이하.
 - 제37조①1호 단위투표금액, 2호 슬롯머신 투입금액이 필요경비.
 """
-import asyncio, json
-from korean_tax_calc_mcp.server import mcp
-
-
-def c(n, a):
-    return json.loads(asyncio.run(mcp.call_tool(n, a)).content[0].text)
+import json
+from tests._helpers import call as c
 
 
 def one(year, item):

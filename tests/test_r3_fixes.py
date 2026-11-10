@@ -15,8 +15,8 @@ import openpyxl
 import pytest
 
 from korean_tax_calc_mcp import server as S
-from korean_tax_calc_mcp.engine import calc as engine_calc
-from korean_tax_calc_mcp.audit.agents import calc as agent_calc
+from korean_tax_calc_mcp.engine import calc as engine_calc, exact
+from tests._helpers import call
 
 DATA = pathlib.Path(__file__).parent / "data"
 CORP = json.loads((DATA / "r3_corp_adjust_calls.json").read_text(encoding="utf-8"))
@@ -29,11 +29,6 @@ INCOME_VAT_RECOVERED = copy.deepcopy(INCOME_VAT)
 INCOME_VAT_RECOVERED[5]["args"]["recovered"] = True
 
 soffice = pytest.mark.skipif(not shutil.which("soffice"), reason="LibreOffice 없음")
-
-
-def call(tool, args):
-    r = asyncio.run(S.mcp.call_tool(tool, args))
-    return json.loads((r.content[0] if hasattr(r, "content") else r[0][0]).text)
 
 
 def build(d, calls, name):
@@ -81,7 +76,7 @@ def row_of(ws, text, col=1):
 
 
 # ── 원 미만 반올림(0.5는 올림) ──────────────────────────────────────────
-@pytest.mark.parametrize("fn", [engine_calc.won, agent_calc.won])
+@pytest.mark.parametrize("fn", [engine_calc.won, exact.round_won])
 def test_won_rounds_half_up(fn):
     assert [fn(x) for x in (0.5, 1.5, 2.5, 50_000_000.5, 181_078_830.5, 2.4999, -2.5)] == \
         [1, 2, 3, 50_000_001, 181_078_831, 2, -3]

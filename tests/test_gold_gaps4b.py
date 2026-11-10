@@ -1,12 +1,6 @@
 """부가세 판정 도구 입력 검증 보강 정답 테스트. 작성 Claude 2026-10-24 (docs/SPEC_gold_gaps4b.md)."""
-import asyncio, json
 import pytest
-from korean_tax_calc_mcp.server import mcp
-
-
-def c(tool, a):
-    r = asyncio.run(mcp.call_tool(tool, a))
-    return json.loads((r.content[0] if hasattr(r, "content") else r[0][0]).text)
+from tests._helpers import call as c
 
 
 ITEM = {"항목": "a", "증빙": "세금계산서", "공급가액": 100, "성격": "일반"}

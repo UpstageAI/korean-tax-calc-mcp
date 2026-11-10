@@ -1,12 +1,7 @@
 """도구 공백 — 인적공제·연금소득·결손금 공제·재해손실세액공제 이식과 보강의 정답 테스트. 작성 Claude 2026-10-24.
 값은 문항을 손으로 푼 결과(docs/SPEC_gold_gaps3.md)."""
-import asyncio, json
-from korean_tax_calc_mcp.server import mcp
-
-
-def c(tool, a):
-    r = asyncio.run(mcp.call_tool(tool, a))
-    return json.loads((r.content[0] if hasattr(r, "content") else r[0][0]).text)
+import json
+from tests._helpers import call as c
 
 
 def test_personal_deduction_divorced_with_pension_not_taxed_and_synonyms():

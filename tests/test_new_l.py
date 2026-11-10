@@ -4,12 +4,8 @@
 - 시행령 제53조② 지급이자 × 자산 적수(총차입금 한도) ÷ 총차입금, ③ 적수·동일인 가수금 상계, ④2호 기업구매자금대출 제외.
 - 시행규칙 제28조① → 제44조 각 호 제외(7의2호는 규칙 제774호 부칙 제2조: 2020.1.1. 이후 개시 사업연도), 제28조② 상계 불가.
 """
-import asyncio, json
-from korean_tax_calc_mcp.server import mcp
-
-
-def c(n, a):
-    return json.loads(asyncio.run(mcp.call_tool(n, a)).content[0].text)
+import json
+from tests._helpers import call as c
 
 
 T = "nonbusiness_interest_disallowance"

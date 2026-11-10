@@ -17,6 +17,7 @@ import openpyxl
 import pytest
 
 from korean_tax_calc_mcp import server as S
+from tests._helpers import call
 
 DATA = pathlib.Path(__file__).parent / "data"
 CORP = json.loads((DATA / "r5_corp_adjust_calls.json").read_text(encoding="utf-8"))
@@ -26,11 +27,6 @@ INCOME_VAT = json.loads((DATA / "r5_income_vat_calls.json").read_text(encoding="
 CITE = json.loads((DATA / "related_cite_articles.json").read_text(encoding="utf-8"))
 
 soffice = pytest.mark.skipif(not shutil.which("soffice"), reason="LibreOffice 없음")
-
-
-def call(tool, args):
-    r = asyncio.run(S.mcp.call_tool(tool, args))
-    return json.loads((r.content[0] if hasattr(r, "content") else r[0][0]).text)
 
 
 def tool_def(name):

@@ -1,15 +1,10 @@
 """금액 결함 회귀 테스트(실사용 점검) — 공급시기 세금계산서 매칭, 개인적공급 10만원 한도, 증여 합산 공제,
 지방소득세 포함 조약, 원천징수 등 납부지연가산세."""
-import asyncio, json
 
-from korean_tax_calc_mcp.server import find_tool, mcp
+from korean_tax_calc_mcp.server import find_tool
+from tests._helpers import call as c
 
 M = 1_000_000
-
-
-def c(tool, a):
-    r = asyncio.run(mcp.call_tool(tool, a))
-    return json.loads((r.content[0] if hasattr(r, "content") else r[0][0]).text)
 
 
 def times(r):

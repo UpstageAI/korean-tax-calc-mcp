@@ -1,9 +1,10 @@
 """부가가치세 사전검토 규칙(모드 A). 작성 Mia(윤승미)
 원천: knowledge/13_부가가치세_신고안내_조사포인트.md §12-3 P1~P26(+§12-1 V 규칙 보강). 2026년 1기 기준.
-금액은 원 단위 int. 여부 항목은 bool. 계산은 agents/calc_vat.py, agents/calc.py 재사용.
+금액은 원 단위 int. 여부 항목은 bool. 계산은 agents/calc_vat.py, engine/calc.py 재사용.
 """
 from . import rule, hit, ok, check  # noqa: F401
-from .. import calc_vat as V, calc
+from .. import calc_vat as V
+from ....engine import calc
 
 SCHEMA = {
     # 사업자 기본

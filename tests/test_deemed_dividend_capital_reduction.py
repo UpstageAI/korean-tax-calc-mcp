@@ -2,12 +2,7 @@
 근거 조문: 법인세법 제16조①1호·4호 / 소득세법 제17조②1호·3호, 시행령 제14조①1호가목·③ / 시행령 제27조①1호가목·③.
 손계산 사례는 각 테스트 주석에 계산 근거를 함께 기재한다.
 """
-import asyncio, json
-from korean_tax_calc_mcp.server import mcp
-
-
-def c(n, a):
-    return json.loads(asyncio.run(mcp.call_tool(n, a)).content[0].text)
+from tests._helpers import call as c
 
 
 # ── 사례 1: 개인·감자·자본준비금 비과세 무상주(단기소각 대상)·의제배당 발생 ──

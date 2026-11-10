@@ -1,13 +1,13 @@
 """끝에서 끝까지 계산기 정답 테스트 (Claude 작성 2026-10-13) — 수정 금지.
 공개 검증 사례는 원문 사실관계를 그대로 입력하고 공개 정답과 손계산 일치를 확인. 실무형 사례는 Claude 손계산. 이 사례들은 도구 설계의 기준이 아니라 검증용이다.
 """
-import asyncio, json
-from korean_tax_calc_mcp.server import mcp
+import json
 from tests._legacy_to_ledger import to_ledger   # 0.9.0: 옛 입력은 테스트에서 원장형으로 변환해 호출
+from tests._helpers import call
 
 
 def c(n, a):
-    return json.loads(asyncio.run(mcp.call_tool(n, to_ledger(n, a))).content[0].text)
+    return call(n, to_ledger(n, a))
 
 
 def find(judg, word):

@@ -7,12 +7,7 @@
 - 시행령 제122조의2①: 2021~ 단기·아파트 매입 장기일반은 2020.7.10. 이전 등록 신청분만 등록임대주택.
 - 제64조의2③2호 의무임대기간: 2020.8.18. 이후 등록 신청분 10년(법률 제17757호 부칙 제13조②), 그 전 4년.
 """
-import asyncio, json
-from korean_tax_calc_mcp.server import mcp
-
-
-def c(n, a):
-    return json.loads(asyncio.run(mcp.call_tool(n, a)).content[0].text)
+from tests._helpers import call as c
 
 
 def hr(year, houses, **kw):

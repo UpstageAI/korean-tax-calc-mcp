@@ -2,13 +2,13 @@
 공개 검증 사례는 부가가치세법 제29조⑧⑨·제40조·제41조,
 영 제63조·제64조·제81조~제83조로 손계산해 공개 정답과 일치 확인. 실무형 사례는 Claude 손계산.
 """
-import asyncio, json
-from korean_tax_calc_mcp.server import mcp
+import json
 from tests._legacy_to_ledger import to_ledger   # 0.9.0: 옛 입력은 테스트에서 원장형으로 변환해 호출
+from tests._helpers import call
 
 
 def c(n, a):
-    return json.loads(asyncio.run(mcp.call_tool(n, to_ledger(n, a))).content[0].text)
+    return call(n, to_ledger(n, a))
 
 
 # ── common_input_tax: 안분·정산·공통사용재화 공급 ──

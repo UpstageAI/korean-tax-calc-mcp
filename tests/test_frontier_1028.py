@@ -1,12 +1,7 @@
 """10/28 프론티어 모델 점검에서 나온 수정의 회귀 테스트. 작성 Claude 2026-10-28."""
-import asyncio, json, os, tempfile
+import json, os, tempfile
 import openpyxl
-from korean_tax_calc_mcp.server import mcp
-
-
-def c(tool, a):
-    r = asyncio.run(mcp.call_tool(tool, a))
-    return json.loads((r.content[0] if hasattr(r, "content") else r[0][0]).text)
+from tests._helpers import call as c
 
 
 def test_residential_rental_loss_offsets_other_income():

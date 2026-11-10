@@ -1,14 +1,9 @@
 """부가세 확정신고 시나리오(2026-2기)에서 나온 결함 4건 정답 — 지연수취·대손 확정 시기·제48조② 감면·합계표 전자 전송 면제."""
-import asyncio
 import json
 
 import pytest
 
-from korean_tax_calc_mcp.server import mcp
-
-
-def call(n, a):
-    return json.loads(asyncio.run(mcp.call_tool(n, a)).content[0].text)
+from tests._helpers import call
 
 
 def R(d):

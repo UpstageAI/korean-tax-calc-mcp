@@ -2,13 +2,7 @@
 
 기본세율(제55조①) 과세표준 1억원: 2018~2022년 1,590만 + (1억 − 8,800만) × 35% = 2,010만,
 2023년 이후 1,536만 + (1억 − 8,800만) × 35% = 1,956만."""
-import asyncio, json
-from korean_tax_calc_mcp.server import mcp
-
-
-def c(tool, a):
-    r = asyncio.run(mcp.call_tool(tool, a))
-    return json.loads((r.content[0] if hasattr(r, "content") else r[0][0]).text)
+from tests._helpers import call as c
 
 
 def _tax(**kw):

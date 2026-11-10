@@ -2,13 +2,13 @@
 공개 검증 사례는 부가가치세법 제46조①·제63조·제68조의2②·제69조, 영 제61조②·제111조②로
 손계산해 공개 정답과 일치 확인(495,000 / 366,000 / 310,000). 실무형 사례는 Claude 손계산.
 """
-import asyncio, json
-from korean_tax_calc_mcp.server import mcp
+import json
 from tests._legacy_to_ledger import to_ledger   # 0.9.0: 옛 입력은 테스트에서 원장형으로 변환해 호출
+from tests._helpers import call
 
 
 def c(n, a):
-    return json.loads(asyncio.run(mcp.call_tool(n, to_ledger(n, a))).content[0].text)
+    return call(n, to_ledger(n, a))
 
 
 def test_public_case_public_case_80():

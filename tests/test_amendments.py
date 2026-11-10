@@ -1,17 +1,12 @@
 """조문 개정·미구현 규정 반영 — 원천징수 등 납부지연가산세 2026.7.1. 개정(법률 제21212호)과 납부고지 후 기간,
 증여세 납부세액공제 한도(상증법 제58조②), 대손금 채무보증 구상채권 예외(법인세법 시행령 제19조의2⑥)·전기 유보 정리.
 기대값은 조문을 손으로 계산한 값."""
-import asyncio
 import json
 
 from korean_tax_calc_mcp import server as S
-from korean_tax_calc_mcp.server import mcp
+from tests._helpers import call as c
 
 M = 1_000_000
-
-
-def c(n, a):
-    return json.loads(asyncio.run(mcp.call_tool(n, a)).content[0].text)
 
 
 def wl(**a):

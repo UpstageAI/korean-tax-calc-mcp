@@ -1,18 +1,14 @@
 """새 계산 도구 입력 검증 — 모르는 최상위 인자 거부, 목록 안 금액 칸 bool·문자열 거부."""
-import asyncio, json
+import json
 
 import pytest
 
 from korean_tax_calc_mcp.server import mcp
+from tests._helpers import call as c
 
 M = 1_000_000
 NEW = ["inheritance_tax", "gift_tax", "dividend_received_deduction",
        "inventory_valuation_adjustment", "special_tax_credit", "asset_grant_reserve"]
-
-
-def c(tool, a):
-    r = asyncio.run(mcp.call_tool(tool, a))
-    return json.loads((r.content[0] if hasattr(r, "content") else r[0][0]).text)
 
 
 def rejected(tool, a):

@@ -6,13 +6,11 @@
 한도: 2016~2017 150만, 2018 190만, 2019~2025 210만, 2026 260만(직전 총급여 2,500만→3,000만(2020)→3,700만(2026)).
 연장근로수당 비과세 연 240만원(영 제17조② 1호). 근로소득공제는 법 제47조①.
 """
-import asyncio
-import json
-from korean_tax_calc_mcp.server import mcp
+from tests._helpers import call
 
 
 def c(a):
-    return json.loads(asyncio.run(mcp.call_tool("earned_income_gross_pay", a)).content[0].text)
+    return call("earned_income_gross_pay", a)
 
 
 def 기본항목(prior=30_000_000, **연장facts):

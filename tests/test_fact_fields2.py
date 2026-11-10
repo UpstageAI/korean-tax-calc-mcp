@@ -1,12 +1,7 @@
 """항목형 입력 2차 — 모델이 실제로 보낸 형태를 받아들이고, 틀린 형태면 한국어로 예시와 함께 알린다. 작성 Claude 2026-10-21.
 근거: 실측에서 모델이 items.usage를 {"구분": "재판매", "비율": 30} 꼴로 보냈고 도구는 "invalid literal for int()"라는 파이썬 오류를 그대로 돌려줬다."""
-import asyncio, json
-from korean_tax_calc_mcp.server import mcp
-
-
-def c(tool, a):
-    r = asyncio.run(mcp.call_tool(tool, a))
-    return json.loads((r.content[0] if hasattr(r, "content") else r[0][0]).text)
+import json
+from tests._helpers import call as c
 
 
 BASE = {"period": "2021-1", "industry": "제조", "individual": False, "sme": True}

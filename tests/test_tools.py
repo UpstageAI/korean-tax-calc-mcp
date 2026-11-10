@@ -1,8 +1,6 @@
 import asyncio, json
 from korean_tax_calc_mcp.server import mcp
-
-
-def c(n, a): return json.loads(asyncio.run(mcp.call_tool(n, a)).content[0].text)
+from tests._helpers import call as c
 
 
 def c_err(n, a):

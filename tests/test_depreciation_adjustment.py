@@ -3,11 +3,8 @@
 근거: 법인세법상 개별 자산별 상각범위액(시인액)과 회사계상액을 비교해
 초과액은 상각부인액(손금불산입·유보), 미달액은 시인부족액(손금산입·△유보 또는 소멸).
 """
-import asyncio, json
 from korean_tax_calc_mcp.server import mcp
-
-
-def c(n, a): return json.loads(asyncio.run(mcp.call_tool(n, a)).content[0].text)
+from tests._helpers import call as c
 
 
 # ── §26①·별표4: 정액법 5년 상각률 0.2, 정률법 5년 상각률 0.451 ──────────

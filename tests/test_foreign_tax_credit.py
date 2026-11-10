@@ -2,11 +2,9 @@
 
 손계산 사례: 법인세법 제55조(세율)·제57조(외국납부세액공제)·시행령 제94조(공제한도 계산).
 """
-import asyncio, json
+import asyncio
 from korean_tax_calc_mcp.server import mcp
-
-
-def c(n, a): return json.loads(asyncio.run(mcp.call_tool(n, a)).content[0].text)
+from tests._helpers import call as c
 
 
 def test_tool_registered():

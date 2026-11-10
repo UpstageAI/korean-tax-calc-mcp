@@ -2,12 +2,7 @@
 공개 검증 사례는 소득세법 제21조·제12조·제14조③·제127조·제129조, 영 제18조②·제87조 2025 시행본으로
 손계산해 공식 정답(ㄱ 18,700,000 / ㄴ 1,340,000)과 일치 확인. 실무형 사례는 Claude 손계산.
 """
-import asyncio, json
-from korean_tax_calc_mcp.server import mcp
-
-
-def c(n, a):
-    return json.loads(asyncio.run(mcp.call_tool(n, a)).content[0].text)
+from tests._helpers import call as c
 
 
 ITEMS_2025_52 = [

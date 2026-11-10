@@ -1,12 +1,10 @@
 """주주 명부 → 지분율·합산 범위 → 대주주 판정 (영 제157조 구간별 합산 방식). 손계산 정답. 작성 Claude 2026-10-30."""
-import asyncio, json
-from korean_tax_calc_mcp.server import mcp
 from korean_tax_calc_mcp.engine.calc_stock import parse_relation
+from tests._helpers import call
 
 
 def M(**a):
-    r = asyncio.run(mcp.call_tool("stock_major_shareholder", a))
-    return json.loads((r.content[0] if hasattr(r, "content") else r[0][0]).text)
+    return call("stock_major_shareholder", a)
 
 
 def test_parse_relation_words():

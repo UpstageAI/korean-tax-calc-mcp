@@ -6,13 +6,7 @@
     제17조의2(식사대·출산보육수당), 제17조의3(직무발명보상금), 제17조의4(비과세 복리후생),
     제38조(근로소득에서 제외되는 복리후생), 제49조(수입시기)
 """
-import asyncio
-import json
-from korean_tax_calc_mcp.server import mcp
-
-
-def c(n, a):
-    return json.loads(asyncio.run(mcp.call_tool(n, a)).content[0].text)
+from tests._helpers import call as c
 
 
 # ── helper: facts 없는 항목은 빈 dict로 ──
