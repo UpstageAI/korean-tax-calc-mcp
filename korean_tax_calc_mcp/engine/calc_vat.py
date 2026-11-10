@@ -739,7 +739,7 @@ def default_filed_on(year: int, period: str) -> str:
     return f"{year + 1}-01-25"
 
 
-# 원장형 입력 허용 항목 — 공급·매입·세액 각 항목명(계산 명세서 원문 이름, 가운뎃점 U+00B7)
+# 원장형 입력 허용 항목 — 공급·매입·세액 각 항목명(명세 1-3 표, 가운뎃점 U+00B7)
 _LEDGER_SUPPLY = {  # 공급 항목 → 입력 키
     "세금계산서 발급분": "sales_invoice",
     "매입자발행 세금계산서": "sales_buyer_invoice",
@@ -810,13 +810,7 @@ def vat_return_general(inputs: dict) -> dict:
     kind = str(inputs.get("kind", "확정"))
     e_filing_credit_given = int(inputs.get("e_filing_credit", 0))
     sales_invoice = int(inputs.get("sales_invoice", 0))
-    sales_buyer_invoice = inputs.get("sales_buyer_invoice", 0)
-    if isinstance(sales_buyer_invoice, dict):
-        sbi_amount = int(sales_buyer_invoice.get("금액", 0))
-        sbi_tax = int(sales_buyer_invoice.get("세액", sbi_amount * 10 // 100))
-    else:
-        sbi_amount = int(sales_buyer_invoice or 0)
-        sbi_tax = sbi_amount * 10 // 100
+    sbi_amount = int(inputs.get("sales_buyer_invoice", 0))
     sales_card_cash = int(inputs.get("sales_card_cash", 0))
     sales_other = int(inputs.get("sales_other", 0))
     deemed_supply = int(inputs.get("deemed_supply", 0))
@@ -828,17 +822,13 @@ def vat_return_general(inputs: dict) -> dict:
     import_vat_deferred = int(inputs.get("import_vat_deferred", 0))
     purchase_invoice_fixed = int(inputs.get("purchase_invoice_fixed", 0))
     prelim_omitted_purchase = int(inputs.get("prelim_omitted_purchase", 0))
-    purchase_buyer_invoice = inputs.get("purchase_buyer_invoice", 0)
-    if isinstance(purchase_buyer_invoice, dict):
-        pbi_amount = int(purchase_buyer_invoice.get("금액", 0))
-        pbi_tax = int(purchase_buyer_invoice.get("세액", pbi_amount * 10 // 100))
-    else:
-        pbi_amount = int(purchase_buyer_invoice or 0)
-        pbi_tax = pbi_amount * 10 // 100
+    pbi_amount = int(inputs.get("purchase_buyer_invoice", 0))
     purchase_card_cash = int(inputs.get("purchase_card_cash", 0))
     purchase_deemed = int(inputs.get("purchase_deemed", 0))
     purchase_other_credit = int(inputs.get("purchase_other_credit", 0))
     recovered_input = int(inputs.get("recovered_input", 0))
+    nondeductible = int(inputs.get("nondeductible", 0))
+    common_nondeductible = int(inputs.get("common_nondeductible", 0))
     other_credit = int(inputs.get("other_credit", 0))
     card_sales_credit_val = int(inputs.get("card_sales_credit", 0))
     small_biz_reduction = int(inputs.get("small_biz_reduction", 0))
@@ -858,8 +848,7 @@ def vat_return_general(inputs: dict) -> dict:
             return 검증오류
         # ledger로 들어오는 입력 키
         sales_invoice = 집계["공급"].get("sales_invoice", 0)
-        sales_buyer_invoice = {"금액": 집계["공급"].get("sales_buyer_invoice", 0),
-                               "세액": 집계["공급"].get("sales_buyer_invoice", 0) * 10 // 100}
+        sbi_amount = 집계["공급"].get("sales_buyer_invoice", 0)
         sales_card_cash = 집계["공급"].get("sales_card_cash", 0)
         sales_other = 집계["공급"].get("sales_other", 0)
         deemed_supply = 집계["공급"].get("deemed_supply", 0)
@@ -869,8 +858,7 @@ def vat_return_general(inputs: dict) -> dict:
         purchase_invoice = 집계["매입"].get("purchase_invoice", 0)
         purchase_invoice_fixed = 집계["매입"].get("purchase_invoice_fixed", 0)
         prelim_omitted_purchase = 집계["매입"].get("prelim_omitted_purchase", 0)
-        purchase_buyer_invoice = {"금액": 집계["매입"].get("purchase_buyer_invoice", 0),
-                                  "세액": 집계["매입"].get("purchase_buyer_invoice", 0) * 10 // 100}
+        pbi_amount = 집계["매입"].get("purchase_buyer_invoice", 0)
         purchase_card_cash = 집계["매입"].get("purchase_card_cash", 0)
         purchase_deemed = 집계["세액"].get("purchase_deemed", 0)
         purchase_other_credit = 집계["세액"].get("purchase_other_credit", 0)
@@ -879,9 +867,6 @@ def vat_return_general(inputs: dict) -> dict:
         common_nondeductible = 집계["세액"].get("common_nondeductible", 0)
         bad_debt_credit = 집계["세액"].get("bad_debt_credit", 0)
         import_vat_deferred = 집계["세액"].get("import_vat_deferred", 0)
-        # ledger만 쓸 때 없는 키는 0
-        nondeductible = nondeductible
-        common_nondeductible = common_nondeductible
 
     # ── 입력 검증 ──
     음수검증대상 = {
@@ -893,7 +878,8 @@ def vat_return_general(inputs: dict) -> dict:
         "prelim_omitted_purchase": prelim_omitted_purchase, "purchase_buyer_invoice": pbi_amount,
         "purchase_card_cash": purchase_card_cash, "purchase_deemed": purchase_deemed,
         "purchase_other_credit": purchase_other_credit, "recovered_input": recovered_input,
-        "other_credit": other_credit, "card_sales_credit": card_sales_credit_val,
+        "nondeductible": nondeductible, "common_nondeductible": common_nondeductible,
+        "import_vat_deferred": import_vat_deferred, "other_credit": other_credit, "card_sales_credit": card_sales_credit_val,
         "small_biz_reduction": small_biz_reduction, "prepaid_refund_pending": prelim_refund_pending,
         "prepaid_assessed": prepaid_assessed, "occasional_assessed": occasional_assessed,
         "prepaid_by_transferee": prepaid_by_transferee, "prepaid_buyer_special": prepaid_buyer_special,
@@ -902,8 +888,6 @@ def vat_return_general(inputs: dict) -> dict:
     for key, val in 음수검증대상.items():
         if val < 0:
             raise ValueError(f"{key}: 음수 입력 불가({val}) — bad_debt_credit만 음수 허용(회수분)")
-    if bad_debt_credit < 0:
-        pass  # 회수분은 허용
 
     if kind == "예정":
         if prelim_refund_pending != 0 or prepaid_assessed != 0 or occasional_assessed != 0:
@@ -922,7 +906,7 @@ def vat_return_general(inputs: dict) -> dict:
 
     # (1)~(7) 세액
     세액_1 = sales_invoice * 10 // 100
-    세액_2 = sbi_tax
+    세액_2 = sbi_amount * 10 // 100
     세액_3 = sales_card_cash * 10 // 100
     세액_4 = (sales_other + deemed_supply) * 10 // 100
     세액_5 = 0  # 영세율
@@ -936,14 +920,11 @@ def vat_return_general(inputs: dict) -> dict:
     세액_11 = import_vat_deferred
     세액_12 = purchase_invoice_fixed * 10 // 100
     세액_13 = prelim_omitted_purchase * 10 // 100
-    세액_14 = pbi_tax
+    세액_14 = pbi_amount * 10 // 100
     세액_15 = purchase_card_cash * 10 // 100 + purchase_deemed + purchase_other_credit + recovered_input
-    매입세액 = (purchase_invoice + purchase_invoice_fixed + prelim_omitted_purchase + pbi_amount) * 10 // 100 \
-        - import_vat_deferred + purchase_card_cash * 10 // 100 + purchase_deemed + purchase_other_credit + recovered_input
+    매입세액 = 세액_10 - 세액_11 + 세액_12 + 세액_13 + 세액_14 + 세액_15   # (16) = 칸별 세액의 합(서식 산식 그대로)
 
     # (17) 공제받지 못할 매입세액
-    nondeductible = int(inputs.get("nondeductible", 0)) if ledger is None else nondeductible
-    common_nondeductible = int(inputs.get("common_nondeductible", 0)) if ledger is None else common_nondeductible
     공제받지못할_매입세액 = nondeductible + common_nondeductible
     매입세액_차감계 = 매입세액 - 공제받지못할_매입세액
 
@@ -1054,7 +1035,7 @@ def vat_return_general(inputs: dict) -> dict:
          "근거": "부가가치세법 제38조·제39조"},
         {"항목": "공제받지 못할 매입세액((17))", "금액": 공제받지못할_매입세액,
          "근거": "부가가치세법 제39조 — 부품 도구 판정 결과 그대로"},
-        {"항목": "매입세액 차간계(㉯ = (16)−(17))", "금액": 매입세액_차감계,
+        {"항목": "매입세액 차감계(㉯ = (16)−(17))", "금액": 매입세액_차감계,
          "근거": "부가가치세법 제38조"},
         {"항목": "납부(환급)세액(㉰ = ㉮−㉯)", "금액": 납부환급세액,
          "근거": "부가가치세법 제45조·제48조·제49조"},

@@ -26,7 +26,7 @@ flowchart LR
 3. **Calculation** — follows the statute order, e.g. tax base → that year's brackets → tax.
 4. **Result** — tax, intermediate amounts, item-level judgments, adjustments with income dispositions, and citations.
 
-94 of the 97 tools run in code without generative AI (the 2 price lookups only fetch public data from KRX and VWORLD). Only the 3 PDF tools use Upstage, and only when `UPSTAGE_API_KEY` is set.
+95 of the 98 tools run in code without generative AI (the 2 price lookups only fetch public data from KRX and VWORLD). Only the 3 PDF tools use Upstage, and only when `UPSTAGE_API_KEY` is set.
 
 ### How corporate tax adjustments chain
 
@@ -183,6 +183,7 @@ Click a group to expand its tools.
 | `other_income_aggregate` | other income |
 | `earned_income_gross_pay` | employment gross pay |
 | `simplified_vat_return` | simplified VAT return |
+| `vat_return_general` | general-taxpayer VAT return (Form 21) aggregation — sums component-tool results down to net tax payable/refundable |
 | `common_input_tax` | common input tax |
 | `input_tax_recalculation` | input tax recalculation |
 | `bundled_supply_split` | land/building split |
