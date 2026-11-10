@@ -31,6 +31,7 @@ from .engine import calc_donation_ind as DI
 from .engine import calc_deadline as DL
 from .engine.exact import floor_won as _floor_won, trunc_won as _trunc_won, exact as _exact
 from .engine import inputs as _chk
+from .engine.errors import NoYearTable as _NoYearTable
 from . import vocab
 from .forms_workbook import render_form_sheet, _load_form_templates, tool_value, nonbusiness_form_sources, nonbusiness_form_data
 from .forms_workbook import export_form_inputs, form_cell_inputs, merged_form_sources, vat_period_text
@@ -543,7 +544,7 @@ def _guard(fn):
         try:
             inner = fn(*a, **k)
             r = _front(inner)
-        except (C.NoYearTable, getattr(V, "NoYearTable", C.NoYearTable), getattr(I, "NoYearTable", C.NoYearTable)) as e:
+        except _NoYearTable as e:
             r = {"error": str(e), "주의": "연도표 없는 해는 추정 계산하지 않음"}
         except (ValueError, KeyError, TypeError) as e:
             r = {"error": f"입력 오류: {e}"}
@@ -1644,6 +1645,8 @@ def nonbusiness_interest_disallowance(loans: Annotated[list[Loan], Field(descrip
         r, calc, 판단, pointer = C.nonbusiness_interest_judge([l.model_dump() for l in loans], advances, deposits,
                                                             nonbusiness_jeoksu, year, fiscal_start, fiscal_end,
                                                             company=norm_name(company) if company else None, relations=case)
+    except _NoYearTable:
+        raise                                   # 연도표 없음은 _guard가 {"error", "주의"}로(종전 Exception 기반 때와 같게)
     except (ValueError, KeyError, TypeError) as e:
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [str(e)]}
     extra = {"계산": calc, "판단": 판단}

@@ -4,16 +4,13 @@
 
 import calendar
 
+from .errors import NoYearTable
 from .exact import exact as _x, floor_won as _floor, trunc_won as _trunc
 
 
 # ── 과세기간·연도표 (2016년 제1기 ~ 2026년 제1기, 법제처 연혁본 원문 대조 — knowledge/16 '부가가치세 연도표') ──
 # 과세기간 인자: 'YYYY-1' | 'YYYY-2' | 'YYYY-MM-DD'(그 날이 속한 과세기간). None이면 현행(2026년) 값 — 기존 호출 호환.
 VAT_FIRST, VAT_LAST = (2016, 1), (2026, 2)
-
-
-class NoYearTable(ValueError):
-    """연도표 범위 밖 과세기간 — 계산하지 않음(추정 금지)."""
 
 
 def _period(p):
