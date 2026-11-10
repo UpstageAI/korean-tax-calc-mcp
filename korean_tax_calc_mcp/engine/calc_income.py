@@ -6,7 +6,7 @@ import math
 import os
 
 from .. import vocab
-from .exact import exact as _x, floor_won as _floor
+from .exact import exact as _x, floor_won as _floor, tier
 
 
 def _load_income_rules():
@@ -257,13 +257,8 @@ def _y(year):
 
 def _tier(x, tiers):
     """누진 구간 세액을 분수로 정확히(0.7 같은 세율을 7/10으로) — 부동소수 곱의 절사 오차(2,900,000×70% → 2,029,999) 방지.
-    호출 쪽이 int()로 원 미만을 버린다."""
-    x = _x(x)
-    out, prev = _x(0), 0
-    for cap, r in tiers:
-        if x > prev: out += (min(x, cap) - prev) * _x(r)
-        prev = cap
-    return out
+    호출 쪽이 int()로 원 미만을 버린다(exact.tier)."""
+    return tier(x, tiers)
 
 
 def earned_deduction(gross, year=2025):

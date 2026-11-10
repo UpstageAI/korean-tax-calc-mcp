@@ -61,3 +61,22 @@ def round_won(*factors, div=1) -> int:
     p = product(*factors, div=div)
     n = math.floor(abs(p) + Fraction(1, 2))
     return n if p >= 0 else -n
+
+
+def tier(x, tiers, *, float_accumulate=False):
+    """누진 구간표 [(상한, 세율), …]의 누적 세액 — 상한은 오름차순, 마지막 상한은 None·math.inf 허용.
+    세율은 뜻한 분수로 읽어(0.09 → 9/100) 부동소수 절사 오차 없이 Fraction을 돌려준다. 원 미만 처리는 호출 쪽(int·floor_won·round_won).
+    float_accumulate=True: 종전 부동소수 누적(calc_cit 전용) — 연 환산(×12/월수) 뒤 .5원 경계에서 분수 결과와 1원 갈리므로 법령 근거 없이 바꾸지 않음."""
+    if float_accumulate:
+        out, prev = 0.0, 0
+        for cap, r in tiers:
+            if x > prev: out += (min(x, cap) - prev) * r
+            prev = cap
+        return out
+    x = exact(x)
+    out, prev = Fraction(0), 0
+    for cap, r in tiers:
+        if x > prev:
+            out += ((x if cap is None else min(x, cap)) - prev) * exact(r)
+        prev = cap
+    return out
