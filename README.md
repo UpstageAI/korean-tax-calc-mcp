@@ -8,7 +8,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/korean-tax-calc-mcp)](https://pypi.org/project/korean-tax-calc-mcp/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-korean--tax--calc--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=korean-tax-calc-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Built with Upstage Solar Pro 4](https://img.shields.io/badge/Built%20with-Upstage%20Solar%20Pro%204-7A3FF2)](https://www.upstage.ai/) · [English](README-EN.md)
 
-> **작성 주체(정확한 고지):** 0.3.0부터 0.12.2까지(2026-10-10부터 10-26까지)는 **Solar Pro 4**(Solar Work CLI)가 코드를 쓰고 CodeSolar가 리뷰, Claude가 테스트로 교차 검증했습니다(0.8.0 일부 문법 오류와 0.9.2는 Claude가 수정·작성). **0.13.0(2026-10-28)부터는 기존 계산기 뼈대는 Solar Pro 4 그대로이고, 새 도구·연도별 조문 대조·버그 수정은 Claude(Anthropic)가 작성**하며 CodeSolar가 리뷰합니다. **0.26.0(2026-11-10)부터 새 도구는 Claude가 명세·정답 테스트를 먼저 쓰고 Solar Pro 4가 뼈대를 구현한 뒤 Claude가 검수·보완합니다**(커밋별 작성자 표기). 버전별 작성 주체는 [CHANGELOG](CHANGELOG.md) 각 절 머리에 적혀 있습니다. 도구 104개.
+> **작성 주체(정확한 고지):** 0.3.0부터 0.12.2까지(2026-10-10부터 10-26까지)는 **Solar Pro 4**(Solar Work CLI)가 코드를 쓰고 CodeSolar가 리뷰, Claude가 테스트로 교차 검증했습니다(0.8.0 일부 문법 오류와 0.9.2는 Claude가 수정·작성). **0.13.0(2026-10-28)부터는 기존 계산기 뼈대는 Solar Pro 4 그대로이고, 새 도구·연도별 조문 대조·버그 수정은 Claude(Anthropic)가 작성**하며 CodeSolar가 리뷰합니다. **0.26.0(2026-11-10)부터 새 도구는 Claude가 명세·정답 테스트를 먼저 쓰고 Solar Pro 4가 뼈대를 구현한 뒤 Claude가 검수·보완합니다**(커밋별 작성자 표기). 버전별 작성 주체는 [CHANGELOG](CHANGELOG.md) 각 절 머리에 적혀 있습니다. 도구 108개.
 
 **Korean tax calculations for AI agents — code, not guesses.** [English](README-EN.md)
 
@@ -93,7 +93,7 @@ AI가 도구를 언제 부르고, 도구의 답을 언제 믿을지 정해 주�
 5. 답이 두 개 나오면(안분 전후, 전체와 과세분 등) 질문이 묻는 하나만 답한다.
 ```
 
-## 도구 (105개)
+## 도구 (108개)
 
 묶음 이름을 누르면 도구 목록이 펼쳐집니다.
 

@@ -32,6 +32,7 @@ from .engine import calc_donation_ind as DI
 from .engine import calc_deadline as DL
 from .engine.exact import floor_won as _floor_won, trunc_won as _trunc_won, exact as _exact
 from .engine import inputs as _chk
+from .engine import calc_batch0300 as B
 from .engine.errors import NoYearTable as _NoYearTable
 from . import vocab
 from .tools_income import earned_income_gross_pay_impl as _earned_income_gross_pay_impl
@@ -8808,7 +8809,143 @@ def foreign_exchange_reporting(
         return r
     return _ok(r["결과"], r["근거"], 판단=r.get("판단", []), 주의=r.get("주의", []))
 
+# ── 도구: 개인 외국납부세액공제 (소득세법 제57조, 영 제117조) ──────────────────────
+# SPEC_batch0300_1110. 근거: 소득세법 제57조(1항·2항), 시행령 제117조(1항·2항·7항).
 
+@mcp.tool(annotations=CALC)
+@_guard
+def individual_foreign_tax_credit(
+    year: YEAR,
+    calculated_tax: WON,
+    total_income: WON,
+    countries: Annotated[list, Field(description="[{country, foreign_income, foreign_tax, treaty_rate?, gross_amount?, russia_override?}] — "
+                                             "foreign_income: 국외원천소득(대응비용 차감 후, 원), foreign_tax: 외국소득세액(가산세 제외, 원), "
+                                             "treaty_rate: 조약 제한세율(선택, 소수), gross_amount: 조약 제한세율 적용 대상 총액(원, 선택), "
+                                             "russia_override: 러시아 등 조약 초과분 포함 여부(선택 bool)")],
+    income_kind: Annotated[str, Field(description="소득 종류: '종합'(기본) | '퇴직'")] = "종합",
+    carryforward: Annotated[list | None, Field(description="[{country, year, amount}] 이월된 미공제 외국소득세액 — 종합소득만 지원")] = None,
+) -> dict:
+    """거주자 외국납부세액공제(소득세법 제57조(1항·2항), 시행령 제117조(1항·2항·7항)).
+
+    언제: 거주자가 국외원천소득에 대해 외국에 납부한 세액이 있을 때 종합소득 또는 퇴직소득
+    산출세액에서 국가별 한도 이내로 공제하고, 한도 초과분은 이월 가능 여부와 이월기간을 계산한다.
+    입력:
+      year — 귀속연도(2016~2026).
+      calculated_tax — 종합소득산출세액 또는 퇴직소득산출세액(원, A).
+      total_income — 종합소득금액 또는 퇴직소득금액(원, C). 0이면 오류.
+      countries — [{country, foreign_income, foreign_tax, treaty_rate?, gross_amount?, russia_override?}].
+      income_kind — '종합'(기본) | '퇴직'.
+      carryforward — [{country, year, amount}] (종합소득만, 이월된 미공제 외국소득세액).
+    결과: 외국납부세액공제액·공제한도_합계·이월액·이월기간경과분·국가별 내역·산식.
+    주의: 외국납부세액공제신청서를 확정신고 때 제출(영 제117조(3항)), 국외원천소득은 대응비용을 뺀 금액(영 제117조(2항)).
+    """
+    r = B.individual_foreign_tax_credit(
+        year=year, calculated_tax=calculated_tax, total_income=total_income,
+        countries=countries, income_kind=income_kind, carryforward=carryforward,
+    )
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 주의=r.get("주의", []), 판단=r.get("판단", []))
+
+# ── 도구: 해외금융계좌 신고의무·과태료 판정 (국조법 제53조·제54조·제90조) ──────────────
+# SPEC_batch0300_1110. 근거: 국조법 제53조①②·제54조·제90조①②, 영 제92조③·제93조①·제94조·제147조①②④.
+
+@mcp.tool(annotations=CALC)
+@_guard
+def overseas_account_reporting(
+    year: YEAR,
+    month_end_totals_krw: Annotated[list | None, Field(description="1~12월 말일 합산 잔액(원) 목록, 길이 12 — 호출자가 영 제93조(1항) 방법으로 환산한 값")] = None,
+    accounts: Annotated[list | None, Field(description="[{name, month_end_krw: 길이 12}] — 월별 합산(둘 다 주면 오류, 둘 다 없어도 오류)")] = None,
+    holder: Annotated[Literal["거주자", "내국법인"], Field(description="'거주자'(기본) | '내국법인'")] = "거주자",
+    foreigner_resident_years_in_korea_last10: Annotated[int | None, Field(description="외국인 거주자로서 최근 10년 중 국내 주소·거소 기간(년). 5 이하면 면제")] = None,
+    overseas_korean_days_in_korea: Annotated[int | None, Field(description="재외국민의 신고대상 연도 종료일 1년 전부터 국내 거소 일수. 182 이하면 면제")] = None,
+    treaty_resident_of_other_country: Annotated[bool, Field(description="조세조약상 상대국 거주자면 면제")] = False,
+    reported_amount_krw: Annotated[int, Field(description="기한 내 신고한 금액(과소신고 계산용, 기본 0 = 미신고)")] = 0,
+    corrected_on: Annotated[str | None, Field(description="수정신고일(YYYY-MM-DD — 기한 후 감경표 적용)")] = None,
+    unexplained_amount_krw: Annotated[int | None, Field(description="소명 불이행 과태료 계산용 금액(원, 선택)")] = None,
+) -> dict:
+    """해외금융계좌 신고의무·과태료 판정(국조법 제53조(1항·2항)·제54조·제90조(1항·2항), 시행령 제92조(3항)·제93조(1항)·제94조·제147조(1항·2항·4항).
+
+    언제: 거주자·내국법인이 보유한 해외금융계좌 매월 말일 잔액 합계가 5억 원을 초과하는지,
+    신고의무 유무·기한, 미신고·과소신고 과태료, 수정신고 감경, 소명 불이행 과태료를 계산한다.
+    입력:
+      year — 신고대상 연도(2016~2026).
+      month_end_totals_krw — 1~12월 말일 합산 잔액(원) 목록(길이 12). 또는 accounts.
+      accounts — [{name, month_end_krw: 길이 12}] (둘 다 주면 오류, 둘 다 없어도 오류).
+      holder — '거주자'(기본) | '내국법인'.
+      foreigner_resident_years_in_korea_last10 — 외국인 거주자 최근 10년 국내 주소·거소 기간(년). 5 이하면 면제.
+      overseas_korean_days_in_korea — 재외국민 국내 거소 일수. 182 이하면 면제.
+      treaty_resident_of_other_country — 조세조약상 상대국 거주자면 면제.
+      reported_amount_krw — 기한 내 신고한 금액(기본 0 = 미신고).
+      corrected_on — 수정신고일(YYYY-MM-DD).
+      unexplained_amount_krw — 소명 불이행 과태료 계산용 금액(원, 선택).
+    결과: 신고의무·최고잔액·최고잔액_월·신고기한·위반금액·과태료·과태료_범위·감경비율·감경후_과태료·소명불이행_과태료·면제사유.
+    판단: 실질적 소유자 안내 — 명의와 무관하게 사실상 관리하는 자가 보유자(영 제94조(1항)),
+    내국인이 의결권 100% 직·간접 보유한 외국법인 계좌는 비조약국이면 실질적 소유자(영 제94조(2항)),
+    공동명의자는 각자 전체 잔액 보유로 봄(제53조(2항2호)).
+    주의: 신고기한은 공휴일 조정 없음(영 제53조(1항)), 기한 후 신고 감경은 영 제147조(4항2호) 표 확인.
+    """
+    r = B.overseas_account_reporting(
+        year=year, month_end_totals_krw=month_end_totals_krw, accounts=accounts,
+        holder=holder, foreigner_resident_years_in_korea_last10=foreigner_resident_years_in_korea_last10,
+        overseas_korean_days_in_korea=overseas_korean_days_in_korea,
+        treaty_resident_of_other_country=treaty_resident_of_other_country,
+        reported_amount_krw=reported_amount_krw, corrected_on=corrected_on,
+        unexplained_amount_krw=unexplained_amount_krw,
+    )
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 판단=r.get("판단", []), 주의=r.get("주의", []))
+
+# ── 도구: 양도소득 부당행위계산 (소득세법 제101조, 영 제167조③④⑤⑥) ─────────────────
+# SPEC_batch0300_1110. 근거: 소득세법 제101조①②③, 시행령 제98조①·제167조③④⑤⑥.
+
+@mcp.tool(annotations=CALC)
+@_guard
+def capital_gains_unfair_transaction(
+    mode: Annotated[Literal["저가고가", "증여후양도"], Field(description="'저가고가'(기본) | '증여후양도'")] = "저가고가",
+    transaction: Annotated[str, Field(description="'양도' | '취득' — 저가고가 모드에서 사용")] = "양도",
+    market_value: Annotated[int, Field(description="시가(원, 상증법 준용 평가액·양도일 전후 3개월)")] = 0,
+    price: Annotated[int, Field(description="거래가액(원)")] = 0,
+    related_party: Annotated[bool, Field(description="특수관계인 여부")] = False,
+    counterparty_is_corporation: Annotated[bool, Field(description="상대방이 법인인지(기본 False)")] = False,
+    corporate_tax_market_value_applies: Annotated[bool, Field(description="상대 법인 거래가 법인세법 시행령 제89조 가액이라 제52조 미적용인 경우(기본 False)")] = False,
+    fraud: Annotated[bool, Field(description="사기·허위 등 부정 행위 여부(기본 False)")] = False,
+    gift_date: Annotated[str | None, Field(description="증여일(YYYY-MM-DD) — 증여후양도 모드")] = None,
+    transfer_date: Annotated[str | None, Field(description="양도일(YYYY-MM-DD) — 증여후양도 모드")] = None,
+    donee_relation: Annotated[str | None, Field(description="'배우자' | '직계존비속' | '기타특수관계인' — 증여후양도 모드")] = None,
+    donee_gift_tax: Annotated[int, Field(description="수증자가 낸 증여세(원, 증여후양도 모드)")] = 0,
+    donee_capital_gains_tax: Annotated[int, Field(description="수증자가 낸 양도소득세(원, 증여후양도 모드)")] = 0,
+    donor_direct_capital_gains_tax: Annotated[int, Field(description="증여자가 직접 양도했을 때 낼 양도소득세(원, 증여후양도 모드)")] = 0,
+    income_belongs_to_donee: Annotated[bool, Field(description="소득이 수증자에게 실질적으로 귀속되는지(기본 False — 증여후양도 모드)")] = False,
+) -> dict:
+    """양도소득 부당행위계산(소득세법 제101조(1항·2항·3항), 시행령 제98조(1항)·제167조(3항·4항·5항·6항).
+
+    언제: 특수관계인 간 자산 양도·취득이 시가와 현저히 차이가 나 부당행위계산 부인 대상인지,
+    또는 증여 후 수증자가 양도할 때 증여자가 직접 양도한 것으로 볼지 계산한다.
+    입력:
+      mode — '저가고가'(기본) | '증여후양도'.
+      [저가고가] transaction — '양도' | '취득'. market_value — 시가(원, 상증법 준용 평가액). price — 거래가액.
+        related_party — 특수관계인 여부. counterparty_is_corporation, corporate_tax_market_value_applies,
+        fraud — 법인 상대 거래 예외·영 제167조(6항) 관련.
+      [증여후양도] gift_date, transfer_date — YYYY-MM-DD. donee_relation — '배우자' | '직계존비속' | '기타특수관계인'.
+        donee_gift_tax, donee_capital_gains_tax, donor_direct_capital_gains_tax — 각 세액(원).
+        income_belongs_to_donee — 수증자 귀속분이면 적용 제외.
+    결과: [저가고가] 부당행위계산·차액·차액비율(정수 만분율)·기준_3억_충족·기준_5퍼센트_충족·조정후_양도가액|조정후_취득가액.
+      [증여후양도] 증여자_직접양도_간주·수증자_세액합계·증여자_직접양도세액·적용제외_사유.
+    """
+    r = B.capital_gains_unfair_transaction(
+        mode=mode, transaction=transaction, market_value=market_value, price=price,
+        related_party=related_party, counterparty_is_corporation=counterparty_is_corporation,
+        corporate_tax_market_value_applies=corporate_tax_market_value_applies, fraud=fraud,
+        gift_date=gift_date, transfer_date=transfer_date, donee_relation=donee_relation,
+        donee_gift_tax=donee_gift_tax, donee_capital_gains_tax=donee_capital_gains_tax,
+        donor_direct_capital_gains_tax=donor_direct_capital_gains_tax,
+        income_belongs_to_donee=income_belongs_to_donee,
+    )
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 판단=r.get("판단", []), 주의=r.get("주의", []))
 
 _TOOL_ALIASES: dict[str, list[str]] = {
     "해외직접투자 신고": ["foreign_exchange_reporting"], "외국환 신고": ["foreign_exchange_reporting"], "해외직접투자": ["foreign_exchange_reporting"],
@@ -8919,7 +9056,21 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "파견 인건비": ["expat_cost_recharge"], "주재원": ["expat_cost_recharge"],
     "외부세무조정": ["corporate_filing_obligations"], "외감 대상": ["corporate_filing_obligations"],
     "국제거래명세서": ["corporate_filing_obligations"], "외감": ["corporate_filing_obligations"],
+    # 0.30.0 — 개인 외국납부세액공제 · 해외금융계좌 신고 · 양도소득 부당행위계산
+    "개인 외국납부세액공제": ["individual_foreign_tax_credit"],
+    "거주자 외국납부세액": ["individual_foreign_tax_credit"],
+    "외국납부세액 개인": ["individual_foreign_tax_credit"],
+    "해외금융계좌 신고": ["overseas_account_reporting"],
+    "해외금융계좌 신고의무": ["overseas_account_reporting"],
+    "해외계좌 신고": ["overseas_account_reporting"],
+    "해외계좌 과태료": ["overseas_account_reporting"],
+    "해외금융계좌": ["overseas_account_reporting"],
+    "양도소득 부당행위계산": ["capital_gains_unfair_transaction"],
+    "부당행위계산 양도": ["capital_gains_unfair_transaction"],
+    "저가 양도": ["capital_gains_unfair_transaction"],
+    "증여 후 양도": ["capital_gains_unfair_transaction"],
 }
+
 
 # 계산 도구가 없는 흔한 질문 — 있는 척 엉뚱한 도구를 고르지 않도록 먼저 걸러 근거 조문만 안내(처음 쓰는 사람 점검 2026-10-30)
 _NOT_SUPPORTED: list[tuple[tuple[str, ...], str, list[tuple[str, str]]]] = [
