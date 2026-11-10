@@ -5,7 +5,7 @@ from __future__ import annotations
 import calendar
 import json
 import os
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import Any
 
 _RULES: dict | None = None

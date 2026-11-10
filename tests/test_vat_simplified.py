@@ -67,3 +67,47 @@ def test_simplified_exempt_threshold_text():
     assert "해당 과세기간 공급대가" in exempt_step["항목"]
     assert "직전 연도" not in exempt_step["항목"]
     assert res["납부의무_면제"] is True  # 30,000,000 < 48,000,000
+
+
+def test_simplified_prepaid_tax_deducted():
+    """제67조②: 예정부과·예정신고 납부·수시부과 세액은 확정신고 때 공제.
+    가상 수치: 위 케이스(차가감 895,000) + prepaid_tax 300,000 → 차가감 595,000, 환급 0"""
+    r = vat_simplified_taxpayer(
+        supply_incl_vat=60_000_000, value_added_rate=0.2, invoice_purchase_incl_vat=10_000_000,
+        card_cash_receipt_supply_incl_vat=20_000_000, no_invoice_purchase_incl_vat=1_000_000,
+        prepaid_tax=300_000, year=2026,
+    )
+    res = _result(r)
+    assert res["예정부과세액_공제"] == 300_000
+    assert res["차가감_납부세액"] == 595_000
+    assert res["환급세액"] == 0
+    assert "제67조" in r["근거"]
+
+
+def test_simplified_prepaid_tax_exceeds_gives_refund():
+    """예정부과세액이 납부할 세액보다 크면 차가감은 음수, 환급세액 = 초과분. 895,000 − 1,000,000 = −105,000"""
+    r = vat_simplified_taxpayer(
+        supply_incl_vat=60_000_000, value_added_rate=0.2, invoice_purchase_incl_vat=10_000_000,
+        card_cash_receipt_supply_incl_vat=20_000_000, no_invoice_purchase_incl_vat=1_000_000,
+        prepaid_tax=1_000_000, year=2026,
+    )
+    res = _result(r)
+    assert res["차가감_납부세액"] == -105_000
+    assert res["환급세액"] == 105_000
+
+
+def test_simplified_exempt_with_prepaid_refunds():
+    """제69조④: 납부의무 면제 사업자가 자진 납부한 금액은 환급. 공급대가 30,000,000(면제) + prepaid 200,000 → 환급 200,000"""
+    r = vat_simplified_taxpayer(supply_incl_vat=30_000_000, value_added_rate=0.2, prepaid_tax=200_000, year=2026)
+    res = _result(r)
+    assert res["납부의무_면제"] is True
+    assert res["차가감_납부세액"] == -200_000
+    assert res["환급세액"] == 200_000
+
+
+def test_simplified_prepaid_default_zero_unchanged():
+    r = vat_simplified_taxpayer(supply_incl_vat=60_000_000, value_added_rate=0.2, year=2026)
+    res = _result(r)
+    assert res["예정부과세액_공제"] == 0
+    assert res["환급세액"] == 0
+    assert res["차가감_납부세액"] == 1_200_000

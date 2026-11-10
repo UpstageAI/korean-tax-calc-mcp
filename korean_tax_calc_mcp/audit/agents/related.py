@@ -8,7 +8,6 @@
   officers:{법인: [임원 이름]}
 """
 from collections import defaultdict
-from itertools import count
 
 
 # ── 친족 (국세기본법 시행령 제1조의2①, 상증령 제2조의2①1호) ──

@@ -205,11 +205,6 @@ def _추정상속재산(year, presumed_items):
     return total, details
 
 
-def 상속세율_산출세액(amount):
-    """법 제26조 누진표."""
-    return _calc_tax(amount, 2025)
-
-
 def inheritance_tax(
     year: int,
     estate_value: int,

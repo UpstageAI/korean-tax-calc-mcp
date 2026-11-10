@@ -86,7 +86,7 @@ def resolve(name: str, tool_name: str | None = None, year: int | None = None) ->
                 if year is None:
                     aliases.append(alias_name)
                 else:
-                    ykey = _year_key(year)
+                    ykey = _year_0101(year)
                     from_ok = from_date is None or ykey >= int(from_date)
                     to_ok = to_date is None or ykey <= int(to_date)
                     if from_ok and to_ok:
@@ -105,7 +105,7 @@ def resolve(name: str, tool_name: str | None = None, year: int | None = None) ->
             alias_name, from_date, to_date = alias
             if alias_name == name:
                 if year is not None:
-                    ykey = _year_key(year)
+                    ykey = _year_0101(year)
                     from_ok = from_date is None or ykey >= int(from_date)
                     to_ok = to_date is None or ykey <= int(to_date)
                     if not (from_ok and to_ok):

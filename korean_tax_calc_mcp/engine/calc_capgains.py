@@ -1,7 +1,6 @@
 """부동산 양도소득금액 계산 엔진 (capital_gains_income)."""
 from __future__ import annotations
 
-import math
 from datetime import date, datetime
 from typing import Any
 
@@ -38,13 +37,6 @@ def full_years(start: date, end: date) -> int:
 
 
 # ── vocab 조회 ─────────────────────────────────────────────────────────────
-
-def _vocab_rule_on(name: str, yyyymmdd: int) -> dict:
-    """vocab.rule_on을 파이프라인 임포트 없이 직접 쓰고 싶으면 여기서 호출.
-    calc_capgains에서는 server 측 함수가 vocab을 감싼 rule_on을 전달하므로
-    여기서는 날짜 정수 → dict 조회만 수행한다(어휘 모듈은 서버 측에서 주입)."""
-    import korean_tax_calc_mcp.vocab as V
-    return V.rule_on(name, yyyymmdd)
 
 
 def _표1_공제율(보유년: int, 표1: list[list[int | float]]) -> float:

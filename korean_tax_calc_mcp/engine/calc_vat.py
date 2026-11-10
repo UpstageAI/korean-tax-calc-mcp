@@ -324,7 +324,7 @@ def _is_late_invoice_deduction(supply_date, issue_date, period, filing, 발급�
     supply_date·issue_date는 'YYYY-MM-DD'. period='YYYY-1'|'YYYY-2', filing='예정'|'확정'.
     발급특례=True면 발급기한=공급시기 다음 달 10일(법 제34조③), False면 공급시기 당일.
     반환: (공제여부, 판단메시지, 지연수취여부)."""
-    from datetime import date, timedelta
+    from datetime import date
     from .calc_deadline import roll as _roll
 
     sd = date.fromisoformat(supply_date)

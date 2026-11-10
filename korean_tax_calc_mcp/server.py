@@ -38,12 +38,7 @@ from .forms_workbook import export_form_inputs, form_cell_inputs, merged_form_so
 # ── 세무조사 판정 도구 (audit 패키지) ──
 from .audit.agents import related as _R
 from .audit.agents.related_intake import norm_name
-from .audit.agents.tunnel_intake import upstage as _tunnel_upstage
-from .audit.agents.return_intake import upstage as _return_upstage
-from .audit.agents.precheck import corp as _precheck_corp, vat as _precheck_vat, income as _precheck_income, run as _precheck_run
-from .audit.agents.precheck.needs import guide as _precheck_guide
-from .audit.agents.precheck import REGISTRY as _AUDIT_REGISTRY, Data as _AuditData, Missing as _AuditMissing
-from .audit.agents import calc as _audit_calc, related as _audit_related
+from .audit.agents.precheck import run as _precheck_run
 
 AUDIT_INSTRUCTIONS = (
     "한국 세무조사 판정 도구. 특수관계인 판정은 반드시 기준일(사실관계 시점, YYYY-MM-DD)을 넣는다 — "
@@ -1180,7 +1175,7 @@ def invoice_penalty_bundle(items: Annotated[list, Field(description="[{deal(거�
     · 미발급·미발급_종이(2호)·가공(3호)이 있으면 그 deal의 매출처별합계표_*(6호)·지연수취·신용카드매입공제(7·5호)는 0 (단 5호 신용카드매입공제는 9항에 없으므로 그대로)
     · 지연발급(1호)·지연전송·미전송(3·4호)이 있으면 그 deal의 매출처별합계표_*(6호)는 0(9항2호)
 결과: 가산세_합계, 계산.항목별: [{deal, kind, 가산세, 배제사유?}], 근거(부가가치세법 제60조2항 후문·9항)."""
-    from .engine.calc_vat import invoice_penalties, invoice_penalty_rate
+    from .engine.calc_vat import invoice_penalties
 
     # 종류별 분류 (중복 배제용)
     # key kind가 deal에 있으면 value kind들을 0으로 만듦 (제60조2항 후문·9항)
@@ -2132,7 +2127,7 @@ def vat_simplified_taxpayer(supply_incl_vat: Annotated[int, Field(description="�
                             card_cash_receipt_supply_incl_vat: Annotated[int, Field(description="신용카드매출전표·현금영수증 등 발급분 공급대가(원)")] = 0,
                             no_invoice_purchase_incl_vat: Annotated[int, Field(description="세금계산서 발급 의무자로부터 미수취한 매입 공급대가(원)")] = 0,
                             prior_year_supply_incl_vat: Annotated[int, Field(description="직전 연도 공급대가(원) — 납부의무 면제 판정 참조")] = 0,
-                            prepaid_tax: Annotated[int, Field(description="예정부과 고지·수시부과세액(원)")] = 0,
+                            prepaid_tax: Annotated[int, Field(description="예정부과 고지·예정신고 납부·수시부과세액(원) — 제67조2항에 따라 차가감 납부세액에서 공제, 음수면 환급세액")] = 0,
                             year: Annotated[int, Field(description="적용 연도(2016~2026)")] = 2026,
                             business_start: Annotated[str | None, Field(description="사업 개시일(YYYY-MM-DD) — 제69조3항 12개월 환산 면제 판정에 사용")] = None,
                             closed_on: Annotated[str | None, Field(description="휴업·폐업·유형전환일(YYYY-MM-DD) — 제69조3항 12개월 환산 면제 판정에 사용")] = None,
@@ -2142,9 +2137,8 @@ def vat_simplified_taxpayer(supply_incl_vat: Annotated[int, Field(description="�
   business_start(사업 개시일, YYYY-MM-DD, 선택): 제69조3항 — 해당 과세기간 중 개업했으면 개시일~12.31 공급대가를 12개월로 환산해 면제 판정.
   closed_on(휴업·폐업·유형전환일, YYYY-MM-DD, 선택): 제69조3항 — 해당 과세기간 중 휴업·폐업·유형전환이 있으면 1.1~closed_on 공급대가를 12개월로 환산해 면제 판정.
   industries(겸영 업종 목록, 선택): [{value_added_rate, supply_incl_vat}] — 제63조2항 후문, 공급대가·부가가치율 대신 업종별 납부세액 = Σ(공급대가 × 부가가치율 × 10%). supply_incl_vat와 industries를 같이 주면 error.
-결과: 과세표준·납부세액·매입공제·카드공제·가산세·공제합계·차가감 납부세액·납부의무 면제 여부·면제_판정_공급대가·환산_개월수·단계별 계산, 근거(부가가치세법 제46조·제63조·제68조의2·제69조)."""
+결과: 과세표준·납부세액·매입공제·카드공제·가산세·공제합계·예정부과세액 공제·차가감 납부세액(음수면 환급세액)·환급세액·납부의무 면제 여부·면제_판정_공급대가·환산_개월수·단계별 계산, 근거(부가가치세법 제46조·제63조·제68조의2·제69조)."""
     from .engine.calc_vat import simplified_exempt_threshold, card_sales_credit
-    from datetime import date
 
     # 입력 검증: supply_incl_vat와 industries 동시 제공 시 error
     if industries is not None and supply_incl_vat != 0:
@@ -2195,11 +2189,17 @@ def vat_simplified_taxpayer(supply_incl_vat: Annotated[int, Field(description="�
     # 제69조①: 납부의무 면제면 차가감_납부세액 0 (납부세액은 계산된 값 유지, 판단에만 0 기재)
     if exempt:
         # 제69조①: 면제되는 것은 제63조② 납부세액뿐 — 가산세(제68조의2 등)는 남고, 제60조①(미등록)만 적용 안 함(제69조②)
-        net_tax = total_penalties
+        net_before_prepaid = total_penalties
         tax_due_display = tax_due  # 계산된 납부세액은 유지
     else:
-        net_tax = max(0, tax_due - total_credits) + total_penalties
+        net_before_prepaid = max(0, tax_due - total_credits) + total_penalties
         tax_due_display = tax_due
+
+    # 제67조②: 예정부과(제66조①본문)·예정신고 납부(제66조⑤)·수시부과(제68조②) 세액은 확정신고 때 공제하고 납부
+    # 공제 뒤 음수면 환급세액(면제 사업자의 자진 납부분 환급은 제69조④)
+    prepaid_tax = int(prepaid_tax or 0)
+    net_tax = net_before_prepaid - prepaid_tax
+    refund = max(0, -net_tax)
 
     # 판단 문구
     exempt_reason = "납부의무 면제 — 납부세액 0, 가산세는 남음(제69조①②, 재고납부세액은 별도)" if exempt else None
@@ -2214,7 +2214,9 @@ def vat_simplified_taxpayer(supply_incl_vat: Annotated[int, Field(description="�
         {"항목": "공제 합계(납부세액 한도)", "금액": total_credits, "근거": "부가가치세법 제63조"},
         {"항목": "세금계산서 미수취 가산세(0.5%)", "금액": no_invoice_penalty, "근거": "부가가치세법 제68조의2"},
         {"항목": "가산세 합계", "금액": total_penalties, "근거": "부가가치세법 제68조의2"},
-        {"항목": "차가감 납부세액(납부세액 − 공제 + 가산세, 음수 0)", "금액": net_tax, "근거": "부가가치세법 제63조"},
+        {"항목": "납부세액 − 공제 + 가산세(음수 0)", "금액": net_before_prepaid, "근거": "부가가치세법 제63조"},
+        {"항목": "예정부과·예정신고·수시부과 세액 공제", "금액": prepaid_tax, "근거": "부가가치세법 제67조2항"},
+        {"항목": "차가감 납부세액(음수면 환급세액)", "금액": net_tax, "근거": "부가가치세법 제67조2항"},
     ]
 
     if business_start is not None or closed_on is not None:
@@ -2233,7 +2235,9 @@ def vat_simplified_taxpayer(supply_incl_vat: Annotated[int, Field(description="�
         "카드발행세액공제": card_credit,
         "가산세": total_penalties,
         "공제_합계": total_credits,
+        "예정부과세액_공제": prepaid_tax,
         "차가감_납부세액": net_tax,
+        "환급세액": refund,
         "납부의무_면제": exempt,
         "직전_연도_공급대가": prior_year_supply_incl_vat,
         "면제_기준": exempt_threshold,
@@ -2243,8 +2247,8 @@ def vat_simplified_taxpayer(supply_incl_vat: Annotated[int, Field(description="�
     }
     if exempt_reason:
         result["판단"] = exempt_reason
-    return _ok(result, "부가가치세법 제46조·제63조·제68조의2·제69조",
-               산식="과세표준 = 공급대가 − 마일리지, 납부세액 = 과세표준 × 부가가치율 × 10%, 차가감 = max(0, 납부세액 − min(매입공제+카드공제, 납부세액)) + 가산세" +
+    return _ok(result, "부가가치세법 제46조·제63조·제67조·제68조의2·제69조",
+               산식="과세표준 = 공급대가 − 마일리지, 납부세액 = 과세표준 × 부가가치율 × 10%, 차가감 = max(0, 납부세액 − min(매입공제+카드공제, 납부세액)) + 가산세 − 예정부과·수시부과세액(음수면 환급)" +
                (" (면제 — 납부세액 0)" if exempt else ""))
 
 
@@ -10239,7 +10243,7 @@ def export_workbook(
 
     # ── 워크북 생성 ──
     import openpyxl
-    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side, numbers
+    from openpyxl.styles import Font, Alignment, PatternFill
     from openpyxl.utils import get_column_letter
 
     wb = openpyxl.Workbook()
