@@ -26,7 +26,7 @@ flowchart LR
 3. **Calculation** — follows the statute order, e.g. tax base → that year's brackets → tax.
 4. **Result** — tax, intermediate amounts, item-level judgments, adjustments with income dispositions, and citations.
 
-95 of the 98 tools run in code without generative AI (the 2 price lookups only fetch public data from KRX and VWORLD). Only the 3 PDF tools use Upstage, and only when `UPSTAGE_API_KEY` is set.
+98 of the 101 tools run in code without generative AI (the 2 price lookups only fetch public data from KRX and VWORLD). Only the 3 PDF tools use Upstage, and only when `UPSTAGE_API_KEY` is set.
 
 ### How corporate tax adjustments chain
 
@@ -87,7 +87,7 @@ When answering Korean tax questions, use korean-tax-mcp and korean-tax-calc-mcp 
 5. If two values come out (before/after apportionment, total vs. taxable part, etc.), answer only the one the question asks for.
 ```
 
-## Tools (98)
+## Tools (101)
 
 Click a group to expand its tools.
 
@@ -107,6 +107,7 @@ Click a group to expand its tools.
 | `nonbusiness_interest_disallowance` | non-business interest (advance exclusions, day-balances, ordering) |
 | `business_car_expense` | company cars |
 | `donation_limit` | donation limit |
+| `nonprofit_reserve_limit` | nonprofit reserve limit for inherent purpose business (Article 29) |
 | `bad_debt_allowance` | bad debt allowance |
 | `thin_capitalization` | thin capitalization |
 | `missing_receipt_disallowance` | missing receipts |
@@ -184,6 +185,8 @@ Click a group to expand its tools.
 | `earned_income_gross_pay` | employment gross pay |
 | `simplified_vat_return` | simplified VAT return |
 | `vat_return_general` | general-taxpayer VAT return (Form 21) aggregation — sums component-tool results down to net tax payable/refundable |
+| `vat_foreign_currency_base` | foreign-currency VAT base conversion (Enforcement Decree §59, §95③) |
+| `vat_reverse_charge` | reverse charge on services from foreign businesses (Article 52) |
 | `common_input_tax` | common input tax |
 | `input_tax_recalculation` | input tax recalculation |
 | `bundled_supply_split` | land/building split |

@@ -30,7 +30,7 @@ flowchart LR
 3. **계산** — 조문 순서대로 계산합니다. 예: 과세표준 → 그해 세율 구간 → 산출세액.
 4. **결과** — 세액·중간 계산·항목별 판단·세무조정(소득처분)·근거 조문을 함께 돌려줍니다.
 
-도구 98개 중 95개는 생성형 AI 없이 코드로 동작합니다(시세·공시가격 조회 2개는 KRX·브이월드 공개 데이터만 가져옵니다). PDF 도구 3개만 `UPSTAGE_API_KEY`가 있을 때 Upstage를 씁니다.
+도구 101개 중 98개는 생성형 AI 없이 코드로 동작합니다(시세·공시가격 조회 2개는 KRX·브이월드 공개 데이터만 가져옵니다). PDF 도구 3개만 `UPSTAGE_API_KEY`가 있을 때 Upstage를 씁니다.
 
 ### 법인세 세무조정이 이어지는 모양
 
@@ -91,7 +91,7 @@ AI가 도구를 언제 부르고, 도구의 답을 언제 믿을지 정해 주�
 5. 답이 두 개 나오면(안분 전후, 전체와 과세분 등) 질문이 묻는 하나만 답한다.
 ```
 
-## 도구 (98개)
+## 도구 (101개)
 
 묶음 이름을 누르면 도구 목록이 펼쳐집니다.
 
@@ -111,6 +111,7 @@ AI가 도구를 언제 부르고, 도구의 답을 언제 믿을지 정해 주�
 | `nonbusiness_interest_disallowance` | 업무무관 지급이자(가지급금 제외 판정·적수·순위) |
 | `business_car_expense` | 업무용승용차 |
 | `donation_limit` | 기부금 한도 |
+| `nonprofit_reserve_limit` | 비영리내국법인 고유목적사업준비금 손금산입 한도(법 제29조) |
 | `bad_debt_allowance` | 대손충당금 한도 |
 | `thin_capitalization` | 과소자본 |
 | `missing_receipt_disallowance` | 적격증빙 미수취 |
@@ -188,6 +189,8 @@ AI가 도구를 언제 부르고, 도구의 답을 언제 믿을지 정해 주�
 | `earned_income_gross_pay` | 근로소득 총급여 |
 | `simplified_vat_return` | 간이과세 확정신고 |
 | `vat_return_general` | 일반과세자 부가가치세 신고서(별지 제21호서식) 집계 — 부품 도구 결과를 차가감 납부(환급)세액까지 합산 |
+| `vat_foreign_currency_base` | 외화 대가 부가가치세 과세표준 환산(시행령 제59조·제95조제3항) |
+| `vat_reverse_charge` | 국외사업자 용역등 대리납부(법 제52조) |
 | `common_input_tax` | 공통매입세액 정산 |
 | `input_tax_recalculation` | 매입세액 재계산 |
 | `bundled_supply_split` | 토지·건물 안분 |
