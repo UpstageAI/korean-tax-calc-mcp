@@ -111,3 +111,16 @@ def test_simplified_prepaid_default_zero_unchanged():
     assert res["예정부과세액_공제"] == 0
     assert res["환급세액"] == 0
     assert res["차가감_납부세액"] == 1_200_000
+
+
+def test_simplified_exempt_with_prepaid_and_penalty_nets_refund():
+    """면제 + 세금계산서 미수취 가산세(1,000,000 × 0.5% = 5,000) + 자진 납부 200,000
+    → 가산세는 남고(제69조①) 자진 납부분은 환급(제69조④), 충당 뒤 환급 195,000"""
+    r = vat_simplified_taxpayer(supply_incl_vat=30_000_000, value_added_rate=0.2,
+                                no_invoice_purchase_incl_vat=1_000_000, prepaid_tax=200_000, year=2026)
+    res = _result(r)
+    assert res["납부의무_면제"] is True
+    assert res["가산세"] == 5_000
+    assert res["차가감_납부세액"] == -195_000
+    assert res["환급세액"] == 195_000
+    assert "제69조④" in res["판단"] and "충당" in res["판단"]
