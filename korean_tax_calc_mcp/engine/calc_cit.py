@@ -2067,12 +2067,6 @@ def foreign_tax_credit(year, base, base_includes_grossup, method, countries, mon
 # ── 수입배당금 익금불산입 ──────────────────────────────────────────
 
 
-def _parse_date(s):
-    """YYYY-MM-DD 문자열 → (year, month, day) 튜플."""
-    y, m, d = map(int, s.split("-"))
-    return (y, m, d)
-
-
 def _date_key(s):
     """YYYY-MM-DD 문자열 → YYYYMMDD 정수."""
     return int(s.replace("-", ""))
