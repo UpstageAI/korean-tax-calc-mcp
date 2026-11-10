@@ -2,11 +2,9 @@
 
 0.29.0 신규 도구. 뷰티 브랜드의 해외법인 설립·대여·증자·청산 시나리오에서 외국환 신고 의무와 세무(국조법 해외직접투자명세, 법인세 손금) 연결을 함께 본다.
 """
-from datetime import date, timedelta
-from fractions import Fraction
+from datetime import date
 
 from .calc_deadline import add_months, month_end_plus
-from .exact import trunc_won as _trunc_won
 
 _EVENT_TYPES = frozenset({
     "신설출자", "증액출자", "지분양수", "유보금증자", "금전대여", "임원파견",

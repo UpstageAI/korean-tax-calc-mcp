@@ -114,6 +114,7 @@ Click a group to expand its tools.
 | `dividend_received_deduction` | dividends received deduction |
 | `foreign_subsidiary_dividend` | foreign subsidiary dividend — exclusion vs foreign tax credit |
 | `expat_cost_recharge` | expat cost recharge — arm-length fee, deduction, overseas work exemption |
+| `foreign_exchange_reporting` | overseas direct investment: FX reporting (prior/post) deadline, bank, documents, follow-up reports, liquidation, NTS investment statement deadline |
 | `corporate_filing_obligations` | external audit, tax adjustment, international transaction filing obligations |
 | `asset_grant_reserve` | asset grant reserve |
 | `corporate_deemed_rent_income` | deemed rent income on deposits |
