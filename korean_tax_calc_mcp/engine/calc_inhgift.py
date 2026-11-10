@@ -4,7 +4,7 @@ from datetime import date
 from typing import Literal
 
 from .. import vocab
-from .exact import exact as _x, floor_won as _floor
+from .exact import floor_won as _floor, tier
 
 M = 1_000_000
 
@@ -38,16 +38,8 @@ def _rate_table(year):
 
 
 def _tier(amount, tiers):
-    """누진세액 — 세율을 분수로 곱해(10% → 1/10) 부동소수 절사 오차 없이 원 미만 버림."""
-    out, prev = _x(0), 0
-    for cap, r in tiers:
-        if amount > prev:
-            if cap is None:
-                out += (_x(amount) - prev) * _x(r)
-            else:
-                out += (min(_x(amount), cap) - prev) * _x(r)
-        prev = cap
-    return _won(out)
+    """누진세액 — 세율을 분수로 곱해(10% → 1/10) 부동소수 절사 오차 없이 원 미만 버림(exact.tier)."""
+    return _floor(tier(amount, tiers))
 
 
 def _calc_tax(amount, year):

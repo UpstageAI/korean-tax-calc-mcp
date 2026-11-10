@@ -7,7 +7,7 @@ import re
 from datetime import date, timedelta
 
 from .calc import won
-from .exact import exact as _x, floor_won as _floor, round_won as _round, trunc_won
+from .exact import exact as _x, floor_won as _floor, round_won as _round, trunc_won, tier
 
 # 키 = 사업연도(개시일이 속하는 연도). 값은 모두 법제처 efYd=그해1231 원문 + 개정 부칙 적용시기 대조(2026-09-30, knowledge/16 §법인 연도표).
 _T_OLD = [(200_000_000, 0.10), (20_000_000_000, 0.20), (math.inf, 0.22)]                                   # 제55조 2016·2017
@@ -55,11 +55,8 @@ YEAR = {y: _year(y) for y in range(2016, 2027)}  # 2016~2026 (2026: 법률 21043
 
 
 def _tier(amount, tiers):
-    out, prev = 0.0, 0
-    for cap, r in tiers:
-        if amount > prev: out += (min(amount, cap) - prev) * r
-        prev = cap
-    return out
+    """누진 구간 세액(부동소수 누적 그대로 — exact.tier 참고). 호출 쪽이 won()으로 원 미만 반올림."""
+    return tier(amount, tiers, float_accumulate=True)
 
 
 def months_in(start, end):
