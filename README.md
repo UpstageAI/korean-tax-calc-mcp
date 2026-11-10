@@ -187,6 +187,7 @@ AI가 도구를 언제 부르고, 도구의 답을 언제 믿을지 정해 주�
 | `other_income_aggregate` | 기타소득 |
 | `earned_income_gross_pay` | 근로소득 총급여 |
 | `simplified_vat_return` | 간이과세 확정신고 |
+| `vat_return_general` | 일반과세자 부가가치세 신고서(별지 제21호서식) 집계 — 부품 도구 결과를 차가감 납부(환급)세액까지 합산 |
 | `common_input_tax` | 공통매입세액 정산 |
 | `input_tax_recalculation` | 매입세액 재계산 |
 | `bundled_supply_split` | 토지·건물 안분 |

@@ -5035,8 +5035,8 @@ def vat_return_general(
     year: YEAR,
     period: Annotated[Literal["1", "2"], Field(description="과세기간('1'=제1기, '2'=제2기)")],
     kind: Annotated[Literal["확정", "예정"], Field(description="확정신고/예정신고")] = "확정",
-    sales_invoice: Annotated[int, Field(description="세금계산서 발급분 공급가액(원) — vat_sales_invoice 결과")] = 0,
-    sales_buyer_invoice: Annotated[int | dict, Field(description="매입자발행 세금계산서 [{금액, 세액}] 또는 공급가액(원)")] = 0,
+    sales_invoice: Annotated[int, Field(description="세금계산서 발급분 공급가액(원) — 매출처별 세금계산서합계표 합계")] = 0,
+    sales_buyer_invoice: Annotated[int, Field(description="매입자발행 세금계산서 매출 공급가액(원)")] = 0,
     sales_card_cash: Annotated[int, Field(description="신용카드·현금영수증 발행분 공급가액(원)")] = 0,
     sales_other: Annotated[int, Field(description="기타 정규영수증 외 매출분 공급가액(원)")] = 0,
     deemed_supply: Annotated[int, Field(description="간주공급 과세표준(원) — vat_deemed_supply_items 결과")] = 0,
@@ -5048,7 +5048,7 @@ def vat_return_general(
     import_vat_deferred: Annotated[int, Field(description="수출기업 수입분 납부유예 세액(원)")] = 0,
     purchase_invoice_fixed: Annotated[int, Field(description="고정자산매입 공급가액(원)")] = 0,
     prelim_omitted_purchase: Annotated[int, Field(description="예정신고 누락 매입 공급가액(원)")] = 0,
-    purchase_buyer_invoice: Annotated[int | dict, Field(description="매입자발행 세금계산서 수취 [{금액, 세액}] 또는 공급가액(원)")] = 0,
+    purchase_buyer_invoice: Annotated[int, Field(description="매입자발행 세금계산서 수취 공급가액(원)")] = 0,
     purchase_card_cash: Annotated[int, Field(description="신용카드·현금영수증 수취분 공급가액(원) — 그 밖의 공제매입세액 계산용")] = 0,
     purchase_deemed: Annotated[int, Field(description="의제매입세액(원) — vat_deemed_input_credit 결과")] = 0,
     purchase_other_credit: Annotated[int, Field(description="그 밖의 공제매입세액(원)")] = 0,
@@ -5075,29 +5075,18 @@ def vat_return_general(
       · 매출: sales_invoice(세금계산서 발급분), sales_buyer_invoice(매입자발행 세금계산서), sales_card_cash(신용카드ㆍ현금영수증 발행분), sales_other(기타 매출)·deemed_supply(간주공급, vat_deemed_supply_items 결과), sales_zero_invoice·sales_zero_other(영세율), prelim_omitted_sales(예정신고 누락 매출).
       · 매입: purchase_invoice(세금계산서 수취분 일반매입, common_input_tax 포함 전부), import_vat_deferred(수출기업 수입분 납부유예), purchase_invoice_fixed(고정자산매입), prelim_omitted_purchase(예정신고 누락 매입), purchase_buyer_invoice(매입자발행 세금계산서 수취), purchase_card_cash(신용카드ㆍ현금영수증 수취분, 그 밖의 공제매입세액 계산용), purchase_deemed(의제매입세액, vat_deemed_input_credit 결과), purchase_other_credit(그 밖의 공제매입세액), recovered_input(변제대손세액).
       · 공제받지 못할 매입세액: nondeductible(vat_input_tax_deduction 결과), common_nondeductible(common_input_tax 결과).
-      · 경감·공제: other_credit(그 밖의 경감·공제세액), card_sales_credit(vat_card_sales_credit 결과), e_filing·전자신고세액공제(정해져 있으면 e_filing_credit으로 직접 주입, 아니면 서버가 filed_on/기한으로 계산).
+      · 경감·공제: other_credit(그 밖의 경감·공제세액), card_sales_credit(vat_card_sales_credit 결과), e_filing(전자신고 여부)·filed_on(신고일, 생략하면 확정신고 기한) → 전자신고세액공제는 조세특례제한법 시행령 제104조의5③④ 연도표로 계산(예정신고 0).
       · 그 밖: small_biz_reduction(소규모 감면), prepaid_refund_pending(예정신고 미환급세액), prepaid_assessed(예정부과 고지세액), occasional_assessed(수시부과세액), prepaid_by_transferee·prepaid_buyer_special·prepaid_by_card_company(대리납부 등 기납부세액), penalties(가산세 목록 — invoice_penalty_bundle·late_payment_penalty 결과).
       · ledger(선택): 원장형 입력. 공급·매입·세액 항목명은 어휘 원장 허용값(공급: 세금계산서 발급분·매입자발행 세금계산서·신용카드·현금영수증 발행분·기타 매출·간주공급·영세율 세금계산서 발급분·영세율 기타·예정신고 누락 매출; 매입: 세금계산서 수취분 일반매입·고정자산·예정신고 누락 매입·매입자발행 세금계산서 수취·신용카드·현금영수증 수취분; 세액: 의제매입세액·그 밖의 공제매입세액·변제대손세액·공제받지 못할 매입세액·공통매입세액 면세사업분·대손세액·수입분 납부유예). ledger를 주면서 같은 항목의 scalar 입력을 0이 아닌 값으로 주면 error.
     결과: {결과: {과세표준·영세율_과세표준·매출세액·대손세액_가감·매출세액_합계·매입세액·공제받지못할_매입세액·매입세액_차감계·납부환급세액·경감공제세액·소규모감면세액·예정신고미환급세액·예정고지세액·수시부과세액·기납부세액_기타·가산세액계·차가감_납부세액·납부세액·환급세액}, 서식: {(1)~(30) 서식 원문 칸 이름}, 단계별_계산, 근거, 주의?, 원장대조?}."""
-    from .engine.calc_vat import vat_return_general as _eng, validate_ledger_entries, e_filing_credit_amount, default_filed_on, _LEDGER_ALLOWED
+    from .engine.calc_vat import vat_return_general as _eng, validate_ledger_entries, e_filing_credit_amount, default_filed_on  # 엔진이 ledger를 집계하므로 서버는 검사만
 
     # ledger 검사(먼저) + scalar 중복 검사
     if ledger is not None:
         집계, ve = validate_ledger_entries(ledger)
         if ve:
-            ve["허용값"] = {"공급": ["세금계산서 발급분", "매입자발행 세금계산서", "신용카드·현금영수증 발행분",
-                                      "기타 매출", "간주공급", "영세율 세금계산서 발급분", "영세율 기타", "예정신고 누락 매출"],
-                            "매입": ["세금계산서 수취분 일반매입", "세금계산서 수취분 고정자산", "예정신고 누락 매입",
-                                     "매입자발행 세금계산서 수취", "신용카드·현금영수증 수취분"],
-                            "세액": ["의제매입세액", "그 밖의 공제매입세액", "변제대손세액", "공제받지 못할 매입세액",
-                                     "공통매입세액 면세사업분", "대손세액", "수입분 납부유예"]}
             return ve
-        # scalar 입력과 ledger 항목 중복 검사 (명세 1-3: 중복 시 오류, 메시지에 그 키 이름)
-        ledger_keys = set()
-        for 구분, 매핑 in _LEDGER_ALLOWED.items():
-            for 항목명, 입력키 in 매핑.items():
-                if 집계[구분].get(입력키, 0) != 0:
-                    ledger_keys.add(입력키)
+        # ledger를 주면 원장 항목에 대응하는 scalar 입력은 전부 0이어야 함(명세 1-3) — 엔진이 원장 집계값으로 덮어쓰므로 무시되는 입력을 막는다
         scalar_inputs = {
             "sales_invoice": sales_invoice, "sales_buyer_invoice": sales_buyer_invoice,
             "sales_card_cash": sales_card_cash, "sales_other": sales_other,
@@ -5110,35 +5099,9 @@ def vat_return_general(
             "nondeductible": nondeductible, "common_nondeductible": common_nondeductible,
             "bad_debt_credit": bad_debt_credit, "import_vat_deferred": import_vat_deferred,
         }
-        dup_keys = [k for k, v in scalar_inputs.items()
-                    if (isinstance(v, dict) and (int(v.get("금액", 0)) != 0 or int(v.get("세액", 0)) != 0))
-                    or (not isinstance(v, dict) and int(v or 0) != 0)
-                    if k in ledger_keys]
+        dup_keys = [k for k, v in scalar_inputs.items() if int(v or 0) != 0]
         if dup_keys:
             raise ValueError(f"ledger와 scalar 입력이 중복됨: {', '.join(dup_keys)} — 하나로 통일해 입력")
-        # ledger로 scalar 값 대체
-        sales_invoice = 집계["공급"].get("sales_invoice", 0)
-        sbi_amt = 집계["공급"].get("sales_buyer_invoice", 0)
-        sales_buyer_invoice = {"금액": sbi_amt, "세액": sbi_amt * 10 // 100}
-        sales_card_cash = 집계["공급"].get("sales_card_cash", 0)
-        sales_other = 집계["공급"].get("sales_other", 0)
-        deemed_supply = 집계["공급"].get("deemed_supply", 0)
-        sales_zero_invoice = 집계["공급"].get("sales_zero_invoice", 0)
-        sales_zero_other = 집계["공급"].get("sales_zero_other", 0)
-        prelim_omitted_sales = 집계["공급"].get("prelim_omitted_sales", 0)
-        purchase_invoice = 집계["매입"].get("purchase_invoice", 0)
-        purchase_invoice_fixed = 집계["매입"].get("purchase_invoice_fixed", 0)
-        prelim_omitted_purchase = 집계["매입"].get("prelim_omitted_purchase", 0)
-        pbi_amt = 집계["매입"].get("purchase_buyer_invoice", 0)
-        purchase_buyer_invoice = {"금액": pbi_amt, "세액": pbi_amt * 10 // 100}
-        purchase_card_cash = 집계["매입"].get("purchase_card_cash", 0)
-        purchase_deemed = 집계["세액"].get("purchase_deemed", 0)
-        purchase_other_credit = 집계["세액"].get("purchase_other_credit", 0)
-        recovered_input = 집계["세액"].get("recovered_input", 0)
-        nondeductible = 집계["세액"].get("nondeductible", 0)
-        common_nondeductible = 집계["세액"].get("common_nondeductible", 0)
-        bad_debt_credit = 집계["세액"].get("bad_debt_credit", 0)
-        import_vat_deferred = 집계["세액"].get("import_vat_deferred", 0)
 
     # e_filing_credit 계산
     if e_filing:
