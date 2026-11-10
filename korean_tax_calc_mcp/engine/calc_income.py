@@ -225,10 +225,6 @@ def _process_income_items(year, income_items, rules):
     }
 
 
-def _won(x):
-    """원 미만 절사(⌊x⌋)."""
-    return int(math.floor(x))
-
 # 쟁점 데이터는 korean_tax_calc_mcp/data/issues.json에서 읽음 (SPEC r1d §1 — 하드코딩 금지)
 def _load_issues():
     path = os.path.join(os.path.dirname(__file__), "..", "data", "issues.json")
