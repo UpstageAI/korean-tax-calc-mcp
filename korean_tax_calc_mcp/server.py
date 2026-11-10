@@ -8810,14 +8810,14 @@ def foreign_exchange_reporting(
     )
     if "error" in r:
         return r
-    # ValueError(예: 허용되지 않은 event) → 허용값 오류로 변환
-    if isinstance(r, dict) and "error" not in r:
-        return _ok(r["결과"], r["근거"], 판단=r.get("판단", []), 주의=r.get("주의", []))
-    return r
+    return _ok(r["결과"], r["근거"], 판단=r.get("판단", []), 주의=r.get("주의", []))
 
 
 
 _TOOL_ALIASES: dict[str, list[str]] = {
+    "해외직접투자 신고": ["foreign_exchange_reporting"], "외국환 신고": ["foreign_exchange_reporting"], "해외직접투자": ["foreign_exchange_reporting"],
+    "청산보고": ["foreign_exchange_reporting"], "외화증권취득보고": ["foreign_exchange_reporting"], "해외법인 청산": ["foreign_exchange_reporting"],
+    "외국환거래": ["foreign_exchange_reporting"], "해외법인 신고": ["foreign_exchange_reporting"], "외국환은행 신고": ["foreign_exchange_reporting"],
     "양도세": ["capital_gains_income", "capital_gains_tax"], "양도소득세": ["capital_gains_income", "capital_gains_tax"],
     "단기 양도": ["capital_gains_tax"], "미등기": ["capital_gains_tax"], "비사업용 토지": ["capital_gains_tax", "capital_gains_income"],
     "집 팔": ["capital_gains_income"], "아파트 매도": ["capital_gains_income"], "1세대1주택": ["capital_gains_income"],

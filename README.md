@@ -121,6 +121,7 @@ AI가 도구를 언제 부르고, 도구의 답을 언제 믿을지 정해 주�
 | `foreign_subsidiary_dividend` | 외국자회사 수입배당금 익금불산입·외국납부세액공제 |
 | `expat_cost_recharge` | 해외 파견 인건비 청구액·정상가격·손금·비과세 |
 | `corporate_filing_obligations` | 외부감사·외부세무조정·국제거래 자료 제출 의무 판정 |
+| `foreign_exchange_reporting` | 해외직접투자 해당 여부·외국환 신고(사전/사후) 기한·기관·서류, 사후관리 보고서 일정, 청산, 해외직접투자명세 기한 |
 | `asset_grant_reserve` | 일시상각충당금 |
 | `corporate_deemed_rent_income` | 임대보증금 간주익금 |
 | `liquidation_income` | 청산소득 |
