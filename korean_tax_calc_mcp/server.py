@@ -8784,15 +8784,11 @@ def foreign_exchange_reporting(
     결과: 해외직접투자_해당(bool), 사유, 신고({구분:'사전신고'|'사후보고'|'해당없음', 기관, 기한, 서류:[...]}),
       사후관리([{보고서, 기한|'즉시'|'대상 아님', 근거}]), 세무({해외직접투자명세_기한, 안내:[...]}).
     판단·근거·주의 포함."""
-    # 허용값 검증 - event가 허용값인지 먼저 확인
-    _EVENT_TYPES = frozenset({
-        "신설출자", "증액출자", "지분양수", "유보금증자", "금전대여", "임원파견",
-        "지점설치", "지분매각", "청산", "내용변경",
-    })
-    if event not in _EVENT_TYPES:
+    # 허용값 검증 — 엔진의 목록을 그대로 씀(중복 정의 금지)
+    if event not in F._EVENT_TYPES:
         return {"error": "입력 확인 필요 — 계산하지 않음",
                 "문제": [f"event='{event}' 은(는) 허용값이 아님"],
-                "허용값": {"event": sorted(_EVENT_TYPES)}}
+                "허용값": {"event": sorted(F._EVENT_TYPES)}}
     
     r = F.foreign_exchange_reporting(
         event=event,
