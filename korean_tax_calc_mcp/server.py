@@ -8604,6 +8604,138 @@ def individual_donation_expense(year: YEAR,
     return DI.individual_donation(year, base_income, carried_loss, political, hometown, special, general, religious, carried_special, carried_general, volunteer, in_kind)
 
 
+# ── 도구 1: 외국자회사 수입배당금 — 익금불산입 vs 외국납부세액공제 ──────────────────────
+# SPEC_foreign_sub_tools_1110 §1. 근거: 법인세법 제18조의4·제57조·시행령 제18조·제57조·제94조·제21조, 부칙 법률 19193호.
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def foreign_subsidiary_dividend(
+    received_on: Annotated[str, Field(description="배당 받은 날(YYYY-MM-DD, 필수)")],
+    ownership_ratio: Annotated[float, Field(description="내국법인의 외국자회사 지분율(소수, 0 초과 1 이하, 필수)")],
+    held_months: Annotated[int, Field(description="배당기준일 현재 계속 보유 개월 수(int≥0, 필수)")],
+    dividend: Annotated[int, Field(description="원천징수 전 배당 총액(원 int>0, 필수)")],
+    foreign_withholding: Annotated[int, Field(description="외국 원천징수세액(원 int≥0, 기본 0)")] = 0,
+    subsidiary_tax: Annotated[int | None, Field(description="자회사 법인세액(원, 선택)")] = None,
+    subsidiary_income: Annotated[int | None, Field(description="자회사 소득금액(원, 선택)")] = None,
+    hybrid: Annotated[bool, Field(description="혼성금융상품 해당 여부(기본 False)")] = False,
+    cfc_low_tax: Annotated[bool, Field(description="특정외국법인 저세율(국조법 제27조, 실제부담세액 15% 이하) 여부(기본 False)")] = False,
+    resource_development: Annotated[bool, Field(description="해외자원개발사업 법인 여부(기본 False)")] = False,
+) -> dict:
+    """외국자회사 수입배당금: 익금불산입(법인세법 제18조의4, 2023.1.1. 시행, 지분 10%·해외자원개발 5% 이상 외국자회사 배당의 95% 익금불산입) vs 외국납부세액공제(제57조) 판정·계산.
+    언제: 외국자회사에서 배당을 받은 내국법인의 익금불산입 적용 여부와 익금불산입 금액·외국납부세액공제를 함께 구할 때.
+    입력: 배당 받은 날 → received_on, 지분율 → ownership_ratio, 보유 개월 → held_months,
+      배당 총액(원천징수 전) → dividend, 외국 원천징수세액 → foreign_withholding(선택, 기본 0),
+      자회사 법인세액·소득금액 → subsidiary_tax·subsidiary_income(간접외국납부세액 계산용, 선택),
+      혼성금융상품·특정외국법인 저세율·해외자원개발 여부 → hybrid·cfc_low_tax·resource_development.
+    결과: 제도(익금불산입/외국납부세액공제), 수입배당금액, 익금불산입액, 익금산입액, 직접·간접외국납부세액,
+      공제대상 외국법인세액, Gross-up 익금산입, 외국세 손금불산입, 판단·근거·서식.
+    지분율 요건은 배당 받은 날 기준(2023.1.1. 이후 10%, 그 전 25%; 해외자원개발 5%). 간접외국납부세액 = 자회사 법인세액 × 수입배당금액 ÷ (자회사 소득금액 − 법인세액), 원 미만 절사. 익금불산입 대상은 제57조제1~6항 적용 안 함(제57조제7항)."""
+    r = C.foreign_subsidiary_dividend({
+        "received_on": received_on,
+        "ownership_ratio": ownership_ratio,
+        "held_months": held_months,
+        "dividend": dividend,
+        "foreign_withholding": foreign_withholding,
+        "subsidiary_tax": subsidiary_tax,
+        "subsidiary_income": subsidiary_income,
+        "hybrid": hybrid,
+        "cfc_low_tax": cfc_low_tax,
+        "resource_development": resource_development,
+    })
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 판단=r.get("판단", []), 서식=r.get("서식", ""))
+
+
+# ── 도구 2: 해외 파견 인건비 청구 — 원가·정상가격·손금·비과세 ──────────────────────────
+# SPEC_foreign_sub_tools_1110 §2. 근거: 법인세법 제15조·제19조, 시행령 제106조제1항제1호 라목,
+# 국조법 제7조, 소득세법 제12조제3호거목·시행령 제16조제1항제1호.
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def expat_cost_recharge(
+    year: YEAR,
+    items: Annotated[list, Field(description="[{이름?, 급여(연, 원≥0), 사회보험(회사부담, 원≥0 기본 0), 체재비(원≥0 기본 0), "
+                                         "귀속:'본사'|'현지법인'|'공통'(필수), 공통비율(현지법인 몫, 0~1, 공통일 때 필수), "
+                                         "마크업(소수 기본 0.05), 청구액(실제 청구, 원≥0 기본 0), "
+                                         "국외근로_개월(0~12 기본 0), 국외근로_유형:'일반'|'건설·선박'(기본 '일반'), "
+                                         "거주자(bool 기본 True)}]")],
+) -> dict:
+    """해외 파견 인건비 청구액·손금·비과세 계산. 언제: 해외 현지법인에 파견한 직원의 인건비를 본사가 현지법인에 청구(정상가격 마크업 포함)할 때,
+    청구액에 따른 본사 손금·손금불산입·정상가격 조정 익금산입과 근로자 국외근로 비과세(월 100만원, 건설·선박 500만원)를 함께 구할 때.
+    입력: year — 사업연도(2016~2026). items — 항목별 [이름, 급여, 사회보험, 체재비, 귀속(본사/현지법인/공통),
+      공통비율(공통일 때), 마크업, 청구액, 국외근로_개월, 국외근로_유형, 거주자].
+    결과: 합계·항목별(원가, 현지법인 귀속원가, 정상청구액, 청구액, 미청구, 본사 손금, 본사 손금불산입,
+      소득처분, 정상가격 조정 익금산입, 근로자 비과세), 판단·근거."""
+    r = C.expat_cost_recharge({"year": year, "items": items})
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 판단=r.get("판단", []))
+
+
+# ── 도구 3: 외감·외부세무조정·국제거래 자료 제출 의무 판정 ─────────────────────────────
+# SPEC_foreign_sub_tools_1110 §3. 근거: 외감법 제4조·시행령 제5조, 법인세법 제60조제9항·시행령 제97조의2,
+# 국조법 제16조·시행령 제34조·제36조, 제58조.
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def corporate_filing_obligations(
+    year: YEAR,
+    corp_type: Annotated[str, Field(description="법인 유형('주식회사'|'유한회사', 기본 '주식회사')")] = "주식회사",
+    revenue: Annotated[int, Field(description="당기 수입금액(원)")] = 0,
+    revenue_prev: Annotated[int, Field(description="직전 사업연도 수입금액(원)")] = 0,
+    assets: Annotated[int, Field(description="기말 자산총액(원)")] = 0,
+    liabilities: Annotated[int, Field(description="기말 부채총액(원)")] = 0,
+    employees: Annotated[int, Field(description="종업원 수(명)")] = 0,
+    members: Annotated[int | None, Field(description="유한회사 사원 수(명, 선택)")] = None,
+    established_on: Annotated[str | None, Field(description="설립일(YYYY-MM-DD, 선택)")] = None,
+    foreign_subsidiary: Annotated[bool, Field(description="지분 10% 이상 외국자회사 보유 여부")] = False,
+    foreign_branch: Annotated[bool, Field(description="국외사업장 보유 여부")] = False,
+    tax_incentive: Annotated[bool, Field(description="조세특례제한법 특례 적용 여부")] = False,
+    reserve_balance: Annotated[int, Field(description="준비금 잔액(원, 기본 0)")] = 0,
+    assessed: Annotated[bool, Field(description="법인세 결정·경정 여부")] = False,
+    merger_within_3y: Annotated[bool, Field(description="3년 내 합병·분할 여부")] = False,
+    foreign_direct_investment: Annotated[bool, Field(description="해외직접투자 해당 여부")] = False,
+    related_goods: Annotated[int, Field(description="국외특수관계인 재화 거래 합계(원, 기본 0)")] = 0,
+    related_services: Annotated[int, Field(description="국외특수관계인 용역 거래 합계(원, 기본 0)")] = 0,
+    related_intangibles: Annotated[int, Field(description="국외특수관계인 무형재산 거래 합계(원, 기본 0)")] = 0,
+    party_max_goods: Annotated[int, Field(description="국외특수관계인별 재화 최대 거래(원, 기본 0)")] = 0,
+    party_max_services: Annotated[int, Field(description="국외특수관계인별 용역 최대 거래(원, 기본 0)")] = 0,
+    party_max_intangibles: Annotated[int, Field(description="국외특수관계인별 무형재산 최대 거래(원, 기본 0)")] = 0,
+) -> dict:
+    """외부감사(외감법 제4조)·외부세무조정(법인세법 제60조제9항)·국제거래 자료 제출 의무(국조법 제16조·제34조·제36조·제58조) 판정.
+    언제: 법인 사업연도 종료 후 외부감사 대상 여부, 외부세무조정(세무대리인 조정) 의무, 국제거래명세서·요약손익계산서·
+    정상가격산출방법신고서·국제거래정보통합보고서·해외직접투자명세서 제출 의무를 한 번에 판정할 때.
+    입력: year — 사업연도(2016~2026). corp_type — '주식회사'|'유한회사'(기본 주식회사).
+      수익·자산·부채·종업원 → revenue·revenue_prev·assets·liabilities·employees.
+      유한회사 사원 수 → members(선택). 설립일 → established_on(선택).
+      외국자회사·국외사업장·특례·준비금·결정경정·합병분할·해외직접투자 → 각 bool.
+      국외특수관계인 거래 합계·상대방별 최대 → related_goods/services/intangibles, party_max_goods/services/intangibles.
+    결과: 외부감사는 대상 여부·충족조건, 외부세무조정은 대상 여부·사유(제1~7호) 목록,
+      국제거래명세서·요약손익계산서·정상가격산출방법신고서·국제거래정보통합보고서 각각 대상 여부,
+      해외직접투자명세는 대상 여부·기한. 판단·근거."""
+    r = C.corporate_filing_obligations({
+        "year": year, "corp_type": corp_type,
+        "revenue": revenue, "revenue_prev": revenue_prev,
+        "assets": assets, "liabilities": liabilities, "employees": employees,
+        "members": members, "established_on": established_on,
+        "foreign_subsidiary": foreign_subsidiary, "foreign_branch": foreign_branch,
+        "tax_incentive": tax_incentive, "reserve_balance": reserve_balance,
+        "assessed": assessed, "merger_within_3y": merger_within_3y,
+        "foreign_direct_investment": foreign_direct_investment,
+        "related_goods": related_goods, "related_services": related_services,
+        "related_intangibles": related_intangibles,
+        "party_max_goods": party_max_goods, "party_max_services": party_max_services,
+        "party_max_intangibles": party_max_intangibles,
+    })
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 판단=r.get("판단", []))
+
+
 _TOOL_ALIASES: dict[str, list[str]] = {
     "양도세": ["capital_gains_income", "capital_gains_tax"], "양도소득세": ["capital_gains_income", "capital_gains_tax"],
     "단기 양도": ["capital_gains_tax"], "미등기": ["capital_gains_tax"], "비사업용 토지": ["capital_gains_tax", "capital_gains_income"],
@@ -8704,6 +8836,12 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "외화 환산": ["vat_foreign_currency_base"], "수출대금 환율": ["vat_foreign_currency_base"],
     "대리납부": ["vat_reverse_charge"], "국외사업자 용역": ["vat_reverse_charge"],
     "고유목적사업준비금": ["nonprofit_reserve_limit"], "비영리법인 준비금": ["nonprofit_reserve_limit"],
+    # 0.28.0 — 외국자회사 배당·파견 인건비· Filing 의무
+    "외국자회사 배당": ["foreign_subsidiary_dividend"], "외국자회사 수입배당금": ["foreign_subsidiary_dividend"],
+    "외국납부세액": ["foreign_subsidiary_dividend", "foreign_tax_credit"],
+    "파견 인건비": ["expat_cost_recharge"], "주재원": ["expat_cost_recharge"],
+    "외부세무조정": ["corporate_filing_obligations"], "외감 대상": ["corporate_filing_obligations"],
+    "국제거래명세서": ["corporate_filing_obligations"], "외감": ["corporate_filing_obligations"],
 }
 
 # 계산 도구가 없는 흔한 질문 — 있는 척 엉뚱한 도구를 고르지 않도록 먼저 걸러 근거 조문만 안내(처음 쓰는 사람 점검 2026-10-30)

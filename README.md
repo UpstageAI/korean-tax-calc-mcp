@@ -30,7 +30,7 @@ flowchart LR
 3. **계산** — 조문 순서대로 계산합니다. 예: 과세표준 → 그해 세율 구간 → 산출세액.
 4. **결과** — 세액·중간 계산·항목별 판단·세무조정(소득처분)·근거 조문을 함께 돌려줍니다.
 
-도구 101개 중 98개는 생성형 AI 없이 코드로 동작합니다(시세·공시가격 조회 2개는 KRX·브이월드 공개 데이터만 가져옵니다). PDF 도구 3개만 `UPSTAGE_API_KEY`가 있을 때 Upstage를 씁니다.
+도구 104개 중 98개는 생성형 AI 없이 코드로 동작합니다(시세·공시가격 조회 2개는 KRX·브이월드 공개 데이터만 가져옵니다). PDF 도구 3개만 `UPSTAGE_API_KEY`가 있을 때 Upstage를 씁니다.
 
 ### 법인세 세무조정이 이어지는 모양
 
@@ -91,12 +91,12 @@ AI가 도구를 언제 부르고, 도구의 답을 언제 믿을지 정해 주�
 5. 답이 두 개 나오면(안분 전후, 전체와 과세분 등) 질문이 묻는 하나만 답한다.
 ```
 
-## 도구 (101개)
+## 도구 (104개)
 
 묶음 이름을 누르면 도구 목록이 펼쳐집니다.
 
 <details>
-<summary><b>법인세</b> (18)</summary>
+<summary><b>법인세</b> (21)</summary>
 
 | 도구 | 하는 일 |
 |---|---|
@@ -116,6 +116,9 @@ AI가 도구를 언제 부르고, 도구의 답을 언제 믿을지 정해 주�
 | `thin_capitalization` | 과소자본 |
 | `missing_receipt_disallowance` | 적격증빙 미수취 |
 | `dividend_received_deduction` | 수입배당금 익금불산입 |
+| `foreign_subsidiary_dividend` | 외국자회사 수입배당금 익금불산입·외국납부세액공제 |
+| `expat_cost_recharge` | 해외 파견 인건비 청구액·정상가격·손금·비과세 |
+| `corporate_filing_obligations` | 외부감사·외부세무조정·국제거래 자료 제출 의무 판정 |
 | `asset_grant_reserve` | 일시상각충당금 |
 | `corporate_deemed_rent_income` | 임대보증금 간주익금 |
 | `liquidation_income` | 청산소득 |

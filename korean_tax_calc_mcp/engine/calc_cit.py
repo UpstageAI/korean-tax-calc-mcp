@@ -3300,3 +3300,541 @@ def inventory_valuation_adjustment(
         "판단": 판단,
         "근거": "법인세법 제42조①2호·②, 시행령 제73조1호·제74조①~⑥",
     }
+
+
+# ── 도구 1: 외국자회사 수입배당금 — 익금불산입 vs 외국납부세액공제 ──────────────────────
+# SPEC_foreign_sub_tools_1110 §1. 근거: 법인세법 제18조의4·제57조·시행령 제18조·제57조·제94조·제21조, 부칙 법률 19193호.
+
+
+def foreign_subsidiary_dividend(args: dict):
+    """외국자회사 수입배당금: 익금불산입(제18조의4) vs 외국납부세액공제(제57조) 판정·계산.
+
+    입력(dict): received_on(YYYY-MM-DD 필수), ownership_ratio(0<r≤1 필수), held_months(int≥0 필수),
+      dividend(원 int>0 필수), foreign_withholding(원 int≥0, 기본 0), subsidiary_tax(원, 선택),
+      subsidiary_income(원, 선택), hybrid(bool 기본 False), cfc_low_tax(bool 기본 False),
+      resource_development(bool 기본 False).
+    반환: {"결과": {제도, 수입배당금액, 익금불산입액, 익금산입액, 직접외국납부세액, 간접외국납부세액,
+                     공제대상_외국법인세액, Gross_up_익금산입, 외국세_손금불산입},
+           "판단": [...], "근거": "...", "서식": "..."} 또는 {"error": ...}.
+    """
+    received_on = args.get("received_on", "")
+    ownership = args.get("ownership_ratio", 0)
+    held_months = args.get("held_months", 0)
+    dividend = args.get("dividend", 0)
+    foreign_withholding = args.get("foreign_withholding", 0) or 0
+    subsidiary_tax = args.get("subsidiary_tax", None) or 0
+    subsidiary_income = args.get("subsidiary_income", None) or 0
+    hybrid = bool(args.get("hybrid", False))
+    cfc_low_tax = bool(args.get("cfc_low_tax", False))
+    resource_dev = bool(args.get("resource_development", False))
+
+    # ── 입력 검증 ──────────────────────────────────────────────────────
+    if not isinstance(received_on, str) or received_on == "":
+        return {"error": "입력 오류: received_on(YYYY-MM-DD) 필요"}
+    try:
+        ymd = int(received_on.replace("-", ""))
+        if len(received_on) != 10 or received_on[4] != "-" or received_on[7] != "-":
+            raise ValueError
+    except Exception:
+        return {"error": "입력 오류: received_on은 YYYY-MM-DD 형식이어야 함"}
+    if not (0 < ownership <= 1):
+        return {"error": "입력 오류: ownership_ratio는 0 초과 1 이하"}
+    if not isinstance(held_months, int) or held_months < 0:
+        return {"error": "입력 오류: held_months는 int≥0"}
+    if not isinstance(dividend, int) or dividend <= 0:
+        return {"error": "입력 오류: dividend는 원 int>0"}
+    if not isinstance(foreign_withholding, int) or foreign_withholding < 0:
+        return {"error": "입력 오류: foreign_withholding은 원 int≥0"}
+    if not isinstance(hybrid, bool):
+        return {"error": "입력 오류: hybrid는 bool"}
+    if not isinstance(cfc_low_tax, bool):
+        return {"error": "입력 오류: cfc_low_tax는 bool"}
+    if not isinstance(resource_dev, bool):
+        return {"error": "입력 오류: resource_development는 bool"}
+    if subsidiary_tax is not None and not isinstance(subsidiary_tax, int):
+        return {"error": "입력 오류: subsidiary_tax은 원 int"}
+    if subsidiary_income is not None and not isinstance(subsidiary_income, int):
+        return {"error": "입력 오류: subsidiary_income은 원 int"}
+    if subsidiary_income is not None and subsidiary_tax is not None and subsidiary_income <= subsidiary_tax:
+        return {"error": "입력 오류: subsidiary_income(≤ subsidiary_tax) — 간접외국납부세액 계산 불가 (소득 ≤ 법인세)"}
+
+    # ── 지분율 요건 ─────────────────────────────────────────────────────
+    자원지분 = 0.05 if resource_dev else 0.10
+    # 2023.1.1. 이후 수령: 10%(자원개발 5%), 그 전: 25%
+    if ymd >= 20230101:
+        기준지분 = 0.10 if not resource_dev else 0.05
+    else:
+        기준지분 = 0.25 if not resource_dev else 0.05
+    지분충족 = ownership >= 기준지분
+    보유충족 = held_months >= 6
+
+    # ── 익금불산입 요건 판정 ─────────────────────────────────────────────
+    요건충족 = (ymd >= 20230101) and 지분충족 and 보유충족 and (not hybrid) and (not cfc_low_tax)
+
+    판단 = []
+    if ymd < 20230101:
+        판단.append({"항목": "적용 시기", "결론": f"수령일 {received_on} → 2023.1.1. 이전(부칙 제19조 종전 규정 적용)", "근거": "법률 19193호 부칙 제19조"})
+    elif ymd >= 20230101:
+        판단.append({"항목": "적용 시기", "결론": f"수령일 {received_on} → 2023.1.1. 이후(부칙 제4조)", "근거": "법률 19193호 부칙 제4조"})
+    if not 보유충족:
+        판단.append({"항목": "보유기간", "결론": f"보유 {held_months}개월 < 6개월 → 익금불산입 대상 아님(시행령 제18조제1항)", "근거": "법인세법 시행령 제18조제1항"})
+    if not 지분충족:
+        판단.append({"항목": "지분율", "결론": f"지분율 {ownership:.0%} < {기준지분:.0%}{'(자원개발 5%)' if resource_dev else ''} → 익금불산입 대상 아님", "근거": "법인세법 제18조의4제1항"})
+    if hybrid:
+        판단.append({"항목": "혼성금융상품", "결론": "혼성금융상품 해당 → 익금불산입 제외(제18조의4제4항제2호)", "근거": "법인세법 제18조의4제4항제2호"})
+    if cfc_low_tax:
+        판단.append({"항목": "특정외국법인", "결론": "특정외국법인 저세율(국조법 제27조) → 익금불산입 제외(제18조의4제4항제1호)", "근거": "법인세법 제18조의4제4항제1호"})
+
+    if 요건충족:
+        제도 = "익금불산입"
+        익금불산입액 = int(dividend * 95 // 100)          # trunc(dividend × 95/100), 원 미만 절사
+        익금산입액 = dividend - 익금불산입액
+        직접외국납부세액 = 0
+        간접외국납부세액 = 0
+        공제대상_외국법인세액 = 0
+        grossup = 0
+        외국세_손금불산입 = foreign_withholding
+        판단.append({"항목": "제도 적용", "결론": "제18조의4 제1항 익금불산입 적용 — 제57조제7항에 따라 외국납부세액공제 불가",
+                     "근거": "법인세법 제18조의4제1항·제57조제7항"})
+        근거 = "법인세법 제18조의4(수입배당금 익금불산입)·제57조제7항(익금불산입 배당은 외국납부세액공제 배제)·제21조제1호(외국납부 세액은 손금불산입)"
+        서식 = "외국자회사 수입배당금액 명세서(제18조의4제5항)"
+    else:
+        제도 = "외국납부세액공제"
+        익금불산입액 = 0
+        익금산입액 = dividend
+        직접외국납부세액 = foreign_withholding
+        # 간접외국납부세액: 지분율 충족 + subsidiary_tax·subsidiary_income 있으면 계산
+        간접충족 = 지분충족 and (subsidiary_tax is not None and subsidiary_tax > 0) and (subsidiary_income is not None and subsidiary_income > 0)
+        if 간접충족 and (subsidiary_income - subsidiary_tax) > 0:
+            간접외국납부세액 = int(subsidiary_tax * dividend // (subsidiary_income - subsidiary_tax))
+        else:
+            간접외국납부세액 = 0
+        grossup = 간접외국납부세액
+        공제대상_외국법인세액 = 직접외국납부세액 + 간접외국납부세액
+        외국세_손금불산입 = 0
+        # 사유 기록
+        if ymd < 20230101:
+            판단.append({"항목": "제도 적용", "결론": "수령일이 2023.1.1. 전 → 종전 규정 적용, 외국납부세액공제(부칙 제19조)", "근거": "법률 19193호 부칙 제19조"})
+        if not 보유충족:
+            판단.append({"항목": "제도 적용", "결론": "보유 6개월 미만 → 외국납부세액공제", "근거": "법인세법 시행령 제18조제1항"})
+        if not 지분충족:
+            판단.append({"항목": "제도 적용", "결론": f"지분율 {ownership:.0%} < {기준지분:.0%} → 외국납부세액공제", "근거": "법인세법 제18조의4제1항"})
+        if cfc_low_tax:
+            판단.append({"항목": "제도 적용", "결론": "특정외국법인 저세율 → 외국납부세액공제(제18조의4제4항제1호)", "근거": "법인세법 제18조의4제4항제1호"})
+        if hybrid:
+            판단.append({"항목": "제도 적용", "결론": "혼성금융상품 → 외국납부세액공제(제18조의4제4항제2호)", "근거": "법인세법 제18조의4제4항제2호"})
+        근거 = "법인세법 제57조(외국납부세액공제) — 직접·간접외국납부세액, 공제대상 외국법인세액"
+        서식 = "외국납부세액공제 세액계산서(제57조)"
+
+    결과 = {
+        "제도": 제도,
+        "수입배당금액": dividend,
+        "익금불산입액": 익금불산입액,
+        "익금산입액": 익금산입액,
+        "직접외국납부세액": 직접외국납부세액,
+        "간접외국납부세액": 간접외국납부세액,
+        "공제대상_외국법인세액": 공제대상_외국법인세액,
+        "Gross_up_익금산입": grossup,
+        "외국세_손금불산입": 외국세_손금불산입,
+    }
+    return {
+        "결과": 결과,
+        "판단": 판단,
+        "근거": 근거,
+        "서식": 서식,
+    }
+
+
+# ── 도구 2: 해외 파견 인건비 청구 — 원가·정상가격·손금·비과세 ──────────────────────────
+# SPEC_foreign_sub_tools_1110 §2. 근거: 법인세법 제15조·제19조, 시행령 제106조제1항제1호 라목,
+# 국조법 제7조, 소득세법 제12조제3호거목·시행령 제16조제1항제1호.
+
+
+def expat_cost_recharge(args: dict):
+    """해외 파견 인건비 청구액·손금·비과세 계산.
+
+    입력(dict): year(2016~2026), items: [{이름?, 급여(원≥0), 사회보험(원≥0, 기본0), 체재비(원≥0, 기본0),
+      귀속:'본사'|'현지법인'|'공통'(필수), 공통비율(0~1, 공통일 때 필수), 마크업(소수 기본0.05),
+      청구액(원≥0 기본0), 국외근로_개월(0~12 기본0), 국외근로_유형:'일반'|'건설·선박'(기본'일반'),
+      거주자(bool 기본True)}].
+    반환: {"결과": {합계:{원가,현지법인_귀속원가,정상청구액,청구액,미청구,본사_손금,본사_손금불산입,
+                           정상가격_조정_익금산입,근로자_비과세},
+                     항목별:[{이름,원가,현지법인_귀속원가,정상청구액,청구액,미청구,본사_손금,
+                              본사_손금불산입,소득처분,정상가격_조정_익금산입,근로자_비과세}]},
+           "판단": [...], "근거": "..."} 또는 {"error": ..., "허용값": ...}.
+    """
+    year = args.get("year", 0)
+    items = args.get("items", None)
+    if not isinstance(year, int) or year < 2016 or year > 2026:
+        return {"error": "입력 오류: year은 2016~2026"}
+    if not isinstance(items, list) or not items:
+        return {"error": "입력 오류: items(목록) 필요"}
+
+    귀속허용 = {"본사", "현지법인", "공통"}
+    유형허용 = {"일반", "건설·선박"}
+    월별비과세 = {"일반": 1_000_000, "건설·선박": 5_000_000}
+
+    항목목록 = []
+    합계 = {"원가": 0, "현지법인_귀속원가": 0, "정상청구액": 0, "청구액": 0, "미청구": 0,
+             "본사_손금": 0, "본사_손금불산입": 0, "정상가격_조정_익금산입": 0, "근로자_비과세": 0}
+    비거주자있음 = False
+
+    for i, it in enumerate(items):
+        이름 = it.get("이름", f"항목{i+1}")
+        급여 = it.get("급여", 0) or 0
+        사회보험 = it.get("사회보험", 0) or 0
+        체재비 = it.get("체재비", 0) or 0
+        귀속 = it.get("귀속", "")
+        공통비율 = it.get("공통비율", None)
+        마크업 = it.get("마크업", 0.05) or 0.0
+        청구액 = it.get("청구액", 0) or 0
+        국외근로_개월 = it.get("국외근로_개월", 0) or 0
+        국외근로_유형 = it.get("국외근로_유형", "일반") or "일반"
+        거주자 = bool(it.get("거주자", True))
+        if not 거주자:
+            비거주자있음 = True
+
+        # 입력 검증
+        if 귀속 not in 귀속허용:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"항목 {i+1}({이름}): 귀속='{귀속}' 은(는) 지원하지 않음 — '본사'|'현지법인'|'공통'"],
+                    "허용값": {"귀속": ["본사", "현지법인", "공통"]}}
+        if not isinstance(급여, int) or 급여 < 0:
+            return {"error": "입력 오류: 급여는 원 int≥0"}
+        if not isinstance(사회보험, int) or 사회보험 < 0:
+            return {"error": "입력 오류: 사회보험은 원 int≥0"}
+        if not isinstance(체재비, int) or 체재비 < 0:
+            return {"error": "입력 오류: 체재비는 원 int≥0"}
+        if not isinstance(마크업, (int, float)) or 마크업 < 0:
+            return {"error": "입력 오류: 마크업은 소수≥0"}
+        if not isinstance(청구액, int) or 청구액 < 0:
+            return {"error": "입력 오류: 청구액은 원 int≥0"}
+        if not isinstance(국외근로_개월, int) or not (0 <= 국외근로_개월 <= 12):
+            return {"error": "입력 오류: 국외근로_개월은 0~12"}
+        if 국외근로_유형 not in 유형허용:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"항목 {i+1}({이름}): 국외근로_유형='{국외근로_유형}' 은(는) 지원하지 않음 — '일반'|'건설·선박'"],
+                    "허용값": {"국외근로_유형": ["일반", "건설·선박"]}}
+        if 귀속 == "공통":
+            if 공통비율 is None:
+                return {"error": "입력 확인 필요 — 계산하지 않음",
+                        "문제": [f"항목 {i+1}({이름}): 공통 귀속인데 공통비율 없음"],
+                        "허용값": {"공통비율": ["0~1 사이 소수"]}}
+            if not isinstance(기본공통비율 := float(공통비율), float) and not isinstance(공통비율, int):
+                return {"error": "입력 오류: 공통비율은 0~1"}
+            if not (0 <= float(공통비율) <= 1):
+                return {"error": "입력 오류: 공통비율은 0~1"}
+        if not isinstance(거주자, bool):
+            return {"error": "입력 오류: 거주자는 bool"}
+
+        # 원가
+        원가 = 급여 + 사회보험 + 체재비
+        # 현지법인 귀속원가
+        if 귀속 == "현지법인":
+            현지법인_귀속원가 = 원가
+        elif 귀속 == "본사":
+            현지법인_귀속원가 = 0
+        else:  # 공통
+            현지법인_귀속원가 = trunc_won(원가, _x(float(공통비율)))
+        # 정상청구액 = trunc(현지법인_귀속원가 × (1+마크업))
+        정상청구액 = trunc_won(현지법인_귀속원가, _x(1 + 마크업)) if 현지법인_귀속원가 > 0 else 0
+        미청구 = max(0, 정상청구액 - 청구액)
+
+        # 본사 손금불산입·소득처분
+        본사_손금불산입 = 0
+        소득처분 = ""
+        정상가격_조정_익금산입 = 0
+        if 청구액 == 0 and 현지법인_귀속원가 > 0:
+            본사_손금불산입 = 현지법인_귀속원가
+            소득처분 = "기타소득(해외현지법인 귀속 — 시행령 제106조제1항제1호 라목)"
+        elif 0 < 청구액 < 정상청구액:
+            정상가격_조정_익금산입 = 정상청구액 - 청구액
+            소득처분 = ""
+
+        # 본사 손금
+        본사_손금 = 원가 - 본사_손금불산입
+        # 청구액 익금
+        청구액_익금 = 청구액
+        # 근로자 비과세
+        if 거주자:
+            개월 = min(국외근로_개월, 12)
+            근로자_비과세 = 개월 * 월별비과세.get(국외근로_유형, 1_000_000)
+        else:
+            근로자_비과세 = 0
+
+        항목 = {
+            "이름": 이름,
+            "원가": 원가,
+            "현지법인_귀속원가": 현지법인_귀속원가,
+            "정상청구액": 정상청구액,
+            "청구액": 청구액_익금,
+            "청구액_익금": 청구액_익금,
+            "미청구": 미청구,
+            "본사_손금": 본사_손금,
+            "본사_손금불산입": 본사_손금불산입,
+            "소득처분": 소득처분,
+            "정상가격_조정_익금산입": 정상가격_조정_익금산입,
+            "근로자_비과세": 근로자_비과세,
+        }
+        항목목록.append(항목)
+        for k in 합계:
+            합계[k] += 항목[k]
+
+    판단 = []
+    if any(it.get("소득처분", "") for it in 항목목록):
+        판단.append({"항목": "소득처분", "결론": "청구액 0 & 현지법인 귀속원가 있음 → 기타소득(해외현지법인 귀속, 시행령 제106조제1항제1호 라목)",
+                     "근거": "법인세법 시행령 제106조제1항제1호 라목"})
+    if any(it.get("정상가격_조정_익금산입", 0) > 0 for it in 항목목록):
+        판단.append({"항목": "정상가격 조정", "결론": "청구액 < 정상청구액 → 국조법 제7조 정상가격 조정 익금산입",
+                     "근거": "국제조세조정에 관한 법률 제7조"})
+    if any(it.get("근로자_비과세", 0) > 0 for it in 항목목록):
+        판단.append({"항목": "국외근로 비과세", "결론": "거주자 국외근로 월 100만원(건설·선박 500만원) 비과세 — 소득세법 시행령 제16조제1항제1호",
+                     "근거": "소득세법 제12조제3호거목, 시행령 제16조제1항제1호"})
+    if 비거주자있음:
+        판단.append({"항목": "비거주자", "결론": "비거주자 국외근로 비과세 적용 안 됨 — 소득세법 시행령 제16조제1항제1호",
+                     "근거": "소득세법 제12조제3호거목, 시행령 제16조제1항제1호"})
+    판단.append({"항목": "본사 인건비", "결론": "파견 인건비는 법인세법 제19조 손금 — 현지법인 귀속분은 정상가격 청구 시 손금",
+                 "근거": "법인세법 제15조(익금)·제19조(손금), 서면-2017-법인-3468"})
+
+    근거 = "법인세법 제15조·제19조, 시행령 제106조제1항제1호 라목, 국제조세조정에 관한 법률 제7조, 소득세법 제12조제3호거목·시행령 제16조제1항제1호"
+    return {
+        "결과": {"합계": 합계, "항목별": 항목목록},
+        "판단": 판단,
+        "근거": 근거,
+    }
+
+
+# ── 도구 3: 외감·외부세무조정·국제거래 자료 제출 의무 판정 ─────────────────────────────
+# SPEC_foreign_sub_tools_1110 §3. 근거: 외감법 제4조·시행령 제5조, 법인세법 제60조제9항·시행령 제97조의2,
+# 국조법 제16조·시행령 제34조·제36조, 제58조.
+
+
+def corporate_filing_obligations(args: dict):
+    """외감·외부세무조정·국제거래 자료 제출 의무 판정.
+
+    입력(dict): year(2016~2026), corp_type:'주식회사'|'유한회사'(기본 주식회사),
+      revenue(당기 수입금액), revenue_prev(직전), assets, liabilities, employees,
+      members(유한회사 사원 수, 선택), established_on(YYYY-MM-DD 선택),
+      foreign_subsidiary(bool, 지분 10%↑), foreign_branch(bool),
+      tax_incentive(bool), reserve_balance(원 기본0), assessed(bool),
+      merger_within_3y(bool), foreign_direct_investment(bool),
+      related_goods·related_services·related_intangibles(국외특수관계인 거래 합계, 원 기본0),
+      party_max_goods·party_max_services·party_max_intangibles(국외특수관계인별 최대, 기본0).
+    반환: {"결과": {외부감사:{대상,충족조건:...}, 외부세무조정:{대상,사유:[...]},
+                     국제거래명세서, 요약손익계산서, 정상가격산출방법신고서,
+                     국제거래정보통합보고서, 해외직접투자명세:{대상,기한}},
+           "판단": [...], "근거": "..."} 또는 {"error": ..., "허용값": ...}.
+    """
+    year = args.get("year", 0)
+    corp_type = args.get("corp_type", "주식회사") or "주식회사"
+    if corp_type not in ("주식회사", "유한회사"):
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"corp_type='{corp_type}' 은(는) 지원하지 않음 — '주식회사'|'유한회사'"],
+                "허용값": {"corp_type": ["주식회사", "유한회사"]}}
+    revenue = args.get("revenue", 0) or 0
+    revenue_prev = args.get("revenue_prev", 0) or 0
+    assets = args.get("assets", 0) or 0
+    liabilities = args.get("liabilities", 0) or 0
+    employees = args.get("employees", 0) or 0
+    members = args.get("members", None)
+    established_on = args.get("established_on", None)
+    foreign_subsidiary = bool(args.get("foreign_subsidiary", False))
+    foreign_branch = bool(args.get("foreign_branch", False))
+    tax_incentive = bool(args.get("tax_incentive", False))
+    reserve_balance = args.get("reserve_balance", 0) or 0
+    assessed = bool(args.get("assessed", False))
+    merger_within_3y = bool(args.get("merger_within_3y", False))
+    foreign_direct_investment = bool(args.get("foreign_direct_investment", False))
+    관련물품 = args.get("related_goods", 0) or 0
+    관련용역 = args.get("related_services", 0) or 0
+    관련무형 = args.get("related_intangibles", 0) or 0
+    상대최대물품 = args.get("party_max_goods", 0) or 0
+    상대최대용역 = args.get("party_max_services", 0) or 0
+    상대최대무형 = args.get("party_max_intangibles", 0) or 0
+
+    if not isinstance(year, int) or year < 2016 or year > 2026:
+        return {"error": "입력 오류: year은 2016~2026"}
+    if corp_type not in ("주식회사", "유한회사"):
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"corp_type='{corp_type}' 은(는) 지원하지 않음 — '주식회사'|'유한회사'"],
+                "허용값": {"corp_type": ["주식회사", "유한회사"]}}
+    if not isinstance(revenue, int) or revenue < 0:
+        return {"error": "입력 오류: revenue는 원 int≥0"}
+    if not isinstance(revenue_prev, int) or revenue_prev < 0:
+        return {"error": "입력 오류: revenue_prev는 원 int≥0"}
+    if not isinstance(assets, int) or assets < 0:
+        return {"error": "입력 오류: assets는 원 int≥0"}
+    if not isinstance(liabilities, int) or liabilities < 0:
+        return {"error": "입력 오류: liabilities는 원 int≥0"}
+    if not isinstance(employees, int) or employees < 0:
+        return {"error": "입력 오류: employees는 int≥0"}
+    if members is not None and (not isinstance(members, int) or members < 0):
+        return {"error": "입력 오류: members는 int≥0"}
+    if established_on is not None:
+        if not isinstance(established_on, str) or len(established_on) != 10:
+            return {"error": "입력 오류: established_on은 YYYY-MM-DD"}
+    if not isinstance(reserve_balance, int) or reserve_balance < 0:
+        return {"error": "입력 오류: reserve_balance는 원 int≥0"}
+    if not isinstance(관련물품, int) or 관련물품 < 0:
+        return {"error": "입력 오류: related_goods는 원 int≥0"}
+    if not isinstance(관련용역, int) or 관련용역 < 0:
+        return {"error": "입력 오류: related_services는 원 int≥0"}
+    if not isinstance(관련무형, int) or 관련무형 < 0:
+        return {"error": "입력 오류: related_intangibles는 원 int≥0"}
+    if not isinstance(상대최대물품, int) or 상대최대물품 < 0:
+        return {"error": "입력 오류: party_max_goods는 원 int≥0"}
+    if not isinstance(상대최대용역, int) or 상대최대용역 < 0:
+        return {"error": "입력 오류: party_max_services는 원 int≥0"}
+    if not isinstance(상대최대무형, int) or 상대최대무형 < 0:
+        return {"error": "입력 오류: party_max_intangibles는 원 int≥0"}
+
+    # ── 외부감사 (외감법 제4조·시행령 제5조) ────────────────────────────────
+    충족조건 = []
+    요건수 = 0
+    # 자산 500억↑ 또는 매출 500억↑ → 단독 대상 (외감법 시행령 제5조)
+    자산500억 = assets >= 50_000_000_000
+    매출500억 = revenue >= 50_000_000_000
+    if 자산500억:
+        요건수 += 1
+        충족조건.append("자산 500억 원 이상")
+    if 매출500억:
+        요건수 += 1
+        충족조건.append("매출액 500억 원 이상")
+    # 4개 조건(자산 120억·부채 70억·매출 100억·종업원 100명) — 자산500억·매출500억과 중복 시 제외
+    if assets >= 12_000_000_000 and not 자산500억:
+        충족조건.append("자산 120억 원 이상")
+        요건수 += 1
+    if liabilities >= 7_000_000_000:
+        충족조건.append("부채 70억 원 이상")
+        요건수 += 1
+    if revenue >= 10_000_000_000 and not 매출500억:
+        충족조건.append("매출액 100억 원 이상")
+        요건수 += 1
+    if employees >= 100:
+        충족조건.append("종업원 100명 이상")
+        요건수 += 1
+    if 자산500억 or 매출500억:
+        외감대상 = True
+    else:
+        if corp_type == "주식회사":
+            외감대상 = 요건수 >= 2
+        else:
+            if members is not None and members >= 50:
+                충족조건.append("사원 50명 이상")
+                요건수 += 1
+            외감대상 = 요건수 >= 3
+
+    외부감사 = {"대상": 외감대상, "충족조건": 충족조건 if 외감대상 else []}
+
+    # ── 외부세무조정 (법인세법 제60조제9항·시행령 제97조의2 제1항) ────────────
+    세무조정사유 = []
+    # 1호: 직전 수입 70억↑ 또는 외감 대상
+    if revenue_prev >= 7_000_000_000 or 외감대상:
+        세무조정사유.append("제1호 직전 사업연도 수입금액 70억 원 이상(또는 외부감사 대상)")
+    # 2호: 당기 수입 3억↑ + 조특 특례
+    if revenue >= 300_000_000 and tax_incentive:
+        세무조정사유.append("제2호 당기 수입금액 3억 원 이상 + 조세특례 특례 적용")
+    # 3호: 준비금 잔액 3억↑
+    if reserve_balance >= 300_000_000:
+        세무조정사유.append("제3호 준비금 잔액 3억 원 이상")
+    # 4호: 설립 2년 이내 + 당기 수입 3억↑ (법인세법 시행령 제97조의2 제1항4호)
+    if established_on is not None:
+        try:
+            est_date = date.fromisoformat(established_on)
+            fy_end = date(year, 12, 31)
+            설립_plus_2y = date(est_date.year + 2, est_date.month, est_date.day)
+            if fy_end <= 설립_plus_2y and revenue >= 300_000_000:
+                세무조정사유.append("제4호 설립 2년 이내 사업연도 + 당기 수입금액 3억 원 이상")
+        except Exception:
+            pass
+    # 5호: 결정·경정
+    if assessed:
+        세무조정사유.append("제5호 법인세 결정·경정")
+    # 6호: 3년 내 합병·분할
+    if merger_within_3y:
+        세무조정사유.append("제6호 3년 내 합병·분할")
+    # 7호: 국외사업장·외국자회사
+    if foreign_subsidiary or foreign_branch:
+        사유 = "제7호"
+        if foreign_subsidiary:
+            사유 += " 외국자회사(지분 10% 이상)"
+        if foreign_branch:
+            사유 += " 국외사업장"
+        세무조정사유.append(사유)
+
+    외부세무조정 = {"대상": bool(세무조정사유), "사유": 세무조정사유}
+
+    # ── 국제거래명세서 (국조법 제16조·시행령 제34조) ─────────────────────────
+    국제거래합계 = 관련물품 + 관련용역 + 관련무형
+    # 국제거래명세서: 재화 5억·용역 1억·무형 1억 중 하나라도 초과 (국조법 시행령 제34조)
+    국제거래명세서 = (관련물품 > 500_000_000) or (관련용역 > 100_000_000) or (관련무형 > 100_000_000)
+
+    # ── 요약손익계산서 (국조법 시행령 제36조) ────────────────────────────────
+    요약손익 = (revenue > 1_000_000_000 or 관련물품 > 200_000_000 or
+                관련용역 > 200_000_000 or 관련무형 > 200_000_000)
+
+    # ── 정상가격산출방법신고서 (국조법 시행령 제36조 면제 규정) ────────────────
+    전체모두이하 = (관련물품 <= 5_000_000_000 and 관련용역 <= 100_000_000 and
+                    관련무형 <= 100_000_000)            # 전체 50억·10억·10억 모두 이하
+    상대모두이하 = (상대최대물품 <= 1_000_000_000 and 상대최대용역 <= 200_000_000 and
+                    상대최대무형 <= 200_000_000)        # 상대별 10억·2억·2억 모두 이하
+    정상가격신고서 = not 전체모두이하 and not 상대모두이하
+
+    # ── 국제거래정보통합보고서 (국조법 제16조·시행령 제34조) ─────────────────
+    통합보고서 = revenue > 100_000_000_000 and 국제거래합계 > 50_000_000_000    # 매출 1,000억↑ & 거래 500억↑
+
+    # ── 해외직접투자명세 (국조법 제58조) ────────────────────────────────────
+    해외직접 = {"대상": foreign_direct_investment}
+    if foreign_direct_investment:
+        if year == 2026:
+            해외직접["기한"] = "2027-06-30"
+        else:
+            해외직접["기한"] = f"{year+1}-06-30"
+    else:
+        해외직접["기한"] = None
+
+    결과 = {
+        "외부감사": 외부감사,
+        "외부세무조정": 외부세무조정,
+        "국제거래명세서": 국제거래명세서,
+        "요약손익계산서": 요약손익,
+        "정상가격산출방법신고서": 정상가격신고서,
+        "국제거래정보통합보고서": 통합보고서,
+        "해외직접투자명세": 해외직접,
+    }
+
+    판단 = []
+    if 외부감사["대상"]:
+        판단.append({"항목": "외부감사", "결론": f"외부감사 대상 — 충족조건: {', '.join(외부감사['충족조건'])}",
+                     "근거": "주식회사 외부감사에 관한 법률 제4조·시행령 제5조"})
+    else:
+        판단.append({"항목": "외부감사", "결론": "외부감사 대상 아님", "근거": "주식회사 외부감사에 관한 법률 제4조·시행령 제5조"})
+    if 외부세무조정["대상"]:
+        판단.append({"항목": "외부세무조정", "결론": f"외부세무조정 대상 — 사유: {', '.join(외부세무조정['사유'])}",
+                     "근거": "법인세법 제60조제9항·시행령 제97조의2 제1항"})
+    else:
+        판단.append({"항목": "외부세무조정", "결론": "외부세무조정 대상 아님", "근거": "법인세법 제60조제9항·시행령 제97조의2 제1항"})
+    if 국제거래명세서:
+        판단.append({"항목": "국제거래명세서", "결론": "국제거래명세서 제출 대상 — 국외특수관계인 거래 합계 50억 초과",
+                     "근거": "국제조세조정에 관한 법률 제16조·시행령 제34조"})
+    if 요약손익:
+        판단.append({"항목": "요약손익계산서", "결론": "요약손익계산서 제출 대상 — 매출 10억↑ 또는 국외특수관계인 거래 2억↑",
+                     "근거": "국제조세조정에 관한 법률 시행령 제36조"})
+    if 정상가격신고서:
+        판단.append({"항목": "정상가격산출방법신고서", "결론": "정상가격산출방법 신고서 제출 대상 — 면제 기준 모두 이하 아님",
+                     "근거": "국제조세조정에 관한 법률 시행령 제36조"})
+    if 통합보고서:
+        판단.append({"항목": "국제거래정보통합보고서", "결론": "국제거래정보 통합보고서 제출 대상 — 매출 1,000억↑ & 국외특수관계인 거래 500억↑",
+                     "근거": "국제조세조정에 관한 법률 제16조·시행령 제34조"})
+    if 해외직접["대상"]:
+        판단.append({"항목": "해외직접투자명세", "결론": f"해외직접투자명세서 제출 대상 — 기한: {해외직접['기한']} (사업연도 종료 후 6개월, 국조법 제58조)",
+                     "근거": "국제조세조정에 관한 법률 제58조"})
+
+    근거 = ("주식회사 외부감사에 관한 법률 제4조·시행령 제5조, "
+             "법인세법 제60조제9항·시행령 제97조의2 제1항, "
+             "국제조세조정에 관한 법률 제16조·시행령 제34조·제36조, 제58조")
+    return {
+        "결과": 결과,
+        "판단": 판단,
+        "근거": 근거,
+    }

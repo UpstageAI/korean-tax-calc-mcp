@@ -724,5 +724,6 @@ def test_all_tools_listed():
     names = {t.name for t in asyncio.run(mcp.list_tools())}
     assert "foreign_tax_credit" in names
     # 기존 도구들도 여전히 등록되어 있는지 확인
-    기존 = {"corporate_tax", "entertainment_limit", "deemed_interest", "other_income_aggregate"}
+    기존 = {"corporate_tax", "entertainment_limit", "deemed_interest", "other_income_aggregate",
+            "foreign_subsidiary_dividend", "expat_cost_recharge", "corporate_filing_obligations"}
     assert 기존 <= names  # 기존 도구들이 사라지지 않았는지 확인
