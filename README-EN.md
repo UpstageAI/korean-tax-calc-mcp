@@ -115,6 +115,9 @@ Click a group to expand its tools.
 | `foreign_subsidiary_dividend` | foreign subsidiary dividend — exclusion vs foreign tax credit |
 | `expat_cost_recharge` | expat cost recharge — arm-length fee, deduction, overseas work exemption |
 | `foreign_exchange_reporting` | overseas direct investment: FX reporting (prior/post) deadline, bank, documents, follow-up reports, liquidation, NTS investment statement deadline |
+| `individual_foreign_tax_credit` | individual foreign tax credit: per-country limit, treaty-rate cap, 10-year carryforward, retirement income (Income Tax Act art. 57) |
+| `overseas_account_reporting` | overseas financial account reporting: duty (month-end balance over KRW 500m), exemptions, deadline, penalties and reductions (Int'l Tax Adjustment Act arts. 53, 90) |
+| `capital_gains_unfair_transaction` | capital-gains unfair transaction: low-price transfer / high-price acquisition at market value (KRW 300m or 5%), gift-then-transfer within 10 years (art. 101) |
 | `corporate_filing_obligations` | external audit, tax adjustment, international transaction filing obligations |
 | `asset_grant_reserve` | asset grant reserve |
 | `corporate_deemed_rent_income` | deemed rent income on deposits |

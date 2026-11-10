@@ -122,6 +122,9 @@ AI가 도구를 언제 부르고, 도구의 답을 언제 믿을지 정해 주�
 | `expat_cost_recharge` | 해외 파견 인건비 청구액·정상가격·손금·비과세 |
 | `corporate_filing_obligations` | 외부감사·외부세무조정·국제거래 자료 제출 의무 판정 |
 | `foreign_exchange_reporting` | 해외직접투자 해당 여부·외국환 신고(사전/사후) 기한·기관·서류, 사후관리 보고서 일정, 청산, 해외직접투자명세 기한 |
+| `individual_foreign_tax_credit` | 거주자 외국납부세액공제 — 국가별 한도·조약 제한세율 상한·10년 이월·퇴직소득(소득세법 제57조) |
+| `overseas_account_reporting` | 해외금융계좌 신고의무(월말 잔액 5억 초과)·면제·신고기한·미신고 과태료·수정신고 감경·소명 불이행 과태료(국조법 제53조·제90조) |
+| `capital_gains_unfair_transaction` | 양도소득 부당행위계산 — 저가양도·고가취득 시가 재계산(3억·5% 기준), 증여 후 10년 내 양도 비교 판정(소득세법 제101조) |
 | `asset_grant_reserve` | 일시상각충당금 |
 | `corporate_deemed_rent_income` | 임대보증금 간주익금 |
 | `liquidation_income` | 청산소득 |

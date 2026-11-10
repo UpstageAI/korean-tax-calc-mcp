@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 from fractions import Fraction
-from datetime import date, timedelta
+from datetime import date
 
 from .exact import trunc_won as _trunc_won, exact as _exact
 
@@ -71,6 +71,9 @@ def individual_foreign_tax_credit(
         if c.get("foreign_income", 0) < 0:
             return _오류([f"countries[{i}].foreign_income 이 음수 — 국외원천소득은 0 이상"],
                           {"foreign_income": "0 이상 (원)"})
+        if c.get("foreign_tax", 0) < 0:
+            return _오류([f"countries[{i}].foreign_tax 가 음수 — 외국소득세액은 0 이상"],
+                          {"foreign_tax": "0 이상 (원)"})
 
     A = calculated_tax          # 산출세액
     C = total_income            # 총소득
@@ -181,6 +184,9 @@ def individual_foreign_tax_credit(
         주의목록.append("퇴직소득은 외국납부세액공제 한도 계산은 되나 이월공제 대상이 아님(소득세법 제57조②)")
 
     판단목록 = []
+    무시된_이월국가 = [k for k in 이월지도 if k not in {c["country"] for c in countries}]
+    if 무시된_이월국가:
+        주의목록.append(f"carryforward의 국가 {무시된_이월국가}는 countries에 없어 이번 과세기간에 공제하지 않음(해당 국가 국외원천소득이 없으면 한도 0)")
     if 이월기간경과분 > 0:
         판단목록.append(f"이월기간 경과분 {이월기간경과분:,}원(연도 경과, 필요경비 산입 가능)")
 
@@ -306,10 +312,10 @@ def overseas_account_reporting(
     if 신고의무:
         위반금액 = 최고잔액 - reported_amount_krw
         # 과태료 = min(위반금액 × 10%, 10억) (영 제147조①1호), 법 상한 20% (제90조①)
-        과태료 = _trunc_won(_exact(위반금액) * _exact(0.10))
+        과태료 = _trunc_won(_exact(위반금액) * Fraction(1, 10))
         과태료 = min(과태료, 1_000_000_000)
         # 조정 범위 ±50% (영 제147조②)
-        과태료_범위 = [_trunc_won(과태료 * 50 / 100), _trunc_won(과태료 * 150 / 100)]
+        과태료_범위 = [_trunc_won(_exact(과태료) * Fraction(1, 2)), _trunc_won(_exact(과태료) * Fraction(3, 2))]
 
         # 수정신고 감경 (영 제147조④1호): 기한 후 6개월 이내 90%, 1년 이내 70%, 2년 이내 50%, 4년 이내 30%
         if corrected_on:
@@ -326,7 +332,7 @@ def overseas_account_reporting(
                 감경비율 = 30
             else:
                 감경비율 = 0
-            감경후_과태료 = _trunc_won(과태료 * (100 - 감경비율) / 100)
+            감경후_과태료 = _trunc_won(_exact(과태료) * Fraction(100 - 감경비율, 100))
         else:
             감경비율 = 0
             감경후_과태료 = 과태료
@@ -334,7 +340,7 @@ def overseas_account_reporting(
     # 소명 불이행 과태료: unexplained_amount_krw × 20% (제90조②)
     소명불이행_과태료 = 0
     if unexplained_amount_krw is not None and unexplained_amount_krw > 0:
-        소명불이행_과태료 = _trunc_won(_exact(unexplained_amount_krw) * _exact(0.20))
+        소명불이행_과태료 = _trunc_won(_exact(unexplained_amount_krw) * Fraction(1, 5))
 
     # 판단: 실질적 소유자 안내
     판단목록 = [
@@ -542,19 +548,21 @@ def _capital_gains_unfair_gift_then_transfer(
             "수증자_세액합계": donee_gift_tax + donee_capital_gains_tax,
             "증여자_직접양도세액": donor_direct_capital_gains_tax,
             "적용제외_사유": 적용제외_사유,
-        }, "소득세법 제101조②, 제97조의2", 판단=적용제외_사유)
+        }, "소득세법 제101조②, 제97조의2", 판단=[적용제외_사유])
 
-    # 증여일부터 양도일까지 10년 초과 → 적용 없음 (제97조의2③ 준용: 등기·등록 기준)
-    delta_days = (transfer_dt - gift_dt).days
-    delta_years = delta_days / 365.0
-    if delta_years > 10:
-        적용제외_사유 = f"증여일부터 양도일까지 10년 초과(약 {delta_years:.1f}년) → 제101조② 적용 없음(소득세법 제97조의2③ 준용)"
+    # 증여일부터 양도일까지 10년 초과 → 적용 없음 (제97조의2③ 준용: 등기·등록 기준, 달력 연수로 계산)
+    try:
+        십년_기한 = gift_dt.replace(year=gift_dt.year + 10)
+    except ValueError:  # 2월 29일
+        십년_기한 = gift_dt.replace(year=gift_dt.year + 10, day=28)
+    if transfer_dt > 십년_기한:
+        적용제외_사유 = f"증여일부터 양도일까지 10년 초과(증여 {gift_date}, 10년 기한 {십년_기한.isoformat()}, 양도 {transfer_date}) → 제101조② 적용 없음(소득세법 제97조의2③ 준용)"
         return _ok({
             "증여자_직접양도_간주": False,
             "수증자_세액합계": donee_gift_tax + donee_capital_gains_tax,
             "증여자_직접양도세액": donor_direct_capital_gains_tax,
             "적용제외_사유": 적용제외_사유,
-        }, "소득세법 제101조②, 제97조의2③", 판단=적용제외_사유)
+        }, "소득세법 제101조②, 제97조의2③", 판단=[적용제외_사유])
 
     # income_belongs_to_donee True → 적용 없음(단서)
     if income_belongs_to_donee:
@@ -564,7 +572,7 @@ def _capital_gains_unfair_gift_then_transfer(
             "수증자_세액합계": donee_gift_tax + donee_capital_gains_tax,
             "증여자_직접양도세액": donor_direct_capital_gains_tax,
             "적용제외_사유": 적용제외_사유,
-        }, "소득세법 제101조② 단서", 판단=적용제외_사유)
+        }, "소득세법 제101조② 단서", 판단=[적용제외_사유])
 
     # 합계 = donee_gift_tax + donee_capital_gains_tax; 합계 < donor_direct_capital_gains_tax → 증여자 직접 양도 간주
     합계 = donee_gift_tax + donee_capital_gains_tax
