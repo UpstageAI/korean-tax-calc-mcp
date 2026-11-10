@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.25.2 (2026-11-10)
+
+보완 Claude(뼈대 Solar Pro 4). 계산 결과·도구 스키마는 바뀌지 않음(97개 도구 스키마 해시 동일, 1,887 테스트).
+
+- 도구 15개에 입력 오류 가드(`_guard`) 추가 — underreporting_penalty, assessment_limitation, bad_debt_allowance, vat_bad_debt_credit, related_judge, kinship_check, ownership_ratio, dominant_shareholder, tunnelling_gift, tunnelling_gift_nts, related_provision_at, return_precheck, precheck_schema, export_workbook, find_tool. 잘못된 입력이 예외 대신 다른 도구처럼 `{"error": "입력 확인 필요 — 계산하지 않음", "문제": [...]}`로 돌아온다. 같은 입력 재호출 "안내"도 같이 적용.
+- `audit/agents/calc.py`(2025 세율 하드코딩 사본) 삭제 — 유일한 사용처(precheck/vat.py V-P21)를 `engine.calc`로 연결. 두 함수 본문은 사본과 동일.
+- 테스트 정리: 70개 파일에 복붙돼 있던 도구 호출 헬퍼를 `tests/_helpers.py` `call` 하나로(−488줄). 고아 import 59개 파일 제거.
+- 테스트: `tests/test_guard_added.py` 11건.
+
 ## 0.25.1 (2026-11-10)
 
 보완 Claude(뼈대 Solar Pro 4). 결함 3건 수정 + 죽은 코드 정리.
