@@ -703,3 +703,389 @@ def vat_deemed_supply_items(period, items):
     if 판단:
         계산["판단"] = 판단
     return {"과세표준": 과세표준합계, "계산": 계산, "판단": 판단}
+
+
+# ── 일반과세자 부가가치세 신고서(별지 제21호서식) 집계 ──────────────────────────────────────────
+# 부품 도구(vat_input_tax_deduction·common_input_tax·vat_bad_debt_credit·vat_card_sales_credit·
+# invoice_penalty_bundle·late_payment_penalty)의 결과를 받아 별지 제21호서식 제1쪽 ① 신고내용 순서로 합산.
+# 새 세법 판단은 하지 않음 — 불공제·대손·안분·가산세는 입력값을 그대로 사용.
+
+E_FILING_CREDIT = [  # 조세특례제한법 제104조의8②·시행령 제104조의5④: 확정신고·전자신고 시 공제액
+    ("2010-02-18", 10_000),  # 2010.2.18.~2026.2.26. 1만원
+    ("2026-02-27", 5_000),   # 2026.2.27.~ 5천원
+]
+
+
+def e_filing_credit_amount(filed_on: str, kind: str) -> int:
+    """전자신고세액공제액(조세특례제한법 제104조의8②, 시행령 제104조의5③④).
+    kind='예정'이면 0(③: 확정신고·제67조 신고만), filed_on이 표 범위 이전이면 NoYearTable.
+    filed_on = YYYY-MM-DD(신고일). 확정신고 기한 기본값 서버-side에서 넣어 호출."""
+    if kind == "예정":
+        return 0
+    s = str(filed_on)
+    last = None
+    for threshold, amount in E_FILING_CREDIT:
+        if s >= threshold:
+            last = amount
+    if last is None:
+        raise NoYearTable(f"전자신고세액공제 연도표 없음: filed_on={s}(2010-02-18 이전)")
+    return last
+
+
+def default_filed_on(year: int, period: str) -> str:
+    """filed_on 생략 시 확정신고 기한(1기 YYYY-07-25, 2기 YYYY+1-01-25)."""
+    if period == "1":
+        return f"{year}-07-25"
+    return f"{year + 1}-01-25"
+
+
+# 원장형 입력 허용 항목 — 공급·매입·세액 각 항목명(계산 명세서 원문 이름, 가운뎃점 U+00B7)
+_LEDGER_SUPPLY = {  # 공급 항목 → 입력 키
+    "세금계산서 발급분": "sales_invoice",
+    "매입자발행 세금계산서": "sales_buyer_invoice",
+    "신용카드·현금영수증 발행분": "sales_card_cash",
+    "기타 매출": "sales_other",
+    "간주공급": "deemed_supply",
+    "영세율 세금계산서 발급분": "sales_zero_invoice",
+    "영세율 기타": "sales_zero_other",
+    "예정신고 누락 매출": "prelim_omitted_sales",
+}
+_LEDGER_PURCHASE = {  # 매입 항목 → 입력 키
+    "세금계산서 수취분 일반매입": "purchase_invoice",
+    "세금계산서 수취분 고정자산": "purchase_invoice_fixed",
+    "예정신고 누락 매입": "prelim_omitted_purchase",
+    "매입자발행 세금계산서 수취": "purchase_buyer_invoice",
+    "신용카드·현금영수증 수취분": "purchase_card_cash",
+}
+_LEDGER_TAX = {  # 세액 항목 → 입력 키
+    "의제매입세액": "purchase_deemed",
+    "그 밖의 공제매입세액": "purchase_other_credit",
+    "변제대손세액": "recovered_input",
+    "공제받지 못할 매입세액": "nondeductible",
+    "공통매입세액 면세사업분": "common_nondeductible",
+    "대손세액": "bad_debt_credit",
+    "수입분 납부유예": "import_vat_deferred",
+}
+_LEDGER_ALLOWED = {
+    "공급": _LEDGER_SUPPLY,
+    "매입": _LEDGER_PURCHASE,
+    "세액": _LEDGER_TAX,
+}
+
+
+def validate_ledger_entries(ledger: dict):
+    """원장형 입력 항목 검사(명세서 1-3).
+    문제 없으면 (집계된 금액 dict, None) 반환, 모르는 항목이 있으면 (None, 오류 dict) 반환.
+    오류 dict에는 "문제"(문제 항목 목록)와 "허용값"(공급·매입·세액 각 허용 항목)이 있다."""
+    문제_항목 = []
+    집계 = {"공급": {}, "매입": {}, "세액": {}}
+
+    for 구분, 허용표 in _LEDGER_ALLOWED.items():
+        항목합 = {}
+        for 행 in ledger.get(구분, []):
+            항목명 = str((행 or {}).get("항목", "")).strip()
+            금액 = int((행 or {}).get("금액", 0))
+            if 항목명 not in 허용표:
+                문제_항목.append(항목명)
+                continue
+            입력키 = 허용표[항목명]
+            항목합[입력키] = 항목합.get(입력키, 0) + 금액
+        집계[구분] = 항목합
+
+    if 문제_항목:
+        return (None, {
+            "error": "입력 확인 필요 — 계산하지 않음",
+            "문제": [f"어휘에 없는 원장 항목: {', '.join(문제_항목)}"],
+            "허용값": {g: list(m.keys()) for g, m in _LEDGER_ALLOWED.items()},
+        })
+    return (집계, None)
+
+
+def vat_return_general(inputs: dict) -> dict:
+    """일반과세자 부가가치세 신고서(별지 제21호서식 제1쪽 ① 신고내용) 집계.
+    부품 도구 결과를 받아 (30) 차감ㆍ가감하여 납부할 세액(환급세액)까지 합산. 새 세법 판단은 하지 않음."""
+    # ── 입력 추출(기본 0) ──
+    year = int(inputs.get("year", 0))
+    period = str(inputs.get("period", "1"))
+    kind = str(inputs.get("kind", "확정"))
+    e_filing_credit_given = int(inputs.get("e_filing_credit", 0))
+    sales_invoice = int(inputs.get("sales_invoice", 0))
+    sales_buyer_invoice = inputs.get("sales_buyer_invoice", 0)
+    if isinstance(sales_buyer_invoice, dict):
+        sbi_amount = int(sales_buyer_invoice.get("금액", 0))
+        sbi_tax = int(sales_buyer_invoice.get("세액", sbi_amount * 10 // 100))
+    else:
+        sbi_amount = int(sales_buyer_invoice or 0)
+        sbi_tax = sbi_amount * 10 // 100
+    sales_card_cash = int(inputs.get("sales_card_cash", 0))
+    sales_other = int(inputs.get("sales_other", 0))
+    deemed_supply = int(inputs.get("deemed_supply", 0))
+    sales_zero_invoice = int(inputs.get("sales_zero_invoice", 0))
+    sales_zero_other = int(inputs.get("sales_zero_other", 0))
+    prelim_omitted_sales = int(inputs.get("prelim_omitted_sales", 0))
+    bad_debt_credit = int(inputs.get("bad_debt_credit", 0))
+    purchase_invoice = int(inputs.get("purchase_invoice", 0))
+    import_vat_deferred = int(inputs.get("import_vat_deferred", 0))
+    purchase_invoice_fixed = int(inputs.get("purchase_invoice_fixed", 0))
+    prelim_omitted_purchase = int(inputs.get("prelim_omitted_purchase", 0))
+    purchase_buyer_invoice = inputs.get("purchase_buyer_invoice", 0)
+    if isinstance(purchase_buyer_invoice, dict):
+        pbi_amount = int(purchase_buyer_invoice.get("금액", 0))
+        pbi_tax = int(purchase_buyer_invoice.get("세액", pbi_amount * 10 // 100))
+    else:
+        pbi_amount = int(purchase_buyer_invoice or 0)
+        pbi_tax = pbi_amount * 10 // 100
+    purchase_card_cash = int(inputs.get("purchase_card_cash", 0))
+    purchase_deemed = int(inputs.get("purchase_deemed", 0))
+    purchase_other_credit = int(inputs.get("purchase_other_credit", 0))
+    recovered_input = int(inputs.get("recovered_input", 0))
+    other_credit = int(inputs.get("other_credit", 0))
+    card_sales_credit_val = int(inputs.get("card_sales_credit", 0))
+    small_biz_reduction = int(inputs.get("small_biz_reduction", 0))
+    prelim_refund_pending = int(inputs.get("prepaid_refund_pending", 0))
+    prepaid_assessed = int(inputs.get("prepaid_assessed", 0))
+    occasional_assessed = int(inputs.get("occasional_assessed", 0))
+    prepaid_by_transferee = int(inputs.get("prepaid_by_transferee", 0))
+    prepaid_buyer_special = int(inputs.get("prepaid_buyer_special", 0))
+    prepaid_by_card_company = int(inputs.get("prepaid_by_card_company", 0))
+    penalties = list(inputs.get("penalties", []))
+    ledger = inputs.get("ledger")
+
+    # ── ledger 집계(있으면) ──
+    if ledger is not None:
+        집계, 검증오류 = validate_ledger_entries(ledger)
+        if 검증오류:
+            return 검증오류
+        # ledger로 들어오는 입력 키
+        sales_invoice = 집계["공급"].get("sales_invoice", 0)
+        sales_buyer_invoice = {"금액": 집계["공급"].get("sales_buyer_invoice", 0),
+                               "세액": 집계["공급"].get("sales_buyer_invoice", 0) * 10 // 100}
+        sales_card_cash = 집계["공급"].get("sales_card_cash", 0)
+        sales_other = 집계["공급"].get("sales_other", 0)
+        deemed_supply = 집계["공급"].get("deemed_supply", 0)
+        sales_zero_invoice = 집계["공급"].get("sales_zero_invoice", 0)
+        sales_zero_other = 집계["공급"].get("sales_zero_other", 0)
+        prelim_omitted_sales = 집계["공급"].get("prelim_omitted_sales", 0)
+        purchase_invoice = 집계["매입"].get("purchase_invoice", 0)
+        purchase_invoice_fixed = 집계["매입"].get("purchase_invoice_fixed", 0)
+        prelim_omitted_purchase = 집계["매입"].get("prelim_omitted_purchase", 0)
+        purchase_buyer_invoice = {"금액": 집계["매입"].get("purchase_buyer_invoice", 0),
+                                  "세액": 집계["매입"].get("purchase_buyer_invoice", 0) * 10 // 100}
+        purchase_card_cash = 집계["매입"].get("purchase_card_cash", 0)
+        purchase_deemed = 집계["세액"].get("purchase_deemed", 0)
+        purchase_other_credit = 집계["세액"].get("purchase_other_credit", 0)
+        recovered_input = 집계["세액"].get("recovered_input", 0)
+        nondeductible = 집계["세액"].get("nondeductible", 0)
+        common_nondeductible = 집계["세액"].get("common_nondeductible", 0)
+        bad_debt_credit = 집계["세액"].get("bad_debt_credit", 0)
+        import_vat_deferred = 집계["세액"].get("import_vat_deferred", 0)
+        # ledger만 쓸 때 없는 키는 0
+        nondeductible = nondeductible
+        common_nondeductible = common_nondeductible
+
+    # ── 입력 검증 ──
+    음수검증대상 = {
+        "sales_invoice": sales_invoice, "sales_buyer_invoice": sbi_amount,
+        "sales_card_cash": sales_card_cash, "sales_other": sales_other,
+        "deemed_supply": deemed_supply, "sales_zero_invoice": sales_zero_invoice,
+        "sales_zero_other": sales_zero_other, "prelim_omitted_sales": prelim_omitted_sales,
+        "purchase_invoice": purchase_invoice, "purchase_invoice_fixed": purchase_invoice_fixed,
+        "prelim_omitted_purchase": prelim_omitted_purchase, "purchase_buyer_invoice": pbi_amount,
+        "purchase_card_cash": purchase_card_cash, "purchase_deemed": purchase_deemed,
+        "purchase_other_credit": purchase_other_credit, "recovered_input": recovered_input,
+        "other_credit": other_credit, "card_sales_credit": card_sales_credit_val,
+        "small_biz_reduction": small_biz_reduction, "prepaid_refund_pending": prelim_refund_pending,
+        "prepaid_assessed": prepaid_assessed, "occasional_assessed": occasional_assessed,
+        "prepaid_by_transferee": prepaid_by_transferee, "prepaid_buyer_special": prepaid_buyer_special,
+        "prepaid_by_card_company": prepaid_by_card_company,
+    }
+    for key, val in 음수검증대상.items():
+        if val < 0:
+            raise ValueError(f"{key}: 음수 입력 불가({val}) — bad_debt_credit만 음수 허용(회수분)")
+    if bad_debt_credit < 0:
+        pass  # 회수분은 허용
+
+    if kind == "예정":
+        if prelim_refund_pending != 0 or prepaid_assessed != 0 or occasional_assessed != 0:
+            raise ValueError("예정신고에는 예정신고 미환급세액·예정고지세액·수시부과세액을 넣지 않음")
+
+    for p in penalties:
+        if not isinstance(p, dict) or "kind" not in p or "amount" not in p:
+            raise ValueError("penalties 각 항목에 kind와 amount(int≥0)가 필요")
+        if not isinstance(p.get("amount"), int) or p["amount"] < 0:
+            raise ValueError("penalties amount는 int≥0")
+
+    # ── 계산 ──
+    # 매출 과세표준: (1)~(4)+(7)
+    과세표준 = sales_invoice + sbi_amount + sales_card_cash + sales_other + deemed_supply + prelim_omitted_sales
+    영세율_과세표준 = sales_zero_invoice + sales_zero_other
+
+    # (1)~(7) 세액
+    세액_1 = sales_invoice * 10 // 100
+    세액_2 = sbi_tax
+    세액_3 = sales_card_cash * 10 // 100
+    세액_4 = (sales_other + deemed_supply) * 10 // 100
+    세액_5 = 0  # 영세율
+    세액_6 = 0  # 영세율
+    세액_7 = prelim_omitted_sales * 10 // 100
+    매출세액_합계 = 세액_1 + 세액_2 + 세액_3 + 세액_4 + 세액_5 + 세액_6 + 세액_7 + (-bad_debt_credit)
+    대손세액_가감 = -bad_debt_credit
+
+    # (10)~(14) 매입
+    세액_10 = purchase_invoice * 10 // 100
+    세액_11 = import_vat_deferred
+    세액_12 = purchase_invoice_fixed * 10 // 100
+    세액_13 = prelim_omitted_purchase * 10 // 100
+    세액_14 = pbi_tax
+    세액_15 = purchase_card_cash * 10 // 100 + purchase_deemed + purchase_other_credit + recovered_input
+    매입세액 = (purchase_invoice + purchase_invoice_fixed + prelim_omitted_purchase + pbi_amount) * 10 // 100 \
+        - import_vat_deferred + purchase_card_cash * 10 // 100 + purchase_deemed + purchase_other_credit + recovered_input
+
+    # (17) 공제받지 못할 매입세액
+    nondeductible = int(inputs.get("nondeductible", 0)) if ledger is None else nondeductible
+    common_nondeductible = int(inputs.get("common_nondeductible", 0)) if ledger is None else common_nondeductible
+    공제받지못할_매입세액 = nondeductible + common_nondeductible
+    매입세액_차감계 = 매입세액 - 공제받지못할_매입세액
+
+    납부환급세액 = 매출세액_합계 - 매입세액_차감계
+
+    # (19) 전자신고세액공제
+    if e_filing_credit_given:
+        efc = e_filing_credit_given
+    else:
+        efc = 0
+    # (1)~(7) 합 = sales_invoice + sbi_amount + sales_card_cash + sales_other + deemed_supply + prelim_omitted_sales + sales_zero_invoice + sales_zero_other
+    매출_금액합 = sales_invoice + sbi_amount + sales_card_cash + sales_other + deemed_supply + prelim_omitted_sales + sales_zero_invoice + sales_zero_other
+    매입_금액합 = purchase_invoice + purchase_invoice_fixed + prelim_omitted_purchase + pbi_amount + purchase_card_cash
+    if 매출_금액합 == 0 and 매입_금액합 == 0 and efc > 0:
+        efc = 0
+        주의_목록 = ["조세특례제한법 제104조의8② 단서 — 매출가액과 매입가액이 없는 일반과세자는 전자신고세액공제 없음"]
+    else:
+        주의_목록 = []
+
+    경감공제세액 = other_credit + efc
+
+    # (20) 카드매출전표 발행공제
+    카드공제 = card_sales_credit_val
+
+    # (21) 합계
+    경감공제_합계 = 경감공제세액 + 카드공제
+
+    # (29) 가산세액 계
+    가산세_합계 = sum(int(p["amount"]) for p in penalties)
+
+    # (30) 차감ㆍ가감하여 납부할 세액(환급받을 세액)
+    차감_가감_납부세액 = 납부환급세액 - 경감공제_합계 - small_biz_reduction - prelim_refund_pending \
+        - prepaid_assessed - occasional_assessed - prepaid_by_transferee - prepaid_buyer_special - prepaid_by_card_company \
+        + 가산세_합계
+    납부세액 = max(0, 차감_가감_납부세액)
+    환급세액 = max(0, -차감_가감_납부세액)
+
+    # ── 결과 ──
+    결과 = {
+        "과세표준": 과세표준,
+        "영세율_과세표준": 영세율_과세표준,
+        "매출세액": 세액_1 + 세액_2 + 세액_3 + 세액_4 + 세액_5 + 세액_6 + 세액_7,
+        "대손세액_가감": 대손세액_가감,
+        "매출세액_합계": 매출세액_합계,
+        "매입세액": 매입세액,
+        "공제받지못할_매입세액": 공제받지못할_매입세액,
+        "매입세액_차감계": 매입세액_차감계,
+        "납부환급세액": 납부환급세액,
+        "경감공제세액": 경감공제세액,
+        "소규모감면세액": small_biz_reduction,
+        "예정신고미환급세액": prelim_refund_pending,
+        "예정고지세액": prepaid_assessed,
+        "수시부과세액": occasional_assessed,
+        "기납부세액_기타": prepaid_by_transferee + prepaid_buyer_special + prepaid_by_card_company,
+        "가산세액계": 가산세_합계,
+        "차가감_납부세액": 차감_가감_납부세액,
+        "납부세액": 납부세액,
+        "환급세액": 환급세액,
+    }
+
+    # ── 서식(0절 표 원문 이름 그대로, ㆍ는 U+318D) ──
+    서식 = {
+        "(1) 세금계산서 발급분": {"금액": sales_invoice, "세액": 세액_1},
+        "(2) 매입자발행 세금계산서": {"금액": sbi_amount, "세액": 세액_2},
+        "(3) 신용카드ㆍ현금영수증 발행분": {"금액": sales_card_cash, "세액": 세액_3},
+        "(4) 기타(정규영수증 외 매출분)": {"금액": sales_other + deemed_supply, "세액": 세액_4},
+        "(5) 영세율 세금계산서 발급분": {"금액": sales_zero_invoice, "세액": 세액_5},
+        "(6) 영세율 기타": {"금액": sales_zero_other, "세액": 세액_6},
+        "(7) 예정신고 누락분": {"금액": prelim_omitted_sales, "세액": 세액_7},
+        "(8) 대손세액 가감": 대손세액_가감,
+        "(9) 합계": 매출세액_합계,
+        "(10) 일반매입": {"금액": purchase_invoice, "세액": 세액_10},
+        "(11) 수출기업 수입분 납부유예": 세액_11,
+        "(12) 고정자산매입": {"금액": purchase_invoice_fixed, "세액": 세액_12},
+        "(13) 예정신고 누락분": {"금액": prelim_omitted_purchase, "세액": 세액_13},
+        "(14) 매입자발행 세금계산서": {"금액": pbi_amount, "세액": 세액_14},
+        "(15) 그 밖의 공제매입세액": 세액_15,
+        "(16) 합계": 매입세액,
+        "(17) 공제받지 못할 매입세액": 공제받지못할_매입세액,
+        "(18) 차감계": 매입세액_차감계,
+        "납부(환급)세액": 납부환급세액,
+        "(19) 그 밖의 경감ㆍ공제세액": 경감공제세액,
+        "(20) 신용카드매출전표등 발행공제 등": 카드공제,
+        "(21) 합계": 경감공제_합계,
+        "(22) 소규모 개인사업자 부가가치세 감면세액": small_biz_reduction,
+        "(23) 예정신고 미환급세액": prelim_refund_pending,
+        "(24) 예정고지세액": prepaid_assessed,
+        "(25) 수시부과세액": occasional_assessed,
+        "(26) 사업양수자가 대리납부한 세액": prepaid_by_transferee,
+        "(27) 매입자 납부특례에 따라 납부한 세액": prepaid_buyer_special,
+        "(28) 신용카드업자가 대리납부한 세액": prepaid_by_card_company,
+        "(29) 가산세액 계": 가산세_합계,
+        "(30) 차감ㆍ가감하여 납부할 세액(환급받을 세액)": 차감_가감_납부세액,
+    }
+
+    단계별 = [
+        {"항목": "과세표준((1)~(4)+(7))", "금액": 과세표준,
+         "근거": "별지 제21호서식 (1) 세금계산서 발급분 + (2) 매입자발행 + (3) 신용카드·현금영수증 + (4) 기타 + (7) 예정신고 누락분"},
+        {"항목": "영세율 과세표준((5)+(6))", "금액": 영세율_과세표준,
+         "근거": "별지 제21호서식 (5) 영세율 세금계산서 발급분 + (6) 영세율 기타"},
+        {"항목": "매출세액((1)~(7) 세액)", "금액": 세액_1 + 세액_2 + 세액_3 + 세액_4 + 세액_5 + 세액_6 + 세액_7,
+         "근거": "각 매출란 공급가액 × 10%(영세율 0%) — 부가가치세법 제37조"},
+        {"항목": "대손세액 가감((8))", "금액": 대손세액_가감,
+         "근거": "부가가치세법 제45조① 대손세액공제 — 공제분 음수, 회수분 양수"},
+        {"항목": "매출세액 합계(㉮ = (1)~(7)+(8))", "금액": 매출세액_합계,
+         "근거": "부가가치세법 제37조"},
+        {"항목": "매입세액((16) = (10)−(11)+(12)+(13)+(14)+(15))", "금액": 매입세액,
+         "근거": "부가가치세법 제38조·제39조"},
+        {"항목": "공제받지 못할 매입세액((17))", "금액": 공제받지못할_매입세액,
+         "근거": "부가가치세법 제39조 — 부품 도구 판정 결과 그대로"},
+        {"항목": "매입세액 차간계(㉯ = (16)−(17))", "금액": 매입세액_차감계,
+         "근거": "부가가치세법 제38조"},
+        {"항목": "납부(환급)세액(㉰ = ㉮−㉯)", "금액": 납부환급세액,
+         "근거": "부가가치세법 제45조·제48조·제49조"},
+        {"항목": "경감ㆍ공제세액((19)+(20) = ㉱)", "금액": 경감공제_합계,
+         "근거": "부가가치세법 제46조·제48조, 조세특례제한법 제104조의8②"},
+        {"항목": "차감ㆍ가감하여 납부할 세액(환급액)((30))", "금액": 차감_가감_납부세액,
+         "근거": "부가가치세법 제48조·제49조·제60조, 국고금 관리법 제47조"},
+    ]
+
+    근거 = ("부가가치세법 제37조·제38조·제39조·제45조·제46조·제48조·제49조·제60조, "
+            "조세특례제한법 제104조의8②, 국고금 관리법 제47조, 별지 제21호서식(2026.3.20.)")
+
+    # ── 원장대조(ledger 있는 경우만) ──
+    if ledger is not None:
+        대조_항목 = []
+        for 구분, 매핑 in _LEDGER_ALLOWED.items():
+            for 항목명, 입력키 in 매핑.items():
+                원장금액 = 집계[구분].get(입력키, 0)
+                대조_항목.append({"항목": 항목명, "금액": 원장금액, "입력키": 입력키})
+        원장대조 = {"판정": "일치", "항목": 대조_항목}
+    else:
+        원장대조 = None
+
+    raw = {
+        "결과": 결과,
+        "서식": 서식,
+        "단계별_계산": 단계별,
+        "근거": 근거,
+    }
+    if 주의_목록:
+        raw["주의"] = 주의_목록
+    if 원장대조:
+        raw["원장대조"] = 원장대조
+    return raw
