@@ -17,6 +17,7 @@ from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
 from .engine import calc as K, calc_cit as C, calc_income as I, calc_vat as V, calc_capgains as CG
+from .engine import calc_nonprofit as NP
 from .engine.calc_cit import min_tax_adjust
 from .engine import calc_inhgift as IG
 from .engine import calc_gold_gaps6 as GG
@@ -1732,6 +1733,45 @@ def donation_limit(year: YEAR, base_income: WON,
 결과: 한도·한도초과·이월 손금산입, 근거(법인세법 제24조)."""
     return _ok(C.donation(base_income, carried_loss, special, general, special_carry, general_carry, sme, social_enterprise, year=year),
                "법인세법 제24조", 산식="특례 = (기준소득 − 결손금) × 50%, 일반 = (기준소득 − 결손금 − 특례 손금산입) × 10%(사회적기업: 2018~2025 사업연도 20%, 2026 사업연도부터 30%)")
+
+
+# ── 비영리내국법인 고유목적사업준비금 손금산입 한도 (법 제29조) ──
+
+@mcp.tool(annotations=CALC)
+@_guard
+def nonprofit_reserve_limit(year: Annotated[int, Field(description="사업연도(정수. 2016~2026은 정상 범위, 2029 등 조특법74 sunset 확인용 연도는 엔진에서 허용)")],
+                            interest_income: Annotated[int, Field(description="이자소득 금액(비영업대금의 이익 제외, 원, ≥0)")] = 0,
+                            dividend_income: Annotated[int, Field(description="배당소득 금액(상증세 과세가액 산입 주식 배당 제외, 원, ≥0)")] = 0,
+                            welfare_loan_interest: Annotated[int, Field(description="특별법 비영리법인 복지사업 융자이자(원, ≥0, 기본 0)")] = 0,
+                            other_income: Annotated[int, Field(description="그 밖의 수익사업 소득(원) — 결손이면 음수")]=0,
+                            reserve_booked: Annotated[int, Field(description="계상액(원, ≥0)")] = 0,
+                            entity: Annotated[str, Field(description="법인 종류: '일반'(기본, 50%) | '공익법인_장학'(80%) | '조특법74'(2028년까지 100%, 이후 50%) — 학교법인·사회복지법인·국립대병원·도서관·박물관 등")]="일반",
+                            interest_separate_tax: Annotated[bool, Field(description="제62조 분리과세 선택으로 이자소득을 한도에서 제외 여부(기본 False)")]=False) -> dict:
+    """비영리내국법인 고유목적사업준비금 손금산입 한도(법인세법 제29조제1항·제5항제4호·제7항, 조세특례제한법 제74조제1항).
+    언제: 비영리내국법인이 고유목적사업준비금을 손금에 계상할 때 손금산입 한도와 한도초과액을 구한다.
+    입력:
+      · year — 사업연도(정수). 2016~2026 범위는 엔진에서 검증, 2029 등 조특법74 sunset 확인용 연도는 허용.
+      · interest_income — 이자소득 금액(비영업대금의 이익 제외, 원, ≥0).
+      · dividend_income — 배당소득 금액(상증세 과세가액 산입 주식 배당 제외, 원, ≥0).
+      · welfare_loan_interest — 특별법 비영리법인 복지사업 융자이자(원, ≥0, 기본 0).
+      · other_income — 그 밖의 수익사업 소득(원, 결손이면 음수).
+      · reserve_booked — 계상액(원, ≥0, 필수).
+      · entity — 법인 종류: '일반'(기본, 50%) | '공익법인_장학'(80%) | '조특법74'(2028년까지 100%, 이후 50%).
+      · interest_separate_tax — 제62조 분리과세 선택으로 이자소득을 한도에서 제외 여부(기본 False).
+    결과: 이자배당등_합계·기타수익사업_소득·적용률·기타분_한도·한도·계상액·손금산입액·한도초과액·판단·근거.
+    근거: 법인세법 제29조제1항(+ 조특법74면 조세특례제한법 제74조)."""
+    if entity not in ("일반", "공익법인_장학", "조특법74"):
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"entity='{entity}'은(는) 지원하지 않음 — 허용값: '일반', '공익법인_장학', '조특법74'"],
+                "허용값": {"일반": {}, "공익법인_장학": {}, "조특법74": {}}}
+    try:
+        r = NP.nonprofit_reserve_limit(year, interest_income, dividend_income, welfare_loan_interest,
+                                        other_income, reserve_booked, entity, interest_separate_tax)
+    except ValueError as e:
+        return {"error": f"입력 오류: {e}"}
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 판단=r.get("판단", []), **({"주의": r.get("주의", [])} if r.get("주의") else {}))
 
 
 @mcp.tool(annotations=CALC)
@@ -5129,6 +5169,79 @@ def vat_return_general(
         "prepaid_by_card_company": prepaid_by_card_company, "penalties": penalties,
         "e_filing_credit": efc, "ledger": ledger,
     })
+
+
+# ── 외화 대가 부가가치세 과세표준 환산 (영 §59·§95③) ──
+
+@mcp.tool(annotations=CALC)
+@_guard
+def vat_foreign_currency_base(context: Annotated[str, Field(description="맥락: '공급'(부가가치세법 시행령 제59조, 기본) | '대리납부'(시행령 제95조제3항)")] = "공급",
+                              items: Annotated[list, Field(description="항목 목록. 각 항목: {이름?(선택), 외화금액(숫자, >0, 필수), 통화?(str, 기본 'USD'), 공급시기?(YYYY-MM-DD, 공급 맥락 필수), 공급시기_환율?(숫자, 미환가분 있으면 필수), 환가?([{환가일, 외화금액, 원화금액}] 선택), 지급일?(YYYY-MM-DD, 대리납부 필수), 지급방식?('원화매입'|'보유외화', 대리납부 필수), 지급일_환율?(숫자, 대리납부 필수)}]")] = []) -> dict:
+    """외화 대가 부가가치세 과세표준 환산 — 외화 거래(수출대금·대리납부 외화 지출 등)의 원화 과세표준을 위환율 없이 사용자 입력 환율로 계산한다.
+    언제: 외화로 공급대가를 받거나 외화를 지급하는 거래에서 원화 과세표준을 구할 때. 환율 조회는 하지 않고 사용자가 입력한다.
+    입력:
+      · context — '공급'(기본, 영 §59: 공급시기 전 환가분은 환가액, 이후는 공급시기 환율) | '대리납부'(영 제95조제3항: 원화매입이면 지급일 매도율, 보유외화면 지급일 기준환율).
+      · items — 항목 목록. 각 항목:
+        - 공통: 이름?(선택), 외화금액(숫자, >0, 필수), 통화?(str, 기본 'USD').
+        - 공급 맥락: 공급시기(YYYY-MM-DD, 필수), 공급시기_환율?(숫자 — 미환가분이 있으면 필수), 환가?([{환가일, 외화금액, 원화금액}] 선택).
+        - 대리납부 맥락: 지급일(YYYY-MM-DD, 필수), 지급방식('원화매입'|'보유외화', 필수), 지급일_환율(숫자, 필수 — 원화매입이면 매도율, 보유외화면 기준환율).
+    결과: 과세표준_합계·항목별[{이름, 통화, 외화금액, 환가분{외화,원화}, 미환가분{외화,환율,원화}, 과세표준, 적용}]·판단·근거.
+    근거: 부가가치세법 제29조제3항, 시행령 제59조(공급) 또는 시행령 제95조제3항(대리납부)."""
+    from .engine.calc_vat import vat_foreign_currency_base as _fn
+    if context not in ("공급", "대리납부"):
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"context='{context}'은(는) 지원하지 않음 — 허용값: '공급', '대리납부'"],
+                "허용값": {"공급": {}, "대리납부": {}}}
+    if not items:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["items가 비어 있음"]}
+    try:
+        r = _fn(context, items)
+    except ValueError as e:
+        msg = str(e)
+        if "지급방식" in msg:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [msg],
+                    "허용값": {"원화매입": {}, "보유외화": {}}}
+        return {"error": f"입력 오류: {e}"}
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 판단=r.get("판단", []))
+
+
+# ── 국외사업자 용역등 대리납부 (법 제52조) ──
+
+@mcp.tool(annotations=CALC)
+@_guard
+def vat_reverse_charge(year: Annotated[int, Field(description="사업연도·귀속연도(2016~2026, 2029 등 조특법74 sunset 확인용 연도는 엔진에서 허용)")],
+                       items: Annotated[list, Field(description="항목 목록. 각 항목: {이름?(선택), 공급자('국내사업장_없음'|'국내사업장_있음_비귀속'|'국내사업장_있음_귀속', 필수), 대가(원, int≥0, 필수 — 외화는 도구1로 먼저 환산), 지급일(YYYY-MM-DD, 필수), 용도('면세'|'과세'|'불공제'|'공통'|'비사업', 필수)}, ...")],
+                       taxable_supply: Annotated[int | None, Field(description="과세 공급가액(원) — 용도 '공통' 안분용, 대가 지급일이 속하는 과세기간")]=None,
+                       exempt_supply: Annotated[int | None, Field(description="면세 공급가액(원) — 용도 '공통' 안분용, 대가 지급일이 속하는 과세기간")]=None) -> dict:
+    """국외사업자 용역등 대리납부(부가가치세법 제52조제1항·제2항, 시행령 제95조제1항·제2항).
+    언제: 국내사업장이 없는 비거주자·외국법인(또는 국내사업장이 있어도 비귀속)으로부터 용역등을 공급받아 대리납부할 때.
+    입력:
+      · year — 사업연도·귀속연도(정수). 2016~2026 범위는 엔진에서 검증, 그 외는 조특법74 sunset 확인용으로 허용.
+      · items — 항목 목록. 각 항목:
+        - 이름?(선택), 공급자('국내사업장_없음'|'국내사업장_있음_비귀속'|'국내사업장_있음_귀속', 필수),
+        - 대가(원, int≥0, 필수 — 외화는 도구1로 먼저 환산), 지급일(YYYY-MM-DD, 필수), 용도('면세'|'과세'|'불공제'|'공통'|'비사업', 필수).
+      · taxable_supply·exempt_supply — 용도 '공통' 안분용 과세기간 공급가액(원, 선택 — 둘 다 필요).
+    결과: 대리납부세액_합계·항목별[{이름, 대상(bool), 사유, 과세표준, 세액, 기한_법정, 기한_적용}]·판단·주의·근거.
+    근거: 부가가치세법 제52조제1항·제2항, 시행령 제95조제1항·제2항. 전자적 용역(제53조의2 간편사업자등록)은 범위 밖."""
+    try:
+        r = V.vat_reverse_charge(year, items, taxable_supply=taxable_supply, exempt_supply=exempt_supply)
+    except ValueError as e:
+        msg = str(e)
+        if "용도" in msg or "공급자" in msg:
+            # 허용값 추출
+            import re
+            허용값 = re.search(r"허용값: (.+?)(?:$| —)", msg)
+            if 허용값:
+                값목록 = [v.strip().strip("'") for v in 허용값.group(1).split(",")]
+                허용값_딕트 = {v: {} for v in 값목록}
+                return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [msg], "허용값": 허용값_딕트}
+        return {"error": f"입력 오류: {e}"}
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 판단=r.get("판단", []), 주의=r.get("주의", []))
 
 
 # ── 끝에서 끝까지: 겸영사업자 공통매입세액 안분·정산 + 공통사용재화 공급 ──
@@ -8587,6 +8700,10 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "주식 양도": ["stock_capital_gains_tax", "stock_major_shareholder"], "주식 양도세": ["stock_capital_gains_tax", "stock_major_shareholder"], "주식 팔": ["stock_capital_gains_tax", "stock_major_shareholder"],
     "대주주": ["stock_major_shareholder", "stock_capital_gains_tax"], "종가": ["stock_price_lookup"], "공시지가": ["official_property_price"], "개인 기부금": ["individual_donation_expense"], "기부금 필요경비": ["individual_donation_expense"], "사업자 기부금 한도": ["individual_donation_expense"], "연금수령한도": ["pension_account_withdrawal"], "연금수령연차": ["pension_account_withdrawal"], "연금계좌 인출": ["pension_account_withdrawal"], "연금외수령": ["pension_account_withdrawal"], "건물 기준시가": ["building_standard_price"], "건물 평가": ["building_standard_price"], "상가 기준시가": ["building_standard_price"], "신축가격기준액": ["building_standard_price"], "공시가격": ["official_property_price"], "기준시가 조회": ["official_property_price"], "공동주택가격": ["official_property_price"], "개별주택가격": ["official_property_price"], "아파트 공시": ["official_property_price"], "비상장주식 평가": ["unlisted_stock_valuation", "stock_basis_income_tax"], "보충적 평가": ["unlisted_stock_valuation"], "순손익가치": ["unlisted_stock_valuation"], "순자산가치": ["unlisted_stock_valuation", "stock_basis_income_tax"], "최대주주 할증": ["unlisted_stock_valuation"], "기준시가 주식": ["stock_basis_income_tax"], "시세": ["stock_price_lookup"], "주가 조회": ["stock_price_lookup"], "시가총액": ["stock_price_lookup", "stock_major_shareholder"], "비상장주식": ["stock_capital_gains_tax", "stock_major_shareholder"], "장외 양도": ["stock_capital_gains_tax"], "소액주주": ["stock_major_shareholder", "stock_capital_gains_tax"],
     "양도": ["capital_gains_income", "capital_gains_tax"], "필요경비": ["capital_gains_income", "estimated_business_income", "other_income_aggregate"],
+    # 0.27.0 — 외화 환산·대리납부·고유목적사업준비금
+    "외화 환산": ["vat_foreign_currency_base"], "수출대금 환율": ["vat_foreign_currency_base"],
+    "대리납부": ["vat_reverse_charge"], "국외사업자 용역": ["vat_reverse_charge"],
+    "고유목적사업준비금": ["nonprofit_reserve_limit"], "비영리법인 준비금": ["nonprofit_reserve_limit"],
 }
 
 # 계산 도구가 없는 흔한 질문 — 있는 척 엉뚱한 도구를 고르지 않도록 먼저 걸러 근거 조문만 안내(처음 쓰는 사람 점검 2026-10-30)
