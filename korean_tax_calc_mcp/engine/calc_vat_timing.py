@@ -27,8 +27,7 @@
   관하여는 제17조제3항제2호의 개정규정에도 불구하고 종전의 규정에 따른다').
 - ④(영 제30조 1~3호): 공급시기 전 발급하면 발급한 때 — 2016~2026 같음.
 
-지원하지 않는 것(입력 확인 필요로 멈춤): 상품권·가공·무인판매기·보세구역·임치물·위탁판매·간주공급(법 제10조), 중계무역·위탁판매수출·
-외국인도수출 등 선적일 외 수출, 부동산 임대(간주임대료)·선불 연회비 등 영 제29조②, 외국항행용역(영 제30조4호), 폐업일 의제(영 제28조⑨·제29조③),
+지원하지 않는 것(입력 확인 필요로 멈춤): 상품권·가공·무인판매기·보세구역·임치물·위탁판매·간주공급(법 제10조), 부동산 임대(간주임대료)·선불 연회비 등 영 제29조②, 외국항행용역(영 제30조4호), 폐업일 의제(영 제28조⑨·제29조③),
 시설물·권리 사용 용역(법 제16조①2호), 2016년 이전·2026년 이후 공급분.
 """
 
@@ -54,6 +53,59 @@ _KIND = {
     "용역_계속적공급": ("용역", "계속"), "용역_계속공급": ("용역", "계속"),
 }
 KINDS = sorted(_KIND)
+
+# 수출 형태별 공급시기 — 부가가치세법 시행령 제28조제6항·제31조제1항. 선적일 외 수출 유형.
+# ('재화', '수출') 계열이지만 공급시기 판정일이 선적일·확정일이거나 외국에서 인도되는 날로 달라짐.
+KOREAN_VAT_EXPORT_TYPES = {
+    "중계무역":          ("수출", "선적일"),
+    "보세구역반출":       ("수출", "선적일"),
+    "위탁판매수출":      ("수출", "확정일"),   # 공급가액이 확정되는 때(영 제28조제6항 표2)
+    "외국인도수출":      ("수출", "인도일"),   # 외국에서 해당 재화가 인도되는 때(영 제31조제1항 3호)
+    "위탁가공무역":      ("수출", "인도일"),   # 영 제31조제1항 4호
+    "원료반출":          ("수출", "인도일"),   # 영 제31조제1항 5호
+}
+
+def _handle_export_type(tx, i):
+    """KOREAN_VAT_EXPORT_TYPES에 등록된 수출 유형 처리 → (형태, parts, 판단, 영30).
+    _base_parts와 동일한 반환 형식이어서 judge()에서 이어서 쓸 수 있다."""
+    kind = str(tx.get("종류") or "").replace(" ", "")
+    if kind not in KOREAN_VAT_EXPORT_TYPES:
+        return None
+    형태, 날짜필드 = KOREAN_VAT_EXPORT_TYPES[kind]
+    total = int(tx.get("공급가액") or 0)
+    if total <= 0:
+        raise InputError(f"거래{i}: 공급가액 필요")
+
+    if 날짜필드 == "선적일":
+        d = _d(tx.get("선적일"), f"거래{i} 선적일")
+        if d is None:
+            raise InputError(f"거래{i}: {kind}은(는) 선적일 필요")
+        판단 = []
+        parts = [{"공급시기": d, "금액": total,
+                  "사유": "수출재화의 선(기)적일",
+                  "근거": "부가가치세법 시행령 제28조제6항 표1"}]
+        return (형태, parts, 판단, False)
+
+    if 날짜필드 == "확정일":
+        d = _d(tx.get("확정일"), f"거래{i} 확정일")
+        if d is None:
+            raise InputError(f"거래{i}: 위탁판매수출은 확정일(공급가액이 확정되는 날) 필요")
+        판단 = [{"항목": "위탁판매수출", "결론": "위탁판매수출 — 공급가액이 확정되는 때",
+                 "근거": "부가가치세법 시행령 제28조제6항 표2"}]
+        parts = [{"공급시기": d, "금액": total,
+                  "사유": "위탁판매수출 — 공급가액이 확정되는 때",
+                  "근거": "부가가치세법 시행령 제28조제6항 표2"}]
+        return (형태, parts, 판단, False)
+
+    # 인도일: 외국인도수출·위탁가공무역·원료반출 — 외국에서 해당 재화가 인도되는 때
+    d = _d(tx.get("인도일"), f"거래{i} 인도일")
+    if d is None:
+        raise InputError(f"거래{i}: {kind}은(는) 인도일(외국에서 인도되는 날) 필요")
+    판단 = []
+    parts = [{"공급시기": d, "금액": total,
+              "사유": f"{kind} — 외국에서 해당 재화가 인도되는 때",
+              "근거": "부가가치세법 시행령 제31조제1항"}]
+    return (형태, parts, 판단, False)
 
 
 class InputError(ValueError):
@@ -388,6 +440,32 @@ def judge(transactions, 사업자="일반", period=None):
     q = parse_query(period, 간이)
     rows, 판단전체, 기간합 = [], [], {}
     for n, tx in enumerate(transactions, 1):
+        if not isinstance(tx, dict):
+            raise InputError(f"거래{n}: 객체(dict)로 입력")
+        kind = str(tx.get("종류") or "").replace(" ", "")
+        if kind in KOREAN_VAT_EXPORT_TYPES:   # 신규 수출 유형 — 선적일·확정일·인도일 기준
+            name = tx.get("이름") or f"거래{n}"
+            형태, parts, 판단, 영30 = _handle_export_type(tx, n)
+            merged = {}
+            for p in parts:
+                if p["공급시기"] < FIRST:
+                    raise InputError(f"{name}: 공급시기 {p['공급시기']} — 2016-01-01 전 공급분은 지원하지 않음")
+                if p["공급시기"] > LAST and not any(j.get("항목") == "2027년 이후 공급시기" for j in 판단):
+                    판단.append({"항목": "2027년 이후 공급시기", "결론": "2026-10-28 현재 시행본 기준으로 기간만 배정(제15~17조·영 제28~30조 시행 예정 개정 없음 확인) — 그 해 조문 재확인 필요",
+                               "근거": "법제처 연혁(article_history) 2026-10-28 확인"})
+                key = (p["공급시기"], p["사유"], p["근거"])
+                merged[key] = merged.get(key, 0) + p["금액"]
+            items = []
+            for (d, why, basis), amt in sorted(merged.items()):
+                per = period_of(d, 간이)
+                items.append({"공급시기": d.isoformat(), "금액": amt, "과세기간": per["과세기간"], "신고기간": per["기간키"], "사유": why, "근거": basis})
+                기간합[per["기간키"]] = 기간합.get(per["기간키"], 0) + amt
+            row = {"거래": name, "판정": 형태, "공급시기별": items, "합계": sum(x["금액"] for x in items)}
+            if q:
+                row["조회기간_귀속"] = sum(x["금액"] for x in items if q[0] <= date.fromisoformat(x["공급시기"]) <= q[1])
+            rows.append(row)
+            판단전체 += [{"거래": name, **j} for j in 판단]
+            continue
         if not isinstance(tx, dict):
             raise InputError(f"거래{n}: 객체(dict)로 입력")
         name = tx.get("이름") or f"거래{n}"

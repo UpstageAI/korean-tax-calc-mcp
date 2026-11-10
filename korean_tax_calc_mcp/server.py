@@ -782,11 +782,17 @@ def deemed_interest(movements: Annotated[list[Movement], Field(description="가�
 @mcp.tool(annotations=CALC)
 @_guard
 def unfair_transaction(market_price: Annotated[float, Field(description="시가(단가, 원)")], actual_price: Annotated[float, Field(description="실제 거래 단가(원)")],
-                       quantity: Annotated[int, Field(description="수량")]) -> dict:
+                       quantity: Annotated[int, Field(description="수량")],
+                       wholly_owned_capital_increase: Annotated[bool, Field(description="100% 자회사 액면 증자 단독 인수 — True이면 부당행위계산 부인 대상 아님(서이46012-12126, 조심-2014-전-0041)")] = False) -> dict:
     """부당행위계산 기준(시가와 실제 거래가 차이 3억 원 이상 또는 5% 이상). 언제: 특수관계인과의 거래 가격이 시가와 크게 차이 나 부당행위계산 부인 대상인지 확인할 때.
-입력: 시가(단가, 원) → market_price, 실제 거래 단가(원) → actual_price, 수량 → quantity.
-결과: 시가총액·차액·차액비율·부당행위계산 여부, 근거(법인세법 제52조, 시행령 제88조제3항). 부당행위계산 기준(시가와 실제 거래가 차액이 3억 원 이상 또는 5% 이상이면 부인 대상)."""
+입력: 시가(단가, 원) → market_price, 실제 거래 단가(원) → actual_price, 수량 → quantity, 100% 자회사 액면 증자 단독 인수 여부 → wholly_owned_capital_increase(기본 False).
+결과: 시가총액·차액·차액비율·부당행위계산 여부, 근거(법인세법 제52조, 시행령 제88조제3항). 부당행위계산 기준(시가와 실제 거래가 차액이 3억 원 이상 또는 5% 이상이면 부인 대상).
+wholly_owned_capital_increase=True이고 시가가 액면 미만(액면=0 포함)인 법인의 신주를 100% 단독 출자 법인이 전부 인수한 경우 부당행위계산 부인 대상 아님(서이46012-12126, 조심-2014-전-0041, 대구지법 2013구합10573)."""
     gap = abs(market_price - actual_price) * quantity; base = market_price * quantity
+    if wholly_owned_capital_increase and market_price == 0 and base == 0 and gap > 0:
+        return _ok({"시가총액": int(base), "차액": int(gap), "차액비율": None,
+                    "부당행위계산": False}, "법인세법 제52조, 시행령 제88조③",
+                   판단=["100% 자회사 액면 증자 단독 인수 — 부당행위계산 부인 대상 아님(서이46012-12126, 조심-2014-전-0041)"])
     return _ok({"시가총액": int(base), "차액": int(gap), "차액비율": round(gap / base, 4) if base else None,
                 "부당행위계산": bool(gap >= 300_000_000 or (base and gap >= base * 0.05))}, "법인세법 제52조, 시행령 제88조③")
 
@@ -1532,15 +1538,18 @@ def nonresident_withholding(income_kind: Annotated[Literal["이자", "배당", "
                             treaty_rate: Annotated[float | None, Field(description="조세조약 제한세율(소수, 예: 0.15 = 15%). 생략 시 국내세율 적용")] = None,
                             bond_interest: Annotated[bool, Field(description="채권 이자 여부 — 이자 소득에서만 의미, 특례 적용 필요 시 별도 확인")] = False,
                             related_party: Annotated[bool, Field(description="수취인이 국외지배주주일 가능성 — 이자 소득에서 과소자본 쟁점 표시 시 사용")] = False,
-                            treaty_includes_local_tax: Annotated[bool | None, Field(description="조세조약 대상조세(제2조)에 한국 지방소득세(주민세)가 포함되는지. 생략 시 내장 표(일본·중국·독일·영국·프랑스·싱가포르·네덜란드·캐나다·호주·베트남 포함, 미국 미포함), 표에 없으면 미포함으로 계산하고 확인 표시")] = None) -> dict:
+                            treaty_includes_local_tax: Annotated[bool | None, Field(description="조세조약 대상조세(제2조)에 한국 지방소득세(주민세)가 포함되는지. 생략 시 내장 표(일본·중국·독일·영국·프랑스·싱가포르·네덜란드·캐나다·호주·베트남 포함, 미국 미포함), 표에 없으면 미포함으로 계산하고 확인 표시")] = None,
+                            service_location: Annotated[Literal["국내", "국외"] | None, Field(description="인적용역 제공 장소 — 인적용역 소득에서만 의미, '국내'면 20%, '국외'면 국내원천소득 아님(0%), None이면 현행(20%+쟁점)")] = None) -> dict:
     """비거주자·외국법인 국내원천소득 원천징수(소득세법 제156조 / 법인세법 제98조). 언제: 비거주자·외국법인에 이자·배당·사용료·인적용역·기타 소득을 지급할 때 원천징수세액을 구한다.
-입력: 소득 종류(이자·배당·사용료·인적용역·기타) → income_kind, 지급액(원) → amount, 수취인 구분(개인/법인) → recipient_type, 거주지국(ISO 2자 또는 국명) → residence_country, 조세조약 제한세율(소수) → treaty_rate, 채권 이자 여부 → bond_interest, 국외지배주주 가능성 → related_party, 조약 대상조세의 지방소득세 포함 여부 → treaty_includes_local_tax.
+입력: 소득 종류(이자·배당·사용료·인적용역·기타) → income_kind, 지급액(원) → amount, 수취인 구분(개인/법인) → recipient_type, 거주지국(ISO 2자 또는 국명) → residence_country, 조세조약 제한세율(소수) → treaty_rate, 채권 이자 여부 → bond_interest, 국외지배주주 가능성 → related_party, 조약 대상조세의 지방소득세 포함 여부 → treaty_includes_local_tax, 인적용역 제공 장소 → service_location.
 결과: 원천징수세액·지방소득세·적용 세율·국내세율, 근거(개인 소득세법 제156조 / 법인 법인세법 제98조). 적용세율 = min(국내세율, 조약 제한세율), 지방소득세는 원천징수세액의 10% 별도.
-  이자·배당·사용료에서 조약 대상조세에 지방소득세(주민세)가 포함되면(법인세법 제98조의7제1항제2호·소득세법 제156조의8제1항제2호) 제한세율이 국세+지방소득세 합계 상한:
-  적용세율 = min(제한세율, 국내세율 × 110%), 원천징수세액 = 지급액 × 적용세율 × 10/11, 지방소득세 = 그 10% (예: 한일조약 사용료 10% → 9.09% + 0.91%). Non-resident/foreign corporation withholding tax on Korean-source income."""
+  인적용역 service_location='국외' → 국내원천소득 아님(소득세법 제119조6호·법인세법 제93조6호), 적용세율 0.
+  인적용역 service_location='국내' → 현행 20%. None이면 현행(20%+쟁점 표시).
+  service_location은 인적용역 소득에서만 의미, 그 외 소득에는 무시. Non-resident/foreign corporation withholding tax on Korean-source income."""
     r = I.nonresident_withholding(income_kind, amount, recipient_type, residence_country, treaty_rate, bond_interest, related_party,
-                                  treaty_includes_local_tax)
-    return _ok({k: v for k, v in r.items() if k != "쟁점"}, r["근거"], 쟁점=r["쟁점"])
+                                  treaty_includes_local_tax, service_location)
+    판단 = r.pop("판단", None)
+    return _ok({k: v for k, v in r.items() if k != "쟁점"}, r["근거"], 쟁점=r["쟁점"], 판단=판단 if 판단 else None)
 
 
 @mcp.tool(annotations=CALC)
@@ -1624,9 +1633,9 @@ def vat_input_tax_deduction(period: Annotated[str, Field(description="과세기�
 @mcp.tool(annotations=CALC)
 @_guard
 def vat_deemed_supply_items(period: Annotated[str, Field(description="과세기간('YYYY-1' 또는 'YYYY-2')")],
-                            items: Annotated[list, Field(description="[{항목, 거래, 매입세액공제(bool), 금액?|시가?|감가상각?, 사용인_구분?('경조사'|'설날·추석'|'창립기념일·생일'), 인원?, 1인당_연간금액?, 견본_광고선전물?, 취득구분?('자기매입'|'사업양수'|'수출영세율')}]")]) -> dict:
+                            items: Annotated[list, Field(description="[{항목, 거래, 매입세액공제(bool), 금액?|시가?|감가상각?, 사용인_구분?('경조사'|'설날·추석'|'창립기념일·생일'), 인원?, 1인당_연간금액?, 견본_광고선전물?, 취득구분?('자기매입'|'사업양수'|'수출영세율'), 반출?('국내'|'국외')}]")]) -> dict:
     """간주공급·판매 과세표준 판정(부가가치세법 제10조, 시행령 제19조의2·제20조·제66조). 언제: 재화의 판매·간주공급에 대한 부가가치세 과세표준을 항목별로 판정할 때.
-    입력: period=과세기간('YYYY-1'|'YYYY-2'), items=[{항목, 거래, 매입세액공제(bool), 금액?|시가?|감가상각?, 사용인_구분?, 인원?, 1인당_연간금액?, 견본_광고선전물?, 취득구분?}].
+    입력: period=과세기간('YYYY-1'|'YYYY-2'), items=[{항목, 거래, 매입세액공제(bool), 금액?|시가?|감가상각?, 사용인_구분?, 인원?, 1인당_연간금액?, 견본_광고선전물?, 취득구분?, 반출?}].
       거래: '판매'|'면세전용'|'비영업용승용차전용'|'타사업장반출'|'개인적공급'|'사업상증여'|'폐업시잔존'.
       감가상각: {구분:'건물'|'구축물'|'기타', 취득가액, 취득일, 공급일} → 간주시가 = 취득가액 × (1 − 체감률 × 경과과세기간수), 체감률 건물·구축물 5%·기타 25%.
       취득구분(선택): '자기매입'(기본) | '사업양수'(사업양도로 취득, 양도자가 매입세액 공제받은 재화 — 제10조1항2호) | '수출영세율'(영세율 적용받은 재화 — 제10조1항3호).
@@ -1634,8 +1643,8 @@ def vat_deemed_supply_items(period: Annotated[str, Field(description="과세기�
       개인적공급: 시가(감가상각 간주시가) 전액 과세. 사용인에게 준 경조사·설날·추석·창립기념일·생일 등 재화만(영 제19조의2 3호) 목별로 사용인 1명당 연간 10만원 한도,
         초과액만 과세 — 사용인_구분('경조사'|'설날·추석'|'창립기념일·생일', '명절'·'생일' 등도 됨), 인원(선물 받은 사용인 수, 시가는 그 합계), 1인당_연간금액(이 선물을 포함한 그 목의 1인당 연간 누계,
         앞서 준 같은 목 선물 포함)을 넣는다. 목: 2024년 제2기부터 가 경조사·나 설날·추석·다 창립기념일·생일 등, 2020년 제2기~2024년 제1기는 설날·추석·창립기념일·생일이 한 목. 2020년 제1기 이전은 미지원.
-      사업상증여: 견본_광고선전물이 True면 0(법 제10조제5항 단서).
-    결과: {결과: {과세표준}, 계산: {항목별: [{항목, 거래, 과세표준, 제외사유?}], 판단: [{항목, 결론, 근거}]}}.
+      사업상증여: 견본_광고선전물이 True면 0(법 제10조제5항 단서). 반출='국외'이면 해외 무상 반출로 수출 영세율(법 제21조제2항제1호), 해당 항목 과세표준은 영세율_과세표준으로 가고 과세표준(10%)에서는 제외.
+    결과: {결과: {과세표준, 영세율_과세표준}, 계산: {항목별: [{항목, 거래, 과세표준, 제외사유?, 영세율?}], 판단: [{항목, 결론, 근거}]}}.
     규칙: '판매'·'타사업장반출'은 금액 그대로 과세(매입세액 공제 여부와 무관). 나머지 간주공급은 매입세액 공제 여부가 False면 0(자기매입만, 사업양수·수출영세율은 제외), True면 시가(또는 감가상각 간주시가) 과세."""
     r = V.vat_deemed_supply_items(period, items)
     if "error" in r:

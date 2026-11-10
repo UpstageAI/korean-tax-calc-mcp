@@ -551,18 +551,38 @@ def _match(issue_match, *, income_kind, treaty_rate, related_party):
 
 
 def nonresident_withholding(income_kind, amount, recipient_type, residence_country,
-                            treaty_rate=None, bond_interest=False, related_party=False, treaty_includes_local_tax=None):
+                            treaty_rate=None, bond_interest=False, related_party=False, treaty_includes_local_tax=None,
+                            service_location: str | None = None):
     """비거주자·외국법인 국내원천소득 원천징수. 적용세율 = min(국내세율, 조약 제한세율).
     domestic_rate는 소득세법 제156조(비거주자)·법인세법 제98조(외국법인)에 따르며, 수취인 구분(개인/법인)과
     관계없이 소득 종류 기준 동일 세율. 조약_rate 미지정 시 국내세율만 적용.
     채권이자(bond_interest=True, income_kind='이자')는 국가·지방자치단체·내국법인 발행 채권 이자로
     소득세법 제156조①1호가목·법인세법 제98조①1호가목 특례 14% 적용.
     related_party=True이면 수취인이 국외지배주주일 가능성을 고려하여 과소자본 쟁점(국제조세조정에 관한 법률 제22조)을 함께 표시한다.
-    이자·배당·사용료에서 조약 대상조세에 지방소득세(주민세)가 포함되면(법인세법 제98조의7①2호·소득세법 제156조의8①2호) 제한세율은
-    소득세(법인세)+지방소득세 합계의 상한 — 합계세율 = min(제한세율, 국내세율 × 110%), 국세분 = 지급액 × 합계세율 × 10/11, 지방소득세 = 국세분의 10%.
-    포함 여부는 treaty_includes_local_tax, 없으면 TREATY_COVERS_LOCAL_TAX(조약 제2조 원문 대조) 표."""
+    service_location='국외'이고 income_kind='인적용역'이면 국내원천소득이 아님(소득세법 제119조제6호·법인세법 제93조제6호) — 적용세율 0.
+    service_location='국내'이면 현행 20% 적용. None이면 현행(20% + 쟁점 표시). 인적용역이 아닌 소득에 service_location을 주면 무시."""
+    # service_location — 인적용역 제공 장소(선택 입력, 기본값 None = 현행 동작)
     side = 0 if recipient_type == "개인" else 1   # 근거: 개인 → 소득세법, 법인 → 법인세법
-    if bond_interest and income_kind == "이자":
+    판단_목록 = []
+    if service_location == "국외" and income_kind == "인적용역":
+        domestic = 0.0
+        basis = ("소득세법 제119조제6호 / 법인세법 제93조제6호 — 국내원천 인적용역소득 = 국내에서 제공하는 인적용역"
+                 if side == 0 else
+                 "법인세법 제93조제6호 — 국내원천 인적용역소득 = 국내에서 제공하는 인적용역")
+        applicable = 0.0
+        wh_amount = 0
+        local_income_tax = 0
+        note = ""
+        판단_목록.append("국외에서 제공한 인적용역은 국내원천소득이 아님 — 다만 조세조약이 국외 제공 용역을 국내 발생으로 보는 경우 제156조제1항제4호 단서 3%(조약 확인)")
+    elif service_location == "국내" and income_kind == "인적용역":
+        pass  # 현행 그대로 — 아래에서 domestic 설정
+    else:
+        if service_location is not None and income_kind != "인적용역":
+            판단_목록.append(f"service_location은 인적용역 소득에서만 의미 — {income_kind}에는 적용하지 않음")
+
+    if service_location == "국외" and income_kind == "인적용역":
+        pass  # 위에서 domestic=0, applicable=0, wh_amount=0, local_income_tax=0, basis, note, 판단목록 설정 완료
+    elif bond_interest and income_kind == "이자":
         domestic = 0.14
         basis = ("소득세법 제156조①1호가목", "법인세법 제98조①1호가목")[side] + " (국가·지방자치단체·내국법인 발행 채권 이자)"
     else:
@@ -582,7 +602,7 @@ def nonresident_withholding(income_kind, amount, recipient_type, residence_count
                 f"{float(cap)*100:g}% 중 낮은 {applicable*100:g}%가 국세+지방소득세 합계 상한(국세분 = 지급액 × {applicable*100:g}% × 10/11) "
                 + ("법인세법 제98조의7①2호" if side else "소득세법 제156조의8①2호"))
     else:
-        if treaty_rate is not None and treaty_rate > domestic:
+        if treaty_rate is not None and treaty_rate > domestic and service_location != "국외":
             note = " · 조약세율이 국내세율보다 높아 국내세율 적용"
         if 포함 is False and treaty_includes_local_tax is None:
             note += " · 조약 대상조세에 지방소득세 없음(조약 제2조) — 지방소득세 10% 별도"
@@ -599,7 +619,7 @@ def nonresident_withholding(income_kind, amount, recipient_type, residence_count
         if _match(m, income_kind=income_kind, treaty_rate=treaty_rate, related_party=related_party):
             issues.append(it)
 
-    return {
+    ret = {
         "국내세율": domestic,
         "조약세율": treaty_rate,
         "적용세율": applicable,
@@ -608,7 +628,10 @@ def nonresident_withholding(income_kind, amount, recipient_type, residence_count
         "합계": wh_amount + local_income_tax,
         "근거": basis + (f" · 조세조약 제한세율 {treaty_rate*100:.0f}%" if treaty_rate else "") + note,
         "쟁점": issues,
-    } | ({"조약_대상조세_지방소득세": {True: "포함 — 제한세율이 국세+지방소득세 합계 상한", False: "미포함 — 지방소득세 10% 별도"}.get(
+    }
+    if 판단_목록:
+        ret["판단"] = 판단_목록
+    return ret | ({"조약_대상조세_지방소득세": {True: "포함 — 제한세율이 국세+지방소득세 합계 상한", False: "미포함 — 지방소득세 10% 별도"}.get(
         포함, f"'{residence_country}' 조약 확인 필요 — 표에 없어 미포함으로 계산. 조약 제2조(대상조세)에 주민세·지방소득세가 있으면 treaty_includes_local_tax=True")}
         if treaty_rate is not None and income_kind in ("이자", "배당", "사용료") else {})
 
@@ -1108,7 +1131,7 @@ def special_tax_credit(
 
     적용세액공제 = 항목별합계 if 선택 == "항목별" else 표준세액공제
 
-    # ── 판단 목록 ──────────────────────────────────────────────────────────
+    # ── 판단_목록 ──────────────────────────────────────────────────────────
     판단 = list(교육비_한도판단) + list(의료비_한도판단)
     for e in expenses:
         k = e["kind"]
