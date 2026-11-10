@@ -87,7 +87,7 @@ When answering Korean tax questions, use korean-tax-mcp and korean-tax-calc-mcp 
 5. If two values come out (before/after apportionment, total vs. taxable part, etc.), answer only the one the question asks for.
 ```
 
-## Tools (104)
+## Tools (105)
 
 Click a group to expand its tools.
 

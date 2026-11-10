@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from .engine import calc as K, calc_cit as C, calc_income as I, calc_vat as V, calc_capgains as CG
 from .engine import calc_nonprofit as NP
+from .engine import calc_foreign as F
 from .engine.calc_cit import min_tax_adjust
 from .engine import calc_inhgift as IG
 from .engine import calc_gold_gaps6 as GG
@@ -8744,6 +8745,76 @@ def corporate_filing_obligations(
     if "error" in r:
         return r
     return _ok(r["결과"], r["근거"], 판단=r.get("판단", []))
+
+# ── 도구: 해외직접투자 외국환 신고·사후보고·청산 판정 ─────────────────────────────────────
+# SPEC_fx_reporting_1110. 근거: 외국환거래법 제18조, 시행령 제8조, 외국환거래규정 제9-5조·제9-6조·제9-9조, 국조법 제58조.
+
+@mcp.tool(annotations=CALC)
+@_guard
+def foreign_exchange_reporting(
+    event: Annotated[str, Field(description="이벤트 종류: '신설출자'|'증액출자'|'지분양수'|'유보금증자'|'금전대여'|'임원파견'|'지점설치'|'지분매각'|'청산'|'내용변경'")],
+    ownership_ratio_after: Annotated[float | None, Field(description="출자 후 소유 비율(소수, 선택)")] = None,
+    loan_term_months: Annotated[int | None, Field(description="금전대여 기간(개월, 선택)")] = None,
+    amount_usd: Annotated[float, Field(description="이번 건 금액(USD, ≥0)")] = 0,
+    cumulative_usd: Annotated[float | None, Field(description="누적 투자금액 합계(USD, 선택, 기본 amount_usd)")] = None,
+    main_bank_type: Annotated[str, Field(description="신고기관: '주채권은행'|'여신최다은행'|'지정은행'(기본 '지정은행')")] = "지정은행",
+    financial_business: Annotated[bool, Field(description="금융·보험업 여부(기본 False)")] = False,
+    event_date: Annotated[str, Field(description="이벤트 날짜(YYYY-MM-DD, 필수)")] = "",
+    fiscal_year_end: Annotated[str | None, Field(description="사업연도 종료일(YYYY-MM-DD, 선택, 기본 event_date 연도 12-31)")] = None,
+    counterparty_resident: Annotated[bool, Field(description="지분양수·지분매각 상대가 거주자 여부(기본 False)")] = False,
+    paid_in: Annotated[bool, Field(description="납입·대여 실행 여부(기본 True)")] = True,
+    recovered_usd: Annotated[float | None, Field(description="청산 시 회수액(USD, 선택)")] = None,
+) -> dict:
+    """해외직접투자 외국환 신고·사후보고·청산 판정. 뷰티 브랜드의 해외법인 설립·대여·증자·청산 시 외국환거래법 의무와 세무(국조법 §58, 법인세 손금) 연결을 함께 본다.
+
+    언제: 해외법인 신설출자·증자·지분양수·금전대여·임원파견·지점설치·지분매각·청산·내용변경 이벤트의 해외직접투자 해당 여부,
+    신고(사전신고/사후보고) 구분·기한·기관·첨부서류, 사후관리 보고서 일정(외화증권취득·송금·연간사업실적·청산·지분매각 등),
+    국조법 제58조 해외직접투자명세 제출 기한을 한 번에 판정할 때.
+
+    입력: event — 반드시 허용값 중 하나. ownership_ratio_after — 출자 후 소유 비율(소수, 지분 10%↑면 해외직접투자).
+      loan_term_months — 금전대여 기간(개월, 기투자 법인 + 12개월↑면 해외직접투자).
+      amount_usd — 이번 건 금액(USD). cumulative_usd — 누적 투자금액 합계(USD, 기본 amount_usd).
+      main_bank_type — 신고기관(주채권은행/여신최다은행/지정은행, 기본 지정은행).
+      financial_business — 금융·보험업 여부(기본 False, 해당 시 제9-10조 별도 안내).
+      event_date — 이벤트 날짜(YYYY-MM-DD, 필수). fiscal_year_end — 사업연도 종료일(YYYY-MM-DD, 선택 시 event_date 연도 12-31).
+      counterparty_resident — 지분양수·지분매각 상대가 거주자면 사후보고/지분매각보고 3개월 적용.
+      paid_in — 납입·대여 실행 여부(기본 True, False면 외화증권취득보고서 미생성).
+      recovered_usd — 청산 시 회수액(USD, 선택).
+
+    결과: 해외직접투자_해당(bool), 사유, 신고({구분:'사전신고'|'사후보고'|'해당없음', 기관, 기한, 서류:[...]}),
+      사후관리([{보고서, 기한|'즉시'|'대상 아님', 근거}]), 세무({해외직접투자명세_기한, 안내:[...]}).
+    판단·근거·주의 포함."""
+    # 허용값 검증 - event가 허용값인지 먼저 확인
+    _EVENT_TYPES = frozenset({
+        "신설출자", "증액출자", "지분양수", "유보금증자", "금전대여", "임원파견",
+        "지점설치", "지분매각", "청산", "내용변경",
+    })
+    if event not in _EVENT_TYPES:
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"event='{event}' 은(는) 허용값이 아님"],
+                "허용값": {"event": sorted(_EVENT_TYPES)}}
+    
+    r = F.foreign_exchange_reporting(
+        event=event,
+        ownership_ratio_after=ownership_ratio_after,
+        loan_term_months=loan_term_months,
+        amount_usd=amount_usd,
+        cumulative_usd=cumulative_usd,
+        main_bank_type=main_bank_type,
+        financial_business=financial_business,
+        event_date=event_date,
+        fiscal_year_end=fiscal_year_end,
+        counterparty_resident=counterparty_resident,
+        paid_in=paid_in,
+        recovered_usd=recovered_usd,
+    )
+    if "error" in r:
+        return r
+    # ValueError(예: 허용되지 않은 event) → 허용값 오류로 변환
+    if isinstance(r, dict) and "error" not in r:
+        return _ok(r["결과"], r["근거"], 판단=r.get("판단", []), 주의=r.get("주의", []))
+    return r
+
 
 
 _TOOL_ALIASES: dict[str, list[str]] = {
