@@ -1,7 +1,9 @@
 """비영리내국법인 고유목적사업준비금 손금산입 한도 계산 — 법인세법 제29조(2026.7.1 시행본).
 작성 Solar Pro 4(뼈대) → Claude 검수. 조문 원문은 korean-tax-mcp로 확인.
 """
-from .exact import exact as _x, trunc_won as _trunc
+from fractions import Fraction as _Fr
+
+from .exact import trunc_won as _trunc
 
 
 def nonprofit_reserve_limit(year, interest_income, dividend_income, welfare_loan_interest=0,
@@ -23,7 +25,7 @@ def nonprofit_reserve_limit(year, interest_income, dividend_income, welfare_loan
     if entity not in ("일반", "공익법인_장학", "조특법74"):
         raise ValueError(f"entity='{entity}' — 허용값: '일반', '공익법인_장학', '조특법74'")
 
-    # year 검증: 조특법74 sunset 확인용 2029 이상 허용 (2016 미만은 오류)
+    # year는 2016 이상(상한 없음 — 조특법 제74조 일몰 뒤 연도도 계산)
     if year < 2016:
         raise ValueError(f"year={year} — 2016 이상 필요")
 
@@ -35,11 +37,11 @@ def nonprofit_reserve_limit(year, interest_income, dividend_income, welfare_loan
     # 적용률
     만약_조특법74 = (entity == "조특법74")
     if entity == "공익법인_장학":
-        적용률 = 0.8
+        적용률 = _Fr(4, 5)
     elif 만약_조특법74 and year <= 2028:
-        적용률 = 1.0
+        적용률 = _Fr(1)
     else:
-        적용률 = 0.5
+        적용률 = _Fr(1, 2)
 
     판단 = []
     주의 = []
@@ -57,7 +59,7 @@ def nonprofit_reserve_limit(year, interest_income, dividend_income, welfare_loan
         적용률_표시 = 0.5
         주의.append("조세특례제한법 제74조 일몰(2028.12.31 이전 사업연도): 2029년 이후는 50% 적용")
     else:
-        적용률_표시 = 적용률
+        적용률_표시 = float(적용률)
 
     손금산입액 = min(reserve_booked, 한도)
     한도초과액 = max(reserve_booked - 한도, 0)

@@ -1739,7 +1739,7 @@ def donation_limit(year: YEAR, base_income: WON,
 
 @mcp.tool(annotations=CALC)
 @_guard
-def nonprofit_reserve_limit(year: Annotated[int, Field(description="사업연도(정수. 2016~2026은 정상 범위, 2029 등 조특법74 sunset 확인용 연도는 엔진에서 허용)")],
+def nonprofit_reserve_limit(year: Annotated[int, Field(description="사업연도(2016 이상. 조세특례제한법 제74조 100% 특례는 2028년 이전 사업연도까지)")],
                             interest_income: Annotated[int, Field(description="이자소득 금액(비영업대금의 이익 제외, 원, ≥0)")] = 0,
                             dividend_income: Annotated[int, Field(description="배당소득 금액(상증세 과세가액 산입 주식 배당 제외, 원, ≥0)")] = 0,
                             welfare_loan_interest: Annotated[int, Field(description="특별법 비영리법인 복지사업 융자이자(원, ≥0, 기본 0)")] = 0,
@@ -1750,7 +1750,7 @@ def nonprofit_reserve_limit(year: Annotated[int, Field(description="사업연도
     """비영리내국법인 고유목적사업준비금 손금산입 한도(법인세법 제29조제1항·제5항제4호·제7항, 조세특례제한법 제74조제1항).
     언제: 비영리내국법인이 고유목적사업준비금을 손금에 계상할 때 손금산입 한도와 한도초과액을 구한다.
     입력:
-      · year — 사업연도(정수). 2016~2026 범위는 엔진에서 검증, 2029 등 조특법74 sunset 확인용 연도는 허용.
+      · year — 사업연도(2016 이상). 조세특례제한법 제74조 100% 특례는 2028년 이전 사업연도까지, 그 뒤는 50%로 계산하고 주의에 표시.
       · interest_income — 이자소득 금액(비영업대금의 이익 제외, 원, ≥0).
       · dividend_income — 배당소득 금액(상증세 과세가액 산입 주식 배당 제외, 원, ≥0).
       · welfare_loan_interest — 특별법 비영리법인 복지사업 융자이자(원, ≥0, 기본 0).
@@ -5171,16 +5171,16 @@ def vat_return_general(
     })
 
 
-# ── 외화 대가 부가가치세 과세표준 환산 (영 §59·§95③) ──
+# ── 외화 대가 부가가치세 과세표준 환산 (영 제59조·제95조제3항) ──
 
 @mcp.tool(annotations=CALC)
 @_guard
 def vat_foreign_currency_base(context: Annotated[str, Field(description="맥락: '공급'(부가가치세법 시행령 제59조, 기본) | '대리납부'(시행령 제95조제3항)")] = "공급",
                               items: Annotated[list, Field(description="항목 목록. 각 항목: {이름?(선택), 외화금액(숫자, >0, 필수), 통화?(str, 기본 'USD'), 공급시기?(YYYY-MM-DD, 공급 맥락 필수), 공급시기_환율?(숫자, 미환가분 있으면 필수), 환가?([{환가일, 외화금액, 원화금액}] 선택), 지급일?(YYYY-MM-DD, 대리납부 필수), 지급방식?('원화매입'|'보유외화', 대리납부 필수), 지급일_환율?(숫자, 대리납부 필수)}]")] = []) -> dict:
-    """외화 대가 부가가치세 과세표준 환산 — 외화 거래(수출대금·대리납부 외화 지출 등)의 원화 과세표준을 위환율 없이 사용자 입력 환율로 계산한다.
+    """외화 대가 부가가치세 과세표준 환산 — 외화 거래(수출대금·대리납부 외화 지출 등)의 원화 과세표준을 사용자가 준 환율로 계산한다(환율 조회 없음).
     언제: 외화로 공급대가를 받거나 외화를 지급하는 거래에서 원화 과세표준을 구할 때. 환율 조회는 하지 않고 사용자가 입력한다.
     입력:
-      · context — '공급'(기본, 영 §59: 공급시기 전 환가분은 환가액, 이후는 공급시기 환율) | '대리납부'(영 제95조제3항: 원화매입이면 지급일 매도율, 보유외화면 지급일 기준환율).
+      · context — '공급'(기본, 영 제59조: 공급시기 전 환가분은 환가액, 이후는 공급시기 환율) | '대리납부'(영 제95조제3항: 원화매입이면 지급일 매도율, 보유외화면 지급일 기준환율).
       · items — 항목 목록. 각 항목:
         - 공통: 이름?(선택), 외화금액(숫자, >0, 필수), 통화?(str, 기본 'USD').
         - 공급 맥락: 공급시기(YYYY-MM-DD, 필수), 공급시기_환율?(숫자 — 미환가분이 있으면 필수), 환가?([{환가일, 외화금액, 원화금액}] 선택).
@@ -5212,17 +5212,17 @@ def vat_foreign_currency_base(context: Annotated[str, Field(description="맥락:
 
 @mcp.tool(annotations=CALC)
 @_guard
-def vat_reverse_charge(year: Annotated[int, Field(description="사업연도·귀속연도(2016~2026, 2029 등 조특법74 sunset 확인용 연도는 엔진에서 허용)")],
-                       items: Annotated[list, Field(description="항목 목록. 각 항목: {이름?(선택), 공급자('국내사업장_없음'|'국내사업장_있음_비귀속'|'국내사업장_있음_귀속', 필수), 대가(원, int≥0, 필수 — 외화는 도구1로 먼저 환산), 지급일(YYYY-MM-DD, 필수), 용도('면세'|'과세'|'불공제'|'공통'|'비사업', 필수)}, ...")],
+def vat_reverse_charge(year: Annotated[int, Field(description="귀속연도(2016~2026)")],
+                       items: Annotated[list, Field(description="항목 목록. 각 항목: {이름?(선택), 공급자('국내사업장_없음'|'국내사업장_있음_비귀속'|'국내사업장_있음_귀속', 필수), 대가(원, int≥0, 필수 — 외화는 vat_foreign_currency_base로 먼저 환산), 지급일(YYYY-MM-DD, 필수), 용도('면세'|'과세'|'불공제'|'공통'|'비사업', 필수)}, ...")],
                        taxable_supply: Annotated[int | None, Field(description="과세 공급가액(원) — 용도 '공통' 안분용, 대가 지급일이 속하는 과세기간")]=None,
                        exempt_supply: Annotated[int | None, Field(description="면세 공급가액(원) — 용도 '공통' 안분용, 대가 지급일이 속하는 과세기간")]=None) -> dict:
     """국외사업자 용역등 대리납부(부가가치세법 제52조제1항·제2항, 시행령 제95조제1항·제2항).
     언제: 국내사업장이 없는 비거주자·외국법인(또는 국내사업장이 있어도 비귀속)으로부터 용역등을 공급받아 대리납부할 때.
     입력:
-      · year — 사업연도·귀속연도(정수). 2016~2026 범위는 엔진에서 검증, 그 외는 조특법74 sunset 확인용으로 허용.
+      · year — 귀속연도(2016~2026).
       · items — 항목 목록. 각 항목:
         - 이름?(선택), 공급자('국내사업장_없음'|'국내사업장_있음_비귀속'|'국내사업장_있음_귀속', 필수),
-        - 대가(원, int≥0, 필수 — 외화는 도구1로 먼저 환산), 지급일(YYYY-MM-DD, 필수), 용도('면세'|'과세'|'불공제'|'공통'|'비사업', 필수).
+        - 대가(원, int≥0, 필수 — 외화는 vat_foreign_currency_base로 먼저 환산), 지급일(YYYY-MM-DD, 필수), 용도('면세'|'과세'|'불공제'|'공통'|'비사업', 필수).
       · taxable_supply·exempt_supply — 용도 '공통' 안분용 과세기간 공급가액(원, 선택 — 둘 다 필요).
     결과: 대리납부세액_합계·항목별[{이름, 대상(bool), 사유, 과세표준, 세액, 기한_법정, 기한_적용}]·판단·주의·근거.
     근거: 부가가치세법 제52조제1항·제2항, 시행령 제95조제1항·제2항. 전자적 용역(제53조의2 간편사업자등록)은 범위 밖."""

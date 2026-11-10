@@ -1072,11 +1072,11 @@ def vat_return_general(inputs: dict) -> dict:
     return raw
 
 
-# ── 외화 대가 부가가치세 과세표준 환산 (영 §59·§95③) ──
+# ── 외화 대가 부가가치세 과세표준 환산 (영 제59조·제95조제3항) ──
 
 def vat_foreign_currency_base(context, items):
     """외화 대가의 부가가치세 과세표준 환산(부가가치세법 제29조제3항제1호 단서, 시행령 제59조 1호·2호 / 대리납부 시행령 제95조제3항 1호·2호).
-    context='공급'(기본, 영 §59)｜'대리납부'(영 §95③). 환율은 사용자 입력(조회하지 않음), 통화 단위 자유.
+    context='공급'(기본, 영 제59조)｜'대리납부'(영 제95조제3항). 환율은 사용자 입력(조회하지 않음), 통화 단위 자유.
     반환: {과세표준_합계, 항목별: [{이름, 통화, 외화금액, 환가분: {외화, 원화}, 미환가분: {외화, 환율, 원화}, 과세표준, 적용}], 판단, 근거}"""
     from .exact import trunc_won as _trunc
 
@@ -1164,7 +1164,7 @@ def vat_foreign_currency_base(context, items):
             })
             합계 += 과세표준
 
-        else:  # 대리납부 (영 §95③)
+        else:  # 대리납부 (영 제95조제3항)
             지급일 = item["지급일"]
             지급방식 = item.get("지급방식")
             지급일_환율 = item.get("지급일_환율")
@@ -1200,7 +1200,8 @@ def vat_foreign_currency_base(context, items):
 
 # ── 국외사업자 용역등 대리납부 (법 제52조) ──
 
-_VAT_RATE = 0.10  # 부가가치세율 10%
+from fractions import Fraction as _Fr
+_VAT_RATE = _Fr(1, 10)  # 부가가치세율 10% (float 금지 — 정확한 분수)
 
 
 def _신고납부기한(지급일):
@@ -1255,6 +1256,8 @@ def vat_reverse_charge(year, items, taxable_supply=None, exempt_supply=None):
 
         if 대가 < 0:
             raise ValueError(f"항목 {idx+1}({이름}): 대가({대가}) 음수 불가")
+        if 용도 not in ("면세", "과세", "불공제", "공통", "비사업"):
+            raise ValueError(f"항목 {idx+1}({이름}): 용도='{용도}' — 허용값: '면세', '과세', '불공제', '공통', '비사업'")
 
         대상 = True
         사유 = ""
