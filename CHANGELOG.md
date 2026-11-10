@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.25.3 (2026-11-10)
+
+보완 Claude(뼈대 Solar Pro 4). 계산 결과 불변 — 연도표 전부에 대해 경계 ±1원·.5원 꼬리·난수 6,500건 스윕으로 리팩터 전후 일치 확인(income 78,720회·inhgift 6,545회·모듈 래퍼 40,290회 불일치 0).
+
+- 누진 구간 계산 `_tier` 3벌(calc_cit·calc_income·calc_inhgift) → `engine/exact.py` `tier` 하나. 모듈 이름 `_tier`는 그대로(래퍼).
+  - calc_cit는 종전 부동소수 누적을 유지(`float_accumulate=True`): 1년 미만 사업연도 연 환산(×12/월수) 뒤 .5원 경계에서 분수 경로와 1원 갈림(예: 과세표준 62,586,115원·11개월 → 종전 6,258,612 / 분수 6,258,611). 종전 float 쪽이 정확값(.5 반올림)이고 분수 쪽이 `exact()`의 분모 복원 한계로 틀리는 사례라 법령 근거 없이 바꾸지 않음 — `exact()` 손볼 때 같이 볼 것.
+- 연도표 없는 해 예외 `NoYearTable` 3벌 → `engine/errors.py` 한 클래스(ValueError). 세 모듈 이름은 별칭으로 유지, 서버 `_guard`는 하나만 잡음. calc_cit 것이 Exception→ValueError가 되면서 `nonbusiness_interest_disallowance`의 ValueError 래퍼가 삼키지 않도록 재전파.
+- 호출 0인 `calc_cit._parse_date`·`calc_income._won` 삭제. `calc_capgains`·`calc_gold_gaps6`의 `_parse_date`(받는 형식이 `inputs.to_date`와 다름)와 `calc_inhgift._won`(float 입력 절사가 `exact.floor_won`과 근접정수에서 갈림)은 그대로.
+- 테스트: `tests/test_year_table_errors.py` 4건.
+
 ## 0.25.2 (2026-11-10)
 
 보완 Claude(뼈대 Solar Pro 4). 계산 결과·도구 스키마는 바뀌지 않음(97개 도구 스키마 해시 동일, 1,887 테스트).
