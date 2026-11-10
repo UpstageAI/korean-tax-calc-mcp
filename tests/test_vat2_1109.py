@@ -1,14 +1,9 @@
 """부가세 시나리오 2탄 결함 정답 — 간이과세자 면제·환산·겸영, 세금계산서 가산세 묶음, 간주공급 대상(사업양수·수출), 공통사용재화 매입세액."""
-import asyncio
 import json
 
 import pytest
 
-from korean_tax_calc_mcp.server import mcp
-
-
-def call(n, a):
-    return json.loads(asyncio.run(mcp.call_tool(n, a)).content[0].text)
+from tests._helpers import call
 
 
 def R(d):

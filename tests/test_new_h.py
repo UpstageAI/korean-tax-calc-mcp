@@ -1,16 +1,11 @@
 """종교인소득 religious_income — 소득세법 제21조①26호(2018.1.1. 시행), 제12조5호아목, 시행령 제19조·제87조3호, 제14조③8호가목."""
-import asyncio, json
 
 import pytest
 
 from korean_tax_calc_mcp.server import mcp
+from tests._helpers import call as c
 
 M = 1_000_000
-
-
-def c(tool, a):
-    r = asyncio.run(mcp.call_tool(tool, a))
-    return json.loads((r.content[0] if hasattr(r, "content") else r[0][0]).text)
 
 
 def ri(**a):

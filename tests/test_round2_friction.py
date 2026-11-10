@@ -1,11 +1,6 @@
 """2차 점검(실사용 재풀이)에서 나온 입력·안내 문제 회귀 테스트. 작성 Claude 2026-10-28."""
-import asyncio, json
-from korean_tax_calc_mcp.server import mcp
-
-
-def c(tool, a):
-    r = asyncio.run(mcp.call_tool(tool, a))
-    return json.loads((r.content[0] if hasattr(r, "content") else r[0][0]).text)
+import json
+from tests._helpers import call as c
 
 
 def test_find_tool_says_none_when_nothing_fits_and_accepts_keyword():

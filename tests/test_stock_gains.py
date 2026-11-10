@@ -1,11 +1,5 @@
 """주식등 양도소득 — 대주주 판정·세율 (시행령 제157조·제167조의8, 법 제104조①11호·12호). 손계산 정답. 작성 Claude 2026-10-30."""
-import asyncio, json
-from korean_tax_calc_mcp.server import mcp
-
-
-def c(tool, a):
-    r = asyncio.run(mcp.call_tool(tool, a))
-    return json.loads((r.content[0] if hasattr(r, "content") else r[0][0]).text)
+from tests._helpers import call as c
 
 
 def M(**a):

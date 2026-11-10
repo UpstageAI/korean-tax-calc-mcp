@@ -1,16 +1,11 @@
 """상속세 계산(inheritance_tax) 정답 테스트 — 손계산·조문 대조 사례."""
-import asyncio, json
+import json
 
 import pytest
 
-from korean_tax_calc_mcp.server import mcp
+from tests._helpers import call as c
 
 M = 1_000_000
-
-
-def c(tool, a):
-    r = asyncio.run(mcp.call_tool(tool, a))
-    return json.loads((r.content[0] if hasattr(r, "content") else r[0][0]).text)
 
 
 def c_or_exc(tool, a):

@@ -1,12 +1,7 @@
 """정답 인자 세트 대조에서 나온 도구 공백 5건의 정답 테스트. 작성 Claude 2026-10-22.
 각 값은 문항을 손으로 푼 결과와 같다(docs/SPEC_gold_gaps.md)."""
-import asyncio, json
-from korean_tax_calc_mcp.server import mcp
-
-
-def c(tool, a):
-    r = asyncio.run(mcp.call_tool(tool, a))
-    return json.loads((r.content[0] if hasattr(r, "content") else r[0][0]).text)
+import json
+from tests._helpers import call as c
 
 
 def test_common_asset_sale_input_tax_prorated_by_prior_period_ratio():

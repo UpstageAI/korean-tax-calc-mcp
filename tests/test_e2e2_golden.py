@@ -1,12 +1,8 @@
 """의제배당(잉여금 자본전입) 끝에서 끝까지 계산기 정답 테스트 (Claude 작성 2026-10-13) — 수정 금지.
 공개 검증 사례는 법인세법 제16조①3호·영 제14조①1호가목으로 손계산해 공개 정답과 일치 확인. 실무형 사례는 Claude 손계산.
 """
-import asyncio, json
-from korean_tax_calc_mcp.server import mcp
-
-
-def c(n, a):
-    return json.loads(asyncio.run(mcp.call_tool(n, a)).content[0].text)
+import json
+from tests._helpers import call as c
 
 
 HOLDERS = [{"name": "A(자기주식)", "shares": 20_000, "self_stock": True},

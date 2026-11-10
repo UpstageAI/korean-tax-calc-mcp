@@ -1,12 +1,7 @@
 """연금계좌 인출(연금수령한도·인출순서)·상증 재산평가(시가 우선순위·저당권 특례) 정답 테스트. 작성 Claude 2026-10-24.
 값은 문항을 손으로 푼 결과와 조문 원문 대조(docs/SPEC_gold_gaps6.md)."""
-import asyncio, json
-from korean_tax_calc_mcp.server import mcp
-
-
-def c(tool, a):
-    r = asyncio.run(mcp.call_tool(tool, a))
-    return json.loads((r.content[0] if hasattr(r, "content") else r[0][0]).text)
+import json
+from tests._helpers import call as c
 
 
 def err(r):

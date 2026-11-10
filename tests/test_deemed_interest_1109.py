@@ -1,12 +1,7 @@
 """인정이자 보강 정답 — 원 미만 절사, 동일인 가수금 연간 적수 상계, 가중평균차입이자율(대여 건별·선입선출·5년 초과·당좌선택)."""
-import asyncio
 import json
 
-from korean_tax_calc_mcp.server import mcp
-
-
-def call(n, a):
-    return json.loads(asyncio.run(mcp.call_tool(n, a)).content[0].text)
+from tests._helpers import call
 
 
 def R(d):

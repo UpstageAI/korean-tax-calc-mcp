@@ -1,11 +1,9 @@
 """건물 기준시가 — 고시 제2025-39호(2026) 산식 손계산. 작성 Claude 2026-10-30."""
-import asyncio, json
-from korean_tax_calc_mcp.server import mcp
+from tests._helpers import call
 
 
 def c(a):
-    r = asyncio.run(mcp.call_tool("building_standard_price", a))
-    return json.loads((r.content[0] if hasattr(r, "content") else r[0][0]).text)
+    return call("building_standard_price", a)
 
 
 def test_office_2026_transfer_tax():

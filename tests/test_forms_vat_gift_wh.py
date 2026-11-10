@@ -4,10 +4,10 @@ calls는 실제 도구 호출 기록(tests/data/forms_vat_gift_wh_calls.json)을
 수식이고, 도구 값 대조 칸이 '일치'여야 한다(LibreOffice 재계산). 서식 라벨·번호는 국가법령정보센터 서식 PDF 원문:
 부가가치세법 시행규칙 별지 제15호(2025.7.4.)·제19호(1)(2022.3.18.)·제21호(2025.7.4.)·제25호(2021.10.28.)서식,
 상속세 및 증여세법 시행규칙 별지 제10호서식(2025.7.4.), 소득세법 시행규칙 별지 제23호서식(1)(2025.3.21.)·(5)(2024.12.31.)."""
-import asyncio, copy, json, pathlib, shutil, subprocess
+import copy, json, pathlib, shutil, subprocess
 import openpyxl
 import pytest
-from korean_tax_calc_mcp.server import mcp
+from tests._helpers import call as c
 
 DATA = json.loads((pathlib.Path(__file__).parent / "data" / "forms_vat_gift_wh_calls.json").read_text(encoding="utf-8"))
 soffice = pytest.mark.skipif(not shutil.which("soffice"), reason="LibreOffice 없음")
@@ -31,11 +31,6 @@ EXTRA = [
     {"label": "의제매입 예정신고", "tool": "vat_deemed_input_credit",
      "args": {"period": "2025-2", "industry": "음식점", "purchase": 54_000_000, "individual": True, "filing": "예정"}},
 ]
-
-
-def c(tool, a):
-    r = asyncio.run(mcp.call_tool(tool, a))
-    return json.loads((r.content[0] if hasattr(r, "content") else r[0][0]).text)
 
 
 def res(call):

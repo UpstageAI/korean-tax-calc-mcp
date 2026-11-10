@@ -11,8 +11,6 @@ openpyxl로 만든 파일을 다시 읽어 칸을 확인한다(수식은 문자�
 - 공통사용재화 공급이 없으면 그 시트를 만들지 않음
 - 라벨 글자 깨짐(자모 분리·대체 문자) 없음
 """
-import asyncio
-import json
 import re
 import unicodedata
 
@@ -20,12 +18,7 @@ import openpyxl
 import pytest
 
 from korean_tax_calc_mcp import server
-
-
-def run(tool, args):
-    r = asyncio.run(server.mcp.call_tool(tool, args))
-    raw = r.content[0].text if hasattr(r, "content") else r[0][0].text
-    return json.loads(raw)
+from tests._helpers import call as run
 
 
 def build(tmp_path, calls, **kw):

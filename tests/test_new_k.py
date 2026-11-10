@@ -8,14 +8,14 @@
 - 법 제17조: 2017까지 ① '동시에'(2017.12.19 개정 전), 2018 ③ 별도기재 필수, 2019~2021 ③2호 지급 확인 필요,
   2022~ ③2호 공급시기 도래만(법률 제18577호 부칙 제6조). ④·영 제30조 장기할부는 발급일.
 """
-import asyncio, json
-from korean_tax_calc_mcp.server import mcp, find_tool
+from korean_tax_calc_mcp.server import find_tool
+from tests._helpers import call
 
 M = 1_000_000
 
 
 def c(a):
-    return json.loads(asyncio.run(mcp.call_tool("vat_supply_timing", a)).content[0].text)
+    return call("vat_supply_timing", a)
 
 
 def times(r, k=0):

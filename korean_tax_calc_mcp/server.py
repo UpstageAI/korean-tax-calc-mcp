@@ -955,6 +955,7 @@ def minimum_tax_adjustment(
 
 
 @mcp.tool(annotations=CALC)
+@_guard
 def underreporting_penalty(additional_tax: WON, fraud: Annotated[bool, Field(description="부정행위로 인한 과소신고 여부")] = False,
                            reduction: Annotated[Literal["수정신고", "예정신고_확정수정"] | None, Field(description="수정신고 감면 종류 — '수정신고'|'예정신고_확정수정'(없으면 감면 없음)")] = None,
                            due: Annotated[str | None, Field(description="법정신고기한 YYYY-MM-DD")] = None,
@@ -1248,6 +1249,7 @@ _BUNDLE_KINDS = {"가공", "지연발급", "미발급", "미발급_종이", "지
 
 
 @mcp.tool(annotations=CALC)
+@_guard
 def assessment_limitation(due_date: Annotated[str, Field(description="법정신고기한(YYYY-MM-DD, 부과할 수 있는 날 = 그 다음 날). 원천징수의무자에게 부과하는 원천징수분은 법정납부기한. 토·일·공휴일이면 국세기본법 제5조제1항으로 다음 날로 미뤄 계산")],
                           case: Annotated[Literal["일반", "무신고", "부정행위"], Field(description="일반(과소신고 등) / 무신고 / 부정행위로 포탈·환급")] = "일반",
                           offshore: Annotated[bool, Field(description="역외거래(국제거래 또는 국외 자산·용역 관련 거래) 여부")] = False,
@@ -1696,6 +1698,7 @@ def donation_limit(year: YEAR, base_income: WON,
 
 
 @mcp.tool(annotations=CALC)
+@_guard
 def bad_debt_allowance(receivables: WON, loss_rate: Annotated[float, Field(description="대손실적률(소수, 예: 0.02 = 2%)", ge=0, le=1)],
                        set_amount: WON, prior_disallowed: WON = 0) -> dict:
     """대손충당금 한도(채권잔액 × max(1%, 대손실적률))와 한도초과. 언제: 매출채권 등에 대해 대손충당금을 설정할 때 손금산입 한도를 구한다.
@@ -2273,6 +2276,7 @@ def vat_card_sales_credit(amount: Annotated[int, Field(description="신용카드
 
 
 @mcp.tool(annotations=CALC)
+@_guard
 def vat_bad_debt_credit(bad_debt_incl_vat: Annotated[int, Field(description="대손금액(부가세 포함, 원). 회수분이면 회수한 대손금액")],
                         supply_receivable: Annotated[bool, Field(description="재화·용역 공급 대가 채권 여부(True면 대손세액 공제 대상)")] = True,
                         recovered: Annotated[bool, Field(description="대손세액을 공제받은 대손금을 회수한 경우 True — 회수한 대손금액의 대손세액을 회수일이 속하는 과세기간 매출세액에 더함(부가가치세법 제45조제1항 단서)")] = False,
@@ -3203,6 +3207,7 @@ def earned_income_gross_pay(year: YEAR,
 입력: 당사자 a(이름) → a, 당사자 b(이름) → b, 사실관계 시점(YYYY-MM-DD, 필수) → on, people={이름: {구분: "개인"|"법인"}} → people, family=[[a, b, "부모자녀"|"배우자"]] → family, stakes=[[보유자, 법인, 지분율(0~1)]] → stakes, officers={법인: [이름]} → officers, employees={법인: [이름]} → employees, livelihood=[[부양자, 피부양자]] → livelihood, 생계를 함께하는 친족 사실관계 [{친족, 상대방, 주민등록_동일세대, 동거_사실, 생활비_공동부담, 독립생계_소득, 경제적_지원, 별거_사유, 별도_임대차, 별거_증빙_유형, 연말정산_부양가족_등록, 수입_상대방계좌_입금, 혼인_독립가구}] → livelihood_shared, influence=[[사실상 영향력자, 법인]] → influence, group={기업집단: [계열회사]} → group, group_exempt={법인: 공정위 통지 내용} → group_exempt, 법령 인용 포함 여부 → with_citation.
 생계를 함께하는 친족(국기령 제1조의2제2항제3호, 법인령 제2조제8항제3호 — 2019.2.12.~2023.12.31. 제2조제5항제3호, 그 전 제87조제1항제3호): 전제는 상대방이 다른 당사자 본인의 임원·사용인(같은 법인 동료는 아님) 또는 생계유지자, 친족이 기준일 친족 범위(2023.3.1.부터 4촌 혈족·3촌 인척) 안. 1차 기준은 동거 불요·생활비 공동 부담: 생활비 공동부담, 무소득+정기송금, 수입이 상대방 계좌로 입금이면 생계 공동 / 안정 소득+따로 거주 또는 별도 세대+생활비 각자+지원 없음, 제3자 지원(금융자료), 혼인 독립 가구+주소 다름(소득 없으면 제외)이면 생계 별도 / 주민등록 동일세대는 객관 자료(진술서만은 안 됨)로 반증해야 하고, 동일세대+소득만·동거만·부양가족 공제 이력이면 생계 공동 추정(인정되는 증빙 안내) / 그 밖은 입력 확인 필요(확인할 항목·필요 자료). 상증법에는 이 항목 없음.
 결과: 특수관계 여부·적용 호수와 근거 조문(기준일 시행 법령 위치), 근거, 생계를_함께하는_친족(결론·사유·결정·해석 번호). 두 당사자의 특수관계 여부와 적용 호수를 국세기본법·법인세법·상증법 기준으로 판정한다(두 사람·법인 간 특수관계와 적용 호수 확인).""")
+@_guard
 def related_judge(a: Annotated[str, Field(description='당사자 a(이름)')], b: Annotated[str, Field(description='당사자 b(이름)')],
                   on: Annotated[str, Field(description='사실관계 시점 YYYY-MM-DD(필수, 친족 범위·조문 위치가 시점마다 다름)')],
                   people: Annotated[dict, Field(description='사람·법인 목록 {이름: {"구분": "개인"|"법인"}. 예: {"김갑": {"구분": "개인"}, "㈜대한": {"구분": "법인"}}')],
@@ -3230,6 +3235,7 @@ def related_judge(a: Annotated[str, Field(description='당사자 a(이름)')], b
 @mcp.tool(description="""두 개인의 친족관계(혈족·인척 촌수, 배우자)와 기준일 친족 범위 해당 여부. 언제: 두 사람이 친족인지, 국세기본법·상증법상 친족 범위에 들어가는지 확인할 때.
 입력: 당사자 a(이름) → a, 당사자 b(이름) → b, 기준일(YYYY-MM-DD) → on, family=[[a, b, "부모자녀"|"배우자"]] → family(related_judge와 동일 형식).
 결과: 관계(촌수·배우자)·기준일·친족 범위·국기법 친족 여부·상증법 친족(사돈 포함) 여부. 두 개인의 친족관계(혈족·인척 촌수, 배우자)와 기준일 친족 범위 해당 여부를 확인한다.""")
+@_guard
 def kinship_check(a: Annotated[str, Field(description='당사자 a(이름)')], b: Annotated[str, Field(description='당사자 b(이름)')],
                   on: Annotated[str, Field(description='기준일 YYYY-MM-DD')],
                   family: Annotated[list, Field(description='친족 관계 목록 [[a, b, "부모자녀"|"배우자"]]. 예: [["김갑", "김을", "부모자녀"]] — related_judge와 동일 형식')]) -> dict:
@@ -3243,6 +3249,7 @@ def kinship_check(a: Annotated[str, Field(description='당사자 a(이름)')], b
 @mcp.tool(description="""보유자→법인 직접·간접 보유비율(경로별 곱 합산, 순환출자 반영). 언제: 일감몰아주기·지배주주 판정에서 특정인이 법인에 얼마나 간접 보유하는지 계산할 때.
 입력: 보유자(이름) → holder, 대상 법인(이름) → target, stakes=[[보유자, 법인, 지분율(0~1)]] → stakes(직접보유비율, related_judge와 동일).
 결과: 직접비율·경로별 비율·합계·순환출자 여부, 근거(상증법 시행령 제34조의3제2항). 보유자→법인 직접·간접 보유비율을 계산한다(간접은 단계별 직접보유비율의 곱, 경로별 합산, 순환출자는 단계별 모두 반영).""")
+@_guard
 def ownership_ratio(holder: Annotated[str, Field(description='보유자(이름)')], target: Annotated[str, Field(description='대상 법인(이름)')],
                     stakes: Annotated[list, Field(description='직접보유비율 목록 [[보유자, 법인, 지분율(0~1)]]. 예: [["김갑", "㈜대한", 0.30]]')]) -> dict:
     st = [(h, c, float(r)) for h, c, r in stakes]
@@ -3254,6 +3261,7 @@ def ownership_ratio(holder: Annotated[str, Field(description='보유자(이름)'
 @mcp.tool(description="""수혜법인의 지배주주 판정(상증법 시행령 제34조의3제1항). 언제: 일감몰아주기 증여의제이익 계산에서 수혜법인의 지배주주가 누구인지 판정할 때.
 입력: 수혜법인(이름) → corp, people={이름: {구분: "개인"|"법인"}} → people, family=[[a, b, "부모자녀"|"배우자"]] → family, stakes=[[보유자, 법인, 지분율(0~1)]] → stakes(related_judge와 동일 형식).
 결과: 지배주주(이름)·판정 이유. 수혜법인의 지배주주를 판정한다(중견기업 중 직접보유 최고자 / 법인이면 직접+간접 최고 개인).""")
+@_guard
 def dominant_shareholder(corp: Annotated[str, Field(description='수혜법인(이름)')],
                          people: Annotated[dict, Field(description='사람·법인 목록 {이름: {"구분": "개인"|"법인"}}. 예: {"김갑": {"구분": "개인"}}')],
                          family: Annotated[list, Field(description='친족 관계 [[a, b, "부모자녀"|"배우자"]]. 예: [["김갑", "김을", "부모자녀"]]')],
@@ -3265,6 +3273,7 @@ def dominant_shareholder(corp: Annotated[str, Field(description='수혜법인(�
 @mcp.tool(description="""일감몰아주기 증여의제이익(상증법 제45조의3, 제10항 과세제외매출액 직접 입력, 제14항·제15항 미반영). 언제: 일감몰아주기 검토에서 증여의제이익을 간단히 계산할 때(국세청 신고안내 전체 산식은 tunnelling_gift_nts 사용).
 입력: 수혜자(이름) → beneficiary, 기업 규모(중소|중견|일반) → size, 총 매출액 → sales_total, sales_by_corp={거래처 법인: 매출액} → sales_by_corp, 세후영업이익 → after_tax_op_profit, people={이름: {구분: "개인"|"법인"}} → people, family=[[a, b, "부모자녀"|"배우자"]] → family, stakes=[[보유자, 법인, 지분율(0~1)]] → stakes, 제10항·제14항 과세제외매출액 → excluded_sales.
 결과: 증여의제이익, 근거(상증법 제45조의3, 시행령 제34조의3). 일감몰아주기 증여의제이익(상증법 제45조의3).""")
+@_guard
 def tunnelling_gift(beneficiary: Annotated[str, Field(description='수혜자(이름)')],
                     size: Annotated[str, Field(description="기업 규모('중소'|'중견'|'일반')")],
                     sales_total: Annotated[float, Field(description="총 매출액(원)")],
@@ -3281,6 +3290,7 @@ def tunnelling_gift(beneficiary: Annotated[str, Field(description='수혜자(이
 @mcp.tool(description="""일감몰아주기 증여의제이익 — 국세청 2026 신고안내 산식(세후영업이익 제12항, 출자관계별 추가 과세제외 제14항제1호·제3호, 한계보유 제13항, 배당공제 제15항). 언제: 국세청 신고안내 공식에 따라 일감몰아주기 증여의제이익을 정확히 계산할 때.
 입력: 기업 규모(중소|중견|일반) → size, 수혜법인(이름, 고정) → '수혜법인', 세후영업이익 제12항(원) → op_income, 과세표준(원) → taxable_income, 법인세 산출세액(원) → tax, 총 매출액(원) → sales_total, sales_by_corp={거래처 법인: 매출액(원)} → sales_by_corp, relations={관계명: 보유비율(소수)}(예: {'직접':0.2,'A경유':0.18}) → relations, 기본 과세제외매출액(제10항, 원) → base_excluded, holdings_in_related={특관법인: 지배주주등 보유비율(소수)} → holdings_in_related, indirect_corp_of={관계명: 그 경로 간접출자법인} → indirect_corp_of, excluded_by_corp={특관법인: 제10항 과세제외액(원)} → excluded_by_corp, dividends={관계명: [배당소득(원), 분모]}(제15항) → dividends, 토지등 양도소득 법인세(차감, 원) → land_tax, 공제·감면세액(차감, 원) → credits, 미환류소득 법인세(원, tax에 포함이 맞음) → unreturned_tax.
 결과: 증여의제이익·단계별 계산, 근거(상증법 제45조의3, 시행령 제34조의3, 국세청 2026 신고안내). 일감몰아주기 증여의제이익 — 국세청 2026 신고안내 산식.""")
+@_guard
 def tunnelling_gift_nts(size: Annotated[str, Field(description="기업 규모('중소'|'중견'|'일반')")],
                         op_income: Annotated[float, Field(description="세후영업이익 제12항(원)")],
                         taxable_income: Annotated[float, Field(description="과세표준(원)")],
@@ -3306,6 +3316,7 @@ def tunnelling_gift_nts(size: Annotated[str, Field(description="기업 규모('�
 @mcp.tool(description="""특수관계인 범위 조문이 기준일에 어느 법령에 있었는지 확인. 언제: 특수관계 판정 결과를 근거로 인용할 때 해당 기준일 시행 조문의 위치를 확인한다.
 입력: 법령 구분(국기|법인|상증) → law, 기준일(YYYY-MM-DD) → on. 예: law='법인', on='2019-02-11' → 법인세 시행령 제87조제1항.
 결과: 법령명·조항·원문·기준일. 특수관계인 범위 조문이 기준일에 어디 있었는지 확인한다(law=국기|법인|상증).""")
+@_guard
 def related_provision_at(law: Annotated[str, Field(description="법령 구분('국기'|'법인'|'상증')")],
                          on: Annotated[str, Field(description="기준일 YYYY-MM-DD")]) -> dict:
     name, jo, head = _R.cite_at(law, on)
@@ -3331,11 +3342,13 @@ def tunnelling_from_pdf(pdf_path: Annotated[str, Field(description="PDF 파일 �
 
 
 @mcp.tool(description="""신고서 사전검토(조사 착수 전 오류 의심 목록). 언제: 세무조사 착수 전에 신고서 값으로 오류 의심 항목을 미리 점검할 때. 입력: data={입력키: 값}, tax=법인|부가|소득(생략 시 전체) — 입력키는 precheck_schema로 먼저 확인. 결과: 오류 의심·이상 없음·자료 부족·사실 확인 필요.""")
+@_guard
 def return_precheck(data: Annotated[dict, Field(description='신고서 입력키·값 사전(dictionary). 입력키는 precheck_schema로 확인')], tax: Annotated[str | None, Field(description="세목('법인'|'부가'|'소득'), 생략 시 전체")] = None) -> dict:
     return _precheck_run(data, tax)
 
 
 @mcp.tool(description="""신고서 사전검토 입력스키마. 언제: return_precheck·영어로 된 신고서 PDF 도구 입력 전에 어떤 키를 넣어야 하는지 확인할 때. 입력: tax=법인|부가|소득. 결과: 각 입력키의 의미·단위·필수 여부를 목록으로 반환한다.""")
+@_guard
 def precheck_schema(tax: Annotated[Literal["법인", "부가", "소득"], Field(description="사전검토 세목('법인'|'부가'|'소득')")] ) -> dict:
     from .audit.agents.precheck import REGISTRY
     from .audit.agents.precheck import corp as _c, vat as _v, income as _i
@@ -10132,6 +10145,7 @@ def _judgement_rows(data: dict, calc_sheet: str) -> list[dict]:
 
 
 @mcp.tool(annotations=CALC)
+@_guard
 def export_workbook(
     title: Annotated[str, Field(description="문서 제목 — 파일명 기본값")],
     calls: Annotated[list | str, Field(description="[{label, tool, args}] 1~30개 — JSON 문자열로 줘도 됨")],
@@ -12161,6 +12175,7 @@ def _bigrams(text: str) -> set[str]:
 
 
 @mcp.tool(annotations=CALC)
+@_guard
 def find_tool(query: Annotated[str, Field(description="찾는 계산을 평소 말로. 예: '아파트 팔았을 때 양도세', '보험차익으로 산 기계', '접대비 한도', '해산한 법인 청산소득'")] = "",
               n: Annotated[int, Field(description="돌려줄 도구 수(1~10)", ge=1, le=10)] = 5,
               keyword: Annotated[str, Field(description="query와 같음(korean-tax-mcp find_article과 같은 이름으로 불러도 되게)")] = "") -> dict:

@@ -1,12 +1,6 @@
 """10/28 연도별 조문 대조 수정(금융소득 원천징수·조문 인용, 연금소득공제 합산, 지정지역 비사업용 토지, 다주택 중과 확인) 회귀 테스트."""
-import asyncio, json
-from korean_tax_calc_mcp.server import mcp
 from korean_tax_calc_mcp.engine import calc_income as I
-
-
-def c(tool, a):
-    r = asyncio.run(mcp.call_tool(tool, a))
-    return json.loads((r.content[0] if hasattr(r, "content") else r[0][0]).text)
+from tests._helpers import call as c
 
 
 def _판단(r, 항목):

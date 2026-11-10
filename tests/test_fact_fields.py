@@ -2,11 +2,7 @@
 근거: 오답 분류에서 입력값 오류가 가장 많은 세 도구. 기존 입력 방식은 그대로 동작해야 한다(하위 호환)."""
 import asyncio, json
 from korean_tax_calc_mcp.server import mcp
-
-
-def c(tool, a):
-    r = asyncio.run(mcp.call_tool(tool, a))
-    return json.loads((r.content[0] if hasattr(r, "content") else r[0][0]).text)
+from tests._helpers import call as c
 
 
 def _schema(tool):

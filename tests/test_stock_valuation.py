@@ -1,11 +1,5 @@
 """비상장주식 평가 — 상증법 보충적 평가·소득세법 기준시가 손계산 정답. 작성 Claude 2026-10-30."""
-import asyncio, json
-from korean_tax_calc_mcp.server import mcp
-
-
-def c(tool, a):
-    r = asyncio.run(mcp.call_tool(tool, a))
-    return json.loads((r.content[0] if hasattr(r, "content") else r[0][0]).text)
+from tests._helpers import call as c
 
 
 INC = [{"사업연도": 2025, "순손익액": 120_000_000}, {"사업연도": 2024, "순손익액": 90_000_000}, {"사업연도": 2023, "순손익액": 60_000_000}]

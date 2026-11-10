@@ -20,12 +20,7 @@ import openpyxl
 import pytest
 
 from korean_tax_calc_mcp import server
-
-
-def run(tool, args):
-    r = asyncio.run(server.mcp.call_tool(tool, args))
-    raw = r.content[0].text if hasattr(r, "content") else r[0][0].text
-    return json.loads(raw)
+from tests._helpers import call as run
 
 
 def build(tmp_path, calls, **kw):

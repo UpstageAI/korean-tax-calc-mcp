@@ -1,14 +1,9 @@
 """살아 있는 수식(계산식 단계) 정답 테스트. 작성 Claude 2026-10-24 (docs/SPEC_export_workbook_c.md)."""
-import asyncio, json, re, shutil, subprocess
+import re, shutil, subprocess
 import openpyxl
 import pytest
-from korean_tax_calc_mcp.server import mcp
 from korean_tax_calc_mcp.engine.exact import trunc_won
-
-
-def c(tool, a):
-    r = asyncio.run(mcp.call_tool(tool, a))
-    return json.loads((r.content[0] if hasattr(r, "content") else r[0][0]).text)
+from tests._helpers import call as c
 
 
 ENT = {"year": 2025, "sme": True, "ledger": [

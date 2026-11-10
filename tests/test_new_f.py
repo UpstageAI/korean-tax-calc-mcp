@@ -4,11 +4,11 @@ import asyncio, json
 import pytest
 
 from korean_tax_calc_mcp.server import mcp
+from tests._helpers import call
 
 
 def c(a):
-    r = asyncio.run(mcp.call_tool("child_tax_credit", a))
-    return json.loads((r.content[0] if hasattr(r, "content") else r[0][0]).text)
+    return call("child_tax_credit", a)
 
 
 def ok(a):

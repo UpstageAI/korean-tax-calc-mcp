@@ -1,13 +1,8 @@
 """기존 도구 확장 — 2025 전통시장 추가한도, 기타·금융소득 항목 추가, 부담부증여, 의제배당 재원 추가의 정답 테스트. 작성 Claude 2026-10-24.
 값은 문항을 손으로 푼 결과(docs/SPEC_gold_gaps5.md)."""
-import asyncio, json
+import json
 import pytest
-from korean_tax_calc_mcp.server import mcp
-
-
-def c(tool, a):
-    r = asyncio.run(mcp.call_tool(tool, a))
-    return json.loads((r.content[0] if hasattr(r, "content") else r[0][0]).text)
+from tests._helpers import call as c
 
 
 def err(r):

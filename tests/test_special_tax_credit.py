@@ -1,17 +1,12 @@
 """근로소득자 특별세액공제(보험료·의료비·교육비)·표준세액공제 비교 정답 테스트 — 손계산·조문 대조 사례."""
-import asyncio, json
+import json
 
 import pytest
 
-from korean_tax_calc_mcp.server import mcp
+from tests._helpers import call as c
 
 M = 1_000_000
 TOOL = "special_tax_credit"
-
-
-def c(tool, a):
-    r = asyncio.run(mcp.call_tool(tool, a))
-    return json.loads((r.content[0] if hasattr(r, "content") else r[0][0]).text)
 
 
 def c_or_exc(tool, a):

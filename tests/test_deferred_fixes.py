@@ -6,10 +6,7 @@ import pytest
 
 from korean_tax_calc_mcp import server as S
 from korean_tax_calc_mcp.server import mcp
-
-
-def c(n, a):
-    return json.loads(asyncio.run(mcp.call_tool(n, a)).content[0].text)
+from tests._helpers import call as c
 
 
 TC = {"equity": 1_000_000_000, "borrowings": 3_000_000_000, "total_interest": 150_000_000}

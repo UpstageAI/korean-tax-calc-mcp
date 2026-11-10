@@ -1,11 +1,5 @@
 """처음 쓰는 사람 점검(생활어 질문 10개)에서 나온 입력·안내 문제 회귀 테스트. 작성 Claude 2026-10-30."""
-import asyncio, json
-from korean_tax_calc_mcp.server import mcp
-
-
-def c(tool, a):
-    r = asyncio.run(mcp.call_tool(tool, a))
-    return json.loads((r.content[0] if hasattr(r, "content") else r[0][0]).text)
+from tests._helpers import call as c
 
 
 def top(q):

@@ -3,14 +3,12 @@
 기댓값은 조문으로 손계산. 기본세율은 제55조 연도표(2016: 1,200만 6%·4,600만 15%·8,800만 24%·1.5억 35%,
 2023~: 1,400만 6%·5,000만 15%·8,800만 24%·1.5억 35%). Gross-up 11%(2016~2023)·10%(2024~).
 """
-import asyncio
-import json
 
-from korean_tax_calc_mcp.server import mcp
+from tests._helpers import call
 
 
 def _call(**args):
-    return json.loads(asyncio.run(mcp.call_tool("dividend_tax_credit", args)).content[0].text)
+    return call("dividend_tax_credit", args)
 
 
 # ── 1. 종합과세, 공제액 = Gross-up (한도 안) ─────────────────────────────────

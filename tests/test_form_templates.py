@@ -1,19 +1,14 @@
 """엑셀 법정서식 그대로(서식 틀 + 값 채우기) 1단계 정답 테스트. 작성 Claude 2026-10-25 (docs/SPEC_form_templates.md).
 값은 가상 사례(가람정밀, 2025) 손 검산."""
-import asyncio, json, pathlib, re, shutil, subprocess
+import json, pathlib, re, shutil, subprocess
 import openpyxl
 import pytest
-from korean_tax_calc_mcp.server import mcp
 from test_gold_gaps5 import ENT as MARKET_LEDGER, REV as MARKET_REV, VOUCHER
+from tests._helpers import call as c
 
 CALLS = json.loads((pathlib.Path(__file__).parent / "data" / "workbook_forms_calls.json").read_text(encoding="utf-8"))
 GAP, EUL = "별지23(갑) 기업업무추진비", "별지23(을) 기업업무추진비"
 soffice = pytest.mark.skipif(not shutil.which("soffice"), reason="LibreOffice 없음")
-
-
-def c(tool, a):
-    r = asyncio.run(mcp.call_tool(tool, a))
-    return json.loads((r.content[0] if hasattr(r, "content") else r[0][0]).text)
 
 
 def build(d, calls, **kw):

@@ -1,12 +1,7 @@
 """계산 근거 엑셀 내보내기 export_workbook 정답 테스트. 작성 Claude 2026-10-24 (docs/SPEC_export_workbook.md)."""
-import asyncio, json
+import json
 import openpyxl
-from korean_tax_calc_mcp.server import mcp
-
-
-def c(tool, a):
-    r = asyncio.run(mcp.call_tool(tool, a))
-    return json.loads((r.content[0] if hasattr(r, "content") else r[0][0]).text)
+from tests._helpers import call as c
 
 
 ENT = {"year": 2025, "sme": True, "ledger": [{"항목": "일반", "금액": 95000000, "증빙": "적격"},
