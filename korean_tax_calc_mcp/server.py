@@ -1039,8 +1039,25 @@ def late_payment_penalty(unpaid_tax: WON, due: Annotated[str, Field(description=
                          until: Annotated[str, Field(description="납부일·고지일(YYYY-MM-DD)")]) -> dict:
     """납부지연가산세(미납 세액 × 일수 × 이율, 이율 변경일 기준 기간 안분). 언제: 세금을 법정납부기한보다 늦게 납부했을 때 일수분 가산세를 계산한다.
 입력: 미납 세액(원) → unpaid_tax, 법정납부기한(YYYY-MM-DD) → due, 납부일·고지일(YYYY-MM-DD) → until.
-결과: 가산세 총액, 근거(국세기본법 제47조의4, 시행령 제27조의4). Late payment penalty with daily rate split at rate-change dates."""
-    return _ok(C.late_payment_penalty(unpaid_tax, due, until), "국세기본법 제47조의4, 시행령 제27조의4")
+결과: 가산세 총액, 근거(국세기본법 제47조의4, 시행령 제27조의4). until이 due와 같은 날이면 가산세 0, due가 토·일·공휴일이면 주의(기한 연장은 자동 반영 안 함). Late payment penalty with daily rate split at rate-change dates."""
+    out = _ok(C.late_payment_penalty(unpaid_tax, due, until), "국세기본법 제47조의4, 시행령 제27조의4")
+    주의 = _due_holiday_note(due)
+    if 주의:
+        out["주의"] = 주의
+    return out
+
+
+def _due_holiday_note(due: str) -> str | None:
+    """법정납부기한이 토·일·공휴일이면 주의 문장(국세기본법 제5조① 기한 특례) — 날짜를 옮기지 않고 알리기만 한다."""
+    try:
+        d = date.fromisoformat(due)
+    except ValueError:
+        return None
+    why = DL.nonbusiness(d)
+    if not why:
+        return None
+    return (f"납부기한 {due}은(는) {why} — 납부기한이 토요일·공휴일이면 다음 날로 연장(국세기본법 제5조①). "
+            "계산은 입력한 due 그대로이니, 연장된 기한으로 보려면 due를 그 다음 영업일로 넣으세요")
 
 
 @mcp.tool(annotations=CALC)
@@ -1062,6 +1079,7 @@ def withholding_late_payment_penalty(unpaid_tax: WON,
   제5항: 납부고지서별·세목별 세액 150만원 미만이면 고지 후분(개정 3호·4호, 종전 지정납부기한 후 2호 일수분) 없음. 전체는 미납세액의 50% 한도.
   일반 납부지연가산세(제47조의4, 3% 없음·한도 없음)는 late_payment_penalty.
 지원 안 함: 제3항 적용 제외(주한미군·국가·지방자치단체 등) 판단, 고지 후 일부 납부(분할 납부) — 미납세액 전부를 paid_on에 낸 것으로 계산.
+until이 due와 같은 날(기한 당일 납부)이면 가산세 0. due가 토·일·공휴일이면 주의(국세기본법 제5조제1항 기한 연장은 자동 반영 안 함 — 다음 영업일을 due로).
 결과: 가산세·3%분·일수분·10% 한도·일수·고지후분(종전 일수분 또는 개정 3호)·경과 개월·독촉비용·50% 한도·적용 규정, 근거(국세기본법 제47조의5, 시행령 제27조의4, 법률 제21212호 부칙). Withholding late-payment penalty (3% + daily, 10% cap before notice; after notice daily (old) or monthly 0.67% (from 2026-07-01); 50% overall cap)."""
     try:
         d0, d1 = _chk.to_date("due", due), _chk.to_date("until", until)
@@ -1070,8 +1088,8 @@ def withholding_late_payment_penalty(unpaid_tax: WON,
     except ValueError as e:
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [str(e)]}
     문제 = []
-    if d1 <= d0:
-        문제.append(f"until={until} — 법정납부기한 due={due}보다 뒤 날짜(기한 안 납부면 가산세 없음)")
+    if d1 < d0:
+        문제.append(f"until={until} — 법정납부기한 due={due}보다 앞 날짜(기한 안 납부면 가산세 없음 — 기한 당일 납부는 until=due로 넣으면 가산세 0)")
     if d0 < date(2016, 1, 1):
         문제.append(f"due={due} — 2016.1.1. 이후 법정납부기한만 지원")
     if (nd is None) != (pd is None):
@@ -1086,6 +1104,17 @@ def withholding_late_payment_penalty(unpaid_tax: WON,
         문제.append("notice_amount — 납부고지가 있을 때만(notice_due와 함께)")
     if 문제:
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제}
+    주의 = _due_holiday_note(due)
+    if d1 == d0 and nd is None:
+        # 법정납부기한 당일 납부 — 미납이 아니므로 1호 3%·2호 일수분 모두 없음
+        결과 = {"가산세": 0, "3%분": 0, "일수분": 0, "한도_10%": _floor_won(unpaid_tax, 0.10), "한도_적용": False, "일수": 0,
+              "고지후분": 0, "고지후_일수": 0, "경과_개월": 0, "독촉비용": 0, "한도_50%": _floor_won(unpaid_tax, 0.50), "50%한도_적용": False,
+              "적용_규정": {"고지 전": "해당 없음(기한 안 납부)", "고지 후": None}}
+        out = _ok(결과, "국세기본법 제47조의5① — 법정납부기한까지 납부하면 가산세 없음", 산식="기한 당일 납부 — 가산세 0")
+        out["판단"] = [{"항목": "납부일", "결론": f"납부일 {until} = 법정납부기한 {due} — 미납·과소납부 아님, 가산세 0", "근거": "국세기본법 제47조의5①"}]
+        if 주의:
+            out["주의"] = 주의
+        return out
     r = I.withholding_late_penalty_full(unpaid_tax, d0, d1, nd, pd, dunning_fee, notice_amount)
     근거 = ["국세기본법 제47조의5①(1호 3% + 2호 일수분, 1호·2호 10% 한도, 전체 50% 한도), 시행령 제27조의4"]
     판단 = []
@@ -1121,6 +1150,8 @@ def withholding_late_payment_penalty(unpaid_tax: WON,
     결과["적용_규정"] = {"고지 전": r["고지전_규정"], "고지 후": r["고지후_규정"]}
     out = _ok(결과, ", ".join(근거), 산식=산식)
     out["판단"] = 판단
+    if 주의:
+        out["주의"] = 주의
     return out
 
 
@@ -1576,15 +1607,17 @@ def vat_input_tax_deduction(period: Annotated[str, Field(description="과세기�
       공급가액·공급대가 중 하나 이상 필요. 공급가액만 있으면 ×10%, 공급대가만 있으면 ×10/110.
       실제공급가액이 있으면 필요적 기재사항 착오로 실제분 공제(영 제75조2호).
     결과: {결과: {공제매입세액, 불공제매입세액}, 계산: {항목별: [{항목, 세액, 공제세액, 불공제사유?}], 판단: [{항목, 결론, 근거}]}}.
-    판단 순서: (1)성격별 불공제(접대·비영업용승용차·토지관련·면세사업·사업무관) → (2)증빙 '영수증' → (3)신용카드·현금영수증 + 간이과세자_영수증 → (4)세금계산서 발급시기(지연수취 가산세) → (5)실제공급가액(착오 기재)."""
+    판단 순서: (1)성격별 불공제(접대·비영업용승용차·토지관련·면세사업·사업무관) → (2)증빙 '영수증' → (3)신용카드·현금영수증 + 간이과세자_영수증 → (4)세금계산서 발급시기(지연수취 가산세) → (5)실제공급가액(착오 기재).
+    확정신고기한 뒤 1년 안 발급분(영 제75조7호)은 공제로 세되 수정신고·경정청구 또는 결정·경정이 있는 경우에 한한다는 주의를 붙인다."""
     r = V.vat_input_tax_deduction(period, filing, items)
     if "error" in r:
         return r
     calc = r.pop("계산", None)
     판단 = r.pop("판단", None)
+    주의 = r.pop("주의", None)
     if calc and "판단" in calc:
         calc = {k: v for k, v in calc.items() if k != "판단"}
-    return _ok(r, "부가가치세법 제38조·제39조·제46조, 시행령 제75조", 계산=calc, 판단=판단)
+    return _ok(r, "부가가치세법 제38조·제39조·제46조, 시행령 제75조", 계산=calc, 판단=판단, **({"주의": 주의} if 주의 else {}))
 
 
 @mcp.tool(annotations=CALC)
@@ -2493,11 +2526,12 @@ def daily_worker_withholding(daily_wage: Annotated[int, Field(description="일�
 @_guard
 def deemed_bonus_resettlement(gross_pay: Annotated[int, Field(description="귀속연도 당초 총급여(원)")], tax_base: Annotated[int, Field(description="당초 과세표준(원)")],
                               bonus: Annotated[int, Field(description="소득처분 상여(원)")], year: YEAR,
-                              other_credits: Annotated[int, Field(description="근로소득세액공제 외 세액공제 합계(원)")] = 0,
-                              prev_decided: Annotated[int | None, Field(description="당초 결정세액(원). 모르면 생략")] = None) -> dict:
+                              other_credits: Annotated[int, Field(description="근로소득세액공제 외 세액공제 합계(원). 0(기본)이면 표준세액공제 13만 원(소득세법 제59조의4제9항)을 적용해 결정세액을 구하고, 0보다 크면 이 금액만 빼며 표준세액공제는 따로 더하지 않음(특별세액공제와 택일 — 표준세액공제 대상자는 13만 원을 포함해 넣음)")] = 0,
+                              prev_decided: Annotated[int | None, Field(description="당초 결정세액(원) = 산출세액 − 근로소득세액공제 − 표준세액공제(13만 원) − 그 밖의 세액공제, 즉 wage_income_tax의 결정세액(참고)와 같은 기준(표준세액공제 반영 후). 모르면 생략 — 같은 방식으로 재계산")] = None) -> dict:
     """소득처분 상여 연말정산 재정산(추가 원천징수세액). 언제: 법인세 소득금액 변동으로 상여 처분이 발생했을 때 해당 근로자의 연말정산을 재정산해 추가 원천징수세액을 구한다.
 입력: 귀속연도 당초 총급여(원) → gross_pay, 당초 과세표준(원) → tax_base, 소득처분 상여(원) → bonus, 귀속연도(2016~2026) → year, 근로소득세액공제 외 세액공제 합계(원) → other_credits, 당초 결정세액(원, 모르면 생략) → prev_decided.
-결과: 추가 원천징수세액, 근거(법인세법 제67조, 소득세법 시행령 제192조, 소득세법 제137조). Year-end resettlement after a deemed bonus (income disposition) is added to wages."""
+결정세액 = 산출세액 − 근로소득세액공제 − 표준세액공제 13만 원(other_credits=0일 때, 제59조의4제9항·제137조제3항 — wage_income_tax 결정세액(참고)와 같은 기준) − other_credits. 당초·재정산 모두 같은 식.
+결과: 재정산총급여·재정산과세표준·재정산결정세액·당초결정세액·추가 원천징수세액·표준세액공제, 근거(법인세법 제67조, 소득세법 시행령 제192조, 소득세법 제137조). Year-end resettlement after a deemed bonus (income disposition) is added to wages."""
     return _ok(I.deemed_bonus_resettlement(gross_pay, tax_base, bonus, other_credits, prev_decided, year=year),
                "법인세법 제67조, 소득세법 시행령 제192조, 소득세법 제137조",
                주의="총급여 연동 소득·세액공제(신용카드 공제 등)는 수기 보정 필요")
@@ -4755,7 +4789,7 @@ def simplified_vat_return(year: YEAR,
       대손 확정액(기본 0) → bad_debt_confirmed, 직전연도 합계 → prior_year_supplies,
       예정부과 고지세액 → prepaid_assessed,
       사업 개시일 → business_start, 휴업·폐업·유형전환일 → closed_on(있으면 그 기간 공급대가를 12개월로 환산해 면제 판정, 제69조제3항).
-    결과: 판단(항목·결론·근거)·계산(과세표준·부가가치율·납부세액·공제·가산세)·결과(납부의무면제·차가감납부세액)·산식·근거."""
+    결과: 판단(항목·결론·근거)·계산(과세표준·부가가치율·납부세액·공제·가산세)·결과(납부의무면제·예정부과세액_공제·차가감납부세액(음수면 환급세액, 제67조제2항)·환급세액)·산식·근거."""
 
     # 2021-07-01 이전 체계 미지원
     if year < 2021:
@@ -4908,8 +4942,10 @@ def simplified_vat_return(year: YEAR,
     # 8. 의제매입세액공제 0 (2021-07-01부터 적용 없음), 대손세액공제 적용 없음 — 판단에 명시
     의제매입세액공제 = 0
 
-    # 9. 차가감납부세액 = 공제후세액 + 가산세 − 예정고지 (음수면 0, 환급 없음)
-    차가감납부세액 = max(0, 공제후세액 + 미수취가산세 - 예정고지)
+    # 9. 차가감납부세액 = 공제후세액 + 가산세 − 예정부과·예정신고 납부·수시부과 세액(제67조②) — 음수면 환급세액.
+    #   면제(제69조①)면 납부세액은 0이나 가산세는 남고, 자진 납부한 예정부과세액은 가산세 충당 뒤 환급(제69조④). vat_simplified_taxpayer와 같은 산식(0.25.5).
+    차가감납부세액 = 공제후세액 + 미수취가산세 - 예정고지
+    환급세액 = max(0, -차가감납부세액)
 
     # 판단 목록
     판단 = [
@@ -4937,9 +4973,14 @@ def simplified_vat_return(year: YEAR,
              f"0원 (직전연도 공급대가 {직전연도:,}원 ≥ {영수증발급기준:,}원 — 세금계산서 발급 대상 간이과세자, 미수취 매입 {미수취매입:,}원)"),
             ),
          "근거": "부가가치세법 제68조의2②1호, 제36조①2호가목"},
-        {"항목": "차가감납부세액", "결론": f"{차가감납부세액:,}원 (공제후세액 {공제후세액:,}원 + 가산세 {미수취가산세:,}원 − 예정고지 {예정고지:,}원)",
-         "근거": "부가가치세법 제63조⑥, 제66조(예정부과세액 차감)"},
+        {"항목": "차가감납부세액", "결론": f"{차가감납부세액:,}원 (공제후세액 {공제후세액:,}원 + 가산세 {미수취가산세:,}원 − 예정부과세액 공제 {예정고지:,}원)"
+                                    + (f" → 환급세액 {환급세액:,}원" if 환급세액 else ""),
+         "근거": "부가가치세법 제63조⑥, 제67조②(예정부과·예정신고 납부·수시부과 세액 공제)"},
     ]
+    if 납부의무면제 and 예정고지 > 0:
+        판단.append({"항목": "면제 사업자 예정부과세액 환급", "결론": f"자진 납부한 예정부과세액 {예정고지:,}원은 환급(제69조④)"
+                     + (f" — 남은 가산세 {미수취가산세:,}원 충당 뒤 {환급세액:,}원" if 미수취가산세 else ""),
+                     "근거": "부가가치세법 제69조④"})
     if 대손확정 > 0:
         판단.append({"항목": "대손 확정액", "결론": f"{대손확정:,}원 — 간이과세자 납부세액에 영향 없음(제45조 일반과세자 대상)",
                      "근거": "부가가치세법 제45조① — 간이과세자 과세표준·납부세액 계산 범위 밖"})
@@ -4952,7 +4993,7 @@ def simplified_vat_return(year: YEAR,
         f"공제합계 = min(매입공제 + 카드공제, 납부세액) = min({세금계산서수취공제:,} + {카드발급공제:,}, {납부세액:,}) = {공제합계:,}원 (제63조⑥)",
         f"공제후세액 = max(0, 납부세액 − 공제합계) = max(0, {납부세액:,} − {공제합계:,}) = {공제후세액:,}원",
         f"세금계산서미수취가산세 = {('0원 (영수증 발급 기간)' if 직전연도 < 영수증발급기준 else '0원 (미수취 매입 없음)') if 미수취가산세 == 0 else f'no_tax_invoice × 0.5% = {미수취매입:,} × 0.005 = {미수취가산세:,}원 (제68조의2②1호)'}",
-        f"차가감납부세액 = max(0, 공제후세액 + 가산세 − 예정고지) = max(0, {공제후세액:,} + {미수취가산세:,} − {예정고지:,}) = {차가감납부세액:,}원",
+        f"차가감납부세액 = 공제후세액 + 가산세 − 예정부과세액 공제 = {공제후세액:,} + {미수취가산세:,} − {예정고지:,} = {차가감납부세액:,}원 (제67조②, 음수면 환급세액 {환급세액:,}원)",
     ]
 
     return {
@@ -4970,7 +5011,9 @@ def simplified_vat_return(year: YEAR,
         },
         "결과": {
             "납부의무면제": 납부의무면제,
+            "예정부과세액_공제": 예정고지,
             "차가감납부세액": 차가감납부세액,
+            "환급세액": 환급세액,
             **({"면제판정_공급대가": 면제판정_공급대가, "환산_개월수": 환산_개월수} if 환산_개월수 else {}),
         },
         "산식": 산식,
@@ -8416,6 +8459,20 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "2천만 원 초과": ["financial_income_aggregate", "dividend_tax_credit"], "금융소득종합과세": ["financial_income_aggregate", "dividend_tax_credit"],
     "증여": ["gift_tax", "inheritance_gift_valuation"], "상속": ["inheritance_tax", "inheritance_gift_valuation"],
     "법인세": ["corporate_tax", "income_adjustment_total"], "퇴직소득세": ["retirement_income_tax"],
+    # 0.25.5 — 소득처분·인정상여·재정산·업무무관 경비·부가가치세 묶음(통합 시나리오에서 find_tool이 못 찾던 말)
+    "소득처분": ["income_adjustment_total", "deemed_bonus_resettlement"], "상여 처분": ["deemed_bonus_resettlement", "income_adjustment_total"],
+    "인정상여": ["deemed_bonus_resettlement", "earned_income_gross_pay", "income_adjustment_total"], "대표자 상여": ["deemed_bonus_resettlement", "income_adjustment_total"],
+    "재정산": ["deemed_bonus_resettlement"], "연말정산 재정산": ["deemed_bonus_resettlement"], "소득금액변동": ["deemed_bonus_resettlement"],
+    "추가 원천징수": ["deemed_bonus_resettlement"], "추가 납부 원천세": ["deemed_bonus_resettlement"],
+    "세무조정": ["income_adjustment_total", "entertainment_adjustment", "depreciation_adjustment"], "손금불산입": ["income_adjustment_total", "nonbusiness_interest_disallowance", "entertainment_adjustment"],
+    "업무무관 경비": ["income_adjustment_total", "deemed_bonus_resettlement", "nonbusiness_interest_disallowance"], "업무무관 비용": ["income_adjustment_total", "deemed_bonus_resettlement", "nonbusiness_interest_disallowance"],
+    "개인 경비": ["income_adjustment_total", "deemed_bonus_resettlement", "nonbusiness_interest_disallowance"], "개인적 지출": ["income_adjustment_total", "deemed_bonus_resettlement"],
+    "사적 경비": ["income_adjustment_total", "deemed_bonus_resettlement"], "사적 사용": ["income_adjustment_total", "business_car_expense"], "가사 경비": ["income_adjustment_total", "deemed_bonus_resettlement"],
+    "대표이사": ["deemed_interest", "income_adjustment_total", "deemed_bonus_resettlement"], "법인 지출": ["income_adjustment_total", "entertainment_adjustment"],
+    "부가가치세": ["vat_simplified_taxpayer", "vat_input_tax_deduction", "common_input_tax", "vat_bad_debt_credit", "simplified_vat_return"],
+    "부가세 신고": ["vat_input_tax_deduction", "vat_simplified_taxpayer", "common_input_tax", "vat_bad_debt_credit"],
+    "지연수취": ["vat_input_tax_deduction", "invoice_penalty", "invoice_penalty_bundle"], "늦게 받은 세금계산서": ["vat_input_tax_deduction", "invoice_penalty"],
+    "매입세액 공제": ["vat_input_tax_deduction", "common_input_tax"], "매입세액공제": ["vat_input_tax_deduction", "common_input_tax"],
     "주식 양도": ["stock_capital_gains_tax", "stock_major_shareholder"], "주식 양도세": ["stock_capital_gains_tax", "stock_major_shareholder"], "주식 팔": ["stock_capital_gains_tax", "stock_major_shareholder"],
     "대주주": ["stock_major_shareholder", "stock_capital_gains_tax"], "종가": ["stock_price_lookup"], "공시지가": ["official_property_price"], "개인 기부금": ["individual_donation_expense"], "기부금 필요경비": ["individual_donation_expense"], "사업자 기부금 한도": ["individual_donation_expense"], "연금수령한도": ["pension_account_withdrawal"], "연금수령연차": ["pension_account_withdrawal"], "연금계좌 인출": ["pension_account_withdrawal"], "연금외수령": ["pension_account_withdrawal"], "건물 기준시가": ["building_standard_price"], "건물 평가": ["building_standard_price"], "상가 기준시가": ["building_standard_price"], "신축가격기준액": ["building_standard_price"], "공시가격": ["official_property_price"], "기준시가 조회": ["official_property_price"], "공동주택가격": ["official_property_price"], "개별주택가격": ["official_property_price"], "아파트 공시": ["official_property_price"], "비상장주식 평가": ["unlisted_stock_valuation", "stock_basis_income_tax"], "보충적 평가": ["unlisted_stock_valuation"], "순손익가치": ["unlisted_stock_valuation"], "순자산가치": ["unlisted_stock_valuation", "stock_basis_income_tax"], "최대주주 할증": ["unlisted_stock_valuation"], "기준시가 주식": ["stock_basis_income_tax"], "시세": ["stock_price_lookup"], "주가 조회": ["stock_price_lookup"], "시가총액": ["stock_price_lookup", "stock_major_shareholder"], "비상장주식": ["stock_capital_gains_tax", "stock_major_shareholder"], "장외 양도": ["stock_capital_gains_tax"], "소액주주": ["stock_major_shareholder", "stock_capital_gains_tax"],
     "양도": ["capital_gains_income", "capital_gains_tax"], "필요경비": ["capital_gains_income", "estimated_business_income", "other_income_aggregate"],
