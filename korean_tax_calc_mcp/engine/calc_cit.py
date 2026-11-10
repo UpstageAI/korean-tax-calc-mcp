@@ -780,7 +780,6 @@ def min_tax_adjust(
     반환: {결과, 계산, 근거} — 도구에서 _ok로 감싼다.
     결과 키: 감면전_산출세액(감면 등을 모두 배제했을 때의 산출세액, corp_tax(max(0,③118), year, months)),
     감면전_산출세액 < 최저한세이면 server.py minimum_tax_adjustment가 판단에 "최저한세가 산출세액보다 큼" 항목을 추가."""
-    import json as _json
     문제 = []
     # ── 입력 확인 ──
     if reserve + special_depreciation + exclusion_mt > income_deduct:
@@ -2082,16 +2081,6 @@ def _date_key(s):
     return int(s.replace("-", ""))
 
 
-def _months_between(start, end):
-    """두 날짜 사이의 월수 (초일 산입). start, end는 (y,m,d) 튜플."""
-    sy, sm, sd = start
-    ey, em, ed = end
-    months = (ey - sy) * 12 + (em - sm)
-    if ed >= sd:
-        months += 1
-    return months
-
-
 def _within_3m_cutoff(record_date):
     """배당기준일(record_date)의 3개월 이전 기준일(YYYYMMDD). 민법 초일 불산입 기준."""
     y, m, d = map(int, record_date.split("-"))
@@ -2220,43 +2209,6 @@ def _is_exclusion_applicable(exclusion_kind, received_on_key):
         return False, f"해당 연도에는 제18조의2② 제외 대상 아님(2024.1.1 이후 받는 분부터)"
 
 
-def _get_exclusion_rate_and_rule(received_on_key, company_type, holding_legacy_election, is_subsidiary):
-    """받은 날 기준 적용 규정과 익금불산입률 조회.
-
-    returns: (적용규정 str, 익금불산입률 float)
-    """
-    # 2023.1.1 이후: 통합 표 (제18조의2)
-    if received_on_key >= 20230101:
-        if company_type == "지주회사" and holding_legacy_election and received_on_key <= 20261231:
-            # 종전 제18조의3 선택: 자회사 요건 충족 시 지주 표, 아니면 통합 표
-            if is_subsidiary:
-                # 2020~2022 지주 표 사용
-                if is_subsidiary:
-                    return _get_holding_rate_2020_2022(received_on_key, company_type)
-            # 자회사 아니면 통합 표
-            return "법인세법 제18조의2(2023.1.1 이후)", _get_integrated_rate(received_on_key)
-        return "법인세법 제18조의2(2023.1.1 이후)", _get_integrated_rate(received_on_key)
-
-    # 2019.1.1 ~ 2022.12.31
-    if received_on_key >= 20190101:
-        if company_type == "지주회사":
-            # 지주회사는 자회사 요건 판정
-            return _get_holding_rate_2019_2022(received_on_key, company_type)
-        return "법인세법 제18조의2(2019.1.1~2022.12.31)", _get_general_rate_2019_2022(received_on_key)
-
-    # 2016.1.1 ~ 2018.12.31
-    if company_type == "지주회사":
-        return "구 법인세법 제18조의2(지주회사)", _get_holding_rate_2016_2018(received_on_key)
-    return "구 법인세법 제18조의3(일반)", _get_general_rate_2016_2018(received_on_key)
-
-
-def _get_integrated_rate(received_on_key):
-    """2023.1.1 이후 통합 표 익금불산입률."""
-    # 상장/비상장 구분 없음: 50% 이상 100%, 20% 이상~50% 미만 80%, 20% 미만 30%
-    # (비율 파라미터로 판정)
-    return None  # 호출측에서 비율 기준으로 판정
-
-
 def _get_integrated_exclusion_rate(ratio):
     """2023.1.1 이후 통합 표: 50%↑ 100%, 20~50% 80%, 20%↓ 30%."""
     if ratio >= 0.5:
@@ -2333,11 +2285,6 @@ def _get_general_exclusion_rate_2016_2018(ratio, listed):
             return 0.5
         else:
             return 0.3
-
-
-def _get_holding_rate_2019_2022(received_on_key, company_type):
-    """2019~2022 지주회사 익금불산입률."""
-    return None  # 호출측에서 비율 기준으로 판정
 
 
 def _get_holding_exclusion_rate_2019_2022(ratio, listed, received_on_key, is_subsidiary):
@@ -2709,8 +2656,6 @@ def dividend_received_deduction(
         "판단": 판단_목록,
         "근거": "법인세법 제18조의2, 시행령 제17조의2·제17조의3",
     }
-
-
 
 
 # ── 일시상각충당금·압축기장충당금 ──────────────────────────────────

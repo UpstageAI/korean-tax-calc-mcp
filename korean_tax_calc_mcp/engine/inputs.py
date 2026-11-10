@@ -19,10 +19,6 @@ def int_range(name: str, v, lo: int, hi: int, what: str = "") -> None:
     need(isinstance(v, int) and not isinstance(v, bool) and lo <= v <= hi, f"{name}={v!r} — {what}{lo}~{hi}만 받음")
 
 
-def nonneg(name: str, v) -> None:
-    need(v is None or v >= 0, f"{name}={v!r} — 음수는 받지 않음")
-
-
 def to_date(name: str, s) -> date:
     try:
         return date.fromisoformat(str(s)[:10])

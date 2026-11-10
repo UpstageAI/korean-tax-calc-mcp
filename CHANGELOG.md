@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.25.1 (2026-11-10)
+
+보완 Claude(뼈대 Solar Pro 4). 결함 3건 수정 + 죽은 코드 정리.
+
+- **계산 결과 바뀌는 수정 — `vat_simplified_taxpayer` prepaid_tax 구현**: 인자 prepaid_tax(예정부과 고지·예정신고 납부·수시부과세액)가 스키마에만 있고 계산에 쓰이지 않아 넣어도 무시됐다. 이제 제67조②에 따라 차가감 납부세액에서 공제하고, 음수면 환급세액(면제 사업자의 자진 납부분 환급은 제69조④). 결과에 예정부과세액_공제·환급세액 추가, 차가감_납부세액은 공제 뒤 금액(음수 가능). prepaid_tax=0(기본)이면 결과 그대로.
+- **`vocab.resolve(name, year=…)` NameError**: year를 넘기면 정의 안 된 `_year_key`를 불러 터졌다(현재 호출처는 year를 안 넘겨 잠복). `_year_0101`로 고침.
+- **`engine/calc_cit.py` 죽은 함수에 미정의 이름**: `_get_exclusion_rate_and_rule`(호출처 없음) 안에서 정의 안 된 `_get_holding_rate_2020_2022`를 불렀다. 이 함수와 `return None` 스텁 2개(`_get_integrated_rate`·`_get_holding_rate_2019_2022`) 삭제.
+- 죽은 코드 삭제(호출 0 확인): `_months_between`, `forms_workbook.tier_tax_formula`, `return_intake._split/_merge/vote`, `calc_inhgift.상속세율_산출세액`, `inputs.nonneg`, `calc_capgains._vocab_rule_on`, `calc_gold_gaps6._floor_won`; 미사용 import 15개(server.py 등).
+- 테스트: `tests/test_vocab_year.py`, `tests/test_vat_simplified.py` prepaid 4건.
+
 ## 0.25.0 (2026-11-09)
 
 부가세 시나리오 2탄 결함 4건 수정 — 간이과세자 면제·환산·겸영, 세금계산서 가산세 묶음(중복 배제), 간주공급 대상 재화(사업양수·수출영세율), 공통사용재화 매입세액(규칙 제54조③).

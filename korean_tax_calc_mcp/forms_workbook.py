@@ -1192,16 +1192,6 @@ def _tier_inputs(prefix: str, tiers: list, n: int, what: str) -> list[dict]:
     return out
 
 
-def tier_tax_formula(base: str, prefix: str, n: int, months: str | None = None) -> str:
-    """구간 누진 세액 수식(원 미만 반올림, 도구 won()과 같음). months가 있으면 1년 미만 연 환산(과세표준×12/월수 → 세율 → ×월수/12)."""
-    x = f"{base}*12/{months}" if months else base
-    terms = [f"MAX(0,{x})*[입력.{prefix}율1_만분율]"]
-    for k in range(1, n):
-        terms.append(f"MAX(0,{x}-[입력.{prefix}_구간{k}_상한])*([입력.{prefix}율{k + 1}_만분율]-[입력.{prefix}율{k}_만분율])")
-    body = f"({'+'.join(terms)})/10000"
-    return f"=ROUND({body}*{months}/12,0)" if months else f"=ROUND({body},0)"
-
-
 def form_cell_inputs(tool: str, args: dict | None, data: dict | None) -> dict | None:
     """내보내기 전용: 서식 금액 칸이 숫자 대신 '입력·가정' 이름·앞 칸을 가리키도록 `계산식_입력`에 이름을 덧붙인 사본
     (export_form_inputs 뒤에 부름. 이미 있는 이름은 그대로). 법정 세율·구간은 그 사업연도 연도표 값. 도구 출력은 그대로."""

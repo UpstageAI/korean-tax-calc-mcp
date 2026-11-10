@@ -1,7 +1,6 @@
 """연금계좌 인출(연금수령한도·인출순서) · 상속·증여재산 평가 도구. 작성 Claude 2026-10-24.
 근거: 소득세법 시행령 제40조의2·제40조의3(2024.1.1. 시행본), 상속세 및 증여세법 제60조·제66조, 시행령 제49조·제63조."""
 
-import math
 from fractions import Fraction
 from datetime import date, timedelta
 from typing import Literal
@@ -18,11 +17,6 @@ def _parse_date(s: str) -> date:
         return date.fromisoformat(s)
     except (ValueError, TypeError):
         raise ValueError(f"날짜 형식 오류: '{s}' — YYYY-MM-DD 형식으로 입력하세요")
-
-
-def _floor_won(x: float) -> int:
-    """원 미만 버림."""
-    return int(math.floor(x))
 
 
 def _add_years(d: date, n: int) -> date:

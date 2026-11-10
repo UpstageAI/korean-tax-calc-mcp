@@ -170,37 +170,6 @@ def from_extract(j):
     return from_key_tables(md), md
 
 
-def _split(path, n=3):
-    """신고서 PDF를 n쪽씩 나눔 — 서식 7종·10쪽을 한 번에 옮기면 Instruct가 시간 초과."""
-    import tempfile
-    from pypdf import PdfReader, PdfWriter
-    r = PdfReader(path); out = []
-    for i in range(0, len(r.pages), n):
-        w = PdfWriter()
-        for pg in r.pages[i:i + n]: w.add_page(pg)
-        f = tempfile.NamedTemporaryFile(suffix=f"_{i // n + 1}.pdf", delete=False); w.write(f.name); out.append(f.name)
-    return out
-
-
-def _merge(parts):
-    """쪽 묶음별 표 → 하나로: 같은 제목의 표 행을 합치고 단일 값은 먼저 나온 값 유지."""
-    sec, order = {}, []
-    for t in parts:
-        cur = None
-        for line in t.splitlines():
-            m = re.match(r"^#+\s*\d*\.?\s*(.+?)\s*$", line)
-            if m:
-                cur = m.group(1);
-                if cur not in sec: sec[cur] = []; order.append(cur)
-                continue
-            if cur and line.strip().startswith("|"):
-                if not sec[cur] or not re.fullmatch(r"\|?[\s:\-|]+\|?", line.strip()) or len(sec[cur]) < 2:
-                    if line not in sec[cur] or not re.search(r"\d", line): sec[cur].append(line)
-            elif cur and line.strip().startswith("-") and "없음" not in line:
-                sec[cur].append(line)
-    return "\n\n".join(f"## {i}. {k}\n" + "\n".join(sec[k]) for i, k in enumerate(order, 1))
-
-
 _EXTRACT_PROMPT = """아래 법인세 신고서 PDF 텍스트에서 다음 항목들을 찾아 JSON으로 출력하라.
 없으면 null로 둔다. 숫자 값은 원문 표기 그대로(콤마·△ 포함) 출력 — 코드에서 변환한다.
 
@@ -266,20 +235,6 @@ def fill_by_law(d):
         if k not in d: d[k] = v
     d.setdefault("_기준보완", []).extend(k for k in added if d.get(k) == added[k])
     return d
-
-
-def vote(inputs):
-    """여러 번 추출한 입력 → 칸별 다수결."""
-    import json as _json
-    from collections import Counter
-    keys = set().union(*inputs); out, unsure = {}, {}
-    need = len(inputs) // 2 + 1
-    for k in keys:
-        vals = [_json.dumps(d.get(k), ensure_ascii=False, sort_keys=True) for d in inputs]
-        (top, n), = Counter(vals).most_common(1)
-        if n >= need and top != "null": out[k] = _json.loads(top)
-        elif top != "null" or n < len(inputs): unsure[k] = [d.get(k) for d in inputs]
-    return out, unsure
 
 
 def precheck_pdf(path):
