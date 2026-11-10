@@ -310,7 +310,7 @@ def overseas_account_reporting(
     과태료_범위 = [0, 0]
 
     if 신고의무:
-        위반금액 = 최고잔액 - reported_amount_krw
+        위반금액 = max(0, 최고잔액 - reported_amount_krw)   # 신고액이 최고잔액 이상이면 위반 없음
         # 과태료 = min(위반금액 × 10%, 10억) (영 제147조①1호), 법 상한 20% (제90조①)
         과태료 = _trunc_won(_exact(위반금액) * Fraction(1, 10))
         과태료 = min(과태료, 1_000_000_000)
