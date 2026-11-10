@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.25.4 (2026-11-10)
+
+보완 Claude(뼈대 Solar Pro 4). 계산 결과·도구 스키마 불변(97개 도구 스키마 해시 동일, 1,892 테스트). 순수 이동.
+
+- `server.py`(12,263줄)에서 큰 도구 본문을 모듈로 분리 — `tools_export.py`(export_workbook 1,600줄 + 전용 헬퍼), `tools_income.py`(earned_income_gross_pay), `tools_vat.py`(common_input_tax), `tools_cit.py`(retirement_allowance_adjustment). server.py에는 같은 서명·설명의 `@mcp.tool @_guard` 래퍼만 남음 → 8,536줄. 옮긴 본문은 바이트 동일, server 전용 헬퍼는 호출 시점 지연 import(순환 없음).
+
 ## 0.25.3 (2026-11-10)
 
 보완 Claude(뼈대 Solar Pro 4). 계산 결과 불변 — 연도표 전부에 대해 경계 ±1원·.5원 꼬리·난수 6,500건 스윕으로 리팩터 전후 일치 확인(income 78,720회·inhgift 6,545회·모듈 래퍼 40,290회 불일치 0).
