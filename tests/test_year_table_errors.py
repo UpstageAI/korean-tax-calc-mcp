@@ -30,3 +30,14 @@ def test_cit_missing_year_through_value_error_wrapper():
     r = call("nonbusiness_interest_disallowance", {"loans": [{"interest": 1_200, "principal": 120_000, "days": 365}],
                                                    "nonbusiness_jeoksu": 1_200, "fiscal_start": "2015-04-01", "fiscal_end": "2016-03-31"})
     assert _strip(r) == {"error": "2015 사업연도 — 2016~2026만 지원(추정 계산 안 함)", "주의": 주의}
+
+
+def test_tier_float_accumulate_accepts_none_cap():
+    """exact.tier: 설명대로 마지막 상한 None도 부동소수 누적 경로에서 받는다(math.inf와 같은 값)."""
+    import math
+    from korean_tax_calc_mcp.engine import exact
+    tiers_none = [(200_000_000, 0.09), (20_000_000_000, 0.19), (None, 0.21)]
+    tiers_inf = [(200_000_000, 0.09), (20_000_000_000, 0.19), (math.inf, 0.21)]
+    for x in (150_000_000, 200_000_000, 5_000_000_000, 30_000_000_000):
+        assert exact.tier(x, tiers_none, float_accumulate=True) == exact.tier(x, tiers_inf, float_accumulate=True)
+        assert exact.tier(x, tiers_none) == exact.tier(x, tiers_inf)

@@ -70,7 +70,7 @@ def tier(x, tiers, *, float_accumulate=False):
     if float_accumulate:
         out, prev = 0.0, 0
         for cap, r in tiers:
-            if x > prev: out += (min(x, cap) - prev) * r
+            if x > prev: out += ((x if cap is None else min(x, cap)) - prev) * r
             prev = cap
         return out
     x = exact(x)
