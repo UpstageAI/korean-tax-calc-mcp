@@ -1290,6 +1290,9 @@ def late_payment_penalty(tax, due, until):
         raise ValueError(f"until={until}이 법정납부기한 due={due}보다 앞섬 — 납부일·고지일은 납부기한 이후 날짜")
     a = d0 + timedelta(days=1)
     days = max(0, (b - a).days + 1)
+    # 2026.7.1. 시행(법률 제21212호): "법정납부기한의 다음 날부터 납부고지일(고지 전 납부는 납부일)의 전날까지" → until이 2026.7.1. 이후면 하루 줄어듦
+    if b >= _d(2026, 7, 1):
+        days = max(0, days - 1)
     seg = late_payment_rate_segments(a.isoformat(), days) if days else []
     n = {r: k for k, r in seg}
     out = {"일수": days}

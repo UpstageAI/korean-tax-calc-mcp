@@ -632,12 +632,12 @@ def entertainment_limit(year: YEAR, sme: Annotated[bool, Field(description="중�
 @_guard
 def deemed_interest(movements: Annotated[list[Movement], Field(description="가지급금 증감 목록 [{date:'YYYY-MM-DD', amount:원(대여 +, 회수 -)}]")],
                     year_end: Annotated[str, Field(description="사업연도 종료일(YYYY-MM-DD)")],
-                    market_rate: Annotated[float, Field(description="시가 이자율(소수, 예: 0.046 = 4.6%). 가중평균차입이자율 원칙, 예외 시 당좌대출이자율 0.046. rate_mode='입력'일 때 사용")] = 0.046,
+                    market_rate: Annotated[float, Field(description="시가 이자율(소수, 예: 0.046 = 4.6%). 가중평균차입이자율 원칙, 예외 시 당좌대출이자율 0.046(2016.3.6.까지 발생분은 0.069). rate_mode='입력'일 때 사용")] = 0.046,
                     charged_rate: Annotated[float, Field(description="실제 받은 이자율(소수, 예: 0.0 = 무수익)")] = 0.0,
                     received_interest: Annotated[int | None, Field(description="실제 받은 이자 금액(원, ge=0). 주면 charged_rate 계산 대신 이 금액을 수령이자로 사용")] = None,
                     fiscal_start: Annotated[str | None, Field(description="사업연도 개시일(YYYY-MM-DD). 생략 시 year_end의 1년 전 다음 날")] = None,
                     deposits: Annotated[list[Deposit] | None, Field(description="동일인 가수금 [{date, amount(원, 입금 +, 반환 -), offset_blocked(상계 불가 여부), 이름?}]")] = None,
-                    rate_mode: Annotated[Literal["입력", "가중평균", "당좌선택"], Field(description="이자율 계산 방식: '입력'(기본, market_rate 사용) | '가중평균'(borrowings로 가중평균차입이자율) | '당좌선택'(당좌대출이자율 4.6%, 이후 2개 사업연도 적용)")] = "입력",
+                    rate_mode: Annotated[Literal["입력", "가중평균", "당좌선택"], Field(description="이자율 계산 방식: '입력'(기본, market_rate 사용) | '가중평균'(borrowings로 가중평균차입이자율) | '당좌선택'(당좌대출이자율 4.6%, 2016.3.6.까지 발생분은 6.9%로 기간 안분, 이후 2개 사업연도 적용)")] = "입력",
                     borrowings: Annotated[list[Borrowing] | None, Field(description="차입금 [{borrowed_on, amount, rate, repaid_on?, related?, unclear_creditor?}] (rate_mode='가중평균'일 때)")] = None) -> dict:
     """가지급금 인정이자(적수 × 시가 이자율)와 부당행위계산 여부. 언제: 특수관계인 가지급금 이자와 부당행위 3억·5% 판정을 함께 구할 때.
     입력: 가지급금 증감 [{date, amount(원, 대여 +, 회수 -)}] → movements, 사업연도 종료일(YYYY-MM-DD) → year_end, 시가 이자율(소수) → market_rate(rate_mode='입력'일 때), 실제 이자율(소수) → charged_rate, 실제 받은 이자 금액(원) → received_interest, 사업연도 개시일(YYYY-MM-DD, 생략 시 year_end 기준 자동 계산) → fiscal_start, 동일인 가수금 [{date, amount(원, 입금 +, 반환 -), offset_blocked(상계 불가 여부), 이름?}] → deposits, 이자율 계산 방식('입력'|'가중평균'|'당좌선택') → rate_mode, 차입금 [{borrowed_on, amount, rate, repaid_on?, related?, unclear_creditor?}] → borrowings(rate_mode='가중평균'일 때).
@@ -728,10 +728,21 @@ def deemed_interest(movements: Annotated[list[Movement], Field(description="가�
             offset_blocked_jeoksu += bal * ((y_end - cur).days + 1)
     net_jeoksu = max(0, j - gupum_jeoksu)
     # ── 이자율 결정 ──
+    overdraft_split = None
+    _CUT = _date(2016, 3, 7)      # 당좌대출이자율 6.9% → 4.6%(시행규칙 제43조②, 2016.3.7. 개정, 부칙 제4조: 시행 이후 발생하는 분부터)
     if rate_mode == "당좌선택":
         rate_used = Fraction(K.RATE_OVERDRAFT).limit_denominator(10**7)
         note = "선택한 사업연도와 이후 2개 사업연도 적용(영 제89조③2호, 규칙 제43조②)"
         loan_tranches = None
+        if fs < _CUT:
+            if deposits:
+                return {"error": "입력 확인 필요 — 계산하지 않음",
+                        "문제": ["사업연도에 2016.3.6. 이전 기간이 있어 당좌대출이자율이 6.9%(~2016.3.6.)와 4.6%(2016.3.7.~)로 나뉨 — 가수금 상계와 함께는 계산하지 않음. "
+                               "가수금을 반영한 순 잔액으로 movements를 넣거나 기간을 나눠 계산"]}
+            before = [(d_, a_) for d_, a_ in fy_movements if _date.fromisoformat(d_) < _CUT]
+            j_before = C.jeoksu(before, "2016-03-06") if before else 0
+            overdraft_split = (j_before, j - j_before)
+            note += "; 2016.3.6.까지 발생분은 6.9%, 2016.3.7.부터 4.6%(시행규칙 제43조②, 2016.3.7. 개정 부칙 제4조). 2016.3.7. 전에 약정한 기간부 대여금은 약정 만료일까지 6.9%(부칙 제11조) — 해당하면 rate_mode='입력'으로 따로 계산"
     elif rate_mode == "가중평균":
         market, loan_tranches = _weighted_average_rate(mv, fy_movements, fs, y_end, days,
                                                           borrowings or [], j, net_jeoksu, gupum_jeoksu, offset_blocked_jeoksu)
@@ -743,6 +754,8 @@ def deemed_interest(movements: Annotated[list[Movement], Field(description="가�
     # ── 시가이자·수령이자·차액 (원 미만 절사) ──
     if rate_mode == "가중평균":
         market_exact = Fraction(market)
+    elif overdraft_split is not None:
+        market_exact = (Fraction(overdraft_split[0]) * Fraction(69, 1000) + Fraction(overdraft_split[1]) * Fraction(46, 1000)) / days
     elif received_interest is not None:
         market_exact = Fraction(net_jeoksu) * rate_used / days
     else:
@@ -1057,8 +1070,17 @@ def late_payment_penalty(unpaid_tax: WON, due: Annotated[str, Field(description=
                          until: Annotated[str, Field(description="납부일·고지일(YYYY-MM-DD)")]) -> dict:
     """납부지연가산세(미납 세액 × 일수 × 이율, 이율 변경일 기준 기간 안분). 언제: 세금을 법정납부기한보다 늦게 납부했을 때 일수분 가산세를 계산한다.
 입력: 미납 세액(원) → unpaid_tax, 법정납부기한(YYYY-MM-DD) → due, 납부일·고지일(YYYY-MM-DD) → until.
-결과: 가산세 총액, 근거(국세기본법 제47조의4, 시행령 제27조의4). until이 due와 같은 날이면 가산세 0, due가 토·일·공휴일이면 주의(기한 연장은 자동 반영 안 함). Late payment penalty with daily rate split at rate-change dates."""
+결과: 가산세 총액, 근거(국세기본법 제47조의4, 시행령 제27조의4). 일수는 until이 2026.6.30.까지면 납부일(고지일)까지, 2026.7.1.부터는 그 전날까지(법률 제21212호). 법정납부기한 2016.1.1. 이후만 지원. until이 due와 같은 날이면 가산세 0, due가 토·일·공휴일이면 주의(기한 연장은 자동 반영 안 함). Late payment penalty with daily rate split at rate-change dates."""
+    try:
+        _d0 = _chk.to_date("due", due)
+        _d1 = _chk.to_date("until", until)
+    except ValueError as e:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [str(e)]}
+    if _d0 < date(2016, 1, 1):
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"due={due} — 2016.1.1. 이후 법정납부기한만 지원(그 전 이율·규정은 대조하지 않음)"]}
     out = _ok(C.late_payment_penalty(unpaid_tax, due, until), "국세기본법 제47조의4, 시행령 제27조의4")
+    if _d1 >= date(2026, 7, 1):
+        out["판단"] = [{"항목": "일수", "결론": "법정납부기한 다음 날부터 납부고지일(고지 전 납부는 납부일)의 전날까지 — 2026.7.1. 시행 개정", "근거": "국세기본법 제47조의4①1호(법률 제21212호)"}]
     주의 = _due_holiday_note(due)
     if 주의:
         out["주의"] = 주의
@@ -1086,7 +1108,8 @@ def withholding_late_payment_penalty(unpaid_tax: WON,
                                      notice_due: Annotated[str, Field(description="지정납부기한 = 납부고지서에 따른 납부기한(YYYY-MM-DD) — 납부고지가 있었을 때만")] = "",
                                      paid_on: Annotated[str, Field(description="납부고지 후 실제 납부일(YYYY-MM-DD) — notice_due와 함께")] = "",
                                      dunning_fee: Annotated[int, Field(ge=0, description="독촉에 드는 비용(원, 제47조의5제1항제4호·영 제27조의4제3항 등기우편 요금) — 개정 규정의 고지 후분에만")] = 0,
-                                     notice_amount: Annotated[int | None, Field(ge=0, description="납부고지서별·세목별 세액(원, 제5항 150만원 기준) — 생략하면 미납세액 + 고지 전 가산세")] = None) -> dict:
+                                     notice_amount: Annotated[int | None, Field(ge=0, description="납부고지서별·세목별 세액(원, 제5항 소액 기준: 지정납부기한 2021년까지 100만원, 2022년부터 150만원) — 생략하면 미납세액 + 고지 전 가산세")] = None,
+                                     accrued_on: Annotated[str | None, Field(description="납세의무 성립일 = 소득을 지급한 날(YYYY-MM-DD, 선택). 2020.1.1. 전이면 종전 규정(3% + 고지일까지 일수분, 10% 한도). 생략하면 법정납부기한이 2020.1.10. 이전인 경우 2019년 성립분으로 봄")] = None) -> dict:
     """원천징수 등 납부지연가산세(국세기본법 제47조의5제1항) — 미납세액 3% + 일수분(고지 전 10% 한도) + 납부고지 후분, 전체 50% 한도. 언제: 원천징수의무자(납세조합·부가가치세 대리납부자 포함)가 원천징수세액을 법정납부기한까지 내지 않았거나 적게 냈을 때.
 입력: 미납·과소납부 세액(원) → unpaid_tax, 법정납부기한(YYYY-MM-DD) → due, 고지 전 납부일 또는 납부고지일(YYYY-MM-DD) → until,
   납부고지가 있었으면 지정납부기한(납부고지서에 따른 납부기한) → notice_due, 실제 납부일 → paid_on, 독촉비용(원) → dunning_fee, 납부고지서별·세목별 세액(원, 생략 가능) → notice_amount.
@@ -1095,6 +1118,8 @@ def withholding_late_payment_penalty(unpaid_tax: WON,
   고지 후(지정납부기한 다음 날부터 납부일): 지정납부기한이 2026.6.30. 이전에 지났으면 종전 규정(법률 제21212호 부칙 제4조) — 2호 일수분(납부일까지, 제4항 5년 한도),
   아니면 개정 3호 — 미납세액 × 지정납부기한 다음 날부터 납부일 전날까지 경과 개월 수(제4항 5년 = 60개월 한도) × 월 1만분의 67(영 제27조의4제2항) + 4호 독촉비용.
   제5항: 납부고지서별·세목별 세액 150만원 미만이면 고지 후분(개정 3호·4호, 종전 지정납부기한 후 2호 일수분) 없음. 전체는 미납세액의 50% 한도.
+  연도: 2020.1.1. 전 납세의무 성립분(지급일 기준, 법률 제16841호 부칙 제21조)은 종전 규정 — 3% + 납부기한 다음 날부터 자진납부일 또는 납세고지일까지 일수분, 10% 한도. 고지 후분은 구 국세징수법 가산금 대상이라 계산하지 않음.
+  제5항 소액 기준은 지정납부기한 2021.12.31.까지 100만원 미만, 2022.1.1.부터 150만원 미만.
   일반 납부지연가산세(제47조의4, 3% 없음·한도 없음)는 late_payment_penalty.
 지원 안 함: 제3항 적용 제외(주한미군·국가·지방자치단체 등) 판단, 고지 후 일부 납부(분할 납부) — 미납세액 전부를 paid_on에 낸 것으로 계산.
 until이 due와 같은 날(기한 당일 납부)이면 가산세 0. due가 토·일·공휴일이면 주의(국세기본법 제5조제1항 기한 연장은 자동 반영 안 함 — 다음 영업일을 due로).
@@ -1110,6 +1135,16 @@ until이 due와 같은 날(기한 당일 납부)이면 가산세 0. due가 토·
         문제.append(f"until={until} — 법정납부기한 due={due}보다 앞 날짜(기한 안 납부면 가산세 없음 — 기한 당일 납부는 until=due로 넣으면 가산세 0)")
     if d0 < date(2016, 1, 1):
         문제.append(f"due={due} — 2016.1.1. 이후 법정납부기한만 지원")
+    pre2020 = d0 <= date(2020, 1, 10)
+    성립일_추정 = accrued_on is None and pre2020 and d0 > date(2019, 12, 31)
+    if accrued_on is not None:
+        try:
+            ad = _chk.to_date("accrued_on", accrued_on)
+            pre2020 = ad < date(2020, 1, 1)
+            if ad > d0:
+                문제.append(f"accrued_on={accrued_on} — 납세의무 성립일(지급일)이 법정납부기한 due={due}보다 뒤일 수 없음")
+        except ValueError as e:
+            문제.append(str(e))
     if (nd is None) != (pd is None):
         문제.append("notice_due(지정납부기한)와 paid_on(고지 후 납부일)은 함께 — 고지 없이 납부했으면 둘 다 비우고 until=납부일")
     if nd is not None and nd < d1:
@@ -1133,7 +1168,23 @@ until이 due와 같은 날(기한 당일 납부)이면 가산세 0. due가 토·
         if 주의:
             out["주의"] = 주의
         return out
-    r = I.withholding_late_penalty_full(unpaid_tax, d0, d1, nd, pd, dunning_fee, notice_amount)
+    r = I.withholding_late_penalty_full(unpaid_tax, d0, d1, nd, pd, dunning_fee, notice_amount, pre2020=pre2020)
+    if pre2020:
+        결과 = {k: r[k] for k in ("가산세", "3%분", "일수분", "한도_10%", "한도_적용", "일수", "고지후분", "고지후_일수", "경과_개월", "독촉비용", "한도_50%", "50%한도_적용")}
+        결과["적용_규정"] = {"고지 전": r["고지전_규정"], "고지 후": r["고지후_규정"]}
+        out = _ok(결과, "구 국세기본법 제47조의5①(2019.12.31. 개정 전: 3% + 일수분, 10% 한도), 시행령 제27조의4, 법률 제16841호 부칙 제21조(시행 전 납세의무 성립분은 종전 규정)",
+                  산식=f"min({unpaid_tax:,} × 3% + {unpaid_tax:,} × {r['일수']}일 × 1일 이율, {unpaid_tax:,} × 10%)")
+        out["판단"] = [{"항목": "적용 규정", "결론": "2020.1.1. 전 납세의무 성립분 — 종전 규정: 3% + 납부기한 다음 날부터 "
+                       + ("납세고지일" if nd else "자진납부일") + f"까지 {r['일수']}일분, 합계 10% 한도. 50% 한도·고지 후 일수분 없음",
+                       "근거": "구 국세기본법 제47조의5①, 법률 제16841호 부칙 제21조"}]
+        주의목록 = [주의] if 주의 else []
+        if nd is not None:
+            주의목록.append("납세고지 후 체납분은 구 국세징수법의 가산금(체납 국세의 3%)·중가산금 대상 — 이 도구는 계산하지 않음")
+        if 성립일_추정:
+            주의목록.append("법정납부기한이 2020.1.10. 이전이라 2019년 지급분(성립분)으로 보고 종전 규정 적용 — 2020년 지급분이면 accrued_on에 지급일을 넣는다")
+        if 주의목록:
+            out["주의"] = 주의목록 if len(주의목록) > 1 else 주의목록[0]
+        return out
     근거 = ["국세기본법 제47조의5①(1호 3% + 2호 일수분, 1호·2호 10% 한도, 전체 50% 한도), 시행령 제27조의4"]
     판단 = []
     if r["고지전_규정"] == "개정":
@@ -1144,7 +1195,7 @@ until이 due와 같은 날(기한 당일 납부)이면 가산세 0. due가 토·
                    "근거": "국세기본법 제47조의5①2호(2026.7.1. 개정 전)"})
     if r["고지후_규정"] == "종전":
         근거.append("법률 제21212호 부칙 제4조(2026.6.30. 이전 지정납부기한 경과분 종전 규정)" if pd >= date(2026, 7, 1) else "국세기본법 제47조의5①2호·④·⑤(2026.7.1. 개정 전)")
-        판단.append({"항목": "고지 후", "결론": ("150만원 미만 — 고지 후 일수분 없음" if r["150만원미만_제외"] else
+        판단.append({"항목": "고지 후", "결론": (f"{r['소액기준'] // 10_000}만원 미만 — 고지 후 일수분 없음" if r["150만원미만_제외"] else
                                              f"종전 2호 일수분 {r['고지후분']:,}원 — 지정납부기한 다음 날부터 납부일까지 {r['고지후_일수']}일(5년 한도)"),
                    "근거": "국세기본법 제47조의5①2호·④·⑤(종전)" + (", 법률 제21212호 부칙 제4조" if pd >= date(2026, 7, 1) else "")})
     elif r["고지후_규정"] == "개정":
@@ -1153,7 +1204,7 @@ until이 due와 같은 날(기한 당일 납부)이면 가산세 0. due가 토·
                                              f"3호 {r['고지후분']:,}원 — 경과 {r['경과_개월']}개월 × 월 1만분의 67" + (f", 4호 독촉비용 {r['독촉비용']:,}원" if r["독촉비용"] else "")),
                    "근거": "국세기본법 제47조의5①3호·4호·⑤(법률 제21212호), 시행령 제27조의4②③"})
     if r["150만원미만_제외"]:
-        판단.append({"항목": "⑤ 소액 체납", "결론": f"납부고지서별·세목별 세액 {r['납부고지서_세액']:,}원 < 150만원" + ("" if notice_amount is not None else "(미납세액 + 고지 전 가산세로 봄 — 다르면 notice_amount)"),
+        판단.append({"항목": "⑤ 소액 체납", "결론": f"납부고지서별·세목별 세액 {r['납부고지서_세액']:,}원 < {r['소액기준'] // 10_000}만원" + ("" if notice_amount is not None else "(미납세액 + 고지 전 가산세로 봄 — 다르면 notice_amount)"),
                    "근거": "국세기본법 제47조의5⑤"})
     if r["고지후_규정"] == "개정" or r["고지전_규정"] == "개정":
         근거.append("법률 제21212호 부칙 제1조 단서·제4조")
@@ -1305,18 +1356,34 @@ def assessment_limitation(due_date: Annotated[str, Field(description="법정신�
                           case: Annotated[Literal["일반", "무신고", "부정행위"], Field(description="일반(과소신고 등) / 무신고 / 부정행위로 포탈·환급")] = "일반",
                           offshore: Annotated[bool, Field(description="역외거래(국제거래 또는 국외 자산·용역 관련 거래) 여부")] = False,
                           inheritance_gift: Annotated[bool, Field(description="상속세·증여세 여부")] = False,
-                          withholding: Annotated[bool, Field(description="원천징수의무자(또는 납세조합)에게 부과하는 원천징수세액이면 True — 기산일이 법정납부기한 다음 날(국세기본법 시행령 제12조의3제2항제1호)")] = False) -> dict:
+                          withholding: Annotated[bool, Field(description="원천징수의무자(또는 납세조합)에게 부과하는 원천징수세액이면 True — 기산일이 법정납부기한 다음 날(국세기본법 시행령 제12조의3제2항제1호)")] = False,
+                          accrued_on: Annotated[str | None, Field(description="납세의무 성립일(YYYY-MM-DD, 선택) — 역외거래 7년·10년은 2019.1.1. 이후 성립분부터. 법정신고기한이 2019년이고 offshore면 필요(예: 2018년 귀속 소득세는 성립일 2018-12-31)")] = None) -> dict:
     """국세 부과제척기간과 만료일(2020년 이후 부과분 기준 현행 조문). 언제: 어느 과세기간의 세금이든 부과·제척기간이 언제까지인지 역산한다.
 입력: 법정신고기한(원천징수분은 법정납부기한, YYYY-MM-DD) → due_date, 부과 성격(일반·무신고·부정행위) → case, 역외거래 여부 → offshore, 상속세·증여세 여부 → inheritance_gift, 원천징수분 → withholding.
 기한 특례: 법정신고기한(납부기한)이 토·일·공휴일·대체공휴일·근로자의 날이면 다음 날이 기한(국세기본법 제5조제1항)이라 그다음 날부터 기산하고, 만료일이 토요일·공휴일이면 다음 날 만료(국세기본법 제4조·민법 제161조, 기본통칙 4-0…2). 공휴일표 2016~2027.
-결과: 제척기간(년)·법정신고기한(적용)(원천징수분은 법정납부기한(적용))·기산일·만료일(이월 전 역법상 만료일 함께), 근거(국세기본법 제26조의2제1항·제2항·제4항, 시행령 제12조의3, 기한이 미뤄졌으면 제5조제1항, 만료일이 미뤄졌으면 제4조). 일반 5년(역외 7년), 무신고 7년(역외 10년), 부정행위 10년(역외 15년), 상속·증여 10년(부정 등 15년).
+결과: 제척기간(년)·법정신고기한(적용)(원천징수분은 법정납부기한(적용))·기산일·만료일(이월 전 역법상 만료일 함께), 근거(국세기본법 제26조의2제1항·제2항·제4항, 시행령 제12조의3, 기한이 미뤄졌으면 제5조제1항, 만료일이 미뤄졌으면 제4조). 일반 5년(역외 7년), 무신고 7년(역외 10년), 부정행위 10년(역외 15년), 상속·증여 10년(부정 등 15년). 역외 7년·10년은 2019.1.1. 이후 납세의무 성립분부터이고 그 전 성립분은 5년·7년(부정행위 15년은 그 전에도 같음). 법정신고기한 2016.1.1. 이후만 지원.
 경정청구가 있으면 제척기간이 지나도 청구일부터 2개월 안에 경정할 수 있음(제26조의2제6항제3호) — 경정청구 기한은 refund_claim_deadline."""
-    if inheritance_gift: n = 10 if case == "일반" else 15
-    else: n = {"일반": (5, 7), "무신고": (7, 10), "부정행위": (10, 15)}[case][1 if offshore else 0]
     try:
         d = _chk.to_date("due_date", due_date)
+        acc = _chk.to_date("accrued_on", accrued_on) if accrued_on else None
     except ValueError as e:
         return {"error": f"입력 오류: {e}"}
+    if d < date(2016, 1, 1):
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"due_date={due_date} — 법정신고기한 2016.1.1. 이후만 지원(그 전 제척기간 조문은 대조하지 않음)"]}
+    # 역외거래 가산(일반 7년·무신고 10년)은 2019.1.1. 이후 납세의무 성립분부터(법률 제16097호 부칙 제10조). 그 전 성립분은 일반 5년·무신고 7년,
+    # 부정행위는 종전에도 국제거래 15년.
+    역외_종전 = False
+    if offshore and not inheritance_gift and case != "부정행위":
+        if acc is not None:
+            역외_종전 = acc < date(2019, 1, 1)
+        elif d < date(2019, 1, 1):
+            역외_종전 = True
+        elif d < date(2020, 1, 1):
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": ["역외거래 7년·10년은 2019.1.1. 이후 납세의무 성립분부터 — 법정신고기한이 2019년이면 성립일에 따라 갈리므로 accrued_on(납세의무 성립일)이 필요"],
+                    "허용값": {"accrued_on": "YYYY-MM-DD (예: 2018년 귀속 소득세·12월 결산 법인세 2018-12-31, 2018년 2기 부가가치세 2018-12-31)"}}
+    if inheritance_gift: n = 10 if case == "일반" else 15
+    else: n = {"일반": (5, 7), "무신고": (7, 10), "부정행위": (10, 15)}[case][1 if (offshore and not 역외_종전) else 0]
     due = DL.roll(d)                                 # 국세기본법 제5조제1항 — 신고·납부 기한
     da = due["날짜"]
     raw_end = DL.add_months(da, 12 * n)              # 기산일(da 다음 날)부터 n년 → 역법상 말일 = da의 n년 뒤 같은 날
@@ -1340,6 +1407,8 @@ def assessment_limitation(due_date: Annotated[str, Field(description="법정신�
     outside = sorted(set(due["표_밖_연도"] + end["표_밖_연도"]))
     if outside:
         주의.append(DL.outside_note(outside))
+    if 역외_종전:
+        판단.append({"항목": "역외거래", "결론": f"2019.1.1. 전 납세의무 성립분 — 역외거래 가산(7년·10년) 없이 {n}년", "근거": "국세기본법 제26조의2(2018.12.31. 개정 전), 법률 제16097호 부칙 제10조"})
     # 근거: 제척기간 조문 + 기산일(시행령 제12조의3) + 실제로 적용한 기한 특례(제5조①)·만료일 이월(제4조)만
     근거 = "국세기본법 제26조의2" + ("④" if inheritance_gift else ("②" if case != "일반" else "①"))
     if due["건너뜀"]:
@@ -1531,12 +1600,25 @@ def income_tax(base: Annotated[int, Field(description="종합소득 과세표준
 @mcp.tool(annotations=CALC)
 @_guard
 def withholding_tax(kind: Annotated[str, Field(description="소득 종류: 이자·배당·비영업대금·사업·기타·봉사료·일용·비실명·외국인직업운동가·온투업이자")],
-                    amount: WON, year: Annotated[int, Field(description="지급연도(2016~2026)")] = 2025) -> dict:
+                    amount: WON, year: Annotated[int, Field(description="지급연도(2016~2026)")] = 2025,
+                    contract_over_3_years: Annotated[bool, Field(description="외국인직업운동가의 프로스포츠구단 계약기간이 3년을 넘는지 — 2019~2024년 지급분은 3년 이하 계약만 20%, 넘으면 3%. 2025년부터는 계약기간과 무관하게 20%")] = False) -> dict:
     """국내 원천징수세액(소득세분). 언제: 이자·배당·사업·기타소득 등을 지급할 때 원천징수할 소득세액을 구한다.
-입력: 소득 종류(이자·배당·비영업대금·사업·기타·봉사료·일용·비실명·외국인직업운동가·온투업이자) → kind, 지급액(원) → amount, 지급연도(2016~2026) → year.
+입력: 소득 종류(이자·배당·비영업대금·사업·기타·봉사료·일용·비실명·외국인직업운동가·온투업이자) → kind, 지급액(원) → amount, 지급연도(2016~2026) → year, 외국인직업운동가 계약기간 3년 초과 여부 → contract_over_3_years.
+연도: 비실명 38%(~2017)·40%(2018)·42%(2019~2022)·45%(2023~), 외국인직업운동가 3%(~2018)·20%(2019~2024는 계약기간 3년 이하만, 2025~ 제한 없음), 온투업이자 25%(~2019)·14%(2020~).
 결과: 원천징수세액·적용 세율, 근거(소득세법 제129조). 지방소득세 10% 별도. 비거주자·외국법인은 nonresident_withholding 사용. 국내 withholding tax (소득세분) on interest, dividends, business income, etc."""
-    return _ok({"원천징수세액": I.withholding_tax(kind, amount, year), "세율": I.withholding_rate(kind, year)}, "소득세법 제129조",
-               주의="지방소득세(소득세의 10%) 별도. 비거주자는 조세조약 제한세율 확인(korean-tax-mcp treaty_withholding_rates)")
+    if kind.strip() == "외국인직업운동가" and contract_over_3_years and 2019 <= year <= 2024:
+        # 소득세법 제129조①3호 단서: 2019~2024년 "계약기간이 3년 이하인 경우로 한정" → 3년 초과 계약은 사업소득 3%. 2025.1.1. 한정 삭제(법률 제20615호, 부칙 제13조).
+        out = _ok({"원천징수세액": I.withholding_tax("사업", amount, year), "세율": I.withholding_rate("사업", year)}, "소득세법 제129조①3호 본문",
+                  주의="지방소득세(소득세의 10%) 별도. 비거주자는 조세조약 제한세율 확인(korean-tax-mcp treaty_withholding_rates)")
+        out["판단"] = [{"항목": "외국인 직업운동가", "결론": "계약기간 3년 초과 — 20% 특례 대상 아님(2019~2024년 지급분은 3년 이하 계약만), 사업소득 3%",
+                       "근거": "소득세법 제129조①3호 단서(2024.12.31. 개정 전)"}]
+        return out
+    out = _ok({"원천징수세액": I.withholding_tax(kind, amount, year), "세율": I.withholding_rate(kind, year)}, "소득세법 제129조",
+              주의="지방소득세(소득세의 10%) 별도. 비거주자는 조세조약 제한세율 확인(korean-tax-mcp treaty_withholding_rates)")
+    if kind.strip() == "외국인직업운동가" and 2019 <= year <= 2024:
+        out["판단"] = [{"항목": "외국인 직업운동가", "결론": "20%는 계약기간 3년 이하인 경우(2019~2024년 지급분). 3년 초과 계약이면 contract_over_3_years=True",
+                       "근거": "소득세법 제129조①3호 단서(2024.12.31. 개정 전)"}]
+    return out
 
 
 @mcp.tool(annotations=CALC)
