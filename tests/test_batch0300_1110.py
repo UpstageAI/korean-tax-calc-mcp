@@ -162,12 +162,13 @@ def test_cgut_corporate_counterparty_exception_and_fraud():
 
 
 def test_cgut_gift_then_transfer_comparison():
-    r = c("capital_gains_unfair_transaction", {"mode": "증여후양도", "gift_date": "2020-03-01", "transfer_date": "2026-02-01",
+    # 2026-11-11 정정: 증여일을 2023년으로 — 2023.1.1. 전 증여분은 5년(부칙 제18조)이라 2020년 증여·2026년 양도는 적용 기간 밖
+    r = c("capital_gains_unfair_transaction", {"mode": "증여후양도", "gift_date": "2023-03-01", "transfer_date": "2026-02-01",
           "donee_relation": "기타특수관계인", "donee_gift_tax": 100 * M, "donee_capital_gains_tax": 50 * M, "donor_direct_capital_gains_tax": 200 * M})
     g = r["결과"]
     assert g["증여자_직접양도_간주"] is True and g["수증자_세액합계"] == 150 * M
     assert any("증여세" in str(x) and "부과하지" in str(x) for x in r.get("판단", []))
-    g = c("capital_gains_unfair_transaction", {"mode": "증여후양도", "gift_date": "2020-03-01", "transfer_date": "2026-02-01",
+    g = c("capital_gains_unfair_transaction", {"mode": "증여후양도", "gift_date": "2023-03-01", "transfer_date": "2026-02-01",
           "donee_relation": "기타특수관계인", "donee_gift_tax": 150 * M, "donee_capital_gains_tax": 100 * M, "donor_direct_capital_gains_tax": 200 * M})["결과"]
     assert g["증여자_직접양도_간주"] is False
 
@@ -176,10 +177,10 @@ def test_cgut_gift_then_transfer_exclusions():
     base = {"mode": "증여후양도", "gift_date": "2015-01-01", "transfer_date": "2026-02-01", "donee_relation": "기타특수관계인",
             "donee_gift_tax": 1, "donee_capital_gains_tax": 1, "donor_direct_capital_gains_tax": 100 * M}
     g = c("capital_gains_unfair_transaction", base)["결과"]
-    assert g["증여자_직접양도_간주"] is False and "10년" in g["적용제외_사유"]
+    assert g["증여자_직접양도_간주"] is False and "5년" in g["적용제외_사유"]      # 2015년 증여분은 5년(2026-11-11 정정)
     g = c("capital_gains_unfair_transaction", {**base, "gift_date": "2020-01-01", "donee_relation": "배우자"})["결과"]
     assert g["증여자_직접양도_간주"] is False and "제97조의2" in g["적용제외_사유"]
-    g = c("capital_gains_unfair_transaction", {**base, "gift_date": "2020-01-01", "income_belongs_to_donee": True})["결과"]
+    g = c("capital_gains_unfair_transaction", {**base, "gift_date": "2023-06-01", "income_belongs_to_donee": True})["결과"]
     assert g["증여자_직접양도_간주"] is False and "실질" in g["적용제외_사유"]
 
 

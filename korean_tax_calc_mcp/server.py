@@ -8865,7 +8865,7 @@ def individual_foreign_tax_credit(
       total_income — 종합소득금액 또는 퇴직소득금액(원, C). 0이면 오류.
       countries — [{country, foreign_income, foreign_tax, treaty_rate?, gross_amount?, russia_override?}].
       income_kind — '종합'(기본) | '퇴직'.
-      carryforward — [{country, year, amount}] (종합소득만, 이월된 미공제 외국소득세액).
+      carryforward — [{country, year, amount}] (종합소득만, 이월된 미공제 외국소득세액). 이월공제기간은 2020년 과세기간까지 5년, 2021년부터 10년(2015년 이전 발생분은 2021년부터 기간 경과).
     결과: 외국납부세액공제액·공제한도_합계·이월액·이월기간경과분·국가별 내역·산식.
     주의: 외국납부세액공제신청서를 확정신고 때 제출(영 제117조(3항)), 국외원천소득은 대응비용을 뺀 금액(영 제117조(2항)).
     """
@@ -8888,7 +8888,7 @@ def overseas_account_reporting(
     accounts: Annotated[list | None, Field(description="[{name, month_end_krw: 길이 12}] — 월별 합산(둘 다 주면 오류, 둘 다 없어도 오류)")] = None,
     holder: Annotated[Literal["거주자", "내국법인"], Field(description="'거주자'(기본) | '내국법인'")] = "거주자",
     foreigner_resident_years_in_korea_last10: Annotated[int | None, Field(description="외국인 거주자로서 최근 10년 중 국내 주소·거소 기간(년). 5 이하면 면제")] = None,
-    overseas_korean_days_in_korea: Annotated[int | None, Field(description="재외국민의 신고대상 연도 종료일 1년 전부터 국내 거소 일수. 182 이하면 면제")] = None,
+    overseas_korean_days_in_korea: Annotated[int | None, Field(description="재외국민의 국내 거소 일수 — 2019년 보유분부터 신고대상 연도 종료일 1년 전부터, 2018년까지는 2년 전부터의 합계. 2024년까지 183일 이하, 2025년부터 182일 이하면 면제")] = None,
     treaty_resident_of_other_country: Annotated[bool, Field(description="조세조약상 상대국 거주자면 면제")] = False,
     reported_amount_krw: Annotated[int, Field(description="기한 내 신고한 금액(과소신고 계산용, 기본 0 = 미신고)")] = 0,
     corrected_on: Annotated[str | None, Field(description="수정신고일(YYYY-MM-DD — 기한 후 감경표 적용)")] = None,
@@ -8897,7 +8897,7 @@ def overseas_account_reporting(
 ) -> dict:
     """해외금융계좌 신고의무·과태료 판정(국조법 제53조(1항·2항)·제54조·제90조(1항·2항), 시행령 제92조(3항)·제93조(1항)·제94조·제147조(1항·2항·4항).
 
-    언제: 거주자·내국법인이 보유한 해외금융계좌 매월 말일 잔액 합계가 5억 원을 초과하는지,
+    언제: 거주자·내국법인이 보유한 해외금융계좌 매월 말일 잔액 합계가 기준금액(2018년 보유분부터 5억 원, 2017년까지 10억 원)을 초과하는지,
     신고의무 유무·기한, 미신고·과소신고 과태료, 수정신고 감경, 소명 불이행 과태료를 계산한다.
     입력:
       year — 신고대상 연도(2016~2026).
@@ -8905,7 +8905,7 @@ def overseas_account_reporting(
       accounts — [{name, month_end_krw: 길이 12}] (둘 다 주면 오류, 둘 다 없어도 오류).
       holder — '거주자'(기본) | '내국법인'.
       foreigner_resident_years_in_korea_last10 — 외국인 거주자 최근 10년 국내 주소·거소 기간(년). 5 이하면 면제.
-      overseas_korean_days_in_korea — 재외국민 국내 거소 일수. 182 이하면 면제.
+      overseas_korean_days_in_korea — 재외국민 국내 거소 일수. 2024년 보유분까지 183일 이하, 2025년부터 182일 이하면 면제(2018년까지는 2년 전부터의 일수).
       treaty_resident_of_other_country — 조세조약상 상대국 거주자면 면제.
       reported_amount_krw — 기한 내 신고한 금액(기본 0 = 미신고).
       corrected_on — 수정신고일(YYYY-MM-DD).
@@ -9017,7 +9017,7 @@ def capital_gains_unfair_transaction(
     counterparty_is_corporation: Annotated[bool, Field(description="상대방이 법인인지(기본 False)")] = False,
     corporate_tax_market_value_applies: Annotated[bool, Field(description="상대 법인 거래가 법인세법 시행령 제89조 가액이라 제52조 미적용인 경우(기본 False)")] = False,
     fraud: Annotated[bool, Field(description="사기·허위 등 부정 행위 여부(기본 False)")] = False,
-    gift_date: Annotated[str | None, Field(description="증여일(YYYY-MM-DD) — 증여후양도 모드")] = None,
+    gift_date: Annotated[str | None, Field(description="증여일(YYYY-MM-DD) — 증여후양도 모드. 2023.1.1. 전 증여분은 증여 후 5년, 이후 증여분은 10년 이내 양도에 적용")] = None,
     transfer_date: Annotated[str | None, Field(description="양도일(YYYY-MM-DD) — 증여후양도 모드")] = None,
     donee_relation: Annotated[str | None, Field(description="'배우자' | '직계존비속' | '기타특수관계인' — 증여후양도 모드")] = None,
     donee_gift_tax: Annotated[int, Field(description="수증자가 낸 증여세(원, 증여후양도 모드)")] = 0,
