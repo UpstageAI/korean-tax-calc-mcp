@@ -133,3 +133,15 @@ def test_simplified_supplier_card_from_july_2021(period, supply, deduct):
     item = {"증빙": "신용카드", "공급자": "간이과세자_세금계산서"}
     if supply: item["공급시기"] = supply
     assert vi(period, **item) == deduct
+
+
+def test_tunnelling_gift_nts_gates_on_taxation_requirement():
+    """과세 요건을 충족하지 않으면 합계 0. 일반기업 2/3·1천억 요건은 2018.1.1. 이후 종료분에서만 과세 대상으로 본다."""
+    base = {"size": "일반", "op_income": 100 * E, "taxable_income": 100 * E, "tax": 0, "sales_total": 5000 * E,
+            "sales_by_corp": {"A": 1250 * E}, "relations": {"직접": 0.10}}            # 거래비율 25%, 특수관계법인 매출 1,250억
+    old = c("tunnelling_gift_nts", {**base, "fiscal_year_end": "2017-12-31"})
+    new = c("tunnelling_gift_nts", {**base, "fiscal_year_end": "2018-12-31"})
+    assert old["과세 대상"] is False and old["합계"] == 0 and "미충족" in old["결론"]
+    assert new["과세 대상"] is True and abs(new["합계"] - 2.0 * E) < 2                # 100억 × (25%−5%) × 10%
+    small = c("tunnelling_gift_nts", {**base, "sales_total": 500 * E, "sales_by_corp": {"A": 125 * E}, "fiscal_year_end": "2018-12-31"})
+    assert small["과세 대상"] is False and small["합계"] == 0                         # 25%지만 매출 125억 — 1천억 이하

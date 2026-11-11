@@ -686,8 +686,19 @@ def tunnelling_nts(beneficiary, size, op_income, taxable_income, tax, sales_tota
     hit = base_ratio > normal
     res = {"수혜법인": beneficiary, "과세요건(정상거래비율 초과)": hit, "출자관계별": out, "합계": total,
            "적용 비율": {"정상거래비율": normal, "한계보유비율": limit, "계산식_차감거래비율": sub_ratio, "계산식_차감보유비율": sub_hold}}
+    taxable = hit
     if alt_route:   # 법 ①1호나목2): 일반기업 — 정상거래비율의 2/3 초과 + 특수관계법인 매출 1천억원 초과(2018.1.1. 이후 종료 사업연도)
-        res["과세요건(정상거래비율 2/3 초과·매출 1천억 초과)"] = base_ratio > normal * 2 / 3 and rel_amt - base_excluded > 100_000_000_000
+        alt = base_ratio > normal * 2 / 3 and rel_amt - base_excluded > 100_000_000_000
+        res["과세요건(정상거래비율 2/3 초과·매출 1천억 초과)"] = alt
+        taxable = hit or alt
+    res["과세 대상"] = taxable
+    if not taxable:
+        # 과세 요건(법 ①1호)을 충족하지 않으면 증여의제이익 없음 — 계산식 값은 '요건 미충족 시 계산값'으로만 남김
+        for v in out.values():
+            v["요건 미충족 시 계산값"] = v["증여의제이익"]
+            v["증여의제이익"] = 0
+        res["합계"] = 0
+        res["결론"] = f"과세 요건 미충족 — 특수관계법인거래비율 {base_ratio:.2%} ≤ 정상거래비율 {normal:.0%}"
     return res
 
 
