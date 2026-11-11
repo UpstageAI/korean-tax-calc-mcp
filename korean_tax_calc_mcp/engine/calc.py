@@ -4,7 +4,7 @@ from datetime import date
 
 from .exact import floor_won, round_won
 
-RATE_OVERDRAFT = 0.046  # 당좌대출이자율 (법인세법 시행규칙 제43조제2항) — 연도별 변동 없음, 조문 조회로 확인
+RATE_OVERDRAFT = 0.046  # 당좌대출이자율 (법인세법 시행규칙 제43조제2항) — 2016.3.7.부터 4.6%, 2016.3.6.까지 발생분은 6.9%(server.deemed_interest가 날짜로 나눔)
 
 
 def won(x):
