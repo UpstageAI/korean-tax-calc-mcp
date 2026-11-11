@@ -101,3 +101,10 @@ def test_gift_relative_scope_by_gift_date(on, scope):
 def test_out_of_range_dates_are_refused(tool, args):
     r = c(tool, args)
     assert "error" in r and ("2016" in str(r) or "지원" in str(r)), r
+
+
+def test_review_findings_0318():
+    """자동 리뷰 지적 확인: ① 2016.6.30. 이전 발생분도 권면 합계 10만원 초과면 과세 ② 2018 사업연도는 확정일과 관계없이 10호 시행 전."""
+    item = {"kind": "승마투표권환급금", "amount": 5 * M, "unit_bet": 100_000, "per_bet_refund": 5 * M, "ticket_total": 200_000, "occurred_on": "2016-06-30"}
+    assert sep(2016, item) == 4_900_000
+    assert "10호 시행 전" in str(bd(2018, date="2019-03-01"))
