@@ -3017,7 +3017,9 @@ def tunnelling_from_pdf(pdf_path: Annotated[str, Field(description="PDF 파일 �
     return _add_ai_mark(tunnel_intake.from_pdf(pdf_path))
 
 
-@mcp.tool(description="""신고서 사전검토(조사 착수 전 오류 의심 목록). 언제: 세무조사 착수 전에 신고서 값으로 오류 의심 항목을 미리 점검할 때. 입력: data={입력키: 값}, tax=법인|부가|소득(생략 시 전체) — 입력키는 precheck_schema로 먼저 확인. 결과: 오류 의심·이상 없음·자료 부족·사실 확인 필요.""")
+@mcp.tool(description="""신고서 사전검토(조사 착수 전 오류 의심 목록). 언제: 세무조사 착수 전에 신고서 값으로 오류 의심 항목을 미리 점검할 때. 입력: data={입력키: 값}, tax=법인|부가|소득(생략 시 전체) — 입력키는 precheck_schema로 먼저 확인.
+연도: 소득은 "귀속연도"(2016~2026), 부가는 "신고.과세기간"('YYYY-1'|'YYYY-2', 2016-1~2026-2)을 넣어야 그 연도 시행 규정(세율·공제·비과세 한도·감면 요건·공제율·이자율)으로 판정 — 없거나 범위 밖이면 연도에 따라 달라지는 규칙은 자료 부족.
+결과: 오류 의심·이상 없음·자료 부족·사실 확인 필요.""")
 @_guard
 def return_precheck(data: Annotated[dict, Field(description='신고서 입력키·값 사전(dictionary). 입력키는 precheck_schema로 확인')], tax: Annotated[str | None, Field(description="세목('법인'|'부가'|'소득'), 생략 시 전체")] = None) -> dict:
     return _precheck_run(data, tax)
@@ -3036,7 +3038,7 @@ def precheck_schema(tax: Annotated[Literal["법인", "부가", "소득"], Field(
     needed = set()
     prefix = {"법인": "법인", "부가": "부가", "소득": "소득"}[tax]
     for r in REGISTRY:
-        if r.세목 != prefix: continue
+        if not r.세목.startswith(prefix): continue   # 소득 규칙의 세목 이름은 '소득·원천'
         for k in r.needs:
             needed.add(k)
 

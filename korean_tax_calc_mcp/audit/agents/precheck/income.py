@@ -1,14 +1,15 @@
 """income 사전검토 규칙(소득세·원천세·연말정산). 작성 Mia(윤승미)
 원천: knowledge/14_소득세_원천세_연말정산_조사포인트.md §13 (PR-01~23, 보조 WH-01·02·03·07·09·13).
-2025 귀속 기준. 날짜는 "YYYY-MM-DD", 월은 "YYYY-MM" 문자열. 금액은 원 단위 int.
+귀속연도(2016~2026) 연도표 적용 — 연도에 따라 달라지는 규칙은 "귀속연도"가 없으면 자료 부족으로 돌려준다. 날짜는 "YYYY-MM-DD", 월은 "YYYY-MM" 문자열. 금액은 원 단위 int.
 근로자별 항목은 "근로자" 리스트의 dict 원소 키로 받는다(아래 SCHEMA의 "근로자[].xxx").
 """
 from datetime import date
 from . import rule, hit, ok, check, Missing  # noqa: F401
 from .. import calc_income as C
+from .... import vocab
 
 SCHEMA = {
-    "귀속연도": "귀속 과세연도(int, 예 2025)",
+    "귀속연도": "귀속 과세연도(int, 2016~2026) — 세율·공제·비과세 한도·감면 요건을 이 연도 시행 규정으로 본다",
     # 원천징수이행상황신고서
     "원천세신고.근로소득총지급액": "원천징수이행상황신고서 근로소득 A01~A04 인원·총지급액 합계 중 연간 총지급액(연말정산분 A04 기준, 원)",
     "원천세신고.소득처분신고액": "원천징수이행상황신고서 소득처분(인정상여 등) 총지급액 합계(원)",
@@ -61,8 +62,8 @@ SCHEMA = {
     "근로자[].종전합산": "주(현) 근무지 연말정산에 종전 소득 합산(bool)",
     "근로자[].확정신고": "다음 해 5월 종합소득세 확정신고 여부(bool)",
     "근로자[].부양가족": "부양가족 명세 리스트 [{주민번호, 관계(직계존속|직계비속|형제자매|배우자|기타), 생년월일, 장애인(bool), 사망일, 근로소득만(bool), 총급여, 일용만(bool), 소득금액합계}]",
-    "근로자[].중기감면": "중기감면 dict {계약일, 생년월일, 병역연수, 장애인, 경력단절, 청년(bool), 감면율(0.9|0.7), 감면대상총급여, 취업일, 최초감면취업일, 감면최종지급월(YYYY-MM), 임원, 최대주주}",
-    "근로자[].월세": "월세 세액공제 dict {공제액, 지급액, 지원금, 공제율(0.17|0.15), 주택보유(bool, 12.31. 세대), 종합소득금액}",
+    "근로자[].중기감면": "중기감면 dict {계약일, 생년월일, 병역연수, 장애인, 경력단절, 청년(bool), 감면율(0.9|0.7 — 청년 0.9는 2018년 귀속부터), 감면대상총급여, 취업일, 최초감면취업일, 감면최종지급월(YYYY-MM), 임원, 최대주주}",
+    "근로자[].월세": "월세 세액공제 dict {공제액, 지급액, 지원금, 공제율(소수 — 2023년 귀속부터 0.17|0.15, 2018~2022년 0.12|0.10, 2017년까지 0.10), 주택보유(bool, 12.31. 세대), 종합소득금액}",
     "근로자[].주택자금공제": "주택임차차입금·장기주택저당차입금 소득공제액 합계(원)",
     "근로자[].장기주택저당이자공제": "장기주택저당차입금 이자상환액 소득공제(원)",
     "근로자[].세대보유주택수": "12.31. 현재 세대 보유 주택 수(주택 보유 전산)",
@@ -92,40 +93,87 @@ def _age(birth, at):
     return at.year - b.year - ((at.month, at.day) < (b.month, b.day))
 
 
+def _Y(d):
+    """귀속연도(2016~2026). 없거나 범위 밖이면 자료 부족 — 한 연도 규정으로 대신 판정하지 않는다."""
+    y = int(d["귀속연도"])
+    if not 2016 <= y <= 2026: raise Missing(f"귀속연도 {y} — 연도표(2016~2026) 밖")
+    return y
+
+
+# 중소기업 취업자 감면(조특법 제30조①, 조특령 제27조①1호) 연도표
+#   2016~2017: 70%, 150만, 3년, 청년 15~29세 / 2018~2022: 70%(청년 90%)·청년 5년·청년 15~34세(법률 제15623호 부칙 제2조,
+#   대통령령 제29116호 부칙 제3조 — 2018 과세연도분부터, 시행 전 취업 청년 포함), 150만 / 2023~: 한도 200만
+def _sme_rule(y):
+    return {"한도": 2_000_000 if y >= 2023 else 1_500_000, "청년율": 0.9 if y >= 2018 else 0.7,
+            "청년기간": 5 if y >= 2018 else 3, "청년상한": 34 if y >= 2018 else 29}
+
+
+# 월세 세액공제(조특법 제95조의2①) 연도표: (총급여 상한, 종합소득금액 상한, 기본율, 우대율, 우대 총급여, 우대 종합소득, 월세액 한도)
+def _rent_rule(y):
+    if y <= 2017: return (70_000_000, 60_000_000, 0.10, None, None, None, 7_500_000)
+    if y <= 2020: return (70_000_000, 60_000_000, 0.10, 0.12, 55_000_000, 40_000_000, 7_500_000)
+    if y <= 2022: return (70_000_000, 60_000_000, 0.10, 0.12, 55_000_000, 45_000_000, 7_500_000)
+    if y == 2023: return (70_000_000, 60_000_000, 0.15, 0.17, 55_000_000, 45_000_000, 7_500_000)
+    return (80_000_000, 70_000_000, 0.15, 0.17, 55_000_000, 45_000_000, 10_000_000)
+
+
+def _daily_due(yy, mm):
+    """일용근로소득 지급명세서 제출기한(소득세법 제164조① 단서) — 지급월 기준.
+    ~2018 지급: 분기 마지막 달의 다음 달 말일(4분기는 다음 해 2월 말일) / 2019 지급: 분기 마지막 달의 다음 달 10일
+    (4분기는 법률 제16834호 부칙 제13조①에 따라 2020.1.31.) / 2020.1.~2021.6. 지급: 분기 마지막 달의 다음 달 말일 /
+    2021.7. 이후 지급: 지급월의 다음 달 말일(법률 제17925호 부칙 제3조·제5조)."""
+    def month_end(y, m):
+        ny, nm = (y + 1, 1) if m == 12 else (y, m + 1)
+        return date.fromordinal(date(ny, nm, 1).toordinal() - 1)
+    if (yy, mm) >= (2021, 7):
+        ny, nm = (yy + 1, 1) if mm == 12 else (yy, mm + 1)
+        return month_end(ny, nm)
+    q_last = (mm - 1) // 3 * 3 + 3
+    ny, nm = (yy + 1, 1) if q_last == 12 else (yy, q_last + 1)
+    if yy <= 2018:
+        return month_end(ny, 2) if q_last == 12 else month_end(ny, nm)
+    if yy == 2019 and q_last != 12:
+        return date(ny, nm, 10)
+    return month_end(ny, nm)
+
+
 def _out(bad, note):
     return hit(None, None, f"{note}: " + "; ".join(bad)) if bad else ok()
 
 
 # ── 근로자별 재계산 (WH-01·02·03·07) ─────────────────────────────
-@rule("I-WH01", S, F, "근로소득공제 재계산 불일치", "소득세법 제47조①", needs=["근로자"], source="14 WH-01")
+@rule("I-WH01", S, F, "근로소득공제 재계산 불일치", "소득세법 제47조①", needs=["귀속연도", "근로자"], source="14 WH-01")
 def _(d):
-    bad = []
+    y, bad = _Y(d), []
     for i, w in enumerate(_W(d)):
-        r, c = _g(w, "근로소득공제", i), C.earned_deduction(_g(w, "총급여", i))
+        r, c = _g(w, "근로소득공제", i), C.earned_deduction(_g(w, "총급여", i), y)
         if abs(r - c) > 1: bad.append(f"{_name(w, i)} 신고 {r:,} / 재계산 {c:,}")
     return _out(bad, "근로소득공제 불일치")
 
 
-@rule("I-WH02", S, F, "산출세액 재계산 불일치", "소득세법 제55조①", needs=["근로자"], source="14 WH-02")
+@rule("I-WH02", S, F, "산출세액 재계산 불일치", "소득세법 제55조①", needs=["귀속연도", "근로자"], source="14 WH-02")
 def _(d):
-    bad = []
+    y, bad = _Y(d), []
     for i, w in enumerate(_W(d)):
-        r, c = _g(w, "산출세액", i), C.income_tax(_g(w, "과세표준", i))
+        r, c = _g(w, "산출세액", i), C.income_tax(_g(w, "과세표준", i), y)
         if abs(r - c) > 1: bad.append(f"{_name(w, i)} 신고 {r:,} / 재계산 {c:,}")
     return _out(bad, "산출세액 불일치")
 
 
-@rule("I-WH07", S, F, "중기감면액 한도·산식 초과", "조특법 제30조", needs=["근로자"], source="14 WH-07")
+@rule("I-WH07", S, F, "중기감면액 한도·산식 초과", "조특법 제30조", needs=["귀속연도", "근로자"], source="14 WH-07")
 def _(d):
-    """근로소득만 있는 근로자 전제(근로소득금액/종합소득금액 = 1). 감면세액이 산식·200만원 한도 재계산값을 초과하면 의심."""
-    bad = []
+    """근로소득만 있는 근로자 전제(근로소득금액/종합소득금액 = 1). 감면세액이 산식·한도 재계산값을 초과하면 의심.
+    한도: 2022년 귀속까지 150만원, 2023년부터 200만원. 감면율: 70%, 청년은 2018년 귀속부터 90%."""
+    k, bad = _sme_rule(_Y(d)), []
     for i, w in enumerate(_W(d)):
         red = w.get("감면세액") or 0
         if not red: continue
         m = _g(w, "중기감면", i)
         c = C.sme_youth_reduction(_g(w, "산출세액", i), _g(w, "총급여", i),
-                                  m.get("감면대상총급여", w["총급여"]), m.get("감면율", 0.9 if m.get("청년") else 0.7))
-        if red > c + 1: bad.append(f"{_name(w, i)} 감면 {red:,} / 재계산 한도 {c:,}")
+                                  m.get("감면대상총급여", w["총급여"]), m.get("감면율", k["청년율"] if m.get("청년") else 0.7), k["한도"])
+        if m.get("감면율") is not None and m["감면율"] > (k["청년율"] if m.get("청년") else 0.7) + 1e-9:
+            bad.append(f"{_name(w, i)} 감면율 {m['감면율']:.0%} — {d['귀속연도']}년 귀속 적용률 {(k['청년율'] if m.get('청년') else 0.7):.0%} 초과")
+        if red > c + 1: bad.append(f"{_name(w, i)} 감면 {red:,} / 재계산 한도 {c:,}(연 한도 {k['한도']:,})")
     return _out(bad, "중기감면 과다")
 
 
@@ -178,13 +226,14 @@ def _(d):
 
 
 # ── PR-05~09 비과세 ─────────────────────────────────────────────
-@rule("I-PR05", S, F, "식대 비과세 월 20만원 초과·현물식사 중복", "소득세법 시행령 제17조의2", needs=["근로자"], source="14 PR-05")
+@rule("I-PR05", S, F, "식대 비과세 월 한도 초과·현물식사 중복", "소득세법 제12조3호러목(2022년 귀속까지 시행령 제17조의2)", needs=["귀속연도", "근로자"], source="14 PR-05")
 def _(d):
-    bad = []
+    """월 한도: 2022년 귀속까지 10만원, 2023년부터 20만원."""
+    월한도, bad = vocab.rule("식사대", _Y(d))["월한도"], []
     for i, w in enumerate(_W(d)):
         v = w.get("비과세.식대") or 0
         if not v: continue
-        cap = 200_000 * _g(w, "근무월수", i)
+        cap = 월한도 * _g(w, "근무월수", i)
         if w.get("현물식사"): bad.append(f"{_name(w, i)} 현물식사+비과세식대 {v:,}")
         elif v > cap: bad.append(f"{_name(w, i)} 비과세식대 {v:,} > 한도 {cap:,} (과세전환 {v - cap:,})")
     return _out(bad, "식대 비과세 초과")
@@ -205,39 +254,46 @@ def _(d):
 
 @rule("I-PR07", S, F, "보육수당 비과세 대상 자녀 없음·한도 초과", "소득세법 제12조3호", needs=["귀속연도", "근로자"], source="14 PR-07")
 def _(d):
-    """과세기간 개시일 현재 6세 이하 자녀 기준(부양가족 명세 한정 — 명세 외 자녀는 가족관계 확인). 2025 귀속 월 20만원."""
-    start, bad = date(d["귀속연도"], 1, 1), []
+    """과세기간 개시일 현재 6세 이하 자녀 기준(부양가족 명세 한정 — 명세 외 자녀는 가족관계 확인).
+    월 한도: 2023년 귀속까지 10만원, 2024~2025년 20만원(근로자 1인당), 2026년부터 6세 이하 자녀 1명당 20만원."""
+    y = _Y(d); r = vocab.rule("출산·보육수당", y)
+    start, bad = date(y, 1, 1), []
     for i, w in enumerate(_W(d)):
         v = w.get("비과세.보육수당") or 0
         if not v: continue
         kids = [p for p in w.get("부양가족") or [] if p.get("관계") == "직계비속" and p.get("생년월일") and _age(p["생년월일"], start) <= 6]
         if not kids: bad.append(f"{_name(w, i)} 6세 이하 자녀 없음")
-        cap = 200_000 * _g(w, "근무월수", i)
+        cap = r["월한도"] * (max(1, len(kids)) if r.get("보육_자녀1명당") else 1) * _g(w, "근무월수", i)
         if v > cap: bad.append(f"{_name(w, i)} 보육 {v:,} > 한도 {cap:,}")
     return _out(bad, "보육수당 비과세 의심")
 
 
-@rule("I-PR08", S, F, "출산지원금 비과세 요건 의심", "소득세법 제12조3호머목", needs=["근로자"], source="14 PR-08")
+@rule("I-PR08", S, F, "출산지원금 비과세 요건 의심", "소득세법 제12조3호머목1), 시행령 제17조의2", needs=["귀속연도", "근로자"], source="14 PR-08")
 def _(d):
-    """지급일 기준 출생 후 2년 이내 자녀 필요(지급일 없으면 12.31.). 대표자 친족 수령은 과세."""
-    bad = []
+    """지급일 기준 출생 후 2년 이내 자녀 필요(지급일 없으면 12.31.). 2024년 지급분은 2021.1.1. 이후 출생 자녀면 대상.
+    2023년 귀속까지는 출산 급여 전액 비과세 규정이 없음(출산·보육 월 10만원 한도만). 대표자 친족 수령은 과세."""
+    y, bad = _Y(d), []
     for i, w in enumerate(_W(d)):
         if not (w.get("비과세.출산지원금") or 0): continue
-        pay = _d(w["출산지원금지급일"]) if w.get("출산지원금지급일") else date(d["귀속연도"], 12, 31)
+        if y <= 2023:
+            bad.append(f"{_name(w, i)} {y}년 귀속 — 출산 급여 전액 비과세 규정 없음(2024년 지급분부터)"); continue
+        pay = _d(w["출산지원금지급일"]) if w.get("출산지원금지급일") else date(y, 12, 31)
+        lo = date(2021, 1, 1) if pay.year == 2024 else pay.replace(year=pay.year - 2)
         kids = [p for p in w.get("부양가족") or [] if p.get("관계") == "직계비속" and p.get("생년월일")
-                and 0 <= (pay - _d(p["생년월일"])).days and _d(p["생년월일"]) >= pay.replace(year=pay.year - 2)]
-        if not kids: bad.append(f"{_name(w, i)} 2년 이내 출생 자녀 없음")
+                and 0 <= (pay - _d(p["생년월일"])).days and _d(p["생년월일"]) >= lo]
+        if not kids: bad.append(f"{_name(w, i)} " + ("2021.1.1. 이후 출생 자녀 없음" if pay.year == 2024 else "2년 이내 출생 자녀 없음"))
         if w.get("대표자친족"): bad.append(f"{_name(w, i)} 대표자 친족")
     return _out(bad, "출산지원금 비과세 의심")
 
 
-@rule("I-PR09", S, F, "야간근로수당 비과세 직전연도 총급여 3천만원 초과", "소득세법 시행령 제17조", needs=["근로자"], source="14 PR-09", kind="외부자료")
+@rule("I-PR09", S, F, "야간근로수당 비과세 직전연도 총급여 기준 초과", "소득세법 시행령 제17조①", needs=["귀속연도", "근로자"], source="14 PR-09", kind="외부자료")
 def _(d):
-    """전년도 지급명세서 필요. 직종·월정액 요건은 별도 확인."""
-    bad = []
+    """전년도 지급명세서 필요. 직종·월정액 요건은 별도 확인.
+    직전 과세기간 총급여 기준: 2019년 귀속까지 2,500만원, 2020~2025년 3,000만원, 2026년 3,700만원."""
+    lim, bad = vocab.rule("연장근로수당", _Y(d))["직전연도총급여한도"], []
     for i, w in enumerate(_W(d)):
-        if (w.get("비과세.야간근로") or 0) and _g(w, "직전연도총급여", i) > 30_000_000:
-            bad.append(f"{_name(w, i)} 직전 총급여 {w['직전연도총급여']:,}")
+        if (w.get("비과세.야간근로") or 0) and _g(w, "직전연도총급여", i) > lim:
+            bad.append(f"{_name(w, i)} 직전 총급여 {w['직전연도총급여']:,} > 기준 {lim:,}")
     return _out(bad, "야간근로 비과세 부적격")
 
 
@@ -246,16 +302,16 @@ def _sme(d):
     return [(i, w, w["중기감면"]) for i, w in enumerate(_W(d)) if (w.get("감면세액") or 0) and w.get("중기감면")]
 
 
-@rule("I-PR10", S, F, "중기감면 연령요건 밖", "조특법 제30조, 조특령 제27조", needs=["근로자"], source="14 PR-10")
+@rule("I-PR10", S, F, "중기감면 연령요건 밖", "조특법 제30조, 조특령 제27조", needs=["귀속연도", "근로자"], source="14 PR-10")
 def _(d):
-    """계약일 현재 만 나이 − 병역기간(최대 6년) 15~34세 또는 60세 이상. 장애인·경력단절 코드는 제외."""
-    bad = []
+    """계약일 현재 만 나이 − 병역기간(최대 6년) 15~34세(2017년 귀속까지 15~29세) 또는 60세 이상. 장애인·경력단절 코드는 제외."""
+    top, bad = _sme_rule(_Y(d))["청년상한"], []
     for i, w, m in _sme(d):
         if m.get("장애인") or m.get("경력단절"): continue
         if not m.get("계약일") or not m.get("생년월일"): raise Missing(f"근로자[{i}].중기감면.계약일/생년월일")
         a = _age(m["생년월일"], _d(m["계약일"]))
         adj = a - min(m.get("병역연수") or 0, 6)
-        if not (15 <= adj <= 34 or a >= 60): bad.append(f"{_name(w, i)} 계약일 {a}세(병역차감 {adj}세)")
+        if not (15 <= adj <= top or a >= 60): bad.append(f"{_name(w, i)} 계약일 {a}세(병역차감 {adj}세, 청년 상한 {top}세)")
     return _out(bad, "연령요건 밖 감면")
 
 
@@ -303,6 +359,9 @@ def _(d):
     """조특령§27③ 열거 업종(23개 호 + 18의2 컴퓨터 학원) 키워드 대사. 업종명이 열거 명칭과 다르면 KSIC 분류로 재확인.
     공공기관 등(단서)은 업종 무관 제외."""
     ind, bad = d["사업장.업종"], []
+    y = d.get("귀속연도")
+    if y is not None and int(y) <= 2024 and _sme(d):
+        raise Missing(f"조특령 제27조③ {int(y)}년 시행 업종표 — 이 규칙의 업종표는 2025.2.28. 개정 시행령 기준이라 {int(y)}년 귀속에는 쓰지 않음(당시 시행령으로 확인)")
     for i, w, m in _sme(d):
         if d.get("사업장.공공기관"): bad.append(f"{_name(w, i)} 공공기관 등"); continue
         okk, why = sme_job_industry(ind, _d(m["취업일"]) if m.get("취업일") else None)
@@ -318,13 +377,13 @@ def _(d):
     return _out(bad, "제외 근로자 감면")
 
 
-@rule("I-PR13", S, F, "중기감면 기간 종료 후 감면", "조특법 제30조①", needs=["근로자"], source="14 PR-13", kind="외부자료")
+@rule("I-PR13", S, F, "중기감면 기간 종료 후 감면", "조특법 제30조①", needs=["귀속연도", "근로자"], source="14 PR-13", kind="외부자료")
 def _(d):
-    """최초 감면 취업일부터 3년(청년 5년)이 되는 날이 속하는 달까지. 홈택스 감면 이력 필요."""
-    bad = []
+    """최초 감면 취업일부터 3년(청년 5년 — 2018년 귀속부터, 그 전은 3년)이 되는 날이 속하는 달까지. 홈택스 감면 이력 필요."""
+    청년기간, bad = _sme_rule(_Y(d))["청년기간"], []
     for i, w, m in _sme(d):
         if not m.get("최초감면취업일") or not m.get("감면최종지급월"): raise Missing(f"근로자[{i}].중기감면.최초감면취업일/감면최종지급월")
-        s = _d(m["최초감면취업일"]); n = 5 if m.get("청년") else 3
+        s = _d(m["최초감면취업일"]); n = 청년기간 if m.get("청년") else 3
         try: e = s.replace(year=s.year + n)
         except ValueError: e = date(s.year + n, 2, 28)
         end = f"{e.year:04d}-{e.month:02d}"
@@ -332,30 +391,37 @@ def _(d):
     return _out(bad, "기간 경과 감면")
 
 
-@rule("I-PR14", S, F, "근로소득세액공제 감면비율 미조정·재계산 불일치", "소득세법 제59조, 조특법 제30조", needs=["근로자"], source="14 PR-14 / WH-03")
+@rule("I-PR14", S, F, "근로소득세액공제 감면비율 미조정·재계산 불일치", "소득세법 제59조, 조특법 제30조", needs=["귀속연도", "근로자"], source="14 PR-14 / WH-03")
 def _(d):
-    bad = []
+    y, bad = _Y(d), []
     for i, w in enumerate(_W(d)):
         r = _g(w, "근로소득세액공제", i)
-        c = C.earned_tax_credit(_g(w, "산출세액", i), _g(w, "총급여", i), w.get("감면세액") or 0)
+        c = C.earned_tax_credit(_g(w, "산출세액", i), _g(w, "총급여", i), w.get("감면세액") or 0, y)
         if abs(r - c) > 1: bad.append(f"{_name(w, i)} 신고 {r:,} / 재계산 {c:,}")
     return _out(bad, "근로소득세액공제 불일치")
 
 
 # ── PR-15~17 주택 ───────────────────────────────────────────────
-@rule("I-PR15", S, F, "월세 세액공제 대상·공제율·금액 의심", "조특법 제95조의2", needs=["근로자"], source="14 PR-15 / WH-09", kind="외부자료")
+@rule("I-PR15", S, F, "월세 세액공제 대상·공제율·금액 의심", "조특법 제95조의2", needs=["귀속연도", "근로자"], source="14 PR-15 / WH-09", kind="외부자료")
 def _(d):
-    """주택 보유는 12.31. 세대 전산. 총급여 8천만 초과 배제, 5,500만 초과·종합소득 4,500만 초과자 17% 불가, 공제액 = Min(지급−지원금, 1천만) × 율."""
+    """주택 보유는 12.31. 세대 전산. 공제액 = Min(지급−지원금, 월세액 한도) × 율. 연도표(조특법 제95조의2①):
+    2016~2017 총급여 7천만(종합소득 6천만) 이하 10%, 한도 750만 / 2018~2020 총급여 5,500만(종합소득 4천만) 이하 12% /
+    2021~2022 우대 종합소득 기준 4,500만 / 2023 15%·17% / 2024~ 총급여 8천만(종합소득 7천만) 이하, 한도 1천만."""
+    y = _Y(d); gmax, imax, r0, r1, g1, i1, cap = _rent_rule(y)
     bad = []
     for i, w in enumerate(_W(d)):
         m = w.get("월세")
         if not m or not m.get("공제액"): continue
         g, rate, inc = _g(w, "총급여", i), m.get("공제율"), m.get("종합소득금액")
         if m.get("주택보유"): bad.append(f"{_name(w, i)} 세대 주택 보유")
-        if g > 80_000_000 or (inc is not None and inc > 70_000_000): bad.append(f"{_name(w, i)} 총급여 {g:,} 대상 아님"); continue
-        if rate == 0.17 and (g > 55_000_000 or (inc is not None and inc > 45_000_000)): bad.append(f"{_name(w, i)} 17% 적용 부적격")
+        if g > gmax or (inc is not None and inc > imax): bad.append(f"{_name(w, i)} 총급여 {g:,} 대상 아님({y}년 기준 {gmax:,})"); continue
+        우대 = r1 is not None and g <= g1 and not (inc is not None and inc > i1)
+        if rate is not None and rate not in (r0, r1):
+            bad.append(f"{_name(w, i)} 공제율 {rate:.0%} — {y}년 귀속 공제율은 {r0:.0%}" + (f"·{r1:.0%}" if r1 else ""))
+        elif rate is not None and rate == r1 and rate != r0 and not 우대:
+            bad.append(f"{_name(w, i)} {r1:.0%} 적용 부적격(총급여 {g1:,} 이하·종합소득 {i1:,} 이하)")
         if m.get("지급액") is not None and rate:
-            c = int(min(m["지급액"] - (m.get("지원금") or 0), 10_000_000) * rate)
+            c = int(min(m["지급액"] - (m.get("지원금") or 0), cap) * rate)
             if m["공제액"] > c + 1: bad.append(f"{_name(w, i)} 공제 {m['공제액']:,} > 재계산 {c:,}")
     return _out(bad, "월세 세액공제 의심")
 
@@ -444,49 +510,48 @@ def _(d):
 @rule("I-PR23", S, "지급명세서", "지급명세서 제출기한 경과", "소득세법 제164조, 제81조의11",
       needs=["귀속연도"], source="14 PR-23")
 def _(d):
-    """근로: 다음 연도 3.10.(휴일 순연 미반영), 일용: 지급월 다음 달 말일. 가산세 1%(3개월 내 0.5%)는 참고치."""
-    y, bad = d["귀속연도"], []
+    """근로: 다음 연도 3.10.(휴일 순연 미반영). 일용: 2021.7. 이후 지급분은 지급월 다음 달 말일, 그 전은 분기별(_daily_due).
+    가산세 1%(3개월 내 0.5%, 제출기한이 2017.12.31. 이전이면 2%·1%)는 참고치."""
+    y, bad = _Y(d), []
     if d.get("지급명세서.근로제출일") is None and d.get("일용근로자") is None: raise Missing("지급명세서.근로제출일")
     if d.get("지급명세서.근로제출일"):
         due, sub = date(y + 1, 3, 10), _d(d["지급명세서.근로제출일"])
         if sub > due:
             w3 = (sub - due).days <= 92
-            pen = C.payment_statement_penalty(d["지급명세서.근로지급액"], w3) if d.get("지급명세서.근로지급액") else None
+            pen = C.payment_statement_penalty(d["지급명세서.근로지급액"], w3, due.isoformat()) if d.get("지급명세서.근로지급액") else None
             bad.append(f"근로 제출 {sub} > 기한 {due}" + (f", 가산세 참고 {pen:,}" if pen is not None else ""))
     for p in d.get("일용근로자") or []:
         for m, s in (p.get("제출일") or {}).items():
-            yy, mm = int(m[:4]), int(m[5:7])
-            ny, nm = (yy + 1, 1) if mm == 12 else (yy, mm + 1)
-            nxt = date(ny + (nm == 12), 1 if nm == 12 else nm + 1, 1)
-            due = date.fromordinal(nxt.toordinal() - 1)
+            due = _daily_due(int(m[:4]), int(m[5:7]))
             if _d(s) > due: bad.append(f"일용 {p.get('주민번호')} {m}분 제출 {s} > 기한 {due}")
     return _out(bad, "제출기한 경과")
 
 
 @rule("I-WH13", S, "일용근로소득 지급명세서", "일용근로 원천세 재계산 불일치", "소득세법 제134조③, 제86조",
-      needs=["일용근로자"], source="14 WH-13")
+      needs=["귀속연도", "일용근로자"], source="14 WH-13")
 def _(d):
-    bad = []
+    """일용 근로소득공제: 2018년 귀속까지 1일 10만원, 2019년부터 15만원."""
+    y, bad = _Y(d), []
     for p in d["일용근로자"]:
         if p.get("일급") is None or p.get("일원천세") is None: continue
-        c = C.daily_worker_tax(p["일급"])
+        c = C.daily_worker_tax(p["일급"], y)
         if abs(p["일원천세"] - c) > 1: bad.append(f"{p.get('주민번호')} 일급 {p['일급']:,} 신고 {p['일원천세']:,} / 재계산 {c:,}")
     return _out(bad, "일용 원천세 불일치")
 
 
 # ── 소득처분·임원퇴직 재계산(조문 원문 확인: knowledge/16) ──────────────────
-@rule("I-WH11", S, F, "상여 처분 재정산 결정세액", "소득세법 제135조④·제131조②, 소득세법 시행령 제49조①3호·제196조", needs=["근로자"],
+@rule("I-WH11", S, F, "상여 처분 재정산 결정세액", "소득세법 제135조④·제131조②, 소득세법 시행령 제49조①3호·제196조", needs=["귀속연도", "근로자"],
       source="14 WH-11")
 def _(d):
     """인정상여는 근로 제공 사업연도 귀속(소령§49①3호) → 귀속연도 총급여에 가산해 연말정산 재계산(소령§196) − 당초 결정세액
     = 추가 원천징수(지급시기: 신고분 신고일·수정신고일, 결정·경정분 소득금액변동통지서 받은 날, 소법§135④→§131②).
     소령§192는 소득금액변동통지(결정·경정일부터 15일 내 법인 통지) 절차 조문. 대상자(근로자[].인정상여재정산)만 계산."""
-    bad = []
+    y, bad = _Y(d), []
     for i, w in enumerate(_W(d)):
         m = w.get("인정상여재정산")
         if not m: continue
         r = C.deemed_bonus_resettlement(m["당초총급여"], m["당초과세표준"], m.get("인정상여", w.get("인정상여") or 0),
-                                        m.get("기타세액공제", 0), m.get("당초결정세액"))
+                                        m.get("기타세액공제", 0), m.get("당초결정세액"), year=y)
         rep_ = m.get("추가원천징수신고액")
         if rep_ is None: raise Missing(f"근로자[{i}].인정상여재정산.추가원천징수신고액")
         if rep_ + 10 < r["추가원천징수세액"]:
@@ -495,14 +560,14 @@ def _(d):
 
 
 @rule("I-WH12", S, "원천징수이행상황신고서", "배당·기타소득 처분 원천징수세율", "소득세법 제129조①2호나목·6호라목",
-      needs=["소득처분.배당처분액", "소득처분.기타소득처분액"], source="14 WH-12")
+      needs=["귀속연도", "소득처분.배당처분액", "소득처분.기타소득처분액"], source="14 WH-12")
 def _(d):
     """배당 처분 14%(§129①2호나목), 기타소득 처분 20%(§129①6호라목, 필요경비 없음). 지방소득세 별도, 10원 미만 절사."""
-    bad = []
+    y, bad = _Y(d), []
     for k, kind in (("배당", "배당"), ("기타소득", "기타")):
         amt = d[f"소득처분.{k}처분액"]
         if not amt: continue
-        should = C.withholding_tax(kind, amt)
+        should = C.withholding_tax(kind, amt, y)
         got = d.get(f"소득처분.{k}원천징수액")
         if got is None: raise Missing(f"소득처분.{k}원천징수액")
         if got + 10 < should: bad.append(f"{k} 처분 {amt:,} 원천징수 {got:,} < {should:,}({C.WITHHOLDING_RATES[kind]:.0%})")
