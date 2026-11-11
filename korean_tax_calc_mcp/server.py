@@ -8951,11 +8951,12 @@ def corporate_filing_obligations(
     year: YEAR,
     corp_type: Annotated[str, Field(description="법인 유형('주식회사'|'유한회사', 기본 '주식회사')")] = "주식회사",
     revenue: Annotated[int, Field(description="당기 수입금액(원)")] = 0,
-    revenue_prev: Annotated[int, Field(description="직전 사업연도 수입금액(원)")] = 0,
-    assets: Annotated[int, Field(description="기말 자산총액(원)")] = 0,
-    liabilities: Annotated[int, Field(description="기말 부채총액(원)")] = 0,
-    employees: Annotated[int, Field(description="종업원 수(명)")] = 0,
-    members: Annotated[int | None, Field(description="유한회사 사원 수(명, 선택)")] = None,
+    revenue_prev: Annotated[int, Field(description="직전 사업연도 수입금액(원) — 외부감사 매출액 기준, 외부세무조정 제1~3호 기준")] = 0,
+    assets: Annotated[int, Field(description="직전 사업연도 말 자산총액(원) — 외부감사 판정 기준")] = 0,
+    liabilities: Annotated[int, Field(description="직전 사업연도 말 부채총액(원) — 외부감사 판정 기준")] = 0,
+    employees: Annotated[int, Field(description="직전 사업연도 말 종업원 수(명) — 외부감사 판정 기준")] = 0,
+    members: Annotated[int | None, Field(description="유한회사 직전 사업연도 말 사원 수(명, 선택)")] = None,
+    listed: Annotated[bool, Field(description="주권상장법인(또는 해당·다음 사업연도에 상장하려는 회사) 여부")] = False,
     established_on: Annotated[str | None, Field(description="설립일(YYYY-MM-DD, 선택)")] = None,
     foreign_subsidiary: Annotated[bool, Field(description="지분 10% 이상 외국자회사 보유 여부")] = False,
     foreign_branch: Annotated[bool, Field(description="국외사업장 보유 여부")] = False,
@@ -8981,12 +8982,18 @@ def corporate_filing_obligations(
       국외특수관계인 거래 합계·상대방별 최대 → related_goods/services/intangibles, party_max_goods/services/intangibles.
     결과: 외부감사는 대상 여부·충족조건, 외부세무조정은 대상 여부·사유(제1~7호) 목록,
       국제거래명세서·요약손익계산서·정상가격산출방법신고서·국제거래정보통합보고서 각각 대상 여부,
-      해외직접투자명세는 대상 여부·기한. 판단·근거."""
+      해외직접투자명세는 대상 여부·기한. 판단·근거.
+    연도별 기준:
+      외부감사 — 2019년까지(2019.10.31. 이전 개시 사업연도) 구 기준: 자산 120억 / 상장 / 부채 70억+자산 70억 / 종업원 300명+자산 70억, 주식회사만.
+        2020년부터 자산 또는 매출 500억, 4개(자산 120억·부채 70억·매출 100억·종업원 100명) 중 2개(유한회사 5개 중 3개). 값은 모두 직전 사업연도 기준.
+      국제거래명세서 — 2022년까지 국외특수관계인 거래가 있으면 제출, 2023년부터 재화 5억·용역 1억·무형 1억 모두 이하면 면제.
+      요약손익계산서·정상가격 산출방법 신고서 — 2022년까지 재화·용역 금액만, 2023년부터 무형자산 금액 포함.
+      해외현지법인 명세서등 기한 — 2019 사업연도까지 법인세 신고기한(3.31.), 2020 사업연도부터 6.30.(12월 결산 기준)."""
     r = C.corporate_filing_obligations({
         "year": year, "corp_type": corp_type,
         "revenue": revenue, "revenue_prev": revenue_prev,
         "assets": assets, "liabilities": liabilities, "employees": employees,
-        "members": members, "established_on": established_on,
+        "members": members, "established_on": established_on, "listed": listed,
         "foreign_subsidiary": foreign_subsidiary, "foreign_branch": foreign_branch,
         "tax_incentive": tax_incentive, "reserve_balance": reserve_balance,
         "assessed": assessed, "merger_within_3y": merger_within_3y,
