@@ -523,6 +523,14 @@ DOMESTIC_WH_BASIS = {
     "인적용역": "소득세법 제156조①4호 / 법인세법 제98조①4호",
     "기타": "소득세법 제156조①8호 / 법인세법 제98조①8호",
 }
+# 2018.12.31. 개정(2019.1.1. 시행) 전 호 배치 — 이자·배당·사용료·기타는 3호(채권이자 14%는 3호 단서), 인적용역은 2호. 세율은 같음
+DOMESTIC_WH_BASIS_OLD = {
+    "이자": "소득세법 제156조①3호 / 법인세법 제98조①3호",
+    "배당": "소득세법 제156조①3호 / 법인세법 제98조①3호",
+    "사용료": "소득세법 제156조①3호 / 법인세법 제98조①3호",
+    "인적용역": "소득세법 제156조①2호 / 법인세법 제98조①2호",
+    "기타": "소득세법 제156조①3호 / 법인세법 제98조①3호",
+}
 
 
 # 조세조약 대상조세(제2조)에 한국의 지방소득세(주민세)가 들어 있는지 — 법인세법 제98조의7①·소득세법 제156조의8①(이자·배당·사용료)
@@ -567,7 +575,7 @@ def _match(issue_match, *, income_kind, treaty_rate, related_party):
 
 def nonresident_withholding(income_kind, amount, recipient_type, residence_country,
                             treaty_rate=None, bond_interest=False, related_party=False, treaty_includes_local_tax=None,
-                            service_location: str | None = None):
+                            service_location: str | None = None, year: int | None = None):
     """비거주자·외국법인 국내원천소득 원천징수. 적용세율 = min(국내세율, 조약 제한세율).
     domestic_rate는 소득세법 제156조(비거주자)·법인세법 제98조(외국법인)에 따르며, 수취인 구분(개인/법인)과
     관계없이 소득 종류 기준 동일 세율. 조약_rate 미지정 시 국내세율만 적용.
@@ -578,6 +586,7 @@ def nonresident_withholding(income_kind, amount, recipient_type, residence_count
     service_location='국내'이면 현행 20% 적용. None이면 현행(20% + 쟁점 표시). 인적용역이 아닌 소득에 service_location을 주면 무시."""
     # service_location — 인적용역 제공 장소(선택 입력, 기본값 None = 현행 동작)
     side = 0 if recipient_type == "개인" else 1   # 근거: 개인 → 소득세법, 법인 → 법인세법
+    old = year is not None and year <= 2018     # 지급 연도 2018년까지는 개정 전 호 배치
     판단_목록 = []
     if service_location == "국외" and income_kind == "인적용역":
         domestic = 0.0
@@ -588,7 +597,9 @@ def nonresident_withholding(income_kind, amount, recipient_type, residence_count
         wh_amount = 0
         local_income_tax = 0
         note = ""
-        판단_목록.append("국외에서 제공한 인적용역은 국내원천소득이 아님 — 다만 조세조약이 국외 제공 용역을 국내 발생으로 보는 경우 제156조제1항제4호 단서 3%(조약 확인)")
+        판단_목록.append("국외에서 제공한 인적용역은 국내원천소득이 아님 — 다만 조세조약이 국외 제공 용역을 국내 발생으로 보는 경우 "
+                     + ("3% 단서는 2016.12.20. 개정으로 신설(2016년 지급분에는 없음 — 조약 확인)" if year == 2016 else
+                        "제156조제1항제2호 단서 3%(조약 확인)" if old else "제156조제1항제4호 단서 3%(조약 확인)"))
     elif service_location == "국내" and income_kind == "인적용역":
         pass  # 현행 그대로 — 아래에서 domestic 설정
     else:
@@ -599,10 +610,13 @@ def nonresident_withholding(income_kind, amount, recipient_type, residence_count
         pass  # 위에서 domestic=0, applicable=0, wh_amount=0, local_income_tax=0, basis, note, 판단목록 설정 완료
     elif bond_interest and income_kind == "이자":
         domestic = 0.14
-        basis = ("소득세법 제156조①1호가목", "법인세법 제98조①1호가목")[side] + " (국가·지방자치단체·내국법인 발행 채권 이자)"
+        basis = (("소득세법 제156조①3호 단서", "법인세법 제98조①3호 단서") if old else
+                 ("소득세법 제156조①1호가목", "법인세법 제98조①1호가목"))[side] + " (국가·지방자치단체·내국법인 발행 채권 이자)"
     else:
         domestic = DOMESTIC_WH_RATES[income_kind]
-        basis = DOMESTIC_WH_BASIS[income_kind].split(" / ")[side]
+        basis = (DOMESTIC_WH_BASIS_OLD if old else DOMESTIC_WH_BASIS)[income_kind].split(" / ")[side]
+        if old:
+            basis += " (2018.12.31. 개정 전 호)"
     applicable = min(domestic, treaty_rate) if treaty_rate is not None else domestic
     note = ""
     포함 = None
