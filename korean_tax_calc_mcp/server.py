@@ -865,7 +865,7 @@ def minimum_tax_adjustment(
     income_deduction: Annotated[int, Field(description="116 소득공제")] = 0,
     income_deduction_mt: Annotated[int, Field(description="117 그중 최저한세 적용대상")] = 0,
     reductions: Annotated[list, Field(description="세액감면 [{code, amount}]")] = None,
-    credits: Annotated[list, Field(description="세액공제 [{code, current(당기발생, 기본 0), carryforward([{year, amount}], 기본 [])}]")] = None,
+    credits: Annotated[list, Field(description="세액공제 [{code, current(당기발생, 기본 0), carryforward([{year, amount, period(종전 이월공제기간 5·7·10, 기본 5)}], 기본 [])}]")] = None,
     exclusion_order: Annotated[list, Field(description="신고 때 납세의무자가 고른 배제 순서(코드 또는 \"105\"·\"106\"·\"114\"·\"113\"·\"117\"). 빈 목록이면 시행령 제126조제5항 순서")] = None,
 ) -> dict:
     """법인세 최저한세 조정(조세특례제한법 제132조제1항, 시행령 제126조제5항, 미공제 이월 제144조). 언제: 세액감면·공제 후 세액이 최저한세 미달일 때 배제 내역을 구한다.
@@ -888,7 +888,9 @@ def minimum_tax_adjustment(
   income_deduction — 116 소득공제(기본 0).
   income_deduction_mt — 117 그중 최저한세 적용대상(기본 0).
   reductions — 세액감면 [{code, amount}] 목록(기본 []).
-  credits — 세액공제 [{code, current(당기발생, 기본 0), carryforward([{year, amount}], 기본 [])}] 목록(기본 []).
+  credits — 세액공제 [{code, current(당기발생, 기본 0), carryforward([{year, amount, period?}], 기본 [])}] 목록(기본 []).
+    이월공제기간(제144조제1항): 2019 사업연도까지는 발생 다음 사업연도부터 5년(창업 중소기업 제5조 7년·제10조 10년, 제10조제1항제1호 10년 — carryforward의 period에 5·7·10), 2020 사업연도부터 10년.
+    다만 종전 기간이 2021.1.1. 전에 지난 세액(12월 결산 5년 기준 2014 사업연도 이전 발생분)은 10년으로 늘어나지 않음(법률 제17759호 부칙 제35조·제51조, 서면-2022-법인-1779). 기간이 지난 이월분은 입력 오류로 거절.
   exclusion_order — 신고 때 납세의무자가 고른 배제 순서(코드 또는 "105"·"106"·"114"·"113"·"117"). 빈 목록이면 시행령 제126조제5항 순서(기본 []).
 결과: 별지 제4호서식 감면후·최저한세·조정감·조정후 란과 별지 제8호서식(갑) 공제감면세액, 배제_내역·이월_미공제·최저한세_적용제외·별지8 등.
   감면전_산출세액 — 감면 등을 모두 배제했을 때의 산출세액. 이 값이 최저한세보다 적으면(예: 2023~2025 사업연도 일반법인 2억원 이하 9% < 최저한세율 10%) 판단 "최저한세가 산출세액보다 큼" — 납부할 세액은 그 산출세액.
@@ -977,8 +979,10 @@ def minimum_tax_adjustment(
         총이월 = sum(x["금액"] for x in r["이월_미공제"])
         if 총이월 > 0:
             판단목록.append({"항목": "이월공제",
-                              "결론": f"{총이월:,}원 다음 사업연도부터 10년 이월",
-                              "근거": "조세특례제한법 제144조①"})
+                              "결론": (f"{총이월:,}원 다음 사업연도부터 10년 이월" if year >= 2020 else
+                                       f"{총이월:,}원 다음 사업연도부터 이월 — 당시 규정 5년(창업 중소기업 제5조 7년·제10조 10년). "
+                                       "2015 사업연도 이후 발생분은 2020.12.29. 개정으로 10년(2021.1.1. 전에 종전 기간이 지난 세액은 제외)"),
+                              "근거": "조세특례제한법 제144조①" + ("" if year >= 2020 else "(2020.12.29. 개정 전), 법률 제17759호 부칙 제35조·제51조, 서면-2022-법인-1779")})
     if r["최저한세_적용제외"]["감면세액"] + r["최저한세_적용제외"]["세액공제"] > r["차감세액"]:
         판단목록.append({"항목": "적용제외 공제감면",
                           "결론": "산출세액을 넘음 — 법인세법 제59조 순서·이월공제 확인 필요",
@@ -1712,7 +1716,8 @@ def vat_input_tax_deduction(period: Annotated[str, Field(description="과세기�
       실제공급가액이 있으면 필요적 기재사항 착오로 실제분 공제(영 제75조2호).
     결과: {결과: {공제매입세액, 불공제매입세액}, 계산: {항목별: [{항목, 세액, 공제세액, 불공제사유?}], 판단: [{항목, 결론, 근거}]}}.
     판단 순서: (1)성격별 불공제(접대·비영업용승용차·토지관련·면세사업·사업무관) → (2)증빙 '영수증' → (3)신용카드·현금영수증 + 간이과세자_영수증 → (4)세금계산서 발급시기(지연수취 가산세) → (5)실제공급가액(착오 기재).
-    확정신고기한 뒤 1년 안 발급분(영 제75조7호)은 공제로 세되 수정신고·경정청구 또는 결정·경정이 있는 경우에 한한다는 주의를 붙인다."""
+    확정신고기한 뒤 발급분(영 제75조7호)은 공급시기별로 다름 — 2019.2.11.까지 공급분은 불공제(7호 없음), 2019.2.12.~2022.2.14. 공급분은 6개월 이내, 2022.2.15. 이후 공급분은 1년 이내 발급분만 공제로 세되 수정신고·경정청구 또는 결정·경정이 있는 경우에 한한다는 주의를 붙인다.
+    간이과세자가 발급한 신용카드매출전표·현금영수증(공급자 '간이과세자_세금계산서')은 2021.7.1. 이후 공급분부터 공제, 2021.6.30.까지 공급분은 불공제(공급시기가 없으면 과세기간으로 판단: 2021년 제1기까지 불공제)."""
     r = V.vat_input_tax_deduction(period, filing, items)
     if "error" in r:
         return r
@@ -2764,19 +2769,59 @@ def ownership_ratio(holder: Annotated[str, Field(description='보유자(이름)'
 
 @mcp.tool(description="""수혜법인의 지배주주 판정(상증법 시행령 제34조의3제1항). 언제: 일감몰아주기 증여의제이익 계산에서 수혜법인의 지배주주가 누구인지 판정할 때.
 입력: 수혜법인(이름) → corp, people={이름: {구분: "개인"|"법인"}} → people, family=[[a, b, "부모자녀"|"배우자"]] → family, stakes=[[보유자, 법인, 지분율(0~1)]] → stakes(related_judge와 동일 형식).
-결과: 지배주주(이름)·판정 이유. 수혜법인의 지배주주를 판정한다(중견기업 중 직접보유 최고자 / 법인이면 직접+간접 최고 개인).""")
+기준일: 수혜법인 사업연도 종료일 → on. 최대주주등을 묶는 친족 범위가 2023.2.28.까지 6촌 혈족·4촌 인척, 2023.3.1.부터 4촌 혈족·3촌 인척(국세기본법 시행령 제1조의2제1항).
+결과: 지배주주(이름)·판정 이유·친족 범위. 수혜법인의 지배주주를 판정한다(중견기업 중 직접보유 최고자 / 법인이면 직접+간접 최고 개인).""")
 @_guard
 def dominant_shareholder(corp: Annotated[str, Field(description='수혜법인(이름)')],
                          people: Annotated[dict, Field(description='사람·법인 목록 {이름: {"구분": "개인"|"법인"}}. 예: {"김갑": {"구분": "개인"}}')],
                          family: Annotated[list, Field(description='친족 관계 [[a, b, "부모자녀"|"배우자"]]. 예: [["김갑", "김을", "부모자녀"]]')],
-                         stakes: Annotated[list, Field(description='직접보유비율 [[보유자, 법인, 지분율(0~1)]]. 예: [["김갑", "㈜대한", 0.30]]')]) -> dict:
-    who, why = _R.dominant_shareholder(people, [tuple(x) for x in family], [(h, c, float(r)) for h, c, r in stakes], corp)
-    return {"지배주주": who, "판정": why}
+                         stakes: Annotated[list, Field(description='직접보유비율 [[보유자, 법인, 지분율(0~1)]]. 예: [["김갑", "㈜대한", 0.30]]')],
+                         on: Annotated[str | None, Field(description="판정 기준일 = 수혜법인 사업연도 종료일(YYYY-MM-DD). 친족 범위가 2023.2.28.까지 6촌 혈족·4촌 인척, 2023.3.1.부터 4촌·3촌. 생략하면 현행 범위")] = None) -> dict:
+    if on is not None:
+        try:
+            on = _chk.to_date("on", on).isoformat()
+        except ValueError as ex:
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [str(ex)]}
+    who, why = _R.dominant_shareholder(people, [tuple(x) for x in family], [(h, c, float(r)) for h, c, r in stakes], corp, on or "2099-12-31")
+    out = {"지배주주": who, "판정": why}
+    if on:
+        blood, inlaw = _R.kin_limits(on)
+        out["친족 범위"] = f"{blood}촌 이내 혈족·{inlaw}촌 이내 인척(기준일 {on}, 국세기본법 시행령 제1조의2① — 2023.3.1. 시행 개정 전후)"
+    else:
+        out["주의"] = "on 생략 — 현행 친족 범위(4촌 혈족·3촌 인척)로 판정. 2023.2.28. 이전 종료 사업연도는 on을 넣어야 함(당시 6촌·4촌)"
+    return out
+
+
+def _tunnel_fy(fiscal_year_end, fiscal_year_start):
+    """일감몰아주기 사업연도 인자 검증 → (on, fiscal_start, 주의 목록, 오류 dict|None)."""
+    if fiscal_year_end is None:
+        return "2099-12-31", None, ["fiscal_year_end 생략 — 2018.1.1. 이후 종료 사업연도 규정(중소 50%·10%, 중견 40%·10%의 각 1/2, 일반 5% 초과 × 보유비율)과 "
+                                    "현행 친족 범위(4촌 혈족·3촌 인척)로 계산. 2017.12.31. 이전 종료분·2023.2.28. 이전 종료분은 사업연도 종료일을 넣어야 함"], None
+    try:
+        e = _chk.to_date("fiscal_year_end", fiscal_year_end)
+        st = _chk.to_date("fiscal_year_start", fiscal_year_start) if fiscal_year_start else None
+    except ValueError as ex:
+        return None, None, [], {"error": "입력 확인 필요 — 계산하지 않음", "문제": [str(ex)]}
+    if not (date(2016, 1, 1) <= e <= date(2026, 12, 31)):
+        return None, None, [], {"error": "입력 확인 필요 — 계산하지 않음",
+                                "문제": [f"fiscal_year_end={fiscal_year_end} — 2016.1.1.~2026.12.31. 종료 사업연도만 지원(그 밖은 시행본을 대조하지 않음)"]}
+    if st is not None and st > e:
+        return None, None, [], {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"fiscal_year_start={fiscal_year_start}가 fiscal_year_end={fiscal_year_end}보다 뒤"]}
+    return e.isoformat(), (st.isoformat() if st else None), [], None
+
+
+def _tunnel_basis(on):
+    """일감몰아주기 근거 조문 — 시행령 조 번호가 2020.2.11. 개정으로 제34조의2 → 제34조의3."""
+    if on < "2018-01-01":
+        return "상속세 및 증여세법 제45조의3①(2017.12.19. 개정 전 계산식, 법률 제15224호 부칙 제10조), 시행령 제34조의2⑤·⑦(당시)"
+    return "상속세 및 증여세법 제45조의3①, 시행령 " + ("제34조의2" if on < "2020-02-11" else "제34조의3")
+
 
 
 @mcp.tool(description="""일감몰아주기 증여의제이익(상증법 제45조의3, 제10항 과세제외매출액 직접 입력, 제14항·제15항 미반영). 언제: 일감몰아주기 검토에서 증여의제이익을 간단히 계산할 때(국세청 신고안내 전체 산식은 tunnelling_gift_nts 사용).
 입력: 수혜자(이름) → beneficiary, 기업 규모(중소|중견|일반) → size, 총 매출액 → sales_total, sales_by_corp={거래처 법인: 매출액} → sales_by_corp, 세후영업이익 → after_tax_op_profit, people={이름: {구분: "개인"|"법인"}} → people, family=[[a, b, "부모자녀"|"배우자"]] → family, stakes=[[보유자, 법인, 지분율(0~1)]] → stakes, 제10항·제14항 과세제외매출액 → excluded_sales.
-결과: 증여의제이익, 근거(상증법 제45조의3, 시행령 제34조의3). 일감몰아주기 증여의제이익(상증법 제45조의3).""")
+사업연도: 수혜법인 사업연도 종료일 → fiscal_year_end(개시일 → fiscal_year_start). 2017.12.31. 이전 종료분은 종전 계산식(일반: 정상거래비율의 1/2인 15% 초과 거래비율 × 3% 초과 보유비율, 중소·중견: 정상거래비율 초과 × 10% 초과), 중견 정상거래비율은 2017년 개시 사업연도부터 40%(그 전 50%). 2018.1.1. 이후 종료분은 현행식. 친족 범위는 2023.2.28.까지 6촌 혈족·4촌 인척. 2016~2026 종료 사업연도만 지원.
+결과: 증여의제이익, 근거(상증법 제45조의3, 시행령 제34조의3 — 2020.2.10.까지는 제34조의2). 일감몰아주기 증여의제이익(상증법 제45조의3).""")
 @_guard
 def tunnelling_gift(beneficiary: Annotated[str, Field(description='수혜자(이름)')],
                     size: Annotated[str, Field(description="기업 규모('중소'|'중견'|'일반')")],
@@ -2786,14 +2831,26 @@ def tunnelling_gift(beneficiary: Annotated[str, Field(description='수혜자(이
                     people: Annotated[dict, Field(description='사람·법인 목록 {이름: {"구분": "개인"|"법인"}}')],
                     family: Annotated[list, Field(description='친족 관계 [[a, b, "부모자녀"|"배우자"]]')],
                     stakes: Annotated[list, Field(description='직접보유비율 [[보유자, 법인, 지분율(0~1)]]')],
-                    excluded_sales: Annotated[float, Field(description="제10항·제14항 과세제외매출액(원)")] = 0) -> dict:
-    return _R.tunnelling(people, [tuple(x) for x in family], [(h, c, float(r)) for h, c, r in stakes], beneficiary,
-                        sales_total, sales_by_corp, after_tax_op_profit, size, excluded_sales)
+                    excluded_sales: Annotated[float, Field(description="제10항·제14항 과세제외매출액(원)")] = 0,
+                    fiscal_year_end: Annotated[str | None, Field(description="수혜법인 사업연도 종료일(YYYY-MM-DD, 증여시기). 비율·계산식이 사업연도마다 다름 — 2017.12.31. 이전 종료분은 종전 계산식. 생략하면 2018.1.1. 이후 종료 사업연도 규정으로 계산하고 주의에 표시")] = None,
+                    fiscal_year_start: Annotated[str | None, Field(description="사업연도 개시일(YYYY-MM-DD, 선택). 중견기업 정상거래비율 40%는 2017년 개시 사업연도부터 — 생략하면 종료일 1년 전 다음 날")] = None) -> dict:
+    on, fs, notes, err = _tunnel_fy(fiscal_year_end, fiscal_year_start)
+    if err:
+        return err
+    r = _R.tunnelling(people, [tuple(x) for x in family], [(h, c, float(r)) for h, c, r in stakes], beneficiary,
+                      sales_total, sales_by_corp, after_tax_op_profit, size, excluded_sales, on=on, fiscal_start=fs)
+    r["근거"] = _tunnel_basis(on)
+    if fiscal_year_end:
+        r["사업연도_종료일"] = on
+    if notes:
+        r["주의"] = notes
+    return r
 
 
 @mcp.tool(description="""일감몰아주기 증여의제이익 — 국세청 2026 신고안내 산식(세후영업이익 제12항, 출자관계별 추가 과세제외 제14항제1호·제3호, 한계보유 제13항, 배당공제 제15항). 언제: 국세청 신고안내 공식에 따라 일감몰아주기 증여의제이익을 정확히 계산할 때.
 입력: 기업 규모(중소|중견|일반) → size, 수혜법인(이름, 고정) → '수혜법인', 세후영업이익 제12항(원) → op_income, 과세표준(원) → taxable_income, 법인세 산출세액(원) → tax, 총 매출액(원) → sales_total, sales_by_corp={거래처 법인: 매출액(원)} → sales_by_corp, relations={관계명: 보유비율(소수)}(예: {'직접':0.2,'A경유':0.18}) → relations, 기본 과세제외매출액(제10항, 원) → base_excluded, holdings_in_related={특관법인: 지배주주등 보유비율(소수)} → holdings_in_related, indirect_corp_of={관계명: 그 경로 간접출자법인} → indirect_corp_of, excluded_by_corp={특관법인: 제10항 과세제외액(원)} → excluded_by_corp, dividends={관계명: [배당소득(원), 분모]}(제15항) → dividends, 토지등 양도소득 법인세(차감, 원) → land_tax, 공제·감면세액(차감, 원) → credits, 미환류소득 법인세(원, tax에 포함이 맞음) → unreturned_tax.
-결과: 증여의제이익·단계별 계산, 근거(상증법 제45조의3, 시행령 제34조의3, 국세청 2026 신고안내). 일감몰아주기 증여의제이익 — 국세청 2026 신고안내 산식.""")
+사업연도: 수혜법인 사업연도 종료일 → fiscal_year_end(개시일 → fiscal_year_start). 2017.12.31. 이전 종료분은 종전 비율·계산식(일반 15% 초과 × 3% 초과, 중소·중견 정상거래비율 초과 × 10% 초과, 중견 정상거래비율 2016년 개시분까지 50%), 2018.1.1. 이후 종료분은 현행식. 제12항·제14항·제15항 산식은 2026 신고안내 기준 그대로라 과거 사업연도는 당시 서식과 대조 필요. 2016~2026 종료 사업연도만 지원.
+결과: 증여의제이익·단계별 계산·적용 비율, 근거(상증법 제45조의3, 시행령 제34조의3 — 2020.2.10.까지는 제34조의2, 국세청 2026 신고안내). 일감몰아주기 증여의제이익 — 국세청 2026 신고안내 산식.""")
 @_guard
 def tunnelling_gift_nts(size: Annotated[str, Field(description="기업 규모('중소'|'중견'|'일반')")],
                         op_income: Annotated[float, Field(description="세후영업이익 제12항(원)")],
@@ -2809,12 +2866,23 @@ def tunnelling_gift_nts(size: Annotated[str, Field(description="기업 규모('�
                         dividends: Annotated[dict | None, Field(description='관계명별 [배당소득(원), 분모]. 예: {"직접": [10000000, 300000000]}')] = None,
                         land_tax: Annotated[float, Field(description="토지등 양도소득 법인세(차감, 원)")] = 0,
                         credits: Annotated[float, Field(description="공제·감면세액(차감, 원)")] = 0,
-                        unreturned_tax: Annotated[float, Field(description="미환류소득 법인세(원, tax에 포함이 맞음)")] = 0) -> dict:
-    return _R.tunnelling_nts("수혜법인", size, op_income, taxable_income, tax, sales_total, sales_by_corp, relations,
-                            base_excluded=base_excluded, holdings_in_related=holdings_in_related, indirect_corp_of=indirect_corp_of,
-                            dividends={k: tuple(v) for k, v in (dividends or {}).items()},
-                            excluded_by_corp=excluded_by_corp,
-                            land_tax=land_tax, credits=credits, unreturned_tax=unreturned_tax)
+                        unreturned_tax: Annotated[float, Field(description="미환류소득 법인세(원, tax에 포함이 맞음)")] = 0,
+                        fiscal_year_end: Annotated[str | None, Field(description="수혜법인 사업연도 종료일(YYYY-MM-DD, 증여시기). 비율·계산식이 사업연도마다 다름 — 2017.12.31. 이전 종료분은 종전 계산식. 생략하면 2018.1.1. 이후 종료 사업연도 규정으로 계산하고 주의에 표시")] = None,
+                        fiscal_year_start: Annotated[str | None, Field(description="사업연도 개시일(YYYY-MM-DD, 선택). 중견기업 정상거래비율 40%는 2017년 개시 사업연도부터 — 생략하면 종료일 1년 전 다음 날")] = None) -> dict:
+    on, fs, notes, err = _tunnel_fy(fiscal_year_end, fiscal_year_start)
+    if err:
+        return err
+    r = _R.tunnelling_nts("수혜법인", size, op_income, taxable_income, tax, sales_total, sales_by_corp, relations,
+                          base_excluded=base_excluded, holdings_in_related=holdings_in_related, indirect_corp_of=indirect_corp_of,
+                          dividends={k: tuple(v) for k, v in (dividends or {}).items()},
+                          excluded_by_corp=excluded_by_corp,
+                          land_tax=land_tax, credits=credits, unreturned_tax=unreturned_tax, on=on, fiscal_start=fs)
+    r["근거"] = _tunnel_basis(on)
+    if fiscal_year_end:
+        r["사업연도_종료일"] = on
+    if notes:
+        r["주의"] = notes
+    return r
 
 
 @mcp.tool(description="""특수관계인 범위 조문이 기준일에 어느 법령에 있었는지 확인. 언제: 특수관계 판정 결과를 근거로 인용할 때 해당 기준일 시행 조문의 위치를 확인한다.
@@ -2838,7 +2906,7 @@ def extract_relations(pdf_path: Annotated[str, Field(description="PDF 파일 경
 
 @mcp.tool(description="""일감몰아주기 검토 자료 PDF → 표 추출 → 코드가 지배주주·출자관계·증여의제이익 계산. 언제: PDF로 된 일감몰아주기 검토 자료에서 관계표를 추출해 tunnelling_gift_nts 입력으로 정리할 때.
 입력: PDF 파일 경로 → pdf_path.
-결과: 지배주주·출자관계·증여의제이익 계산 결과(초안) + AI 생성 표시(필요 시). UPSTAGE_API_KEY 없이도 pypdf 로컬 추출 후 정리 가능(기본), 키 설정 시 Document Parse + Solar Pro 4로 더 정교한 표 추출. 결과는 사람 확인. 일감몰아주기 검토 자료 PDF에서 표를 뽑는다.""")
+결과: 지배주주·출자관계·증여의제이익 계산 결과(초안) + AI 생성 표시(필요 시). 자료의 사업연도를 읽어 그 사업연도 규정으로 계산(2017.12.31. 이전 종료분은 종전 계산식), 못 읽으면 2018.1.1. 이후 규정으로 계산하고 '확인 필요'에 표시. UPSTAGE_API_KEY 없이도 pypdf 로컬 추출 후 정리 가능(기본), 키 설정 시 Document Parse + Solar Pro 4로 더 정교한 표 추출. 결과는 사람 확인. 일감몰아주기 검토 자료 PDF에서 표를 뽑는다.""")
 @_pdf_guard
 def tunnelling_from_pdf(pdf_path: Annotated[str, Field(description="PDF 파일 경로")]) -> dict:
     from .audit.agents import tunnel_intake
