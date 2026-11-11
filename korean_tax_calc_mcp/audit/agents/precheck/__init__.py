@@ -72,7 +72,7 @@ def run(data, 세목=None):
     d = Data(data)
     out = {"오류 의심": [], "이상 없음": [], "자료 부족": [], "사실 확인 필요": []}
     for r in REGISTRY:
-        if 세목 and r.세목 != 세목: continue
+        if 세목 and not r.세목.startswith(세목): continue   # '소득' → 규칙 세목 '소득·원천'(이름이 달라 소득 규칙이 하나도 안 돌던 문제)
         head = {"규칙": r.id, "세목": r.세목, "서식": r.서식, "항목": r.제목, "근거": r.근거}
         if r.kind == "사실판단":
             out["사실 확인 필요"].append({**head, "확인": r.fn.__doc__ or r.제목}); continue

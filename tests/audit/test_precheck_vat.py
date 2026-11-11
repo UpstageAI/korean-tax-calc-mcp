@@ -4,12 +4,17 @@ from korean_tax_calc_mcp.audit.agents.precheck import Data, REGISTRY, vat  # noq
 R = {r.id: r for r in REGISTRY}
 
 
-def j(rid, data): return R[rid].fn(Data(data))["결과"]
+def _d(data):
+    # 이 파일의 사례는 2026년 제1기 수치 — 과세기간에 따라 달라지는 규칙은 신고.과세기간이 필요(없으면 자료 부족)
+    return Data({"신고.과세기간": "2026-1", **data})
+
+
+def j(rid, data): return R[rid].fn(_d(data))["결과"]
 
 
 def pair(rid, good, bad):
-    assert j(rid, good) == "이상 없음", (rid, "정상", R[rid].fn(Data(good)))
-    assert j(rid, bad) == "오류 의심", (rid, "오류", R[rid].fn(Data(bad)))
+    assert j(rid, good) == "이상 없음", (rid, "정상", R[rid].fn(_d(good)))
+    assert j(rid, bad) == "오류 의심", (rid, "오류", R[rid].fn(_d(bad)))
 
 
 def test_P01_P02_P03_card_T13_T14():

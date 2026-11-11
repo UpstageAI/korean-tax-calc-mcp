@@ -7,6 +7,8 @@ R = {r.id: r for r in REGISTRY}
 
 
 def res(rid, data):
+    # 이 파일의 사례는 2025년 귀속 수치 — 연도에 따라 달라지는 규칙은 귀속연도가 필요(없으면 자료 부족)
+    data = {"귀속연도": 2025, **data}
     try: return R[rid].fn(Data(data))["결과"]
     except Missing: return "자료 부족"
 
