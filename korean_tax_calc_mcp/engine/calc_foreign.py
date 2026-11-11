@@ -40,43 +40,70 @@ def _is_fdi(event: str, ownership_ratio_after: float | None,
     return False, "해외직접투자 요건 미충족"
 
 
+def fx_rule(d: date) -> dict:
+    """외국환거래규정 제9-5조·제9-9조의 날짜별 규정(기획재정부 고시, 법제처 등록 연혁 2015~2026 전 판을 대조 — 2026-11-11).
+    - 유보금(자체이익유보금·자본잉여금) 증액투자: 2019.5.2.까지 '거주자가 최대주주가 아닌 경우'만 사후보고(기한 규정 없음),
+      2019.5.3.(제2019-12호)부터 조건 없이 사후보고(기한 규정 없음), 2023.7.4.(제2023-26호)부터 거래일부터 3개월 이내.
+    - 거주자로부터 지분 양수: 2023.7.3.까지 신고(사전), 2023.7.4.부터 3개월 이내 사후보고.
+    - 누적 투자금액 미화 50만불 이내: 2023.7.3.까지 지급일부터 1개월 이내 사후보고, 2023.7.4.~2025.2.9. 3개월 이내, 2025.2.10.(제2025-4호) 삭제.
+    - 신고 내용 변경: 2017.12.31.까지 변경신고(사전, 일부 사유만 3개월 사후보고), 2018.1.1.(제2017-40호)부터 변경사유 발생 후 3개월 이내 보고(제9-5조②),
+      2023.7.4.부터 변경사유가 발생한 회계기간 종료 후 5월 이내(제9-9조①8호).
+    - 다른 거주자에게 지분 매각: 2018.1.1.부터 즉시 보고, 2021.6.18.(제2021-11호)부터 7영업일 이내, 2022.1.3.(제2021-37호)부터 3개월 이내
+      (2023.7.4.부터 제9-9조①9호). 2017.12.31.까지는 따로 정한 문구 없음(변경신고 대상).
+    - 연간사업실적보고서(제9-9조①5호, 부동산관련업 외): 면제 가능·현지법인 투자현황표 갈음 기준이
+      2018.12.31.까지 50만·100만불, 2019.1.1.(제2018-28호)부터 100만·200만불, 2022.1.3.부터 200만·300만불, 2025.2.10.부터 '300만불 초과만 대상'."""
+    return {
+        "retained": "최대주주 아닌 경우만" if d < date(2019, 5, 3) else "사후보고" if d < date(2023, 7, 4) else "3개월",
+        "transfer_post": d >= date(2023, 7, 4),
+        "small": "1개월" if d < date(2023, 7, 4) else "3개월" if d < date(2025, 2, 10) else None,
+        "change": "변경신고" if d < date(2018, 1, 1) else "3개월" if d < date(2023, 7, 4) else "회계기간 후 5월",
+        "sale": None if d < date(2018, 1, 1) else "즉시" if d < date(2021, 6, 18) else "7영업일" if d < date(2022, 1, 3) else "3개월",
+        "sale_basis": "제9-5조②" if d < date(2023, 7, 4) else "제9-9조① 제9호",
+        "annual": ((500_000, 1_000_000) if d < date(2019, 1, 1) else (1_000_000, 2_000_000) if d < date(2022, 1, 3)
+                   else (2_000_000, 3_000_000) if d < date(2025, 2, 10) else (3_000_000, None)),
+    }
+
+
+_DOCS = ["사업계획서(자금조달·운용계획)", "신용정보 채무불이행 미등록 증빙", "조세체납 없음 증빙", "기타 필요 서류"]
+_SMALL_EVENTS = {"신설출자", "증액출자", "지분양수", "금전대여", "지점설치"}
+
+
 def _reporting_deadline(event: str, event_date: date, paid_in: bool,
                         ownership_ratio_after: float, loan_term_months: int | None,
                         counterparty_resident: bool, cumulative_usd: float,
-                        fiscal_year_end: date, main_bank_type: str) -> dict:
-    """신고 구분·기한·서류(규정 제9-5조·제9-6조·제9-9조)."""
+                        fiscal_year_end: date, main_bank_type: str, largest_shareholder: bool | None = None) -> dict:
+    """신고 구분·기한·서류(규정 제9-5조·제9-6조·제9-9조) — 이벤트 날짜의 규정(fx_rule)으로."""
     fdi, _ = _is_fdi(event, ownership_ratio_after, loan_term_months, False)
     if not fdi:
         return {"구분": "해당없음", "기관": "", "기한": "", "서류": []}
+    R = fx_rule(event_date)
 
-    # 사후보고 가능 이벤트: 지분양수(거주자 간)·유보금증자
-    post_possible = (event == "지분양수" and counterparty_resident) or event == "유보금증자"
-    if post_possible:
-        due = add_months(event_date, 3)
-        return {
-            "구분": "사후보고",
-            "기관": main_bank_type,
-            "기한": _fmt(due),
-            "서류": [
-                "사업계획서(자금조달·운용계획)",
-                "신용정보 채무불이행 미등록 증빙",
-                "조세체납 없음 증빙",
-                "기타 필요 서류",
-            ],
-        }
+    def post(due, 비고):
+        return {"구분": "사후보고", "기관": main_bank_type, "기한": due, "서류": list(_DOCS), "비고": 비고}
 
+    if event == "유보금증자":
+        if R["retained"] == "3개월":
+            return post(_fmt(add_months(event_date, 3)), "거래가 있은 날부터 3개월 이내(제9-5조② 제2호)")
+        if R["retained"] == "사후보고":
+            return post("사후(기한 규정 없음)", "유보금·자본잉여금 증액투자는 사후에 보고할 수 있음 — 2023.7.3.까지는 기한을 정한 문구 없음(제9-5조① 단서)")
+        if largest_shareholder is False:
+            return post("사후(기한 규정 없음)", "2019.5.2.까지는 거주자가 최대주주가 아닌 경우에만 사후보고(제9-5조① 단서)")
+        return {"구분": "사전신고", "기관": main_bank_type, "기한": "거래 전(사전)", "서류": list(_DOCS),
+                "비고": ("2019.5.2.까지 유보금 증액투자의 사후보고는 거주자가 최대주주가 아닌 경우만(제9-5조① 단서)"
+                        + (" — largest_shareholder 미입력이라 사전신고로 봄" if largest_shareholder is None else " — 최대주주라 사전신고"))}
+    if event == "지분양수" and counterparty_resident and R["transfer_post"]:
+        return post(_fmt(add_months(event_date, 3)), "거주자로부터 지분 양수 — 거래가 있은 날부터 3개월 이내(제9-5조② 제1호, 2023.7.4. 이후)")
     # 금융·보험업은 사전신고라도 별도 안내
-    return {
-        "구분": "사전신고",
-        "기관": main_bank_type,
-        "기한": "거래 전(사전)",
-        "서류": [
-            "사업계획서(자금조달·운용계획)",
-            "신용정보 채무불이행 미등록 증빙",
-            "조세체납 없음 증빙",
-            "기타 필요 서류",
-        ],
-    }
+    out = {"구분": "사전신고", "기관": main_bank_type, "기한": "거래 전(사전)", "서류": list(_DOCS)}
+    # 누적 투자금액 미화 50만불 이내: 사후보고를 '할 수 있다'(선택) — 기본 답은 사전신고로 두고 선택지를 따로 표시
+    if event in _SMALL_EVENTS and cumulative_usd <= 500_000 and R["small"]:
+        n = 1 if R["small"] == "1개월" else 3
+        out["사후보고_가능"] = {"기한": _fmt(add_months(event_date, n)),
+                           "기준": f"{'투자금 지급일' if n == 1 else '거래가 있은 날'}부터 {n}개월 이내",
+                           "근거": f"누적 투자금액 미화 50만불 이내 — {'제9-5조① 단서(2023.7.3.까지 1개월)' if n == 1 else '제9-5조② 제3호(2023.7.4.~2025.2.9. 3개월)'}"}
+    if event == "지분양수" and counterparty_resident:
+        out["비고"] = "거주자로부터 지분 양수의 3개월 사후보고는 2023.7.4. 이후 — 그 전은 신고(사전) 대상(제9-5조①)"
+    return out
 
 
 def _aftercare_schedule(event: str, event_date: date, paid_in: bool,
@@ -104,19 +131,25 @@ def _aftercare_schedule(event: str, event_date: date, paid_in: bool,
             "근거": "제9-9조① 제4호",
         })
 
-    # 5호 연간사업실적보고서: cumulative_usd > 300만불 → 회계기간 종료 후 5월
-    if cumulative_usd > 3_000_000 and fdi:
-        sched.append({
-            "보고서": "연간사업실적보고서",
-            "기한": _fmt(month_end_plus(fiscal_year_end, 5)),
-            "근거": "제9-9조① 제5호",
-        })
-    elif fdi:
-        sched.append({
-            "보고서": "연간사업실적보고서",
-            "기한": "대상 아님",
-            "근거": "제9-9조① 제5호",
-        })
+    # 5호 연간사업실적보고서: 회계기간 종료 후 5월 이내. 면제 가능·투자현황표 갈음 기준은 제출기한 당시 규정(fx_rule)
+    if fdi:
+        due = month_end_plus(fiscal_year_end, 5)
+        exempt_cap, table_cap = fx_rule(due)["annual"]
+        row = {"보고서": "연간사업실적보고서", "근거": "제9-9조① 제5호"}
+        if table_cap is None:                                   # 2025.2.10. 이후: 투자금액 합계 300만불 초과만 대상
+            row["기한"] = _fmt(due) if cumulative_usd > exempt_cap else "대상 아님"
+        elif cumulative_usd > table_cap:
+            row["기한"] = _fmt(due)
+        elif cumulative_usd > exempt_cap:
+            row["기한"] = _fmt(due)
+            row["비고"] = f"투자금액 합계 미화 {table_cap // 10_000:,}만불 이하 — 현지법인 투자현황표로 갈음할 수 있음(부동산관련업 제외)"
+        else:
+            row["기한"] = "면제 가능"
+            row["비고"] = (f"투자금액 합계 미화 {exempt_cap // 10_000:,}만불 이하 — 신고기관의 장이 제출을 면제할 수 있음(부동산관련업 제외). "
+                         f"면제받지 못하면 {_fmt(due)}까지")
+        if fx_rule(fiscal_year_end)["annual"] != (exempt_cap, table_cap):
+            row["주의"] = "회계기간 종료일과 제출기한 사이에 기준 금액이 개정됨 — 제출기한 당시 규정으로 판단(부칙에 적용례 없음, 신고기관 확인)"
+        sched.append(row)
 
     # 6호 청산보고서: 청산 이벤트 → 회수 즉시
     if event == "청산":
@@ -126,21 +159,26 @@ def _aftercare_schedule(event: str, event_date: date, paid_in: bool,
             "근거": "제9-9조① 제6호, 제9-6조",
         })
 
-    # 8호 신고 내용 변경: 회계기간 종료 후 5월
+    R = fx_rule(event_date)
+    # 신고 내용 변경: 2023.7.4.부터 회계기간 종료 후 5월(제9-9조①8호) / 2018.1.1.~2023.7.3. 변경사유 발생 후 3개월(제9-5조②) / 그 전 변경신고(사전)
     if event == "내용변경" and fdi:
-        sched.append({
-            "보고서": "신고 내용 변경 보고서",
-            "기한": _fmt(month_end_plus(fiscal_year_end, 5)),
-            "근거": "제9-9조① 제8호",
-        })
+        if R["change"] == "회계기간 후 5월":
+            sched.append({"보고서": "신고 내용 변경 보고서", "기한": _fmt(month_end_plus(fiscal_year_end, 5)), "근거": "제9-9조① 제8호"})
+        elif R["change"] == "3개월":
+            sched.append({"보고서": "신고 내용 변경 보고", "기한": _fmt(add_months(event_date, 3)), "근거": "제9-5조②(2018.1.1.~2023.7.3.)"})
+        else:
+            sched.append({"보고서": "변경신고", "기한": "변경 전(사전)", "근거": "제9-5조②(2017.12.31.까지)",
+                          "비고": "상호·대표자·소재지 변경, 자회사·손자회사 지분율 변경 등 일부 사유는 변경사유 발생 후 3개월 이내 사후보고"})
 
-    # 9호 다른 거주자에게 지분 매각: 3개월 이내
+    # 다른 거주자에게 지분 매각: 2018.1.1. 즉시 → 2021.6.18. 7영업일 → 2022.1.3. 3개월(2023.7.4.부터 제9-9조①9호)
     if event == "지분매각" and counterparty_resident:
-        sched.append({
-            "보고서": "지분매각보고",
-            "기한": _fmt(add_months(event_date, 3)),
-            "근거": "제9-9조① 제9호",
-        })
+        if R["sale"] == "3개월":
+            sched.append({"보고서": "지분매각보고", "기한": _fmt(add_months(event_date, 3)), "근거": R["sale_basis"]})
+        elif R["sale"] in ("즉시", "7영업일"):
+            sched.append({"보고서": "지분매각보고", "기한": "즉시" if R["sale"] == "즉시" else "7영업일 이내", "근거": "제9-5조② 단서"})
+        else:
+            sched.append({"보고서": "변경신고", "기한": "변경 전(사전)", "근거": "제9-5조②(2017.12.31.까지)",
+                          "비고": "지분 매각 보고를 따로 정한 문구 없음 — 신고 내용 변경으로 변경신고 대상"})
 
     return sched
 
@@ -175,8 +213,10 @@ def foreign_exchange_reporting(
     counterparty_resident: bool = False,
     paid_in: bool = True,
     recovered_usd: float | None = None,
+    largest_shareholder: bool | None = None,
 ) -> dict:
     """해외직접투자 외국환 신고·사후보고·청산 판정. 외국환거래법 제18조·시행령 제8조·외국환거래규정 제9-5조·제9-6조·제9-9조, 국조법 제58조.
+    규정은 이벤트 날짜의 판으로(fx_rule) — 2016.1.1.~2026.12.31.만 지원.
 
     이벤트 종류(event)가 허용값 밖이면 ValueError(호출부에서 {"error":"입력 확인 필요 — 계산하지 않음","문제":[…],"허용값":…}로 변환).
     """
@@ -195,6 +235,8 @@ def foreign_exchange_reporting(
         ed = date.fromisoformat(event_date)
     except (ValueError, TypeError):
         raise ValueError(f"event_date 날짜 형식 오류: {event_date!r} (YYYY-MM-DD)")
+    if not (date(2016, 1, 1) <= ed <= date(2026, 12, 31)):
+        raise ValueError(f"event_date={event_date} — 2016.1.1.~2026.12.31.만 지원(외국환거래규정 연혁을 그 범위만 대조)")
     if not fiscal_year_end:
         fy = date(ed.year, 12, 31)
     else:
@@ -211,7 +253,7 @@ def foreign_exchange_reporting(
     # 신고
     신고 = _reporting_deadline(event, ed, paid_in, ownership_ratio_after,
                                 loan_term_months, counterparty_resident, cumulative_usd, fy,
-                                main_bank_type)
+                                main_bank_type, largest_shareholder)
 
     # 사후관리 일정
     사후관리 = _aftercare_schedule(event, ed, paid_in, cumulative_usd,
@@ -231,7 +273,7 @@ def foreign_exchange_reporting(
 
     주의 = [
         "금융·보험업·해외부동산·개인 투자자는 범위 밖",
-        "외국환거래규정은 행정규칙이라 개정 잦음 — 2026.11.2 시행본 기준",
+        f"외국환거래규정은 이벤트 날짜({ed.isoformat()}) 당시 판 기준 — 2015~2026.11.2. 시행본을 판별로 대조(개정 잦음, 이후 개정은 korean-tax-mcp law_article로 확인)",
     ]
     if financial_business:
         주의.append("금융·보험업은 제9-10조 별도(한국은행 등) — 범위 밖")
