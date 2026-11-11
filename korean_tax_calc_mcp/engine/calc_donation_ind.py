@@ -11,12 +11,23 @@ PER_DAY = 80_000
 SMALL = 100_000
 
 
-def volunteer_value(hours: float, fuel: int = 0, transport_fuel: int = 0, materials: int = 0, own_hours_only: bool = True) -> dict:
+def volunteer_per_day(year: int, served_on: str | None = None) -> int:
+    """자원봉사용역 1일 가액(소득세법 시행령 제81조⑤1호): 5만원 → 8만원(2024.2.29. 개정, 대통령령 제34265호 부칙 제18조 — 시행 전 제공분은 종전).
+    2024년은 제공일(served_on)로 나눔."""
+    if year <= 2023: return 50_000
+    if year >= 2025: return PER_DAY
+    if not served_on: raise ValueError("2024년 자원봉사용역은 제공일에 따라 1일 5만원(2024.2.28.까지)·8만원(2.29.부터)으로 갈림 — volunteer.served_on(YYYY-MM-DD) 필요")
+    return 50_000 if served_on < "2024-02-29" else PER_DAY
+
+
+def volunteer_value(hours: float, fuel: int = 0, transport_fuel: int = 0, materials: int = 0, own_hours_only: bool = True, per_day: int = PER_DAY) -> dict:
     days = math.ceil(hours / 8) if hours > 0 else 0
-    labor = days * PER_DAY
+    labor = days * per_day
     direct = max(0, fuel - transport_fuel) + materials
     return {"봉사일수": days, "용역가액_일수분": labor, "직접비용": direct, "가액": labor + direct,
-            "근거": "소득세법 시행령 제81조⑤ — 봉사일수(총 봉사시간÷8시간, 소수점은 1일)×8만원 + 부수 유류비(이동 유류비 제외)·재료비; 개인사업자는 본인 봉사분만"}
+            "1일_가액": per_day,
+            "근거": f"소득세법 시행령 제81조⑤ — 봉사일수(총 봉사시간÷8시간, 소수점은 1일)×{per_day // 10_000}만원 + 부수 유류비(이동 유류비 제외)·재료비; 개인사업자는 본인 봉사분만"
+                    + ("(2024.2.28.까지 제공분 5만원)" if per_day == 50_000 else "")}
 
 
 def in_kind_value(book: int, market: int | None) -> int:
@@ -29,6 +40,12 @@ def individual_donation(year: int, base_income: int, carried_loss: int = 0, poli
                         special: int = 0, general: int = 0, religious: int = 0, carried_special: int = 0, carried_general: int = 0,
                         volunteer: dict | None = None, in_kind: list | None = None) -> dict[str, Any]:
     판단: list[dict] = []
+    if not (2016 <= int(year) <= 2026):
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"year={year} — 2016~2026만 지원"]}
+    if hometown and int(year) <= 2022:
+        # 고향사랑 기부금 세액공제·필요경비(조세특례제한법 제58조)는 2023.1.1. 시행 — 20221231·20230101 시행본에는 제58조가 삭제 상태(2023년 중 시행본부터 있음)
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"hometown={hometown:,}원 — 고향사랑 기부금은 2023년 귀속분부터(고향사랑 기부금에 관한 법률·조세특례제한법 제58조 2023.1.1. 시행). {year}년에는 해당 없음"]}
     # 1) 현물·자원봉사 가액
     sp, ge, re = int(special), int(general), int(religious)
     for item in in_kind or []:
@@ -40,9 +57,14 @@ def individual_donation(year: int, base_income: int, carried_loss: int = 0, poli
         판단.append({"항목": f"현물 기부({kind})", "결론": f"{v:,}원 — 시가(시가가 장부가액보다 낮으면 장부가액)", "근거": "소득세법 시행령 제81조③"})
     vol = None
     if volunteer:
-        vol = volunteer_value(float(volunteer.get("hours", 0) or 0), int(volunteer.get("fuel", 0) or 0), int(volunteer.get("transport_fuel", 0) or 0), int(volunteer.get("materials", 0) or 0))
+        try:
+            per_day = volunteer_per_day(int(year), volunteer.get("served_on"))
+        except ValueError as e:
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [str(e)]}
+        vol = volunteer_value(float(volunteer.get("hours", 0) or 0), int(volunteer.get("fuel", 0) or 0), int(volunteer.get("transport_fuel", 0) or 0), int(volunteer.get("materials", 0) or 0), per_day=per_day)
         sp += vol["가액"]
-        판단.append({"항목": "특별재난지역 자원봉사용역", "결론": f"{vol['가액']:,}원 = {vol['봉사일수']}일×80,000 + 직접비용 {vol['직접비용']:,} → 특례기부금", "근거": "소득세법 제34조②1호나목, 시행령 제81조⑤"})
+        판단.append({"항목": "특별재난지역 자원봉사용역", "결론": f"{vol['가액']:,}원 = {vol['봉사일수']}일×{per_day:,} + 직접비용 {vol['직접비용']:,} → 특례기부금"
+                     + (" (1일 5만원 — 2024.2.28.까지 제공분)" if per_day == 50_000 else ""), "근거": "소득세법 제34조②1호나목, 시행령 제81조⑤"})
     # 2) 정치자금·고향사랑: 10만원까지 세액공제(100/110), 초과분은 사업자 필요경비(이월결손금 뺀 소득금액 한도)
     pol_credit = min(political, SMALL); pol_exp = max(0, political - SMALL)
     home_credit = min(hometown, SMALL); home_exp = max(0, hometown - SMALL)
@@ -67,7 +89,7 @@ def individual_donation(year: int, base_income: int, carried_loss: int = 0, poli
     total_general = ge + re
     ge_carry_used = min(carried_general, ge_limit); ge_cur_used = min(total_general, ge_limit - ge_carry_used)
     ge_used = ge_carry_used + ge_cur_used; ge_over = total_general - ge_cur_used
-    판단.append({"항목": "일반기부금", "결론": f"한도 {formula} → 이월분 {ge_carry_used:,} + 당기 {ge_cur_used:,} = {ge_used:,}원 산입, 당기 한도초과 {ge_over:,}원(10년 이월)", "근거": basis + ", 제34조⑤"})
+    판단.append({"항목": "일반기부금", "결론": f"한도 {formula} → 이월분 {ge_carry_used:,} + 당기 {ge_cur_used:,} = {ge_used:,}원 산입, 당기 한도초과 {ge_over:,}원({'10년 이월' if int(year) >= 2018 else '이월 5년 — 2019.1.1. 이후 신고분부터 10년(2013.1.1. 이후 지출분 포함, 2018.12.31. 개정 부칙 제3조)'})", "근거": basis + ", 제34조⑤"})
     total = first + sp_used + ge_used
     판단.append({"항목": "세액공제로 넘어가는 몫", "결론": f"필요경비에 산입하지 않은 특례 {sp_over:,}·일반 {ge_over:,}원은 사업자가 세액공제(제59조의4④)를 택하지 않으면 이월. 정치·고향 10만원 이하분 {pol_credit + home_credit:,}원은 세액공제", "근거": "소득세법 제34조⑤, 제59조의4④, 조세특례제한법 제58조·제76조"})
     return {"결과": {"필요경비_산입_합계": total, "정치·고향_초과분_산입": first, "특례기부금_산입": sp_used, "일반기부금_산입": ge_used, "특례_한도초과_이월": sp_over, "일반_한도초과_이월": ge_over,
