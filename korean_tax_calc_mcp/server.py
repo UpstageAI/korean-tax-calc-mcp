@@ -33,6 +33,7 @@ from .engine import calc_deadline as DL
 from .engine.exact import floor_won as _floor_won, trunc_won as _trunc_won, exact as _exact
 from .engine import inputs as _chk
 from .engine import calc_batch0300 as B
+from .engine import calc_cfc as CF
 from .engine.errors import NoYearTable as _NoYearTable
 from . import vocab
 from .tools_income import earned_income_gross_pay_impl as _earned_income_gross_pay_impl
@@ -8897,6 +8898,77 @@ def overseas_account_reporting(
         return r
     return _ok(r["결과"], r["근거"], 판단=r.get("판단", []), 주의=r.get("주의", []))
 
+# ── 도구: 특정외국법인(CFC) 유보소득 배당간주액 (국조법 제27조~제31조, 영 제61조·제62조·제64조~제67조, 법 제55조) ──
+# SPEC_cfc0310_1111. 근거: 국제조세조정에 관한 법률 제27조①②·제28조·제29조①②·제30조①②·제31조,
+# 시행령 제61조·제62조·제64조①·제65조·제66조①·제67조①④, 법인세법 제55조.
+
+@mcp.tool(annotations=CALC)
+@_guard
+def cfc_deemed_dividend(
+    year: Annotated[int, Field(description="특정외국법인 사업연도 개시일이 속하는 연도(2016~2026)")],
+    pretax_incomes: Annotated[list, Field(description="최근 3개 사업연도 이내 조정 후 세전이익(원) 목록, 길이 1~3 — 음수(결손)는 0으로 봄(영 제61조)")],
+    taxes_paid: Annotated[list, Field(description="pretax_incomes와 같은 길이 실제 부담 세액(원, 0 이상; 거주지국 외 납부세액·이월결손금 공제 감소세액 포함 — 영 제62조)")],
+    ownership_chains: Annotated[list, Field(description="내국인에서 특정외국법인까지 단계별 보유비율 목록의 목록 — 각 줄 곱의 합 = 보유비율(영 제67조), 합 1 초과면 오류")],
+    ownership_with_related_ratio: Annotated[float | None, Field(description="10% 판정용 비율(특수관계인 직접 보유분 포함 — 법 제27조2호). 없으면 보유비율과 같음")] = None,
+    related_party: Annotated[bool, Field(description="특수관계 요건(법 제27조2호), 기본 True")] = True,
+    months: Annotated[int, Field(description="사업연도 개월 수(1~12), 기본 12")] = 12,
+    fy_end: Annotated[str | None, Field(description="특정외국법인 사업연도 종료일(YYYY-MM-DD, 선택)")] = None,
+    distributable: Annotated[dict | None, Field(description="dict: unappropriated_retained_earnings(처분 전 이익잉여금)·dividends·bonuses_and_outflows·mandatory_reserves·previously_taxed_undistributed·pre_cfc_earnings_undistributed·unrealized_stock_gains(각 원, 0 이상, 없으면 0)")] = None,
+    fixed_facility_active_business: Annotated[bool, Field(description="고정 시설을 두고 스스로 관리·운영하며 그 나라에서 주로 사업(법 제28조2호), 기본 False")] = False,
+    holding_company_exemption: Annotated[bool, Field(description="해외지주회사 요건(법 제28조3호) — 호출자 판정, 기본 False")] = False,
+    listed_industry: Annotated[str | None, Field(description="허용 업종명: 도매업·금융 및 보험업·부동산업·전문,과학·기술 서비스업·사업시설관리,사업지원,임대서비스업(선택)")] = None,
+    listed_industry_share: Annotated[float | None, Field(description="그 업종 수입금액 비중(0~1, 선택)")] = None,
+    listed_industry_related_share: Annotated[float | None, Field(description="그 업종 거래 중 특수관계자 비중(0~1, 선택)")] = None,
+    same_country_unrelated_sales_share: Annotated[float | None, Field(description="도매업의 같은 국가등 비특수관계자 판매 비중(0~1, 선택 — 영 제65조)")] = None,
+    passive_main_business: Annotated[bool, Field(description="주식·채권 보유, 지식재산 제공, 선박·항공기·장비 임대, 투자신탁·기금 투자가 총 수입금액 50% 초과(법 제29조2호, 영 제65조3호), 기본 False")] = False,
+    passive_income: Annotated[int | None, Field(description="수동소득 합계(원, 선택)")] = None,
+    passive_excluded_dividends: Annotated[int | None, Field(description="수동소득에서 빼는 배당금(영 제65조4호 단서, 선택)")] = None,
+    total_revenue: Annotated[int | None, Field(description="총 수입금액(원, 선택)")] = None,
+) -> dict:
+    """특정외국법인 유보소득 배당간주액(국제조세조정에 관한 법률 제27조·제28조·제29조·제30조·제31조, 시행령 제61조·제62조·제64조·제65조·제66조·제67조, 법인세법 제55조).
+
+    언제: 특정외국법인의 유보소득을 내국인이 배당받은 것으로 간주해 과세할지 여부와 배당간주금액을 계산할 때.
+    입력:
+      year — 특정외국법인 사업연도 개시일이 속하는 연도(2016~2026).
+      pretax_incomes — 최근 3개 사업연도 이내 조정 후 세전이익(원) 목록(1~3개, 음수=0으로 봄).
+      taxes_paid — 같은 길이 실제 부담 세액(원, 0 이상).
+      ownership_chains — 내국인에서 특정외국법인까지 단계별 보유비율 목록의 목록(곱의 합 = 보유비율).
+      ownership_with_related_ratio — 10% 판정용 비율(특수관계인 직접 보유 포함, 없으면 보유비율과 같음).
+      related_party — 특수관계 요건(법 제27조2호) 기본 True.
+      months — 사업연도 개월 수(1~12, 기본 12).
+      fy_end — 특정외국법인 사업연도 종료일(YYYY-MM-DD, 선택).
+      distributable — dict: unappropriated_retained_earnings 등 키(모두 원, 0 이상, 없으면 0).
+      fixed_facility_active_business — 고정 시설 실질 사업(법 제28조2호) 여부 기본 False.
+      holding_company_exemption — 해외지주회사 예외(법 제28조3호) 여부 기본 False(호출자 판정).
+      listed_industry — 허용 업종명(선택).
+      listed_industry_share / listed_industry_related_share — 그 업종 수입금액·특수관계 비중(선택, 0~1).
+      same_country_unrelated_sales_share — 도매업 같은 국가 비특수관계 판매 비중(선택, 0~1).
+      passive_main_business — 수동소득 주된 사업(법 제29조2호) 여부 기본 False.
+      passive_income / passive_excluded_dividends / total_revenue — 수동소득·배제배당·총수입금액(원, 선택).
+    결과: 특정외국법인_해당·배당간주_적용·적용방식·적용제외_사유·실제발생소득_연평균·실제부담세액_연평균·
+          기준세율_만분율·실제부담세율_만분율·주식보유비율_만분율·배당가능_유보소득·배당간주금액·
+          익금귀속_기준일·익금귀속_과세연도·단계별_계산.
+    """
+    r = CF.cfc_deemed_dividend(
+        year=year, pretax_incomes=pretax_incomes, taxes_paid=taxes_paid,
+        ownership_chains=ownership_chains,
+        ownership_with_related_ratio=ownership_with_related_ratio,
+        related_party=related_party, months=months, fy_end=fy_end,
+        distributable=distributable,
+        fixed_facility_active_business=fixed_facility_active_business,
+        holding_company_exemption=holding_company_exemption,
+        listed_industry=listed_industry,
+        listed_industry_share=listed_industry_share,
+        listed_industry_related_share=listed_industry_related_share,
+        same_country_unrelated_sales_share=same_country_unrelated_sales_share,
+        passive_main_business=passive_main_business,
+        passive_income=passive_income, passive_excluded_dividends=passive_excluded_dividends,
+        total_revenue=total_revenue,
+    )
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 주의=r.get("주의", []), 단계별_계산=r.get("단계별_계산", []))
+
 # ── 도구: 양도소득 부당행위계산 (소득세법 제101조, 영 제167조③④⑤⑥) ─────────────────
 # SPEC_batch0300_1110. 근거: 소득세법 제101조①②③, 시행령 제98조①·제167조③④⑤⑥.
 
@@ -9069,6 +9141,16 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "부당행위계산 양도": ["capital_gains_unfair_transaction"],
     "저가 양도": ["capital_gains_unfair_transaction"],
     "증여 후 양도": ["capital_gains_unfair_transaction"],
+    # 0.31.0 — 특정외국법인(CFC) 유보소득 배당간주 (국조법 제27조~제31조)
+    "특정외국법인": ["cfc_deemed_dividend"],
+    "특정외국법인 유보소득": ["cfc_deemed_dividend"],
+    "배당간주": ["cfc_deemed_dividend"],
+    "유보소득 배당간주": ["cfc_deemed_dividend"],
+    "유보소득 배당 안 해도 과세": ["cfc_deemed_dividend"],
+    "CFC": ["cfc_deemed_dividend"],
+    "CFC 배당간주": ["cfc_deemed_dividend"],
+    "조세피난처 과세": ["cfc_deemed_dividend"],
+    "해외 지주회사 유보소득": ["cfc_deemed_dividend"],
 }
 
 
