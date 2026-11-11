@@ -356,14 +356,31 @@ def earned_income_gross_pay_impl(year, items) -> dict:
                             사유 += f"({year}년은 자녀 수와 관계없이 근로자 1인당 월 한도 — 자녀 1명당 한도는 2026년부터)"
                     비과세_성격 = "월한도비과세"
             elif purpose == "출산":
-                if year >= 2024 and 출산전액 and within_2y and payment_count <= r.get("출산지급횟수한도", 2) and not related_party:
+                # 2024년 지급분은 2021.1.1. 이후 출생 자녀면 '출생일 이후 2년 이내'가 아니어도 대상(제12조3호머목1) 괄호)
+                _born = str(facts.get("child_born_on") or "")[:10]
+                특례_2024 = year == 2024 and _born >= "2021-01-01"
+                기간요건 = bool(within_2y) or 특례_2024
+                if year >= 2024 and 출산전액 and 기간요건 and payment_count <= r.get("출산지급횟수한도", 2) and not related_party:
                     비과세액 = amount; 과세액 = 0
-                    사유 = f"출생 후 2년 이내 {int(payment_count)}번째 출산 급여 — 전액 비과세(특수관계자 제외, 영 제17조의2 2호)"
+                    _기간 = ("출생 후 2년 이내" if within_2y else f"2021.1.1. 이후 출생 자녀({_born})에 대해 2024년에 지급받은")
+                    사유 = (f"{_기간} {int(payment_count)}번째 출산 급여 — 전액 비과세"
+                            "(특수관계자 제외, 법 제12조3호머목1)·영 제17조의2)")
                     비과세_성격 = "출산전액비과세"
+                elif year >= 2025:
+                    # 2025.1.1. 이후 지급분: 머목은 1) 출산 급여 전액, 2) 6세 이하 자녀 보육 급여 월 한도뿐 — 요건을 못 갖춘 출산 급여에는 월 한도 없음
+                    비과세액 = 0; 과세액 = amount
+                    _미충족 = ("사용자와 특수관계" if related_party else
+                              "출생일 이후 2년 이내가 아님" if not within_2y else
+                              f"사용자별 {int(payment_count)}번째 지급(두 번째까지만)")
+                    사유 = (f"출산 급여 전액 비과세 요건 미충족({_미충족}) — 전액 과세. {year}년 제12조3호머목은 1) 출산 급여 전액과 "
+                            "2) 6세 이하 자녀 보육 급여 월 한도만 두므로, 보육과 관련해 받은 급여면 purpose='보육'으로 입력")
+                    비과세_성격 = "과세(요건 미충족)"
                 else:
                     비과세액 = min(amount, 월한도 * months)
                     과세액 = amount - 비과세액
-                    사유 = f"출산 급여 — 월 {월한도:,}원 × {months}개월 이내 비과세(2024년 전 또는 요건 미충족 시 월한도 적용)"
+                    사유 = (f"출산 급여 — 월 {월한도:,}원 × {months}개월 이내 비과세"
+                            + ("(2024년 지급분 전액 비과세 요건 미충족 — 종전 머목 월 한도 적용. 2021.1.1. 이후 출생 자녀면 child_born_on 입력)"
+                               if year == 2024 else "(2023년까지 출산·보육 월 한도)"))
                     비과세_성격 = "월한도비과세"
             else:
                 비과세액 = min(amount, 월한도 * months)

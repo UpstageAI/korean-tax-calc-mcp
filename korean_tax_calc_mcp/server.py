@@ -1517,7 +1517,7 @@ def refund_claim_deadline(kind: Annotated[Literal["통상", "후발적", "증액
   후발적은 안 날의 3개월 뒤 같은 날(제2항, 통상 기간과 별개), 증액경정은 통지받은 날의 3개월 뒤 같은 날(법정신고기한 후 5년 한도). 2024.12.31. 개정(2025.1.1. 시행) 전 증액경정분은 90일 — 시행 당시 3개월이 지나지 않았으면 3개월(부칙 제6조제1항).
 공휴일표: 2016~2027(법정공휴일·대체공휴일·선거일·임시공휴일, data/kr_holidays.json). 표 밖의 해는 토·일·고정 공휴일만 보고 결과에 '확인하지 못함'으로 표시.
 결과: 경정청구_기한·요일, 법정신고기한(법령상·적용·건너뛴 날), 기간_말일, 판정·근거. 원천징수(제45조의2제5항)는 납부기한, 종합부동산세(제6항)는 납부기한 기준.
-지원하지 않음: 2016년 전 사유·통지, 2015년 전 개정(통상 3년·후발적 2개월) 경과조치. 사유가 후발적 사유(제2항 각 호, 시행령 제25조의2)에 해당하는지는 판단하지 않음."""
+지원하지 않음: 2016년 전 사유·통지, 종전 3년 청구기간이 2015.1.1. 전에 끝난 분(법정신고기한이 대체로 2011년 이전 — 부칙 제7조제2항에 따라 종전 규정, 입력 오류로 돌려줌), 후발적 2개월 경과조치. 사유가 후발적 사유(제2항 각 호, 시행령 제25조의2)에 해당하는지는 판단하지 않음."""
     try:
         ev = _chk.to_date("event_date", event_date) if event_date else None
         if kind in ("후발적", "증액경정") and ev is None:
@@ -1530,6 +1530,12 @@ def refund_claim_deadline(kind: Annotated[Literal["통상", "후발적", "증액
         due_raw = basis_due = how_due = None
         if have_due:
             due_raw, how_due, basis_due = _claim_due(tax, due_date, year, fiscal_year_end, period, tax_base_date, sincere_filing, abroad)
+            # 2014.12.23. 개정(3년 → 5년, 2015.1.1. 시행) 부칙 제7조제2항: 시행 전에 종전 3년 청구기간이 지난 분은 종전 규정
+            if kind in ("통상", "증액경정"):
+                _old_end = DL.roll(DL.add_months(DL.roll(due_raw)["날짜"], 36))["날짜"]
+                if _old_end < date(2015, 1, 1):
+                    raise ValueError(f"법정신고기한 {due_raw.isoformat()} — 종전 규정(법정신고기한이 지난 후 3년)의 청구기간이 {_old_end.isoformat()}에 끝나 "
+                                     "2015.1.1. 시행 5년 규정을 적용하지 않음(국세기본법 부칙 법률 제12848호 제7조제2항). 이 도구는 5년 규정 적용분만 계산")
     except ValueError as e:
         return {"error": f"입력 오류: {e}"}
 
@@ -1655,15 +1661,19 @@ def nonresident_withholding(income_kind: Annotated[Literal["이자", "배당", "
                             bond_interest: Annotated[bool, Field(description="채권 이자 여부 — 이자 소득에서만 의미, 특례 적용 필요 시 별도 확인")] = False,
                             related_party: Annotated[bool, Field(description="수취인이 국외지배주주일 가능성 — 이자 소득에서 과소자본 쟁점 표시 시 사용")] = False,
                             treaty_includes_local_tax: Annotated[bool | None, Field(description="조세조약 대상조세(제2조)에 한국 지방소득세(주민세)가 포함되는지. 생략 시 내장 표(일본·중국·독일·영국·프랑스·싱가포르·네덜란드·캐나다·호주·베트남 포함, 미국 미포함), 표에 없으면 미포함으로 계산하고 확인 표시")] = None,
-                            service_location: Annotated[Literal["국내", "국외"] | None, Field(description="인적용역 제공 장소 — 인적용역 소득에서만 의미, '국내'면 20%, '국외'면 국내원천소득 아님(0%), None이면 현행(20%+쟁점)")] = None) -> dict:
+                            service_location: Annotated[Literal["국내", "국외"] | None, Field(description="인적용역 제공 장소 — 인적용역 소득에서만 의미, '국내'면 20%, '국외'면 국내원천소득 아님(0%), None이면 현행(20%+쟁점)")] = None,
+                            year: Annotated[int | None, Field(description="지급 연도(2016~2026) — 세율은 같고 근거 조문의 호만 달라짐: 2018년까지 이자·배당·사용료·기타는 제1항제3호, 인적용역은 제2호. 생략하면 현행 호")] = None) -> dict:
     """비거주자·외국법인 국내원천소득 원천징수(소득세법 제156조 / 법인세법 제98조). 언제: 비거주자·외국법인에 이자·배당·사용료·인적용역·기타 소득을 지급할 때 원천징수세액을 구한다.
-입력: 소득 종류(이자·배당·사용료·인적용역·기타) → income_kind, 지급액(원) → amount, 수취인 구분(개인/법인) → recipient_type, 거주지국(ISO 2자 또는 국명) → residence_country, 조세조약 제한세율(소수) → treaty_rate, 채권 이자 여부 → bond_interest, 국외지배주주 가능성 → related_party, 조약 대상조세의 지방소득세 포함 여부 → treaty_includes_local_tax, 인적용역 제공 장소 → service_location.
+입력: 소득 종류(이자·배당·사용료·인적용역·기타) → income_kind, 지급액(원) → amount, 수취인 구분(개인/법인) → recipient_type, 거주지국(ISO 2자 또는 국명) → residence_country, 조세조약 제한세율(소수) → treaty_rate, 채권 이자 여부 → bond_interest, 국외지배주주 가능성 → related_party, 조약 대상조세의 지방소득세 포함 여부 → treaty_includes_local_tax, 인적용역 제공 장소 → service_location, 지급 연도 → year.
+연도: 국내세율(20%, 채권이자 14%)은 2016~2026 같음. 근거 호는 2018.12.31. 개정(2019.1.1. 시행)으로 바뀜 — 2018년까지 제1항제3호(이자·배당·사용료·기타)·제2호(인적용역), 2019년부터 제1호·제2호·제6호·제4호·제8호.
 결과: 원천징수세액·지방소득세·적용 세율·국내세율, 근거(개인 소득세법 제156조 / 법인 법인세법 제98조). 적용세율 = min(국내세율, 조약 제한세율), 지방소득세는 원천징수세액의 10% 별도.
   인적용역 service_location='국외' → 국내원천소득 아님(소득세법 제119조6호·법인세법 제93조6호), 적용세율 0.
   인적용역 service_location='국내' → 현행 20%. None이면 현행(20%+쟁점 표시).
   service_location은 인적용역 소득에서만 의미, 그 외 소득에는 무시. Non-resident/foreign corporation withholding tax on Korean-source income."""
+    _e = _range_err(("year", year))
+    if _e: return _e
     r = I.nonresident_withholding(income_kind, amount, recipient_type, residence_country, treaty_rate, bond_interest, related_party,
-                                  treaty_includes_local_tax, service_location)
+                                  treaty_includes_local_tax, service_location, year)
     판단 = r.pop("판단", None)
     extra = {"판단": 판단} if 판단 else {}
     return _ok({k: v for k, v in r.items() if k != "쟁점"}, r["근거"], 쟁점=r["쟁점"], **extra)
@@ -2064,10 +2074,10 @@ def vat_deemed_input_credit(period: Annotated[str, Field(description="과세기�
                             exempt_supply: Annotated[int, Field(description="해당 기간 면세 공급가액(원)")] = 0,
                             filing: Annotated[Literal["확정", "예정"], Field(description=(
                                 "신고 구분(기본 '확정'). '예정'이면 공제 한도(과세표준 × 한도율)를 적용하지 않음 — "
-                                "한도는 확정신고 때 과세기간 전체로 정산(부가가치세법 제42조제2항)"))] = "확정") -> dict:
+                                "한도는 확정신고 때 과세기간 전체로 정산(부가가치세법 시행령 제84조제2항)"))] = "확정") -> dict:
     """의제매입세액공제(면세농산물 등 매입가액 × 공제율, 연장·운반비율 제외·공통분 안분). 언제: 음식점·제조업 등에서 면세농산물 등을 매입할 때 의제매입세액공제를 계산한다.
 입력: 과세기간('YYYY-1' 또는 'YYYY-2') → period, 업종 → industry, 면세농산물 등 매입가액(원) → purchase, 해당 과세기간 과세표준(원) → base, 개인사업자 여부 → individual, 중소기업 여부(제조 법인) → sme, 면세농산물 등 총 구입액(원) → purchase_total, 구입액에 포함된 운반비(원) → freight_included, 과세사업 사용·소비액(원) → used_taxable, 면세사업 사용·판매액(원) → used_exempt, 실지귀속 불분명 기말재고(원) → ending_inventory_common, 해당 기간 과세 공급가액(원) → taxable_supply, 해당 기간 면세 공급가액(원) → exempt_supply.
-결과: 공제대상 매입가액·의제매입세액·공제율·한도율·한도액(과세표준 × 한도율, 한도 없으면 null)·한도 적용 매입가액·과세비율·단계별 계산(입력한 단계만), 근거(부가가치세법 제42조, 시행령 제81조·제84조)."""
+결과: 공제대상 매입가액·의제매입세액·공제율·한도율·한도액(과세표준 × 한도율, 한도 없으면 null)·한도 적용 매입가액·과세비율·단계별 계산(입력한 단계만), 근거(부가가치세법 제42조, 시행령 제81조·제84조 — 공제율은 2017년까지 시행령 제84조제1항 표, 2018년부터 법 제42조제1항 표, 한도는 시행령 제84조제2항)."""
     from .engine.calc_vat import deemed_input, deemed_input_rate, deemed_input_limit_ratio
 
     # items와 purchase/purchase_total 동시 입력 거부
@@ -2253,21 +2263,27 @@ def vat_deemed_input_credit(period: Annotated[str, Field(description="과세기�
         매입_항목 = "공제대상 매입가액 = 총 구입액 − 운반비"
     else:
         매입_항목 = "공제대상 매입가액(입력)"
+    # 근거 위치: 공제율은 2017년 과세기간까지 시행령 제84조① 표, 2018년부터 법 제42조① 표(2017.12.19. 개정). 한도는 시행령 제84조②(전 기간)
+    _old_law = int(period[:4]) <= 2017
+    _b_rate = "부가가치세법 시행령 제84조① 표(2017.12.19. 법 개정 전)" if _old_law else "부가가치세법 제42조① 표"
+    _b_limit = "부가가치세법 시행령 제84조②" if _old_law else "부가가치세법 제42조① 괄호, 시행령 제84조②"
+    _b_all = ("부가가치세법 제42조, 시행령 제81조·제84조(공제율 제84조① 표·한도 제84조②)" if _old_law
+              else "부가가치세법 제42조(공제율 ① 표), 시행령 제81조·제84조(한도 제84조②)")
     steps.append({"항목": 매입_항목, "금액": 매입가액_적용, "근거": "부가가치세법 제42조, 시행령 제84조, 제81조"})
     if 한도액 is not None:
         steps.extend([
-            {"항목": "과세표준", "금액": effective_base, "근거": "부가가치세법 제42조②"},
-            {"항목": f"한도율 ({limit_ratio})", "비율": limit_ratio, "근거": "부가가치세법 제42조②"},
-            {"항목": "한도액 = 과세표준 × 한도율", "금액": 한도액, "근거": "부가가치세법 제42조②"},
-            {"항목": "한도 적용 매입가액 = min(공제대상 매입가액, 한도액)", "금액": 한도적용_매입, "근거": "부가가치세법 제42조②"},
+            {"항목": "과세표준", "금액": effective_base, "근거": _b_limit},
+            {"항목": f"한도율 ({limit_ratio})", "비율": limit_ratio, "근거": _b_limit},
+            {"항목": "한도액 = 과세표준 × 한도율", "금액": 한도액, "근거": _b_limit},
+            {"항목": "한도 적용 매입가액 = min(공제대상 매입가액, 한도액)", "금액": 한도적용_매입, "근거": _b_limit},
         ])
     else:
         steps.append({"항목": "한도 — " + ("예정신고라 한도 없이 공제(확정신고 때 과세기간 전체로 정산)" if filing == "예정"
                                           else "과세표준 없음(base·taxable_supply 0)이라 한도 미적용"),
-                      "근거": "부가가치세법 제42조②"})
+                      "근거": _b_limit})
     steps.extend([
-        {"항목": f"공제율 ({num}/{den})", "비율": f"{num}/{den}", "근거": "부가가치세법 제42조"},
-        {"항목": "의제매입세액 = 한도 적용 매입가액 × 공제율", "금액": deemed_tax, "근거": "부가가치세법 제42조"},
+        {"항목": f"공제율 ({num}/{den})", "비율": f"{num}/{den}", "근거": _b_rate},
+        {"항목": "의제매입세액 = 한도 적용 매입가액 × 공제율", "금액": deemed_tax, "근거": _b_rate},
     ])
 
     result = {
@@ -2284,10 +2300,10 @@ def vat_deemed_input_credit(period: Annotated[str, Field(description="과세기�
         "단계별_계산": steps,
     }
     if 품목별_결과 is not None:
-        return _ok(result, "부가가치세법 제42조, 시행령 제81조·제84조",
+        return _ok(result, _b_all,
                    계산={"품목별": 품목별_결과},
                    산식="공제대상 매입 = 과세 사용분 + 공통 재고 × 과세비율(운반비 제외 후), 의제매입세액 = min(공제대상 매입, 과세표준 × 한도율) × 공제율")
-    return _ok(result, "부가가치세법 제42조, 시행령 제81조·제84조",
+    return _ok(result, _b_all,
                산식="공제대상 매입 = 과세 사용분 + 공통 재고 × 과세비율(운반비 제외 후), 의제매입세액 = min(공제대상 매입, 과세표준 × 한도율) × 공제율")
 
 
@@ -2785,7 +2801,7 @@ def earned_income_gross_pay(year: YEAR,
         · 급여·상여 — 다른 해 근로분이면 service_year
         · 잉여금처분상여 — resolution_date(결의일 연도 귀속) / 인정상여 — service_year
         · 식사대 — months, meal_provided / 자가운전보조금 — months, vehicle(본인소유|본인명의임차|기타), business_use, actual_travel_reimbursed
-        · 출산·보육수당 — purpose(보육: months, child_age(과세기간 개시일 현재 만 나이, 6세 이하) / 출산: 2024~ within_2y_of_birth·payment_count·related_party, 그 전 months).
+        · 출산·보육수당 — purpose(보육: months, child_age(과세기간 개시일 현재 만 나이, 6세 이하) / 출산: 2024~ within_2y_of_birth·payment_count(사용자별 지급 차수)·related_party, 그 전 months. 2024년 지급분은 2021.1.1. 이후 출생 자녀면 child_born_on(출생일)으로 2년 요건을 대신함. 2025~ 요건 미충족 출산 급여는 전액 과세).
           보육 한도: 2016~2023 월 10만원(출산 포함), 2024~2025 월 20만원(근로자 1인당), 2026~ 자녀 1명당 월 20만원 —
           2026~는 child_ages(자녀별 개시일 나이 목록) 또는 child_count, 또는 자녀별 항목으로 나누고 facts.child(자녀 이름)를 다르게
         · 직무발명보상금 — retired(퇴직 후면 기타소득), 2024~ related_party
@@ -2845,7 +2861,7 @@ def kinship_check(a: Annotated[str, Field(description='당사자 a(이름)')], b
 
 @mcp.tool(description="""보유자→법인 직접·간접 보유비율(경로별 곱 합산, 순환출자 반영). 언제: 일감몰아주기·지배주주 판정에서 특정인이 법인에 얼마나 간접 보유하는지 계산할 때.
 입력: 보유자(이름) → holder, 대상 법인(이름) → target, stakes=[[보유자, 법인, 지분율(0~1)]] → stakes(직접보유비율, related_judge와 동일).
-결과: 직접비율·경로별 비율·합계·순환출자 여부, 근거(상증법 시행령 제34조의3제2항). 보유자→법인 직접·간접 보유비율을 계산한다(간접은 단계별 직접보유비율의 곱, 경로별 합산, 순환출자는 단계별 모두 반영).""")
+결과: 직접비율·경로별 비율·합계·순환출자 여부, 근거(상증법 시행령 제34조의3제2항 — 2020.2.10.까지는 제34조의2제2항). 보유자→법인 직접·간접 보유비율을 계산한다(간접은 단계별 직접보유비율의 곱, 경로별 합산, 순환출자는 단계별 모두 반영).""")
 @_guard
 def ownership_ratio(holder: Annotated[str, Field(description='보유자(이름)')], target: Annotated[str, Field(description='대상 법인(이름)')],
                     stakes: Annotated[list, Field(description='직접보유비율 목록 [[보유자, 법인, 지분율(0~1)]]. 예: [["김갑", "㈜대한", 0.30]]')]) -> dict:
