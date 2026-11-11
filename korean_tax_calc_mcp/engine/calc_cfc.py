@@ -253,7 +253,7 @@ def cfc_deemed_dividend(
     결과.update({"배당간주_적용": True, "적용방식": 방식, "배당가능_유보소득": 유보})
     단계.append("배당 가능한 유보소득 = 처분 전 이익잉여금 " + f"{d['unappropriated_retained_earnings']:,}"
                 + "".join(f" − {d[k]:,}" for k in _DIST_KEYS[1:] if d[k]) + f" − {월할_2억:,}(2억원×{months}/12) = {유보:,} ({조['유보소득']})")
-    단계.append("주식 보유비율 = " + " + ".join(" × ".join(f"{_F(v) * 100:g}%" if (_F(v) * 100).denominator == 1 else str(_F(v)) for v in ch)
+    단계.append("주식 보유비율 = " + " + ".join(" × ".join(f"{(_F(v) * 100).numerator}%" if (_F(v) * 100).denominator == 1 else str(_F(v)) for v in ch)
                                               for ch in ownership_chains) + f" = {보유비율.numerator}/{보유비율.denominator} ({조['보유비율']})")
     if 방식 == "전부":
         결과["배당간주금액"] = _trunc_won(유보 * 보유비율)
