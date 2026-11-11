@@ -2319,14 +2319,52 @@ def vat_simplified_taxpayer(supply_incl_vat: Annotated[int, Field(description="�
                             year: Annotated[int, Field(description="적용 연도(2016~2026)")] = 2026,
                             business_start: Annotated[str | None, Field(description="사업 개시일(YYYY-MM-DD) — 제69조3항 12개월 환산 면제 판정에 사용")] = None,
                             closed_on: Annotated[str | None, Field(description="휴업·폐업·유형전환일(YYYY-MM-DD) — 제69조3항 12개월 환산 면제 판정에 사용")] = None,
-                            industries: Annotated[list | None, Field(description="겸영 업종 목록 [{value_added_rate, supply_incl_vat}] — 제63조2항 후문, 공급대가·부가가치율 대신 업종별로 납부세액 계산")] = None) -> dict:
+                            industries: Annotated[list | None, Field(description="겸영 업종 목록 [{value_added_rate, supply_incl_vat}] — 제63조2항 후문, 공급대가·부가가치율 대신 업종별로 납부세액 계산")] = None,
+                            food_lodging: Annotated[bool, Field(description="음식점업·숙박업 간이과세자 여부 — 2021.6.30.까지 공급분 카드 발행세액공제율 2.6%(그 밖 1.3%), 2021.7.1.부터는 구분 없이 1.3%")] = False,
+                            invoice_purchase_before_202107: Annotated[int | None, Field(ge=0, description="year=2021일 때만: 세금계산서 등 수취 매입 공급대가 가운데 2021.6.30.까지 공급받은 금액(원) — 그 부분은 종전 산식(매입세액 × 부가가치율)")] = None,
+                            card_cash_receipt_before_202107: Annotated[int | None, Field(ge=0, description="year=2021일 때만: 카드·현금영수증 발급분 공급대가 가운데 2021.6.30.까지 공급한 금액(원)")] = None,
+                            no_invoice_purchase_before_202107: Annotated[int | None, Field(ge=0, description="year=2021일 때만: 세금계산서 미수취 매입 공급대가 가운데 2021.6.30.까지 공급받은 금액(원) — 그 부분은 가산세 없음")] = None) -> dict:
     """간이과세자 납부세액 전 과정(과세표준·납부세액·매입공제·카드 발행세액공제·가산세·납부의무 면제 판정·차가감 납부세액). 언제: 간이과세자 부가가치세 신고 시 납부세액을 단계별로 계산한다.
 입력: 공급대가(부가세 포함, 원) → supply_incl_vat, 업종별 부가가치율(소수, 예: 0.15 = 15%) → value_added_rate, 세금계산서 등 수취 매입 공급대가(원) → invoice_purchase_incl_vat, 자기적립마일리지 등 결제분 공급대가(원) → mileage_supply_incl_vat, 신용카드매출전표·현금영수증 등 발급분 공급대가(원) → card_cash_receipt_supply_incl_vat, 세금계산서 미수취 매입 공급대가(원) → no_invoice_purchase_incl_vat, 직전 연도 공급대가(원) → prior_year_supply_incl_vat, 예정부과 고지·수시부과세액(원) → prepaid_tax, 적용 연도(2016~2026) → year.
   business_start(사업 개시일, YYYY-MM-DD, 선택): 제69조3항 — 해당 과세기간 중 개업했으면 개시일~12.31 공급대가를 12개월로 환산해 면제 판정.
   closed_on(휴업·폐업·유형전환일, YYYY-MM-DD, 선택): 제69조3항 — 해당 과세기간 중 휴업·폐업·유형전환이 있으면 1.1~closed_on 공급대가를 12개월로 환산해 면제 판정.
   industries(겸영 업종 목록, 선택): [{value_added_rate, supply_incl_vat}] — 제63조2항 후문, 공급대가·부가가치율 대신 업종별 납부세액 = Σ(공급대가 × 부가가치율 × 10%). supply_incl_vat와 industries를 같이 주면 error.
+  연도(2020.12.22. 개정, 2021.7.1. 시행 — 부칙 제8조·제10조·제12조): 2021.6.30.까지 공급받은 매입분 공제는 매입세액(공급대가 × 10/110) × 부가가치율, 2021.7.1.부터 공급대가 × 0.5%.
+    세금계산서 미수취 가산세 0.5%는 2021.7.1. 이후 공급받은 분만. 카드 발행세액공제는 2021.6.30.까지 음식점업·숙박업 2.6%(food_lodging), 그 밖 1.3%. 연 한도 2017년까지 500만원, 2018년부터 1,000만원.
+    year=2021은 상·하반기가 섞이므로 매입·카드·미수취 금액이 있으면 2021.6.30.까지분을 *_before_202107에 넣어야 한다. 업종별 부가가치율도 2021.7.1.에 바뀌었으므로 2021년은 industries로 상·하반기를 나눠 넣는다.
 결과: 과세표준·납부세액·매입공제·카드공제·가산세·공제합계·예정부과세액 공제·차가감 납부세액(음수면 환급세액)·환급세액·납부의무 면제 여부·면제_판정_공급대가·환산_개월수·단계별 계산, 근거(부가가치세법 제46조·제63조·제68조의2·제69조)."""
-    from .engine.calc_vat import simplified_exempt_threshold, card_sales_credit
+    from .engine.calc_vat import simplified_exempt_threshold
+
+    # ── 2021.7.1. 전후 구분(법률 제17653호 부칙 제8조·제10조·제12조: 2021.7.1. 전에 공급하거나 공급받은 분은 종전 규정) ──
+    try:
+        _chk.supported_year("year", year)
+    except ValueError as _e:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [str(_e)]}
+    _splits = {"invoice_purchase": (invoice_purchase_incl_vat, invoice_purchase_before_202107),
+               "card_cash_receipt": (card_cash_receipt_supply_incl_vat, card_cash_receipt_before_202107),
+               "no_invoice_purchase": (no_invoice_purchase_incl_vat, no_invoice_purchase_before_202107)}
+    _문제 = []
+    _before = {}
+    for _k, (_tot, _b) in _splits.items():
+        if year <= 2020:
+            _before[_k] = _tot
+            if _b is not None:
+                _문제.append(f"{_k}_before_202107는 year=2021일 때만 사용 — {year}년은 전부 2021.6.30. 이전 규정으로 계산")
+        elif year == 2021:
+            if _tot and _b is None:
+                _문제.append(f"year=2021 — {_k} 금액 {_tot:,}원 가운데 2021.6.30.까지분을 {_k}_before_202107에 넣어야 함"
+                            "(2021.7.1. 전후 산식이 다름: 법률 제17653호 부칙 제8조·제10조·제12조)")
+            elif _b is not None and _b > _tot:
+                _문제.append(f"{_k}_before_202107={_b:,}원이 전체 {_tot:,}원보다 큼")
+            _before[_k] = _b or 0
+        else:
+            _before[_k] = 0
+            if _b is not None:
+                _문제.append(f"{_k}_before_202107는 year=2021일 때만 사용 — {year}년은 전부 2021.7.1. 이후 규정으로 계산")
+    if industries is not None and _before["invoice_purchase"]:
+        _문제.append("겸영(industries)이면서 2021.6.30. 이전 매입분이 있음 — 종전 매입 공제는 업종별 부가가치율을 곱하므로 업종을 나눠 각각 계산")
+    if _문제:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": _문제}
 
     # 입력 검증: supply_incl_vat와 industries 동시 제공 시 error
     if industries is not None and supply_incl_vat != 0:
@@ -2350,14 +2388,20 @@ def vat_simplified_taxpayer(supply_incl_vat: Annotated[int, Field(description="�
         # 납부세액 = 과세표준 × 부가가치율 × 10%
         tax_due = _floor_won(tax_base, value_added_rate, 0.1)
 
-    # 매입세금계산서 등 공제 = 수취 매입 × 0.5%
-    input_credit = _floor_won(invoice_purchase_incl_vat, 0.005)
+    # 매입세금계산서 등 공제: 2021.6.30.까지 공급받은 분 = 매입세액(공급대가 × 10/110) × 부가가치율(구 제63조③), 이후 = 공급대가 × 0.5%
+    _inv_old = _before["invoice_purchase"]
+    input_credit_old = _floor_won(_floor_won(_inv_old, 10, div=110), value_added_rate) if _inv_old else 0
+    input_credit = input_credit_old + _floor_won(invoice_purchase_incl_vat - _inv_old, 0.005)
 
-    # 신용카드매출전표등 발행세액공제 (제46조, 1.3%, 연 한도 1,000만원)
-    card_credit = card_sales_credit(card_cash_receipt_supply_incl_vat, f"{year}-01-01")
+    # 신용카드매출전표등 발행세액공제(제46조①): 2021.6.30.까지 공급분은 음식점업·숙박업 간이과세자 2.6%, 그 밖 1.3% / 이후 1.3%.
+    # 연 한도 500만원(2017 과세기간까지) → 1,000만원(2018.12.31. 개정 부칙 제4조: 시행 이후 신고분 → 간이과세자는 2018 과세기간부터)
+    _card_old = _before["card_cash_receipt"]
+    _card_rate_old = 0.026 if food_lodging else 0.013
+    _card_cap = 5_000_000 if year <= 2017 else 10_000_000
+    card_credit = min(_floor_won(_card_old, _card_rate_old) + _floor_won(card_cash_receipt_supply_incl_vat - _card_old, 0.013), _card_cap)
 
-    # 세금계산서 미수취 가산세 (제68조의2, 0.5%)
-    no_invoice_penalty = _floor_won(no_invoice_purchase_incl_vat, 0.005)
+    # 세금계산서 미수취 가산세(제68조의2②, 0.5%): 2021.7.1. 이후 공급받은 분만(부칙 제12조)
+    no_invoice_penalty = _floor_won(no_invoice_purchase_incl_vat - _before["no_invoice_purchase"], 0.005)
 
     # 공제 합계 (납부세액 한도)
     total_credits = min(input_credit + card_credit, tax_due)
@@ -2399,10 +2443,15 @@ def vat_simplified_taxpayer(supply_incl_vat: Annotated[int, Field(description="�
         {"항목": "자기적립마일리지 등 차감", "금액": mileage_supply_incl_vat, "근거": "부가가치세법 제63조"},
         {"항목": "과세표준(공급대가 − 마일리지)", "금액": tax_base, "근거": "부가법 제63조"},
         {"항목": f"납부세액(과세표준 × 부가가치율 {value_added_rate} × 10%)", "금액": tax_due_display, "근거": "부가가치세법 제63조"},
-        {"항목": "매입세금계산서 등 공제(수취 매입 × 0.5%)", "금액": input_credit, "근거": "부가가치세법 제63조"},
-        {"항목": "신용카드매출전표등 발행세액공제(1.3%, 한도 1,000만원)", "금액": card_credit, "근거": "부가가치세법 제46조"},
+        {"항목": ("매입세금계산서 등 공제(수취 매입 × 0.5%)" if not _inv_old else
+                 f"매입세금계산서 등 공제(2021.6.30.까지 {_inv_old:,}원 × 10/110 × 부가가치율 {value_added_rate} = {input_credit_old:,}원"
+                 + (f" + 이후 {invoice_purchase_incl_vat - _inv_old:,}원 × 0.5%)" if invoice_purchase_incl_vat > _inv_old else ")")),
+         "금액": input_credit, "근거": "부가가치세법 제63조" + ("(2020.12.22. 개정 전 제3항), 법률 제17653호 부칙 제10조" if _inv_old else "")},
+        {"항목": (f"신용카드매출전표등 발행세액공제({'2021.6.30.까지 ' + format(_card_rate_old * 100, '.1f') + '%' + (', 이후 1.3%' if card_cash_receipt_supply_incl_vat > _card_old else '') if _card_old else '1.3%'}, "
+                 f"한도 {_card_cap // 10_000:,}만원)"), "금액": card_credit, "근거": "부가가치세법 제46조"},
         {"항목": "공제 합계(납부세액 한도)", "금액": total_credits, "근거": "부가가치세법 제63조"},
-        {"항목": "세금계산서 미수취 가산세(0.5%)", "금액": no_invoice_penalty, "근거": "부가가치세법 제68조의2"},
+        {"항목": "세금계산서 미수취 가산세(0.5%" + (", 2021.7.1. 이후 공급받은 분만)" if year <= 2021 else ")"), "금액": no_invoice_penalty,
+         "근거": "부가가치세법 제68조의2" + ("(2021.7.1. 시행, 법률 제17653호 부칙 제12조)" if year <= 2021 else "")},
         {"항목": "가산세 합계", "금액": total_penalties, "근거": "부가가치세법 제68조의2"},
         {"항목": "납부세액 − 공제 + 가산세(음수 0)", "금액": net_before_prepaid, "근거": "부가가치세법 제63조"},
         {"항목": "예정부과·예정신고·수시부과 세액 공제", "금액": prepaid_tax, "근거": "부가가치세법 제67조2항"},
@@ -2437,7 +2486,10 @@ def vat_simplified_taxpayer(supply_incl_vat: Annotated[int, Field(description="�
     }
     if exempt_reason:
         result["판단"] = exempt_reason
-    return _ok(result, "부가가치세법 제46조·제63조·제67조·제68조의2·제69조",
+    if year <= 2021:
+        result["주의"] = ("2021.6.30.까지 공급분은 종전 규정 — 업종별 부가가치율도 2021.7.1.에 바뀌었으므로(5~30% → 15~40%) 그 과세기간의 율을 넣어야 함. "
+                        "종전 규정의 의제매입세액공제(음식점업 등)는 이 도구가 계산하지 않음")
+    return _ok(result, "부가가치세법 제46조·제63조·제67조·제68조의2·제69조" + (", 법률 제17653호 부칙 제8조·제10조·제12조" if year <= 2021 else ""),
                산식="과세표준 = 공급대가 − 마일리지, 납부세액 = 과세표준 × 부가가치율 × 10%, 차가감 = max(0, 납부세액 − min(매입공제+카드공제, 납부세액)) + 가산세 − 예정부과·수시부과세액(음수면 환급)" +
                (" (면제 — 납부세액 0)" if exempt else ""))
 
@@ -2447,17 +2499,34 @@ def vat_simplified_taxpayer(supply_incl_vat: Annotated[int, Field(description="�
 def vat_card_sales_credit(amount: Annotated[int, Field(description="신용카드·현금영수증 발급분 공급대가(원)")], supplied_on: Annotated[str, Field(description="공급일 YYYY-MM-DD")],
                           used_this_year: Annotated[int, Field(description="같은 해 이미 공제받은 금액(원)")] = 0,
                           individual: Annotated[bool, Field(description="개인사업자 여부(True면 공제 대상)")] = True,
-                          prior_year_supply: Annotated[int | None, Field(description="직전 연도 공급가액 합계(원). 한도 초과 시 공제 제외")] = None) -> dict:
+                          prior_year_supply: Annotated[int | None, Field(description="직전 연도 공급가액 합계(원). 한도 초과 시 공제 제외")] = None,
+                          simplified_food_lodging: Annotated[bool, Field(description="음식점업·숙박업을 하는 간이과세자 여부 — 2021.6.30.까지 공급분 2.6%, 2021.7.1.부터 1.3%")] = False,
+                          simplified: Annotated[bool, Field(description="간이과세자 여부 — 연 한도 1,000만원 적용 시점이 다름(간이과세자는 2018년 과세기간 전체, 일반과세자는 2018년 제2기 확정분부터)")] = False) -> dict:
     """신용카드매출전표 등 발행세액공제(공제율 1.3%, 연 한도 1,000만 원). 언제: 개인사업자가 신용카드·현금영수증 매출에 대해 발행세액공제를 얼마나 받는지 계산한다.
 입력: 신용카드·현금영수증 발급분 공급대가(원) → amount, 공급일(YYYY-MM-DD, 세율·한도 연도표 기준) → supplied_on, 같은 해 이미 공제받은 금액(원) → used_this_year, 개인사업자 여부 → individual(기본 True), 직전 연도 공급가액 합계(원) → prior_year_supply(직전연도_공급가액_한도 초과 시 공제 0).
-결과: 공제액(법인·한도 초과 시 0, 판단 문구 포함), 근거(부가가치세법 제46조제1항). 신용카드매출전표 등 발행세액공제; 공제율 1.3%(간이 음식·숙박 2.6%는 2021.7.1. 전), 연 한도 1,000만 원(2018년 제2기 확정부터), 개인사업자만 해당·직전 연도 공급가액 한도 이하."""
+  음식점업·숙박업 간이과세자 여부 → simplified_food_lodging(2021.6.30.까지 공급분 2.6%), 간이과세자 여부 → simplified(2018년 한도 적용 시점).
+결과: 공제액·공제율(법인·한도 초과 시 0, 판단 문구 포함), 근거(부가가치세법 제46조제1항). 신용카드매출전표 등 발행세액공제; 공제율 1.3%(간이 음식·숙박 2.6%는 2021.7.1. 전), 연 한도 500만 원(2017년까지) → 1,000만 원(2018년 제2기 확정부터, 간이과세자는 2018년 과세기간부터), 개인사업자만 해당·직전 연도 공급가액 한도 이하. 공급일 2016~2026만 지원."""
     # 법인 또는 직전 연도 공급가액 한도 초과: 공제 0 (부가가치세법 제46조①)
     공급가액_한도 = vocab.rule("직전연도_공급가액_한도", int(supplied_on[:4]))["한도"]
     if not individual or (prior_year_supply is not None and prior_year_supply > 공급가액_한도):
         return _ok({"공제액": 0},
                    f"부가가치세법 제46조① — 개인사업자 아님 또는 직전 연도 공급가액 {공급가액_한도:,}원 초과로 발행세액공제 대상 아님")
-    return _ok({"공제액": V.card_sales_credit(amount, supplied_on, used_this_year=used_this_year)},
-               "부가가치세법 제46조①")
+    try:
+        _chk.supported_year("supplied_on", supplied_on)
+    except ValueError as e:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [str(e)]}
+    if simplified_food_lodging:
+        simplified = True
+    _on = supplied_on
+    if simplified and supplied_on[:4] == "2018":
+        _on = "2018-12-31"       # 간이과세자는 과세기간이 1년 — 2018년분 전체가 2019.1. 신고분이라 한도 1,000만원(2018.12.31. 개정 부칙 제4조)
+    공제액 = V.card_sales_credit(amount, _on, simplified_food_lodging=simplified_food_lodging, used_this_year=used_this_year)
+    out = _ok({"공제액": 공제액, "공제율": 0.026 if (simplified_food_lodging and supplied_on < "2021-07-01") else 0.013}, "부가가치세법 제46조①")
+    if simplified_food_lodging:
+        out["판단"] = [{"항목": "공제율", "결론": ("음식점업·숙박업 간이과세자 2.6% — 2021.6.30.까지 공급분" if supplied_on < "2021-07-01"
+                                               else "1.3% — 2021.7.1. 이후 공급분은 음식점업·숙박업 간이과세자도 1.3%"),
+                       "근거": "부가가치세법 제46조①(2020.12.22. 개정), 법률 제17653호 부칙 제8조"}]
+    return out
 
 
 @mcp.tool(annotations=CALC)
