@@ -31,10 +31,13 @@ def _is_fdi(event: str, ownership_ratio_after: float | None,
         if loan_term_months >= 12:
             return True, "기투자 법인에 1년 이상 대여 — 시행령 제8조 해외직접투자 해당"
         return False, "1년 미만 대여는 해외직접투자 아님 — 다른 자본거래 신고 검토"
+    if event == "청산":
+        # 청산은 이미 신고한 해외직접투자를 끝내는 절차 — 청산 뒤 지분율(0)로 해당 여부를 다시 가리지 않는다
+        return True, "이미 신고한 해외직접투자의 청산 — 제9-6조 청산보고·잔여재산 회수 대상"
     if ownership_ratio_after is not None and ownership_ratio_after >= 0.10:
-        return True, f"출자 지분 {ownership_ratio_after:.0%} 이상 — 시행령 제8조 해외직접투자 해당"
+        return True, f"출자 지분 {ownership_ratio_after:.0%}(10% 이상) — 시행령 제8조 해외직접투자 해당"
     if ownership_ratio_after is not None and ownership_ratio_after < 0.10:
-        return False, f"지분 {ownership_ratio_after:.0%} 미만으로 해외직접투자 요건 미충족(임원파견·기술제공·매매계약 등 관계 수립 없으면 해당 아님)"
+        return False, f"지분 {ownership_ratio_after:.0%} — 10% 미만으로 해외직접투자 요건 미충족(임원파견·기술제공·매매계약 등 관계 수립 없으면 해당 아님)"
     if event in {"신설출자", "증액출자"}:
         return False, "출자 이벤트인데 ownership_ratio_after 없이 지분 요건 판정 불가"
     return False, "해외직접투자 요건 미충족"
@@ -262,7 +265,11 @@ def foreign_exchange_reporting(
                                     recovered_usd, fy)
 
     # 세무 연결
-    세무 = _tax_connection(event, fdi, ownership_ratio_after, ed, fy, loan_term_months)
+    세무 = _tax_connection(event, fdi and event != "청산", ownership_ratio_after, ed, fy, loan_term_months)
+    if event == "청산":
+        # 청산은 새 신고가 아니라 사후관리(청산보고서) — 지분·금액으로 만든 신고 안내를 붙이지 않는다
+        신고 = {"구분": "해당없음", "기관": "", "기한": "", "서류": [], "비고": "청산은 새 신고가 아니라 사후관리(청산보고서, 제9-6조) 대상"}
+        세무["안내"].insert(0, "청산한 사업연도분 해외현지법인 명세서등(국조법 제58조) 제출 여부는 따로 확인 — 이 도구는 기한을 정하지 않음")
 
     # 판단
     판단 = [사유] if 사유 else []
