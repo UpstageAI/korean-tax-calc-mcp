@@ -566,12 +566,20 @@ def _guard(fn):
 @mcp.tool(annotations=CALC)
 @_guard
 def corporate_tax(base: WON, year: YEAR,
-                  months: Annotated[int, Field(description="사업연도 월수(1년 미만이면 1~11)")] = 12) -> dict:
+                  months: Annotated[int, Field(description="사업연도 월수(1년 미만이면 1~11)")] = 12,
+                  small_rental_corp: Annotated[bool, Field(description="법인세법 제60조의2제1항제1호 법인(부동산임대업이 주된 사업인 소규모 법인 등 성실신고확인대상)이면 true — 2025 사업연도부터 200억 이하 구간 세율이 19%(2026년 20%)")] = False) -> dict:
     """법인세 산출세액(사업연도 과세표준 × 세율표, 1년 미만 사업연도 월할 환산). 언제: 법인세 신고·세무조정에서 과세표준이 정해졌을 때 산출세액을 구한다.
-입력: 과세표준(과세표준, 원) → base, 사업연도(2016~2026) → year, 월수(1~12) → months.
-결과: 산출세액·과세표준·사업연도·월수와 근거(법인세법 제55조제1항·제2항). Corporate income tax on a tax base for a fiscal year (rate table, prorated for short fiscal years)."""
+입력: 과세표준(과세표준, 원) → base, 사업연도(2016~2026) → year, 월수(1~12) → months, 성실신고확인대상 소규모 법인(제60조의2제1항제1호) 여부 → small_rental_corp.
+결과: 산출세액·과세표준·사업연도·월수와 근거(법인세법 제55조제1항·제2항). 세율표는 사업연도별(2016~2017, 2018~2022, 2023~2025, 2026)로 다르고,
+  소규모 법인 세율(제55조제1항제2호)은 2025.1.1. 이후 개시 사업연도부터 적용. Corporate income tax on a tax base for a fiscal year (rate table, prorated for short fiscal years)."""
     _chk.int_range("months", months, 1, 12, "사업연도 월수 ")
-    return _ok({"산출세액": C.corp_tax(base, year, months), "과세표준": base, "사업연도": year, "월수": months}, "법인세법 제55조(세율)·제55조②(1년 미만)")
+    결과 = {"산출세액": C.corp_tax(base, year, months, small_rental=small_rental_corp), "과세표준": base, "사업연도": year, "월수": months}
+    if not small_rental_corp:
+        return _ok(결과, "법인세법 제55조(세율)·제55조②(1년 미만)")
+    결과["소규모법인_세율"] = year >= 2025
+    주의 = (["법인세법 제55조①2호 세율(200억원 이하 19%, 2026년부터 20%) 적용 — 제60조의2①1호 요건(부동산임대업 주된 사업 등, 시행령 제97조의4②)은 호출자 판정"] if year >= 2025
+            else ["성실신고확인대상 소규모 법인의 별도 세율(제55조①2호)은 2025.1.1. 이후 개시 사업연도부터 — 이 사업연도는 일반 세율로 계산"])
+    return _ok(결과, "법인세법 제55조①2호(성실신고확인대상 소규모 법인 세율)·제55조②(1년 미만)·제60조의2①1호" if year >= 2025 else "법인세법 제55조(세율)·제55조②(1년 미만)", 주의=주의)
 
 
 @mcp.tool(annotations=CALC)
@@ -3635,6 +3643,7 @@ def deemed_dividend_bonus_shares(
     shareholders: Annotated[list, Field(description="[{name, shares, self_stock?:bool}] — 무상증자 직전 보유주식수, 발행법인 자기주식은 self_stock=true")],
     self_stock_allotment: Annotated[Literal["다른주주에게교부", "미교부"], Field(description="자기주식 몫의 무상주를 다른 주주에게 교부했는지")],
     shareholder_type: Annotated[Literal["법인", "개인"], Field(description="주주 구분 — 법인세법 제16조(법인) / 소득세법 제17조(개인) 근거 조문이 다름")],
+    capitalized_on: Annotated[str | None, Field(description="자본전입일(YYYY-MM-DD, 선택). 재원이 상환주식_주식발행초과금이고 year가 2024이면 필수 — 2024.2.29. 이후 전입분부터 과세")] = None,
 ) -> dict:
     """잉여금을 자본에 전입(무상증자)할 때 주주별 의제배당 금액. 언제: 법인이 잉여금을 자본에 전입해 무상주를 발행할 때 주주별 의제배당을 계산한다.
 입력:
@@ -3647,6 +3656,7 @@ def deemed_dividend_bonus_shares(
   shareholder_type — '법인' | '개인': 근거 조문(법인세법 제16조 / 소득세법 제17조)이 다름.
 결과: 주주별 {배정주식수, 전입전지분율, 전입후지분율, 의제배당, 과세여부, 근거}, 전입후총주식수, 재원구분, 과세대상합계, 산식.
   재원 어휘에 없으면 'error' 반환(계산하지 않음).
+  상환주식_주식발행초과금(이익잉여금으로 상환된 상환주식의 주식발행액면초과액)은 2024.2.29. 이후 자본에 전입하는 분부터 과세(법인세법 시행령 제12조제1항제5호, 2024.2.29. 부칙 제4조) — 그 전 전입분은 의제배당 아님.
   재평가적립금을 일부만 전입하면 1% 토지분은 전입액 × (1% 토지 재평가차액 ÷ 재평가차액 전체)로 나눠 넣을 것(법인세법 시행령 제12조제4항, 소득세법 시행령 제27조제5항)."""
     source = source.strip()
     if source not in _NON_TAXABLE_SOURCES and source not in _TAXABLE_SOURCES and source not in _TAXABLE_SOURCES_GU_FALSE:
@@ -3659,6 +3669,23 @@ def deemed_dividend_bonus_shares(
 
     _chk.need(par_value > 0, f"par_value={par_value} — 신주 1주의 액면금액(원)은 1 이상")
     taxable_source = source in _TAXABLE_SOURCES or source in _TAXABLE_SOURCES_GU_FALSE
+    전입시기_주의 = None
+    if source == "상환주식_주식발행초과금":
+        # 법인세법 시행령 제12조①5호(2024.2.29. 신설), 부칙 제4조: 시행 이후 자본에 전입하는 경우부터 (Claude 11-11, 연도 점검)
+        if capitalized_on is not None:
+            try:
+                과세시기 = date.fromisoformat(capitalized_on) >= date(2024, 2, 29)
+            except ValueError:
+                return {"error": f"capitalized_on='{capitalized_on}' — YYYY-MM-DD 형식", "허용값": {"capitalized_on": "YYYY-MM-DD"}}
+        elif year == 2024:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": ["상환주식_주식발행초과금은 2024.2.29. 이후 전입분부터 과세 — year=2024이면 capitalized_on(자본전입일)이 필요"],
+                    "허용값": {"capitalized_on": "YYYY-MM-DD"}}
+        else:
+            과세시기 = year >= 2025
+        if not 과세시기:
+            taxable_source = False
+            전입시기_주의 = "상환주식 주식발행초과금의 자본전입은 2024.2.29. 이후 전입분부터 의제배당(법인세법 시행령 제12조①5호, 2024.2.29. 부칙 제4조) — 이 전입은 그 전이라 의제배당 아님"
     total_pre = sum(int(h["shares"]) for h in shareholders)
     n_new = int(capitalized_amount / par_value)  # 신주 총수
 
@@ -3721,7 +3748,7 @@ def deemed_dividend_bonus_shares(
 
         taxable_total += deemed_div
 
-        basis = _income_basis(source, shareholder_type, taxable)
+        basis = _income_basis("주식발행초과금" if 전입시기_주의 else source, shareholder_type, taxable)
         if shareholder_type == "개인" and source in _TAXABLE_SOURCES_GU_FALSE:
             basis = basis + " — Gross-up 비대상(소득세법 제17조③)"
         result_list.append({
@@ -3771,6 +3798,8 @@ def deemed_dividend_bonus_shares(
         "과세대상합계": taxable_total,
         "산식": calc_formula,
     }
+    if 전입시기_주의:
+        return _ok(result, _income_basis("주식발행초과금", shareholder_type, False), 주의=[전입시기_주의])
     return _ok(result, _income_basis(source, shareholder_type, taxable_source))
 
 
