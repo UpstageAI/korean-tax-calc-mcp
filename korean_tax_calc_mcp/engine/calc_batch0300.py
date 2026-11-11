@@ -316,7 +316,7 @@ def overseas_account_reporting(
             연도_주의.append("2018년 보유분까지 재외국민 면제는 신고대상 연도 종료일 2년 전부터의 국내 거소 일수 합계(183일 이하)로 판정 — overseas_korean_days_in_korea에 2년치 일수를 넣는다")
         if overseas_korean_days_in_korea <= 면제일수:
             면제사유.append(f"재외국민: 신고대상 연도 종료일 {창}부터 국내 거소 일수 {면제일수}일 이하 → 신고의무 면제"
-                        + ("(국조법 제54조1호나)" if year >= 2021 else "(구 국조법 제34조⑤1호)"))
+                        + ("(국조법 제54조1호나목)" if year >= 2025 else "(국조법 제54조1호)" if year >= 2021 else "(구 국조법 제34조⑤1호)"))
             면제체크 = True
     # 조세조약 상대국 거주자 면제는 2025.1.1. 이후 개시 과세기간 보유분부터(법 제54조7호, 2024.12.31. 개정 부칙 제5조)
     if treaty_resident_of_other_country:
