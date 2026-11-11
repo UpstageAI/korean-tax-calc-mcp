@@ -51,10 +51,18 @@ def from_tables(md):
     held = {c: sum(r for d in doms for _, r in R.paths(stakes, d, c)) for c in sales}
     m = re.search(r"^#+\s*\d*\.?\s*확인 필요.*?$(.*?)(?=^#+\s|\Z)", md, re.S | re.M)
     if m: notes = [re.sub(r"【[^】]*】", "", l).strip("-• ").strip() for l in m.group(1).splitlines() if l.strip("-• ").strip()]
-    return {"수혜법인": corp, "규모": size, "지배주주": doms, "지배주주_판정": why,
+    # 사업연도 종료일: '사업연도' 칸의 마지막 날짜(예: 2017.1.1.~2017.12.31.) — 비율·계산식이 사업연도마다 다름(related.tunnel_rule)
+    fy_txt = next((v for k, v in head.items() if "사업연도" in k and "소득" not in k), "")
+    ds = re.findall(r"(\d{4})\s*[.\-년/]\s*(\d{1,2})\s*[.\-월/]\s*(\d{1,2})", str(fy_txt))
+    fy_end = f"{int(ds[-1][0]):04d}-{int(ds[-1][1]):02d}-{int(ds[-1][2]):02d}" if ds else None
+    fy_start = f"{int(ds[0][0]):04d}-{int(ds[0][1]):02d}-{int(ds[0][2]):02d}" if len(ds) >= 2 else None
+    if fy_end is None:
+        notes = notes + ["사업연도 종료일을 자료에서 읽지 못함 — 2018.1.1. 이후 종료 사업연도 규정으로 계산. 2017.12.31. 이전 종료분은 비율·계산식이 다르므로 tunnelling_gift_nts에 fiscal_year_end를 넣어 다시 계산"]
+    return {"수혜법인": corp, "규모": size, "지배주주": doms, "지배주주_판정": why, "사업연도_종료일": fy_end,
             "입력": dict(size=size, op_income=_num(head.get("세무조정 후 영업손익")), taxable_income=_num(head.get("각 사업연도 소득금액")),
                        tax=_num(head.get("법인세 산출세액")), sales_total=_num(head.get("매출액")), sales_by_corp=sales, relations=rel,
-                       holdings_in_related={c: v for c, v in held.items() if v}, indirect_corp_of=via, excluded_by_corp=excluded),
+                       holdings_in_related={c: v for c, v in held.items() if v}, indirect_corp_of=via, excluded_by_corp=excluded,
+                       **({"on": fy_end} if fy_end else {}), **({"fiscal_start": fy_start} if fy_start and fy_end else {})),
             "확인 필요": notes}
 
 
@@ -67,7 +75,7 @@ _TUNNEL_PROMPT = """아래 '신고안내 작성사례' 텍스트에서 일감몰
 판정은 하지 않는다. 자료에 없는 숫자와 관계는 만들지 않는다.
 
 출력 JSON 키:
-- 수혜법인: {"법인명": "...", "기업 규모": "중소"|"중견"|"일반"}
+- 수혜법인: {"법인명": "...", "기업 규모": "중소"|"중견"|"일반", "사업연도": "2017.1.1.~2017.12.31." 또는 null(자료에 적힌 대로)}
 - 수혜법인 주주: [{"주주": "...", "특수관계": "...", "지분율": "20%" 또는 null}]
 - 주주법인: [{"법인": "...", "주주": "...", "지분율": "30%" 또는 null}]
 - 매출처: [{"법인": "...", "매출액": "1,000,000,000원" 또는 숫자, "과세제외매출액": "..." 또는 null}]
@@ -90,6 +98,8 @@ def from_text(doc):
     corp = j.get("수혜법인", {}) or {}
     md.append(f"| 법인명 | {corp.get('법인명', '')} |")
     md.append(f"| 기업 규모 | {corp.get('기업 규모', '')} |")
+    if corp.get("사업연도"):
+        md.append(f"| 사업연도 | {corp.get('사업연도')} |")
 
     md += ["", "## 2. 수혜법인 주주", "| 주주 | 특수관계 | 지분율 |", "|---|---|---|---|"]
     for sh in (j.get("수혜법인 주주") or []):

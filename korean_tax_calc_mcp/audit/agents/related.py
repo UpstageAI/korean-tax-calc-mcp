@@ -116,9 +116,9 @@ def total_ratio(stakes, holder, target, min_indirect=0.0):
 
 
 # ── 특수관계법인: 상증령 제2조의2①6호·7호 (30% / 50%) ──
-def controlled(people, family, stakes, person, law="상증"):
-    """person과 친족(1호)이 30% 이상(6호) → 그 법인과 함께 50% 이상(7호)인 법인. 반복 확장."""
-    group = {person} | {p for p, v in people.items() if v.get("구분") == "개인" and is_kin(family, person, p, law)}
+def controlled(people, family, stakes, person, law="상증", on="2099-12-31"):
+    """person과 친족(1호)이 30% 이상(6호) → 그 법인과 함께 50% 이상(7호)인 법인. 반복 확장. on=판정 기준일(친족 범위 — kin_limits)."""
+    group = {person} | {p for p, v in people.items() if v.get("구분") == "개인" and is_kin(family, person, p, law, on)}
     corps = {c for _, c, _ in stakes}
     got, changed = {}, True
     while changed:
@@ -132,22 +132,23 @@ def controlled(people, family, stakes, person, law="상증"):
 
 
 # ── 최대주주등·지배주주 (상증령 제19조②, 제34조의3①) ──
-def largest_group(people, family, stakes, corp):
+def largest_group(people, family, stakes, corp, on="2099-12-31"):
     holders = {h: r for h, c, r in stakes if c == corp}
     clusters = []
     for h in holders:
         base = h if people.get(h, {}).get("구분") == "개인" else h
-        grp = {x for x in holders if x == h or (people.get(x, {}).get("구분") == "개인" and people.get(h, {}).get("구분") == "개인" and is_kin(family, h, x, "상증"))}
+        grp = {x for x in holders if x == h or (people.get(x, {}).get("구분") == "개인" and people.get(h, {}).get("구분") == "개인" and is_kin(family, h, x, "상증", on))}
         if people.get(h, {}).get("구분") == "개인":
-            _, ctl = controlled(people, family, stakes, h)
+            _, ctl = controlled(people, family, stakes, h, on=on)
             grp |= {x for x in holders if x in ctl}
         clusters.append((sum(holders[x] for x in grp), grp))
     return max(clusters, key=lambda t: t[0]) if clusters else (0, set())
 
 
-def dominant_shareholder(people, family, stakes, corp):
-    """지배주주: 최대주주등 중 직접보유비율 최고자가 개인이면 그 개인, 법인이면 직접+간접 합계 최고 개인(①1·2호)."""
-    _, grp = largest_group(people, family, stakes, corp)
+def dominant_shareholder(people, family, stakes, corp, on="2099-12-31"):
+    """지배주주: 최대주주등 중 직접보유비율 최고자가 개인이면 그 개인, 법인이면 직접+간접 합계 최고 개인(①1·2호).
+    on=사업연도 종료일 — 친족 범위가 2023.3.1. 전은 6촌 혈족·4촌 인척, 이후 4촌·3촌(kin_limits)."""
+    _, grp = largest_group(people, family, stakes, corp, on)
     if not grp: return None, "주주 자료 없음"
     top = max(grp, key=lambda x: direct(stakes, x, corp))
     if people.get(top, {}).get("구분") == "개인":
@@ -157,7 +158,7 @@ def dominant_shareholder(people, family, stakes, corp):
     members = set(grp)
     corps_in = {x for x in grp if people.get(x, {}).get("구분") == "법인"}
     for p in indiv:
-        kin = {q for q in indiv if q != p and is_kin(family, p, q, "상증")}
+        kin = {q for q in indiv if q != p and is_kin(family, p, q, "상증", on)}
         if any(q in grp for q in kin) or any(sum(r for h, c, r in stakes if c == k and h in kin | {p}) >= 0.30 for k in corps_in):
             members.add(p)
     # ①2호 단서 가·나목: 최대주주등이 아닌 자(수혜법인 주주·직접보유 최고 법인의 주주 포함)는 제외
@@ -180,6 +181,35 @@ def size_rates(size, on="2099-12-31"):
     return 0.30, 0.03, None  # 일반: 5% 초과 거래비율 × 주식보유비율
 
 
+def tunnel_rule(size, on="2099-12-31", fiscal_start=None):
+    """일감몰아주기 사업연도별 규정 — (정상거래비율, 한계보유비율, 계산식 차감 거래비율, 계산식 차감 보유비율, 일반기업 2/3·1천억 요건 여부).
+    on=수혜법인 사업연도 종료일(증여시기, 법 제45조의3③). fiscal_start=사업연도 개시일(생략 시 종료일 1년 전 다음 날).
+    - 2018.1.1. 이후 종료(법 2017.12.19. 개정, 부칙 제10조: 시행 전 증여의제분은 종전): 중소 50%·10% 전부 차감 / 중견 40%·10%의 각 1/2 차감 /
+      일반 30%·3%, 계산식은 5% 초과 거래비율 × 보유비율 전부, 과세요건에 '정상거래비율의 2/3 초과 + 특수관계법인 매출 1천억원 초과' 추가(영 ⑮ 2018.2.13. 신설).
+    - 2014.1.1.~2017.12.31. 종료(법 20161231·20171231 시행본): 일반 '정상거래비율의 1/2'(15%) 초과 거래비율 × 한계보유비율(3%) 초과 보유비율,
+      중소·중견 정상거래비율 초과 × 한계보유비율(10%) 초과. 정상거래비율(영 제34조의2⑤): 일반 30%, 중소 50%,
+      중견은 2017년 개시 사업연도부터 40%(2017.2.7. 개정 부칙 제3조), 그 전 50%.
+    - 2013년 이전은 size_rates의 종전 값(논문 근거)."""
+    if on < "2014-01-01":
+        n, l, m = size_rates(size, on)
+        return n, l, n * m, l * m, False
+    if on < "2018-01-01":
+        if size == "중소": return 0.50, 0.10, 0.50, 0.10, False
+        if size == "중견":
+            if fiscal_start is None:
+                from datetime import date as _d, timedelta as _td
+                e = _d.fromisoformat(on)
+                try: st = e.replace(year=e.year - 1) + _td(days=1)
+                except ValueError: st = e.replace(year=e.year - 1, day=28) + _td(days=1)
+                fiscal_start = st.isoformat()
+            n = 0.40 if fiscal_start >= "2017-01-01" else 0.50
+            return n, 0.10, n, 0.10, False
+        return 0.30, 0.03, 0.15, 0.03, False
+    if size == "중소": return 0.50, 0.10, 0.50, 0.10, False
+    if size == "중견": return 0.40, 0.10, 0.20, 0.05, False
+    return 0.30, 0.03, 0.05, 0.0, True
+
+
 def split_limit(relations, limit):
     """⑬항: 한계보유비율을 간접보유비율에서 먼저, 작은 것부터 뺀 뒤 남으면 직접에서 뺀다."""
     left, out = limit, {}
@@ -188,25 +218,28 @@ def split_limit(relations, limit):
     return out
 
 
-def tunnelling(people, family, stakes, beneficiary, sales_total, sales_by_corp, after_tax_op_profit, size, excluded_sales=0, on="2099-12-31"):
-    """반환: 판정·계산 과정 전체(검증 가능하게 수식 문자열 포함). excluded_sales는 ⑩항 과세제외매출액(입력)."""
-    ctrl, why = dominant_shareholder(people, family, stakes, beneficiary)
+def tunnelling(people, family, stakes, beneficiary, sales_total, sales_by_corp, after_tax_op_profit, size, excluded_sales=0, on="2099-12-31",
+               fiscal_start=None):
+    """반환: 판정·계산 과정 전체(검증 가능하게 수식 문자열 포함). excluded_sales는 ⑩항 과세제외매출액(입력).
+    on=사업연도 종료일 — 비율·계산식(tunnel_rule)과 친족 범위(kin_limits)를 그 시점 규정으로."""
+    ctrl, why = dominant_shareholder(people, family, stakes, beneficiary, on)
     if not ctrl: return {"결론": "지배주주 판정 불가", "사유": why}
-    group, related_corps = controlled(people, family, stakes, ctrl)
+    group, related_corps = controlled(people, family, stakes, ctrl, on=on)
     rel_sales = {c: v for c, v in sales_by_corp.items() if c in related_corps}
     ratio = sum(rel_sales.values()) / sales_total if sales_total else 0
-    normal, limit, mult = size_rates(size, on)
+    normal, limit, sub_ratio, sub_hold, alt_route = tunnel_rule(size, on, fiscal_start)
     taxable_ratio = 1 - (excluded_sales / sales_total if sales_total else 0)
     profit = after_tax_op_profit * taxable_ratio
     rel_amt = sum(rel_sales.values())
     # 과세 요건(법 ①1호): 중소·중견은 정상거래비율 초과, 일반은 그 초과 또는 (정상거래비율의 2/3 초과 & 특관매출 1천억 초과)
-    hit = ratio > normal or (mult is None and ratio > normal * 2 / 3 and rel_amt > 100_000_000_000)
+    hit = ratio > normal or (alt_route and ratio > normal * 2 / 3 and rel_amt > 100_000_000_000)
     # 계산식(법 ①2호): 중소 = 정상거래비율·한계보유비율 초과분, 중견 = 각 50% 초과분, 일반 = 5% 초과 거래비율 × 주식보유비율 전부
-    ex_ratio = ratio - normal * mult if mult is not None else ratio - 0.05
+    # 2017.12.31. 이전 종료 사업연도: 일반 = 정상거래비율의 1/2 초과 × 한계보유비율 초과, 중소·중견 = 정상거래비율 초과 × 한계보유비율 초과
+    ex_ratio = ratio - sub_ratio
     res = {"수혜법인": beneficiary, "기업규모": size, "지배주주": ctrl, "지배주주판정": why, "지배주주등(친족)": sorted(group),
            "특수관계법인": related_corps, "특수관계법인매출": rel_sales, "특수관계법인거래비율": ratio,
-           "정상거래비율": normal, "한계보유비율": limit, "계산식_차감거래비율": normal * mult if mult is not None else 0.05,
-           "계산식_차감보유비율": limit * mult if mult is not None else 0,
+           "정상거래비율": normal, "한계보유비율": limit, "계산식_차감거래비율": sub_ratio,
+           "계산식_차감보유비율": sub_hold,
            "세후영업이익(과세매출비율 반영)": round(profit), "주주별": [], "합계": 0}
     if not hit:
         res["결론"] = f"과세 요건 미충족 — 특수관계법인거래비율 {ratio:.2%} ≤ 정상거래비율 {normal:.0%}"; return res
@@ -218,7 +251,7 @@ def tunnelling(people, family, stakes, beneficiary, sales_total, sales_by_corp, 
                 rel["→".join(path[1:-1])] = r
         tot = sum(rel.values())
         if tot <= limit: continue  # 법 ①: 주식보유비율이 한계보유비율 이하인 주주 제외(중견도 10% 기준)
-        net = split_limit(rel, limit * mult) if mult is not None else rel
+        net = split_limit(rel, sub_hold) if sub_hold else rel
         adj = {}
         if on < "2014-01-01" and ratio:
             for k in net:
@@ -609,8 +642,8 @@ def after_tax_op_profit(op_income, taxable_income, tax, taxable_sales_ratio):
 
 def tunnelling_nts(beneficiary, size, op_income, taxable_income, tax, sales_total, sales_by_corp, relations,
                    base_excluded=0.0, holdings_in_related=None, indirect_corp_of=None, dividends=None, excluded_by_corp=None,
-                   land_tax=0.0, credits=0.0, unreturned_tax=0.0):
-    """출자관계별 증여의제이익(책자 제2장 5).
+                   land_tax=0.0, credits=0.0, unreturned_tax=0.0, on="2099-12-31", fiscal_start=None):
+    """출자관계별 증여의제이익(책자 제2장 5). on=사업연도 종료일 — 비율·계산식을 그 시점 규정으로(tunnel_rule).
     relations: {관계명: 보유비율} — 예: {"직접": 0.20, "A법인 경유": 0.18}
     base_excluded: ⑩항 과세제외매출액(모든 관계 공통, 예: 중소-중소 거래)
     holdings_in_related: {특관법인: 지배주주등의 그 법인 보유비율} → ⑭3호(직접·다른 간접 관계)
@@ -618,9 +651,7 @@ def tunnelling_nts(beneficiary, size, op_income, taxable_income, tax, sales_tota
     dividends: {관계명: (배당소득, 분모)} → ⑮항 공제 (분모 = 배당가능이익×보유비율 등 책자 산식)
     excluded_by_corp: {특관법인: ⑩항 과세제외액} — ⑩항으로 이미 빠진 매출에는 ⑭항을 적용하지 않음(⑭항 본문)"""
     tax = op_tax_base(tax, land_tax, credits, unreturned_tax)
-    normal, limit, mult = size_rates(size)
-    sub_ratio = normal * mult if mult is not None else 0.05
-    sub_hold = limit * mult if mult is not None else 0.0
+    normal, limit, sub_ratio, sub_hold, alt_route = tunnel_rule(size, on, fiscal_start)
     rel_amt = sum(sales_by_corp.values())
     holdings_in_related = holdings_in_related or {}
     indirect_corp_of = indirect_corp_of or {}
@@ -651,8 +682,24 @@ def tunnelling_nts(beneficiary, size, op_income, taxable_income, tax, sales_tota
         out[rel] = {"과세제외매출액": excl, "특수관계법인거래비율": ratio, "과세매출비율": 1 - excl / sales_total,
                     "세후영업이익": profit, "보유비율(한계차감후)": net_hold.get(rel, 0), "증여의제이익": g, "배당공제": ded}
         total += g
-    hit = (rel_amt - base_excluded) / (sales_total - base_excluded) > normal if sales_total > base_excluded else False
-    return {"수혜법인": beneficiary, "과세요건(정상거래비율 초과)": hit, "출자관계별": out, "합계": total}
+    base_ratio = (rel_amt - base_excluded) / (sales_total - base_excluded) if sales_total > base_excluded else 0
+    hit = base_ratio > normal
+    res = {"수혜법인": beneficiary, "과세요건(정상거래비율 초과)": hit, "출자관계별": out, "합계": total,
+           "적용 비율": {"정상거래비율": normal, "한계보유비율": limit, "계산식_차감거래비율": sub_ratio, "계산식_차감보유비율": sub_hold}}
+    taxable = hit
+    if alt_route:   # 법 ①1호나목2): 일반기업 — 정상거래비율의 2/3 초과 + 특수관계법인 매출 1천억원 초과(2018.1.1. 이후 종료 사업연도)
+        alt = base_ratio > normal * 2 / 3 and rel_amt - base_excluded > 100_000_000_000
+        res["과세요건(정상거래비율 2/3 초과·매출 1천억 초과)"] = alt
+        taxable = hit or alt
+    res["과세 대상"] = taxable
+    if not taxable:
+        # 과세 요건(법 ①1호)을 충족하지 않으면 증여의제이익 없음 — 계산식 값은 '요건 미충족 시 계산값'으로만 남김
+        for v in out.values():
+            v["요건 미충족 시 계산값"] = v["증여의제이익"]
+            v["증여의제이익"] = 0
+        res["합계"] = 0
+        res["결론"] = f"과세 요건 미충족 — 특수관계법인거래비율 {base_ratio:.2%} ≤ 정상거래비율 {normal:.0%}"
+    return res
 
 
 def dividend_deduction(gain, dividend, dividend_capacity, holding, via_capacity=None, via_holding=None):
