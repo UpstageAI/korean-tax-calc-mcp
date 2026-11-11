@@ -245,6 +245,7 @@ def overseas_account_reporting(
     reported_amount_krw: int = 0,
     corrected_on: str | None = None,
     unexplained_amount_krw: int | None = None,
+    assessed_on: str | None = None,
 ) -> dict:
     """해외금융계좌 신고의무·과태료 판정(국조법 제53조①②·제54조·제90조①②, 시행령 제92조③·제93조①·제94조·제147조①②④).
 
@@ -302,6 +303,18 @@ def overseas_account_reporting(
 
     신고기한 = f"{year+1}-06-30"
 
+    # 과태료 부과기준은 부과일로 나눈다: 2025.2.28. 이후 부과분은 개정 기준(보유연도와 무관). assessed_on이 없으면 지금 부과하는 것으로 본다.
+    구기준 = False
+    if assessed_on is not None:
+        try:
+            부과일 = date.fromisoformat(assessed_on)
+        except (TypeError, ValueError):
+            return _오류([f"assessed_on='{assessed_on}' — YYYY-MM-DD"], {"assessed_on": "YYYY-MM-DD"})
+        if 부과일 < date(2021, 1, 1):
+            return _오류([f"assessed_on={assessed_on} — 2021.1.1. 전 부과분의 과태료 기준은 지원하지 않음(당시 시행령 대조 전)"],
+                         {"assessed_on": "2021-01-01 이후 또는 생략(현행 기준)"})
+        구기준 = 부과일 < date(2025, 2, 28)
+
     # 과태료 (의무 있는데 미신고·과소신고)
     과태료 = 0
     위반금액 = 0
@@ -311,9 +324,18 @@ def overseas_account_reporting(
 
     if 신고의무:
         위반금액 = max(0, 최고잔액 - reported_amount_krw)   # 신고액이 최고잔액 이상이면 위반 없음
-        # 과태료 = min(위반금액 × 10%, 10억) (영 제147조①1호), 법 상한 20% (제90조①)
-        과태료 = _trunc_won(_exact(위반금액) * Fraction(1, 10))
-        과태료 = min(과태료, 1_000_000_000)
+        if 구기준:
+            # 2025.2.28. 전 부과분 — 누진표(영 제147조① 2024.12.31. 시행본): 20억 이하 10%, 20억 초과 50억 이하 2억 + 초과분 15%,
+            # 50억 초과 6억5천만 + 초과분 20%(20억원 한도)
+            if 위반금액 <= 2_000_000_000:
+                과태료 = _trunc_won(_exact(위반금액) * Fraction(1, 10))
+            elif 위반금액 <= 5_000_000_000:
+                과태료 = 200_000_000 + _trunc_won(_exact(위반금액 - 2_000_000_000) * Fraction(15, 100))
+            else:
+                과태료 = min(650_000_000 + _trunc_won(_exact(위반금액 - 5_000_000_000) * Fraction(1, 5)), 2_000_000_000)
+        else:
+            # 2025.2.28. 이후 부과분 — min(위반금액 × 10%, 10억)(영 제147조①1호), 법 상한 20%(제90조①)
+            과태료 = min(_trunc_won(_exact(위반금액) * Fraction(1, 10)), 1_000_000_000)
         # 조정 범위 ±50% (영 제147조②)
         과태료_범위 = [_trunc_won(_exact(과태료) * Fraction(1, 2)), _trunc_won(_exact(과태료) * Fraction(3, 2))]
 
@@ -337,10 +359,10 @@ def overseas_account_reporting(
             감경비율 = 0
             감경후_과태료 = 과태료
 
-    # 소명 불이행 과태료: 법 제90조② 상한 20%. 부과기준(영)은 2025.2.28. 개정으로 20% → 10%(영 제147조①2호).
-    # 개정 영 부칙에 적용례가 없어 신고기한(year+1.6.30.)이 2025.2.28. 이후인 year 2024부터 10%로 나눔.
+    # 소명 불이행 과태료: 법 제90조② 20%. 부과기준(영 제147조①2호)은 2025.2.28. 개정으로 20% → 10%.
+    # 적용 시기: 시행일(2025.2.28.) 이후 "부과하는 분부터"(기획재정부 국제조세제도과-80, 2026.2.11.; 기준-2025-법규국조-0110) — 보유연도가 아니라 부과일 기준.
     소명불이행_과태료 = 0
-    소명율 = Fraction(1, 10) if year >= 2024 else Fraction(1, 5)
+    소명율 = Fraction(1, 5) if 구기준 else Fraction(1, 10)
     if unexplained_amount_krw is not None and unexplained_amount_krw > 0:
         소명불이행_과태료 = _trunc_won(_exact(unexplained_amount_krw) * 소명율)
 
@@ -355,9 +377,11 @@ def overseas_account_reporting(
         f"신고기한 {신고기한}은 공휴일 조정 없음(국조법 제53조①)",
         "기한 후 신고 감경은 영 제147조④2호 표 확인(미신고자 대상)",
     ]
-    if unexplained_amount_krw:
-        주의목록.append("소명 불이행 과태료 부과기준은 2025.2.28. 영 개정으로 20% → 10%(영 제147조①2호, 법 제90조② 상한 20%). "
-                    "개정 부칙에 적용례가 없어 신고기한이 2025.2.28. 이후인 2024년 보유분부터 10%로 계산 — 그 전 위반분은 20%")
+    주의목록.append(
+        ("과태료는 2025.2.28. 전 부과 기준(누진표 10%·15%·20%, 20억원 한도, 소명 불이행 20%)으로 계산 — assessed_on이 2025.2.28. 전"
+         if 구기준 else
+         "과태료는 2025.2.28. 개정 기준(미신고·과소신고 10%·10억원 한도, 소명 불이행 10%)으로 계산 — 보유연도와 무관하게 2025.2.28. 이후 부과하는 분부터 적용"
+         "(기획재정부 국제조세제도과-80, 2026.2.11.; 기준-2025-법규국조-0110). 그 전에 부과된 건은 assessed_on에 부과일을 넣는다"))
 
     결과 = {
         "신고의무": 신고의무,
