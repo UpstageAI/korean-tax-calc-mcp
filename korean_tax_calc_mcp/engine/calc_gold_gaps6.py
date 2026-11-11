@@ -301,6 +301,11 @@ def inheritance_gift_valuation(
         평가기간_start = _add_months(vd, -6)
         평가기간_end = _add_months(vd, 6)
         기간라벨 = f"평가기준일({vd.isoformat()}) 전 6개월 ~ 후 6개월"
+    elif vd < date(2019, 2, 12):
+        # 증여재산 평가기간: 2019.2.11.까지 증여분은 평가기준일 전후 3개월(상증령 제49조① 2019.2.12. 개정 전, 대통령령 제29533호 부칙 — 시행 이후 증여받는 분부터)
+        평가기간_start = _add_months(vd, -3)
+        평가기간_end = _add_months(vd, 3)
+        기간라벨 = f"평가기준일({vd.isoformat()}) 전 3개월 ~ 후 3개월(2019.2.11.까지 증여분)"
     else:
         평가기간_start = _add_months(vd, -6)
         평가기간_end = _add_months(vd, 3)

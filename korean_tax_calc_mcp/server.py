@@ -434,8 +434,8 @@ _도구별_필수필드 = {
         "주택입주지체상금": {"필요": ["amount"]},
         "연금외수령": {"필요": ["amount"]},
         "직무발명보상금_퇴직후": {"필요": ["amount", "employment_exempt_used"]},
-        "승마투표권환급금": {"필요": ["amount"], "허용": ["unit_bet", "ticket_total", "per_bet_refund"]},
-        "슬롯머신당첨금": {"필요": ["amount"], "허용": ["stake"]},
+        "승마투표권환급금": {"필요": ["amount"], "허용": ["occurred_on", "unit_bet", "ticket_total", "per_bet_refund"]},
+        "슬롯머신당첨금": {"필요": ["amount"], "허용": ["occurred_on", "stake"]},
         "복권당첨금": {"필요": ["amount"], "허용": ["actual_cost"]},
     },
     "earned_income_gross_pay": {
@@ -1228,6 +1228,19 @@ until이 due와 같은 날(기한 당일 납부)이면 가산세 0. due가 토·
     return out
 
 
+def _range_err(*pairs):
+    """(이름, 값) 쌍마다 연도(int) 또는 날짜(YYYY-MM-DD)가 2016~2026 안인지 — 벗어나면 오류 dict, 모두 안이면 None. 값이 비면 건너뜀."""
+    문제 = []
+    for name, value in pairs:
+        if value in (None, ""):
+            continue
+        try:
+            _chk.supported_year(name, value)
+        except ValueError as e:
+            문제.append(str(e))
+    return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제} if 문제 else None
+
+
 @mcp.tool(annotations=CALC)
 @_guard
 def invoice_penalty(supply_amount: WON, kind: Annotated[Literal["가공", "지연발급", "미발급", "미발급_종이", "지연전송", "미전송", "지연수취",
@@ -1239,6 +1252,9 @@ def invoice_penalty(supply_amount: WON, kind: Annotated[Literal["가공", "지�
 입력: 공급가액(원) → supply_amount, 가산세 유형 → kind, 공급일(YYYY-MM-DD, 세율 기준) → supplied_on, 전자세금계산서 전송 여부 → e_invoice_transmitted.
 결과: 가산세·적용 세율, 근거(부가가치세법 제60조제2항·제5항·제6항·제7항, 가공은 제60조제3항). 매출처별합계표 미제출·예정분확정제출은 e_invoice_transmitted로 면제 여부 확인.
   True → 가산세 0(제54조제2항), None → 주의 메시지, False → 기존 금액."""
+    _e = _range_err(("supplied_on", supplied_on))
+    if _e:
+        return _e
     if kind == "가공":
         return _ok({"가산세": K.penalty_fake_invoice(supply_amount, supplied_on), "세율": K.fake_invoice_rate(supplied_on)}, "부가가치세법 제60조③")
 
@@ -1282,6 +1298,9 @@ def invoice_penalty_bundle(items: Annotated[list, Field(description="[{deal(거�
     · 미발급·미발급_종이(2호)·가공(3호)이 있으면 그 deal의 매출처별합계표_*(6호)·지연수취·신용카드매입공제(7·5호)는 0 (단 5호 신용카드매입공제는 9항에 없으므로 그대로)
     · 지연발급(1호)·지연전송·미전송(3·4호)이 있으면 그 deal의 매출처별합계표_*(6호)는 0(9항2호)
 결과: 가산세_합계, 계산.항목별: [{deal, kind, 가산세, 배제사유?}], 근거(부가가치세법 제60조2항 후문·9항)."""
+    _e = _range_err(*[(f"items[{_i}].supplied_on", (_it or {}).get("supplied_on")) for _i, _it in enumerate(items or []) if isinstance(_it, dict)])
+    if _e:
+        return _e
     from .engine.calc_vat import invoice_penalties
 
     # 종류별 분류 (중복 배제용)
@@ -3064,6 +3083,7 @@ _BD_RECIPIENT = {"법인": "기타사외유출", "사업자": "기타사외유�
 _BAD_DEBT_WRITEOFFS_DESC = (
     "대손금 목록 [{kind, amount, arose_in:'전기'|'당기'(대손 사유가 생긴 사업연도), instrument?:'외상매출금'|'받을어음'|'미수금'|'기타', "
     "months_since_default?(부도6개월: 부도발생일부터 사업연도 종료일까지 개월), mortgage?, "
+    "date?(화해·확정판결: 재판상 화해 등이 확정된 날 YYYY-MM-DD — 영 제19조의2제1항제10호는 2019.2.12. 이후 확정분부터라 2019 사업연도는 필수), "
     "months_since_due?(회수기일2년경과: 회수기일부터 사업연도 종료일까지 개월), related_party?(회수기일2년경과: 특수관계인 거래분이면 true), "
     "date?, account?, detail?, booked?:'상계'|'손비'|'전기부인', memo_excluded?:bool}]. "
     "kind 허용값: 소멸시효완성(영 제19조의2제1항제1호~제4호, 신고조정) · 화해·확정판결(제1항제10호) · 부도6개월(제1항제9호, instrument·months_since_default 필수) · "
@@ -3170,10 +3190,22 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
         recognized, memo, 결론, 근거, 이유, 구분 = 0, 0, "", "", "", ""
 
         if kind == "화해·확정판결":
-            # 영 제19조의2①10호는 ③1호 열거 밖 → 결산조정: 손비로 계상한 사업연도 손금
-            recognized = amount
-            결론, 근거 = "인정(대손금, 결산조정)", "법인세법 시행령 제19조의2①10호·③2호"
-            이유 = "확정판결과 같은 효력으로 회수불능 확정 — 손비로 계상한 사업연도에 손금"
+            # 영 제19조의2①10호(재판상 화해 등으로 회수불능 확정)는 2019.2.12. 신설 — 그날 이후 확정되는 분부터(대통령령 제29529호 부칙 제7조). 2013.2.15.~2019.2.11.은 10호 삭제 상태.
+            확정일 = w.get("date")           # 화해·확정판결 항목의 date = 재판상 화해 등이 확정된 날
+            if 확정일 is None and year == 2019:
+                return {"error": "입력 확인 필요 — 계산하지 않음",
+                        "문제": ["화해·확정판결 대손(영 제19조의2①10호)은 2019.2.12. 이후 확정분부터 — 2019 사업연도는 writeoffs 항목에 date(확정일 YYYY-MM-DD) 필요"]}
+            시행전 = (확정일 < "2019-02-12") if 확정일 else (year <= 2018)
+            if 시행전:
+                결론, 근거 = "손금불산입(유보) — 10호 시행 전", "법인세법 시행령 제19조의2①10호(2019.2.12. 신설), 대통령령 제29529호 부칙 제7조"
+                이유 = ("재판상 화해 등으로 회수불능이 확정된 채권을 대손으로 보는 10호는 2019.2.12. 이후 확정분부터 — "
+                      "그 전 확정분은 다른 호(소멸시효 완성, 강제집행·파산 등 회수불능) 요건을 갖춘 때 손금")
+                구분 = "10호 시행 전"
+            else:
+                # ③1호 열거 밖 → 결산조정: 손비로 계상한 사업연도 손금
+                recognized = amount
+                결론, 근거 = "인정(대손금, 결산조정)", "법인세법 시행령 제19조의2①10호·③2호"
+                이유 = "확정판결과 같은 효력으로 회수불능 확정 — 손비로 계상한 사업연도에 손금"
         elif kind == "소멸시효완성" and arose_in == "전기":
             # 신고조정 대손(③1호): 시효가 완성된 사업연도의 손금 — 당기 손금이 아님
             if booked == "전기부인":
@@ -4690,9 +4722,20 @@ def other_income_aggregate(year: YEAR,
                 return {"error": "입력 확인 필요 — 계산하지 않음",
                         "문제": [f"승마투표권환급금: 단위투표금액 {unit_bet:,}원·개별투표당 환급금 {개별환급금:,}원은 환급금 {amount:,}원을 넘을 수 없음"]}
             소득 = amount - unit_bet
+            # 2016.6.30.까지 원인 발생분(법률 제13558호 부칙): 제84조1호 = 권면 합계 10만원 이하이고 단위투표금액당 환급금이 단위투표금액의 100배 이하
+            종전84 = False
+            if year == 2016:
+                if not it.get("occurred_on"):
+                    return {"error": "입력 확인 필요 — 계산하지 않음",
+                            "문제": ["승마투표권환급금: 2016년은 과세최저한(제84조1호)이 2016.7.1.에 바뀜 — occurred_on(환급금 지급 원인 발생일 YYYY-MM-DD) 필요"]}
+                종전84 = str(it["occurred_on"]) < "2016-07-01"
             # 제84조1호 가·나목: 권면 합계 요건을 빼고 먼저 본다
-            가목 = 개별환급금 <= 100000
-            나목 = unit_bet > 0 and 개별환급금 <= unit_bet * 100 and 개별환급금 <= 2000000
+            if 종전84:
+                가목 = False
+                나목 = unit_bet > 0 and 개별환급금 <= unit_bet * 100
+            else:
+                가목 = 개별환급금 <= 100000
+                나목 = unit_bet > 0 and 개별환급금 <= unit_bet * 100 and 개별환급금 <= 2000000
             과세최저한_조건 = False
             if 가목 or 나목:
                 if it.get("ticket_total") in (None, ""):
@@ -4710,7 +4753,8 @@ def other_income_aggregate(year: YEAR,
             항목별.append({"kind": k, "총수입금액": amount, "비과세": 0, "필요경비": unit_bet,
                            "소득금액": 소득, "과세구분": 과세구분표시, "원천징수세액": 원천징수세액, "근거": basis})
             if 과세최저한_조건:
-                사유 = "개별투표당 환급금 10만원 이하(가목)" if 가목 else "단위투표금액의 100배 이하이면서 200만원 이하(나목)"
+                사유 = ("단위투표금액의 100배 이하(2016.6.30.까지 발생분)" if 종전84 else
+                      "개별투표당 환급금 10만원 이하(가목)" if 가목 else "단위투표금액의 100배 이하이면서 200만원 이하(나목)")
                 산식_목록.append(f"{k}: 권면 합계 {ticket_total:,}원 ≤ 100,000원이고 {사유} → 과세최저한(소득세법 제84조1호)으로 과세 제외, 원천징수 0")
             else:
                 산식_목록.append(f"{k}: 환급금 {amount:,}원 − 단위투표금액 {unit_bet:,}원 = 소득금액 {소득:,}원, 원천징수 {세율설명} = {원천징수세액:,}원 (소득세법 제21조①4호·제37조①1호, 제14조③8호마목 무조건 분리과세)")
@@ -4721,8 +4765,15 @@ def other_income_aggregate(year: YEAR,
             if stake > amount:
                 return {"error": "입력 확인 필요 — 계산하지 않음",
                         "문제": [f"슬롯머신당첨금: 투입금액 {stake:,}원이 당첨금 {amount:,}원을 초과"]}
-            과세최저한 = 2000000
-            if amount <= 과세최저한:
+            # 제84조2호: 2016.6.30.까지 발생분 건별 500만원 미만, 2016.7.1.부터 건별 200만원 이하(법률 제13558호 부칙)
+            종전84 = False
+            if year == 2016:
+                if not it.get("occurred_on"):
+                    return {"error": "입력 확인 필요 — 계산하지 않음",
+                            "문제": ["슬롯머신당첨금: 2016년은 과세최저한(제84조2호)이 2016.7.1.에 바뀜(500만원 미만 → 200만원 이하) — occurred_on(당첨일 YYYY-MM-DD) 필요"]}
+                종전84 = str(it["occurred_on"]) < "2016-07-01"
+            과세최저한 = 5000000 if 종전84 else 2000000
+            if (amount < 과세최저한) if 종전84 else (amount <= 과세최저한):
                 소득, 원천징수세액, 과세구분표시 = 0, 0, "과세최저한"
             else:
                 소득 = amount - stake      # 제37조①2호: 당첨 당시 슬롯머신등에 투입한 금액이 필요경비
@@ -4733,7 +4784,7 @@ def other_income_aggregate(year: YEAR,
             항목별.append({"kind": k, "총수입금액": amount, "비과세": 0, "필요경비": stake,
                            "소득금액": 소득, "과세구분": 과세구분표시, "원천징수세액": 원천징수세액, "근거": basis})
             if 과세구분표시 == "과세최저한":
-                산식_목록.append(f"{k}: 당첨금 {amount:,}원 ≤ 2,000,000원 → 과세최저한(소득세법 제84조2호)으로 과세 제외, 원천징수 0")
+                산식_목록.append(f"{k}: 당첨금 {amount:,}원 " + ("< 5,000,000원(2016.6.30.까지 발생분)" if 종전84 else "≤ 2,000,000원") + " → 과세최저한(소득세법 제84조2호)으로 과세 제외, 원천징수 0")
             else:
                 산식_목록.append(f"{k}: 당첨금 {amount:,}원 − 투입금액 {stake:,}원 = 소득금액 {소득:,}원, 원천징수 {세율설명} = {원천징수세액:,}원 (소득세법 제21조①14호·제37조①2호, 제14조③8호마목 무조건 분리과세)")
             근거_목록.extend(basis)
@@ -5448,6 +5499,9 @@ def vat_foreign_currency_base(context: Annotated[str, Field(description="맥락:
         - 대리납부 맥락: 지급일(YYYY-MM-DD, 필수), 지급방식('원화매입'|'보유외화', 필수), 지급일_환율(숫자, 필수 — 원화매입이면 매도율, 보유외화면 기준환율).
     결과: 과세표준_합계·항목별[{이름, 통화, 외화금액, 환가분{외화,원화}, 미환가분{외화,환율,원화}, 과세표준, 적용}]·판단·근거.
     근거: 부가가치세법 제29조제3항, 시행령 제59조(공급) 또는 시행령 제95조제3항(대리납부)."""
+    _e = _range_err(*[(f"items[{_i}].{_k}", _it.get(_k)) for _i, _it in enumerate(items or []) if isinstance(_it, dict) for _k in ("공급시기", "지급일") if isinstance(_it.get(_k), str) and len(_it.get(_k)) == 10])
+    if _e:
+        return _e
     from .engine.calc_vat import vat_foreign_currency_base as _fn
     if context not in ("공급", "대리납부"):
         return {"error": "입력 확인 필요 — 계산하지 않음",
@@ -5487,6 +5541,9 @@ def vat_reverse_charge(year: Annotated[int, Field(description="귀속연도(2016
       · taxable_supply·exempt_supply — 용도 '공통' 안분용 과세기간 공급가액(원, 선택 — 둘 다 필요).
     결과: 대리납부세액_합계·항목별[{이름, 대상(bool), 사유, 과세표준, 세액, 기한_법정, 기한_적용}]·판단·주의·근거.
     근거: 부가가치세법 제52조제1항·제2항, 시행령 제95조제1항·제2항. 전자적 용역(제53조의2 간편사업자등록)은 범위 밖."""
+    _e = _range_err(("year", year))
+    if _e:
+        return _e
     try:
         r = V.vat_reverse_charge(year, items, taxable_supply=taxable_supply, exempt_supply=exempt_supply)
     except ValueError as e:
@@ -5563,6 +5620,9 @@ def input_tax_recalculation(asset_type: Annotated[str, Field(description="자산
         bundle이 주어지면 내부에서 bundled_supply_split과 같은 규칙으로 건물 공급가액을 안분해 부가가치세를 input_tax로 쓴다.
         input_tax와 bundle 둘 다 주면 error.
     결과: 이력(기간별 비율·기준비율·변동·재계산 여부·경과과세기간수·세액)·결과(당기_납부세액_가산·매입세액, 건물_매입세액은 건물·구축물일 때만 주는 옛 이름 — 매입세액을 쓸 것)·판단(안분 기준)·근거."""
+    _e = _range_err(("acquired.year", (acquired or {}).get("year") if isinstance(acquired, dict) else None), *[(f"ratios[{_i}].year", _r.get("year")) for _i, _r in enumerate(ratios or []) if isinstance(_r, dict)])
+    if _e:
+        return _e
 
     # ── 입력 충돌 검사 ──
     if input_tax is not None and bundle is not None:
@@ -5789,6 +5849,9 @@ def bundled_supply_split(total_price: WON,
       장부가액 {building, land} → book_value, 다른 자산 → other_assets,
       감정평가일·공급시기 → appraisal_date·supply_date, 건물 과세 비율 → building_taxable_ratio.
     결과: 판단·결과(건물_공급가액(과세분)·토지_가액·부가가치세, 해당 시 기타자산·과세표준_합계·건물_면세분)·산식·근거."""
+    _e = _range_err(("supply_date", supply_date))
+    if _e:
+        return _e
 
     if not 0 <= building_taxable_ratio <= 1:
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"building_taxable_ratio는 0~1 (입력 {building_taxable_ratio})"]}
@@ -6117,6 +6180,9 @@ def deemed_dividend_capital_reduction(
       par_value — 1주당 액면가액(무상주_과세가 있으면 필수).
     결과: 의제배당금액, 단기소각주식수(결의일 전 2년 이내 비과세 무상주 — 먼저 소각, 취득가액 0; 개인은 주식발행초과금 전입분 제외), 평균단가(나머지 주식 총평균), 소멸주식 취득가액, 소각 후 1주당 장부가액, 산식, 근거.
       사실이 빠지거나 맞지 않으면 'error'와 '필요 입력'을 돌려주고 계산하지 않음."""
+    _e = _range_err(("resolution_date", resolution_date if isinstance(resolution_date, str) and len(resolution_date) == 10 else None))
+    if _e:
+        return _e
     # ── dates ──
     try:
         res_dt = date.fromisoformat(resolution_date)
@@ -8855,11 +8921,12 @@ def individual_donation_expense(year: YEAR,
                                 religious: Annotated[int, Field(description="종교단체 일반기부금(원)", ge=0)] = 0,
                                 carried_special: Annotated[int, Field(description="이월된 특례기부금 한도초과액(원, 10년)", ge=0)] = 0,
                                 carried_general: Annotated[int, Field(description="이월된 일반기부금 한도초과액(원, 10년)", ge=0)] = 0,
-                                volunteer: Annotated[dict | None, Field(description="특별재난지역 자원봉사용역 {hours: 본인 봉사시간, fuel: 부수 유류비, transport_fuel: 그중 이동용 유류비(제외), materials: 재료비} — 특례기부금")] = None,
+                                volunteer: Annotated[dict | None, Field(description="특별재난지역 자원봉사용역 {hours: 본인 봉사시간, fuel: 부수 유류비, transport_fuel: 그중 이동용 유류비(제외), materials: 재료비, served_on: 제공일 YYYY-MM-DD(2024년은 필수 — 2.28.까지 1일 5만원, 2.29.부터 8만원)} — 특례기부금")] = None,
                                 in_kind: Annotated[list | None, Field(description="현물 기부 [{kind: 특례|일반|종교, book: 장부가액, market: 시가}] — 시가(시가가 장부가액보다 낮으면 장부가액)로 평가")] = None) -> dict:
     """개인사업자 기부금 필요경비 산입 한도(소득세법 제34조). 언제: 사업소득자의 종합소득세 신고에서 정치자금·고향사랑·특례·일반(종교) 기부금을 어디까지 필요경비로 넣고, 얼마가 세액공제·이월로 넘어가는지 계산할 때.
     순서(시행령 제81조제4항): 정치자금·고향사랑 10만원 초과분(이월결손금 뺀 소득금액 한도) → 특례(기준소득−이월결손금) → 일반(종교 있으면 10% + min(20%, 종교 외), 없으면 30%). 이월분은 같은 구분에서 먼저 산입(제79조제4항).
-    현물은 시가(시가<장부가액이면 장부가액)(제81조제3항), 자원봉사용역은 봉사일수(8시간 단위 올림)×8만원 + 부수 유류비(이동분 제외)·재료비(제81조제5항).
+    현물은 시가(시가<장부가액이면 장부가액)(제81조제3항), 자원봉사용역은 봉사일수(8시간 단위 올림)×8만원(2024.2.28.까지 제공분은 5만원) + 부수 유류비(이동분 제외)·재료비(제81조제5항).
+    연도: 고향사랑 기부금은 2023년 귀속분부터(그 전 연도에 넣으면 거절). 일반기부금 이월은 2017년 귀속분까지 결과 문구에 5년→10년 전환(2019.1.1. 이후 신고분부터)을 표시.
     입력: 기준소득금액 → base_income(이자·배당 제외), 이월결손금 → carried_loss, 기부금 → political·hometown·special·general·religious, 이월 → carried_*, 자원봉사 → volunteer, 현물 → in_kind.
     결과: 필요경비 산입 합계·구분별 산입·한도초과 이월·기부금 산입 후 사업소득금액·정치·고향 세액공제 대상(10만원 이하), 판단, 근거. 세액공제(제59조의4) 금액 자체는 계산하지 않음 — 종합소득 기준은 별도."""
     return DI.individual_donation(year, base_income, carried_loss, political, hometown, special, general, religious, carried_special, carried_general, volunteer, in_kind)

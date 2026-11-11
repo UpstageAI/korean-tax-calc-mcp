@@ -469,7 +469,7 @@ def gift_tax(
         과세가액 += prior_gifts_same_donor
 
     # 3. 증여재산공제
-    voc = vocab.rule("증여재산공제", 연도_int)
+    voc = vocab.rule_on("증여재산공제", 연도_int)      # 연도_int는 증여일 YYYYMMDD — 기타친족 범위가 2025.3.14.에 바뀜(법률 제20777호)
     if relation == "직계존속" and recipient_minor:
         한도 = voc.get("직계존속_미성년", 0)
     else:
@@ -536,7 +536,7 @@ def gift_tax(
     if 남은한도 < 0:
         남은한도 = 0
 
-    voc_relation = vocab.rule("증여재산공제", 연도_int)
+    voc_relation = vocab.rule_on("증여재산공제", 연도_int)
     기타친족_범위 = voc_relation.get("기타친족_범위", "")
 
     판단 = [
