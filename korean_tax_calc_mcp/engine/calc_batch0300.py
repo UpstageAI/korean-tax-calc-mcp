@@ -129,13 +129,25 @@ def individual_foreign_tax_credit(
         미사용_이월잔액 = 0
         새이월지도항목 = []
         for cf_year, cf_amount in 국가이월잔고:
+            # 이월공제기간 연도표(소득세법 제57조②): 2020년 과세기간까지 5년, 2021년부터 10년(2020.12.29. 개정).
+            # 부칙 제11조는 2021.1.1. 직전까지 남아 있는 금액에 10년을 적용 — 2015년 이전 발생분은 2020년에 5년이 끝나 2021년부터 기간 경과.
+            # 기간 경과는 한도와 무관하게 먼저 판정한다.
+            if year <= 2020:
+                경과 = year - cf_year > 5
+                경과_설명 = f"{year}−{cf_year}={year-cf_year}년 > 5(2020년 과세기간까지 5년) → 이월기간 경과"
+            elif cf_year <= 2015:
+                경과 = True
+                경과_설명 = f"{cf_year}년 발생분은 2020년에 5년이 끝남(2020.12.29. 개정 부칙 제11조: 남아 있는 금액만 10년) → 이월기간 경과, 필요경비 산입 가능"
+            else:
+                경과 = year - cf_year > 10
+                경과_설명 = f"{year}−{cf_year}={year-cf_year}년 > 10 → 이월기간 경과, 필요경비 산입 가능"
+            if 경과:
+                이월기간경과분 += cf_amount
+                산식목록.append(f"{국가} 이월분({cf_year}년 발생 {cf_amount:,}원): {경과_설명}(소득세법 제57조②)")
+                continue
             if 남은한도 <= 0:
                 새이월지도항목.append((cf_year, cf_amount))
-                continue
-            # 이월 가능 기간 확인: year − cf_year > 10 → 기간 경과
-            if year - cf_year > 10:
-                이월기간경과분 += cf_amount
-                산식목록.append(f"{국가} 이월분({cf_year}년 발생 {cf_amount:,}원): year−{cf_year}={year-cf_year}년 > 10 → 이월기간 경과, 필요경비 산입 가능(소득세법 제57조②)")
+                미사용_이월잔액 += cf_amount
                 continue
             적용 = min(cf_amount, 남은한도)
             이월공제 += 적용
@@ -187,8 +199,10 @@ def individual_foreign_tax_credit(
     무시된_이월국가 = [k for k in 이월지도 if k not in {c["country"] for c in countries}]
     if 무시된_이월국가:
         주의목록.append(f"carryforward의 국가 {무시된_이월국가}는 countries에 없어 이번 과세기간에 공제하지 않음(해당 국가 국외원천소득이 없으면 한도 0)")
+    if year <= 2020 and income_kind == "종합":
+        주의목록.append("이 과세기간의 조문은 이월공제기간 5년. 2020.12.29. 개정 부칙 제11조로 2021년 이후 과세기간을 계산할 때부터 남아 있는 금액에 10년 적용")
     if 이월기간경과분 > 0:
-        판단목록.append(f"이월기간 경과분 {이월기간경과분:,}원(연도 경과, 필요경비 산입 가능)")
+        판단목록.append(f"이월기간 경과분 {이월기간경과분:,}원(연도 경과" + (", 필요경비 산입 가능)" if year >= 2021 else ")"))
 
     결과 = {
         "외국납부세액공제액": 총공제액,
@@ -277,9 +291,11 @@ def overseas_account_reporting(
     최고잔액 = max(월별)
     최고잔액_월 = 월별.index(최고잔액) + 1    # 1-based
 
-    # 신고의무: holder가 거주자·내국법인이고 최고잔액 > 5억 (영 제92조③)
-    # 5억 정확히면 의무 없음
-    신고의무 = holder in ("거주자", "내국법인") and 최고잔액 > 500_000_000
+    # 신고 기준금액 연도표: 2017년 보유분까지 10억원(구 영 제49조①, 2018.2.13. 개정 전), 2018년 보유분부터 5억원(현행 영 제92조③). "초과".
+    기준금액 = 1_000_000_000 if year <= 2017 else 500_000_000
+    신고의무 = holder in ("거주자", "내국법인") and 최고잔액 > 기준금액
+    연도_주의 = []
+    연도_판단 = [f"신고 기준금액 {기준금액 // 100_000_000}억원 초과" + ("(2017년 보유분까지 10억원 — 구 시행령 제49조①)" if year <= 2017 else "(2018년 보유분부터 5억원)")]
 
     면제사유 = []
     if not 신고의무 and holder in ("거주자", "내국법인"):
@@ -291,12 +307,24 @@ def overseas_account_reporting(
     if foreigner_resident_years_in_korea_last10 is not None and foreigner_resident_years_in_korea_last10 <= 5:
         면제사유.append("외국인 거주자: 최근 10년 중 국내 주소·거소 기간 5년 이하 → 신고의무 면제(국조법 제54조1호가, 소득세법 제3조① 단서)")
         면제체크 = True
-    if overseas_korean_days_in_korea is not None and overseas_korean_days_in_korea <= 182:
-        면제사유.append("재외국민: 신고대상 연도 종료일 1년 전부터 국내 거소 일수 182일 이하 → 신고의무 면제(국조법 제54조1호나)")
-        면제체크 = True
+    # 재외국민 면제 연도표: 2018년 보유분까지 "종료일 2년 전부터 183일 이하"(구 법 제34조⑤1호), 2019~2024년 "1년 전부터 183일 이하",
+    # 2025년 보유분부터 "182일 이하"(법 제54조1호나목, 2024.12.31. 개정 부칙 제5조).
+    if overseas_korean_days_in_korea is not None:
+        면제일수 = 182 if year >= 2025 else 183
+        창 = "2년 전" if year <= 2018 else "1년 전"
+        if year <= 2018:
+            연도_주의.append("2018년 보유분까지 재외국민 면제는 신고대상 연도 종료일 2년 전부터의 국내 거소 일수 합계(183일 이하)로 판정 — overseas_korean_days_in_korea에 2년치 일수를 넣는다")
+        if overseas_korean_days_in_korea <= 면제일수:
+            면제사유.append(f"재외국민: 신고대상 연도 종료일 {창}부터 국내 거소 일수 {면제일수}일 이하 → 신고의무 면제"
+                        + ("(국조법 제54조1호나)" if year >= 2021 else "(구 국조법 제34조⑤1호)"))
+            면제체크 = True
+    # 조세조약 상대국 거주자 면제는 2025.1.1. 이후 개시 과세기간 보유분부터(법 제54조7호, 2024.12.31. 개정 부칙 제5조)
     if treaty_resident_of_other_country:
-        면제사유.append("조세조약상 상대국 거주자 → 신고의무 면제(국조법 제54조7호)")
-        면제체크 = True
+        if year >= 2025:
+            면제사유.append("조세조약상 상대국 거주자 → 신고의무 면제(국조법 제54조7호)")
+            면제체크 = True
+        else:
+            연도_판단.append("조세조약 상대국 거주자 면제는 2025년 보유분부터(국조법 제54조7호, 부칙 제5조) — 이 연도는 면제 사유 아님")
 
     if 면제체크:
         신고의무 = False
@@ -339,21 +367,23 @@ def overseas_account_reporting(
         # 조정 범위 ±50% (영 제147조②)
         과태료_범위 = [_trunc_won(_exact(과태료) * Fraction(1, 2)), _trunc_won(_exact(과태료) * Fraction(3, 2))]
 
-        # 수정신고 감경 (영 제147조④1호): 기한 후 6개월 이내 90%, 1년 이내 70%, 2년 이내 50%, 4년 이내 30%
+        # 수정신고 감경(영 제147조④1호, 구 영 제51조): 6개월 이내 / 1년 이내 / 2년 이내 / 4년 이내.
+        # 수정신고일 2020.2.11. 전은 70·50·20·10, 이후는 90·70·50·30(2020.2.11. 개정). 기간은 달력으로 센다(기한 6.30. → 12.30., 다음 해 6.30. …).
         if corrected_on:
             corr_date = date.fromisoformat(corrected_on)
-            신고기한_date = date(year + 1, 6, 30)
-            경과일 = (corr_date - 신고기한_date).days
-            if 경과일 <= 180:      # 6개월 이내
-                감경비율 = 90
-            elif 경과일 <= 365:    # 1년 이내
-                감경비율 = 70
-            elif 경과일 <= 730:    # 2년 이내
-                감경비율 = 50
-            elif 경과일 <= 1460:   # 4년 이내
-                감경비율 = 30
+            y1 = year + 1
+            경계 = [date(y1, 12, 30), date(y1 + 1, 6, 30), date(y1 + 2, 6, 30), date(y1 + 4, 6, 30)]
+            표 = (70, 50, 20, 10) if corr_date < date(2020, 2, 11) else (90, 70, 50, 30)
+            감경비율 = 0
+            if corr_date <= date(y1, 6, 30):
+                연도_주의.append("corrected_on이 신고기한 이전 — 수정신고 감경 대상 아님(기한 내 정정)")
             else:
-                감경비율 = 0
+                for 끝, 율 in zip(경계, 표):
+                    if corr_date <= 끝:
+                        감경비율 = 율
+                        break
+            if corr_date < date(2020, 2, 11):
+                연도_주의.append("수정신고일이 2020.2.11. 전 — 종전 감경표(70·50·20·10%, 구 시행령 제51조⑤) 적용")
             감경후_과태료 = _trunc_won(_exact(과태료) * Fraction(100 - 감경비율, 100))
         else:
             감경비율 = 0
@@ -388,6 +418,7 @@ def overseas_account_reporting(
         "최고잔액": 최고잔액,
         "최고잔액_월": 최고잔액_월,
         "신고기한": 신고기한,
+        "기준금액": 기준금액,
         "위반금액": 위반금액,
         "과태료": 과태료,
         "과태료_범위": 과태료_범위,
@@ -399,8 +430,8 @@ def overseas_account_reporting(
 
     return _ok(결과,
                "국제조세조정에 관한 법률 제53조①②·제54조·제90조①②, 시행령 제92조③·제93조①·제94조·제147조①②④",
-               판단=판단목록,
-               주의=주의목록)
+               판단=연도_판단 + 판단목록,
+               주의=주의목록 + 연도_주의)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -579,18 +610,22 @@ def _capital_gains_unfair_gift_then_transfer(
             "적용제외_사유": 적용제외_사유,
         }, "소득세법 제101조②, 제97조의2", 판단=[적용제외_사유])
 
-    # 증여일부터 양도일까지 10년 초과 → 적용 없음 (제97조의2③ 준용: 등기·등록 기준, 달력 연수로 계산)
+    # 적용기간 연도표(소득세법 제101조②): 2023.1.1. 전 증여받은 자산은 5년(2022.12.31. 개정 부칙 제18조: 종전 규정), 이후 증여분은 10년.
+    # 달력 연수로 계산(제97조의2③ 준용: 등기·등록 기준).
+    적용기간_년 = 5 if gift_dt < date(2023, 1, 1) else 10
     try:
-        십년_기한 = gift_dt.replace(year=gift_dt.year + 10)
+        십년_기한 = gift_dt.replace(year=gift_dt.year + 적용기간_년)
     except ValueError:  # 2월 29일
-        십년_기한 = gift_dt.replace(year=gift_dt.year + 10, day=28)
+        십년_기한 = gift_dt.replace(year=gift_dt.year + 적용기간_년, day=28)
     if transfer_dt > 십년_기한:
-        적용제외_사유 = f"증여일부터 양도일까지 10년 초과(증여 {gift_date}, 10년 기한 {십년_기한.isoformat()}, 양도 {transfer_date}) → 제101조② 적용 없음(소득세법 제97조의2③ 준용)"
+        적용제외_사유 = (f"증여일부터 양도일까지 {적용기간_년}년 초과(증여 {gift_date}, {적용기간_년}년 기한 {십년_기한.isoformat()}, 양도 {transfer_date}) → 제101조② 적용 없음"
+                     + ("(2023.1.1. 전 증여분은 5년 — 2022.12.31. 개정 부칙 제18조)" if 적용기간_년 == 5 else "(소득세법 제97조의2③ 준용)"))
         return _ok({
             "증여자_직접양도_간주": False,
             "수증자_세액합계": donee_gift_tax + donee_capital_gains_tax,
             "증여자_직접양도세액": donor_direct_capital_gains_tax,
             "적용제외_사유": 적용제외_사유,
+            "적용기간_년": 적용기간_년,
         }, "소득세법 제101조②, 제97조의2③", 판단=[적용제외_사유])
 
     # income_belongs_to_donee True → 적용 없음(단서)
@@ -601,6 +636,7 @@ def _capital_gains_unfair_gift_then_transfer(
             "수증자_세액합계": donee_gift_tax + donee_capital_gains_tax,
             "증여자_직접양도세액": donor_direct_capital_gains_tax,
             "적용제외_사유": 적용제외_사유,
+            "적용기간_년": 적용기간_년,
         }, "소득세법 제101조② 단서", 판단=[적용제외_사유])
 
     # 합계 = donee_gift_tax + donee_capital_gains_tax; 합계 < donor_direct_capital_gains_tax → 증여자 직접 양도 간주
@@ -616,5 +652,6 @@ def _capital_gains_unfair_gift_then_transfer(
         "수증자_세액합계": 합계,
         "증여자_직접양도세액": donor_direct_capital_gains_tax,
         "적용제외_사유": 적용제외_사유,
+        "적용기간_년": 적용기간_년,
     }, "소득세법 제101조①②③",
        판단=판단목록)
