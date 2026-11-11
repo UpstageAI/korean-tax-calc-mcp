@@ -337,10 +337,12 @@ def overseas_account_reporting(
             감경비율 = 0
             감경후_과태료 = 과태료
 
-    # 소명 불이행 과태료: unexplained_amount_krw × 20% (제90조②)
+    # 소명 불이행 과태료: 법 제90조② 상한 20%. 부과기준(영)은 2025.2.28. 개정으로 20% → 10%(영 제147조①2호).
+    # 개정 영 부칙에 적용례가 없어 신고기한(year+1.6.30.)이 2025.2.28. 이후인 year 2024부터 10%로 나눔.
     소명불이행_과태료 = 0
+    소명율 = Fraction(1, 10) if year >= 2024 else Fraction(1, 5)
     if unexplained_amount_krw is not None and unexplained_amount_krw > 0:
-        소명불이행_과태료 = _trunc_won(_exact(unexplained_amount_krw) * Fraction(1, 5))
+        소명불이행_과태료 = _trunc_won(_exact(unexplained_amount_krw) * 소명율)
 
     # 판단: 실질적 소유자 안내
     판단목록 = [
@@ -353,6 +355,9 @@ def overseas_account_reporting(
         f"신고기한 {신고기한}은 공휴일 조정 없음(국조법 제53조①)",
         "기한 후 신고 감경은 영 제147조④2호 표 확인(미신고자 대상)",
     ]
+    if unexplained_amount_krw:
+        주의목록.append("소명 불이행 과태료 부과기준은 2025.2.28. 영 개정으로 20% → 10%(영 제147조①2호, 법 제90조② 상한 20%). "
+                    "개정 부칙에 적용례가 없어 신고기한이 2025.2.28. 이후인 2024년 보유분부터 10%로 계산 — 그 전 위반분은 20%")
 
     결과 = {
         "신고의무": 신고의무,

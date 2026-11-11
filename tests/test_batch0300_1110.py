@@ -114,7 +114,9 @@ def test_oar_exemptions():
 
 def test_oar_unexplained_penalty_and_errors():
     g = c("overseas_account_reporting", {"year": 2025, "month_end_totals_krw": TOT, "unexplained_amount_krw": 100 * M})["결과"]
-    assert g["소명불이행_과태료"] == 20 * M
+    assert g["소명불이행_과태료"] == 10 * M      # 2026-11-11 정정: 종전 기대값 20%는 법 제90조② 상한. 부과기준은 영 제147조①2호(2025.2.28. 개정) 10%
+    old = c("overseas_account_reporting", {"year": 2022, "month_end_totals_krw": TOT, "unexplained_amount_krw": 100 * M})["결과"]
+    assert old["소명불이행_과태료"] == 20 * M    # 2023년 보유분까지는 20%
     assert "error" in c("overseas_account_reporting", {"year": 2025, "month_end_totals_krw": [1] * 11})
     assert "error" in c("overseas_account_reporting", {"year": 2025})
     assert "error" in c("overseas_account_reporting", {"year": 2025, "month_end_totals_krw": TOT, "accounts": [{"name": "A", "month_end_krw": [0] * 12}]})

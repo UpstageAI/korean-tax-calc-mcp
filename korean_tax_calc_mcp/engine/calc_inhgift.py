@@ -505,7 +505,7 @@ def gift_tax(
     # 8. 할증세액
     할증율 = 0
     if generation_skip:
-        if recipient_minor and (gift_value + (prior_gifts_same_donor if 합산여부 else 0)) > 20 * M:
+        if recipient_minor and (gift_value + (prior_gifts_same_donor if 합산여부 else 0)) > 2_000 * M:   # 20억원 초과(상증법 제57조①, 2016~2026 같음) — 종전 20*M(2천만원)은 오류
             할증율 = 0.4
         else:
             할증율 = 0.3
