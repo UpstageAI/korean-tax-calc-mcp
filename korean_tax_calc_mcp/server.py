@@ -8893,6 +8893,7 @@ def overseas_account_reporting(
     reported_amount_krw: Annotated[int, Field(description="기한 내 신고한 금액(과소신고 계산용, 기본 0 = 미신고)")] = 0,
     corrected_on: Annotated[str | None, Field(description="수정신고일(YYYY-MM-DD — 기한 후 감경표 적용)")] = None,
     unexplained_amount_krw: Annotated[int | None, Field(description="소명 불이행 과태료 계산용 금액(원, 선택)")] = None,
+    assessed_on: Annotated[str | None, Field(description="과태료 부과일(YYYY-MM-DD, 선택). 생략하면 지금 부과하는 것으로 보아 2025.2.28. 개정 기준(10%, 10억원 한도, 소명 불이행 10%). 2025.2.28. 전이면 종전 누진표와 소명 불이행 20%")] = None,
 ) -> dict:
     """해외금융계좌 신고의무·과태료 판정(국조법 제53조(1항·2항)·제54조·제90조(1항·2항), 시행령 제92조(3항)·제93조(1항)·제94조·제147조(1항·2항·4항).
 
@@ -8909,6 +8910,7 @@ def overseas_account_reporting(
       reported_amount_krw — 기한 내 신고한 금액(기본 0 = 미신고).
       corrected_on — 수정신고일(YYYY-MM-DD).
       unexplained_amount_krw — 소명 불이행 과태료 계산용 금액(원, 선택).
+      assessed_on — 과태료 부과일(선택). 과태료 기준은 보유연도가 아니라 부과일로 갈린다: 2025.2.28. 이후 부과분은 10%·10억원 한도·소명 불이행 10%, 그 전은 누진표·소명 불이행 20%.
     결과: 신고의무·최고잔액·최고잔액_월·신고기한·위반금액·과태료·과태료_범위·감경비율·감경후_과태료·소명불이행_과태료·면제사유.
     판단: 실질적 소유자 안내 — 명의와 무관하게 사실상 관리하는 자가 보유자(영 제94조(1항)),
     내국인이 의결권 100% 직·간접 보유한 외국법인 계좌는 비조약국이면 실질적 소유자(영 제94조(2항)),
@@ -8922,6 +8924,7 @@ def overseas_account_reporting(
         treaty_resident_of_other_country=treaty_resident_of_other_country,
         reported_amount_krw=reported_amount_krw, corrected_on=corrected_on,
         unexplained_amount_krw=unexplained_amount_krw,
+        assessed_on=assessed_on,
     )
     if "error" in r:
         return r

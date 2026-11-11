@@ -86,14 +86,34 @@ def test_tp_method_report_exempt_when_total_services_under_1b():
     assert g3["정상가격산출방법신고서"] is False
 
 
-# ── 5. 해외금융계좌 소명 불이행 과태료: 2025.2.28. 영 개정으로 20% → 10%(영 제147조①2호) ───────────
+# ── 5. 해외금융계좌 과태료: 2025.2.28. 영 개정 기준은 보유연도가 아니라 "2025.2.28. 이후 부과하는 분부터" ───────
+#    (기획재정부 국제조세제도과-80, 2026.2.11.; 기준-2025-법규국조-0110 — 2020~2023년 미신고분을 2025.6.에 부과하는 사례)
 BAL = [600 * M] * 12
-def test_unexplained_penalty_rate_by_year():
-    old = c("overseas_account_reporting", {"year": 2022, "month_end_totals_krw": BAL, "unexplained_amount_krw": 1_000 * M})
-    new = c("overseas_account_reporting", {"year": 2025, "month_end_totals_krw": BAL, "unexplained_amount_krw": 1_000 * M})
-    assert old["결과"]["소명불이행_과태료"] == 200 * M and new["결과"]["소명불이행_과태료"] == 100 * M
-    assert c("overseas_account_reporting", {"year": 2024, "month_end_totals_krw": BAL, "unexplained_amount_krw": 1_000 * M})["결과"]["소명불이행_과태료"] == 100 * M
-    assert any("2025.2.28" in s for s in new["주의"])
+def _oar(year, **kw):
+    return c("overseas_account_reporting", {"year": year, "month_end_totals_krw": BAL, **kw})
+
+def test_unexplained_penalty_rate_follows_assessment_date_not_holding_year():
+    for y in (2018, 2022, 2025):                                               # 지금 부과하면 보유연도와 무관하게 10%
+        assert _oar(y, unexplained_amount_krw=1_000 * M)["결과"]["소명불이행_과태료"] == 100 * M
+    assert _oar(2022, unexplained_amount_krw=1_000 * M, assessed_on="2025-02-28")["결과"]["소명불이행_과태료"] == 100 * M
+    assert _oar(2022, unexplained_amount_krw=1_000 * M, assessed_on="2025-02-27")["결과"]["소명불이행_과태료"] == 200 * M
+    r = _oar(2022, unexplained_amount_krw=1_000 * M)
+    assert any("국제조세제도과-80" in s for s in r["주의"])
+
+def test_main_penalty_progressive_table_before_20250228():
+    big = {"month_end_totals_krw": [6_000 * M] * 12}                           # 미신고 60억
+    now = c("overseas_account_reporting", {"year": 2022, **big})["결과"]
+    old = c("overseas_account_reporting", {"year": 2022, **big, "assessed_on": "2024-06-01"})["결과"]
+    assert now["과태료"] == 600 * M                                             # 60억 × 10%, 10억 한도 안
+    assert old["과태료"] == 850 * M                                             # 6.5억 + (60억 − 50억) × 20%
+    mid = c("overseas_account_reporting", {"year": 2022, "month_end_totals_krw": [3_000 * M] * 12, "assessed_on": "2024-06-01"})["결과"]
+    assert mid["과태료"] == 350 * M                                             # 2억 + (30억 − 20억) × 15%
+    cap_old = c("overseas_account_reporting", {"year": 2022, "month_end_totals_krw": [20_000 * M] * 12, "assessed_on": "2024-06-01"})["결과"]
+    cap_new = c("overseas_account_reporting", {"year": 2022, "month_end_totals_krw": [20_000 * M] * 12})["결과"]
+    assert cap_old["과태료"] == 2_000 * M and cap_new["과태료"] == 1_000 * M      # 종전 20억 한도, 개정 10억 한도
+
+def test_assessed_on_validation():
+    assert "error" in _oar(2022, assessed_on="2020-12-31") and "error" in _oar(2022, assessed_on="2025/03/01")
 
 
 # ── 6. 무상증자 의제배당: 상환주식 주식발행초과금은 2024.2.29. 이후 전입분만 과세(법인령 제12조①5호, 부칙 제4조) ──
