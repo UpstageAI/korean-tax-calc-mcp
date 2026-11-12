@@ -301,3 +301,97 @@ def loss_carryback_refund(year, loss, prior_base, prior_credits=0, carryback=Non
     if year == 2020:
         주의.append("2020.12.31.이 속하는 과세연도는 상반기 결손금을 미리 환급받는 특례가 있었음(당시 조세특례제한법 제8조의4) — 이 도구는 계산하지 않음")
     return {"결과": {"환급세액": 환급, "소급공제_결손금": x, "이월할_결손금": loss - x}, "계산": 계산, "판단": 판단, "근거": 근거, "주의": 주의}
+
+
+# ── 중소기업·소기업 해당 여부(조세특례제한법 시행령 제2조·제6조제4항, 중소기업기본법 시행령 별표 1·별표 3) ──
+# 별표는 2017.10.17. 개정본(2018~2024 시행본 동일)과 2025.9.1. 개정본(2025.10.1. 개정본과 업종 묶음·금액 동일)을 원문에서 뽑아 대조.
+# 2025.9.1. 개정으로 기준이 낮아진 업종은 없음 — 12월 결산 2025 과세연도부터 새 기준(시행령 제2조제1항제1호는 과세연도 종료일 현재 별표, 제5항).
+_EOK = 100_000_000
+_SIZE_TABLES = {
+    "old": {
+        "중소": {1500: "C14 C15 C17 C24 C28 C32", 1000: "A B C10 C12 C13 C16 C19 C20 C22 C25 C26 C29 C30 C31 D E36 F G",
+               800: "C11 C18 C21 C23 C27 C33 E H J", 600: "C34 M N Q R S", 400: "I K L N76 P"},
+        "소": {120: "C10 C11 C14 C15 C19 C20 C21 C23 C24 C25 C26 C28 C29 C30 C32 D E36", 80: "A B C12 C13 C16 C17 C18 C22 C27 C31 C33 F H K",
+              50: "G J", 30: "E L M N R", 10: "C34 I P Q S"}},
+    "new": {
+        "중소": {1800: "C17 C24 C28", 1500: "C14 C15 C32", 1200: "C10 C20 C22 C25 C29 C30 C31 F G", 1000: "A B C12 C13 C16 C19 C26 C33 D E36 H J",
+               800: "C11 C18 C21 C23 C27 E N", 600: "C34 M Q R S", 400: "I K L N76 P"},
+        "소": {140: "C19 C24", 120: "C10 C11 C14 C15 C20 C21 C23 C25 C26 C28 C29 C30 C32 D E36", 100: "H K",
+              80: "A B C12 C13 C16 C17 C18 C22 C27 C31 C33 F", 60: "G", 50: "J", 40: "E L", 30: "M N R", 15: "C34 I P Q S"}},
+}
+SIZE_CODES = sorted({c for t in _SIZE_TABLES.values() for g in t["중소"].values() for c in g.split()})
+
+
+def _size_limit(code, year, kind):
+    table = _SIZE_TABLES["new" if year >= 2025 else "old"][kind]
+    key = "N" if (kind == "소" and code == "N76") else code      # 별표 3은 N 전체가 한 줄
+    for eok, codes in table.items():
+        if key in codes.split():
+            return eok * _EOK
+    return None
+
+
+def sme_status(year, industry_code, revenue, total_assets, domestic_affiliates=None, in_disclosure_group=False, large_corp_owner=False,
+               excluded_business=False, first_exceeded_year=None, founded_on=""):
+    문제 = []
+    if not isinstance(year, int) or not 2018 <= year <= YEAR_MAX:
+        문제.append(f"year={year!r} — 2018~{YEAR_MAX}(2017년까지는 종전 산업분류 기준 별표라 지원하지 않음)")
+    code = (industry_code or "").strip().upper() if isinstance(industry_code, str) else ""
+    if code not in SIZE_CODES:
+        문제.append(f"industry_code={industry_code!r} — 주된 업종의 한국표준산업분류 기호: " + " ".join(SIZE_CODES) + " (제조업은 중분류 C10~C34, 수도업 E36, 임대업 N76)")
+    _won(revenue, "revenue(해당 과세연도 손익계산서 매출액)", 문제); _won(total_assets, "total_assets(과세연도 종료일 자산총액)", 문제)
+    for i, a in enumerate(domestic_affiliates or []):
+        rv, own = (a or {}).get("revenue"), (a or {}).get("ownership")
+        if isinstance(rv, bool) or not isinstance(rv, int) or rv < 0:
+            문제.append(f"domestic_affiliates[{i}].revenue — 그 국내기업의 매출액(원)")
+        if isinstance(own, bool) or not isinstance(own, (int, float)) or not 0.3 <= own <= 1:
+            문제.append(f"domestic_affiliates[{i}].ownership — 주식등 소유비율 0.3~1(30% 이상 소유하면서 최다출자자인 관계만 관계기업)")
+    founded = _d(founded_on, "founded_on", 문제) if founded_on else None
+    if first_exceeded_year is not None and (not isinstance(first_exceeded_year, int) or isinstance(year, int) and first_exceeded_year > year):
+        문제.append("first_exceeded_year — 규모 기준을 처음 넘은 과세연도(해당 과세연도 이전)")
+    if 문제:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제}
+
+    한도, 소한도 = _size_limit(code, year, "중소"), _size_limit(code, year, "소")
+    합산 = revenue + sum(a["revenue"] if a["ownership"] >= 0.5 else math.floor(a["revenue"] * a["ownership"]) for a in domestic_affiliates or [])
+    판단, 주의 = [], []
+    근거 = ["조세특례제한법 시행령 제2조제1항", "중소기업기본법 시행령 별표 1" + ("(2025.9.1. 개정)" if year >= 2025 else "(2017.10.17. 개정)")]
+    계산 = {"주된_업종": code, "매출액": revenue, "관계기업_합산_매출액": 합산, "중소기업_매출_기준": 한도, "자산총액": total_assets, "자산총액_기준": 5_000 * _EOK,
+          "소기업_매출_기준": 소한도}
+    매출초과, 자산초과 = 합산 > 한도, total_assets >= 5_000 * _EOK
+    if domestic_affiliates:
+        근거.append("중소기업기본법 시행령 제3조의2·제7조의4·별표 2")
+        판단.append(f"관계기업 합산: 50% 이상 소유는 전액, 50% 미만은 소유비율만큼 더해 {합산:,}원")
+    구분, 중소 = None, False
+    if in_disclosure_group or large_corp_owner or excluded_business:
+        why = "공시대상기업집단 소속" if in_disclosure_group else "자산총액 5천억원 이상 법인이 30% 이상 소유한 최다출자자" if large_corp_owner else "부동산임대업 또는 소비성서비스업이 주된 사업"
+        구분 = "중소기업 아님"
+        판단.append(f"{why} — 중소기업이 아님" + ("" if excluded_business else ". 독립성 요건을 잃은 경우에는 유예기간도 적용하지 않음(제2조제2항제3호)"))
+    elif not 매출초과 and not 자산초과:
+        중소 = True
+        구분 = "소기업" if revenue <= 소한도 else "중기업"
+        판단.append(f"매출액 {합산:,}원 ≤ 기준 {한도:,}원, 자산총액 5천억원 미만 — 중소기업")
+        판단.append(f"소기업 기준 {소한도:,}원 " + ("이내 — 소기업" if 구분 == "소기업" else "초과 — 중기업(특별세액감면 감면율이 달라짐)"))
+        근거.append("조세특례제한법 시행령 제6조제4항, 중소기업기본법 시행령 별표 3")
+    else:
+        why = " · ".join(x for x in (f"매출액 {합산:,}원 > 기준 {한도:,}원" if 매출초과 else "", "자산총액 5천억원 이상" if 자산초과 else "") if x)
+        fy = first_exceeded_year or year
+        n = 5 if fy >= 2024 else 3
+        근거.append("조세특례제한법 시행령 제2조제2항" + (", 대통령령(2024.11.12.) 부칙 제2조" if fy >= 2024 else ""))
+        계산.update({"최초_초과_과세연도": fy, "유예기간": f"{fy}~{fy + n} 과세연도"})
+        if founded and fy <= founded.year + 2:
+            구분 = "중소기업 아님"
+            판단.append(f"{why}. 창업일이 속하는 과세연도 종료일부터 2년 이내({founded.year}~{founded.year + 2})에 기준을 넘어 유예기간을 적용하지 않음(제2조제2항제4호)")
+        elif year <= fy + n:
+            중소, 구분 = True, "유예기간 중"
+            판단.append(f"{why}. 처음 넘은 {fy} 과세연도와 그 다음 {n}개 과세연도({fy + n}까지)는 중소기업으로 봄 — {year}은 유예기간 중")
+        else:
+            구분 = "중소기업 아님"
+            판단.append(f"{why}. 유예기간({fy}~{fy + n})이 지나 {year} 과세연도는 중소기업이 아님")
+        주의.append("유예기간: 2024.11.12.이 속하는 과세연도 이후 처음 사유가 생기면 5개 과세연도(그 전은 3개). 상장법인 7개 과세연도 특례, 중소기업 아닌 기업과의 합병은 계산하지 않음")
+        주의.append("유예기간 중 기업은 창업감면·최저한세 7% 등 중소기업 규정을 적용받지만 소기업은 아님")
+    주의 += ["주된 업종: 둘 이상의 사업을 하면 사업수입금액이 큰 사업(시행령 제2조제3항). 업종 분류는 한국표준산업분류 — 위탁생산 회사가 제조업인지 도매업인지는 이 도구가 판정하지 않음",
+           "매출액은 과세연도 종료일 현재 기업회계기준 손익계산서 기준. 창업·분할·합병한 과세연도는 연간으로 환산(시행규칙 제2조제4항)",
+           "관계기업은 국내기업만 — 해외 자회사 매출은 합산하지 않음(중소기업기본법 시행령 제3조의2제1항). 손자기업 간접 지배, 개인 최다출자자를 통한 합산은 계산하지 않음",
+           "별표 비고의 예외(자동차·철도·항공기용 의자 제조업)와 벤처투자회사 등 관계기업 제외는 반영하지 않음"]
+    return {"결과": {"중소기업": 중소, "구분": 구분}, "계산": 계산, "판단": 판단, "근거": 근거, "주의": 주의}
