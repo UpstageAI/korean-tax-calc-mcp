@@ -816,9 +816,9 @@ def deemed_interest(movements: Annotated[list[Movement], Field(description="가�
         result["정상가격_조정"] = diff > 0
         result["익금산입"] = diff if diff > 0 else 0
         all_notes = [n for n in all_notes if "이후 2개 사업연도" not in n]
-        all_notes.insert(0, ("국외특수관계인 대여 — 법인세법 제52조(부당행위계산 부인) 대신 국조법 제7조 정상가격 조정. 정상이자율은 "
+        all_notes.insert(0, (F.related_party_law(True, "일반", y_end.year)["결론"] + " 정상이자율은 "
                              + ("시행규칙 제3조제1호 간주 이자율(당좌대출이자율)" if rate_mode == "당좌선택" else f"입력한 이자율 {market_rate:.2%}(시행령 제11조①의 요소로 산출했는지 확인)")
-                             + ". 3억·5% 기준 없이 차액 전부 익금산입"))
+                             + ". 대여금 면제(채무 면제)나 자회사 증자 참여는 국제거래라도 법인세법 제52조 대상(국조령 제4조) — unfair_transaction의 transaction_type으로 판정"))
         result["판단"] = "; ".join(all_notes)
         return _ok(result, "국제조세조정에 관한 법률 제4조②(법인세법 제52조 적용 배제)·제7조(정상가격에 의한 과세조정), 시행령 제11조, 시행규칙 제3조 1호(법인세법 시행규칙 제43조② 당좌대출이자율)",
                    주의=["익금산입액을 국외특수관계인에게서 돌려받지 않으면 소득처분이 따름 — 국조법의 익금산입액 반환·처분 규정 확인",
@@ -832,18 +832,37 @@ def deemed_interest(movements: Annotated[list[Movement], Field(description="가�
 @_guard
 def unfair_transaction(market_price: Annotated[float, Field(description="시가(단가, 원)")], actual_price: Annotated[float, Field(description="실제 거래 단가(원)")],
                        quantity: Annotated[int, Field(description="수량")],
-                       wholly_owned_capital_increase: Annotated[bool, Field(description="100% 자회사 액면 증자 단독 인수 — True이면 부당행위계산 부인 대상 아님(서이46012-12126, 조심-2014-전-0041)")] = False) -> dict:
+                       wholly_owned_capital_increase: Annotated[bool, Field(description="100% 자회사 액면 증자 단독 인수 — True이면 부당행위계산 부인 대상 아님(서이46012-12126, 조심-2014-전-0041)")] = False,
+                       foreign_related: Annotated[bool, Field(description="거래 상대가 국외특수관계인(해외 자회사·해외 모회사 등)인지 — True면 국제거래라 법인세법 제52조 대신 국조법 정상가격 조정(3억·5% 기준 없음). transaction_type이 예외 유형이면 법인세법 제52조")] = False,
+                       transaction_type: Annotated[Literal["일반", "무상이전·채무면제", "무수익자산", "출연금대납", "자본거래"], Field(description="거래 유형(foreign_related=True일 때만 의미) — '일반'(재화·용역·임대차·금전대차 등) 외 네 가지는 국제거래라도 법인세법 제52조를 적용하는 예외(국조령 제4조): 자산 무상 이전·채무 면제 / 수익 없는 자산 매입·현물출자·비용 부담 / 출연금 대신 부담 / 자본거래(증자·감자·합병 등)")] = "일반",
+                       year: Annotated[int | None, Field(description="거래가 속한 사업연도(2016~2026, 선택) — 국조법 조문 번호 표기용(2020년까지 구법 제3조·제4조). 생략하면 현행 조문")] = None) -> dict:
     """부당행위계산 기준(시가와 실제 거래가 차이 3억 원 이상 또는 5% 이상). 언제: 특수관계인과의 거래 가격이 시가와 크게 차이 나 부당행위계산 부인 대상인지 확인할 때.
 입력: 시가(단가, 원) → market_price, 실제 거래 단가(원) → actual_price, 수량 → quantity, 100% 자회사 액면 증자 단독 인수 여부 → wholly_owned_capital_increase(기본 False).
 결과: 시가총액·차액·차액비율·부당행위계산 여부, 근거(법인세법 제52조, 시행령 제88조제3항). 부당행위계산 기준(시가와 실제 거래가 차액이 3억 원 이상 또는 5% 이상이면 부인 대상).
-wholly_owned_capital_increase=True이고 시가가 액면 미만(액면=0 포함)인 법인의 신주를 100% 단독 출자 법인이 전부 인수한 경우 부당행위계산 부인 대상 아님(서이46012-12126, 조심-2014-전-0041, 대구지법 2013구합10573)."""
+wholly_owned_capital_increase=True이고 시가가 액면 미만(액면=0 포함)인 법인의 신주를 100% 단독 출자 법인이 전부 인수한 경우 부당행위계산 부인 대상 아님(서이46012-12126, 조심-2014-전-0041, 대구지법 2013구합10573).
+국외특수관계인 거래(foreign_related=True): 국제거래에는 법인세법 제52조를 적용하지 않음(국조법 제4조제2항) → 결과의 적용_규정이 '국조법 정상가격 조정', 부당행위계산은 False, 차액 전부가 조정대상_차액(3억·5% 기준 없음). 입력한 시가를 정상가격으로 본 차액이며 정상가격 산출 자체는 하지 않음.
+  예외 — transaction_type이 무상이전·채무면제, 무수익자산, 출연금대납, 자본거래면 국제거래라도 법인세법 제52조(국조령 제4조)로 종전처럼 판정."""
+    _e = _range_err(("year", year))
+    if _e: return _e
+    law = F.related_party_law(foreign_related, transaction_type, year)
     gap = abs(market_price - actual_price) * quantity; base = market_price * quantity
+    if law["적용"] == "국조법":
+        판단 = [law["결론"],
+               "차액은 입력한 시가를 정상가격으로 본 금액 — 정상가격은 국조법 " + ("제5조" if (year is not None and year <= 2020) else "제8조") + "의 정상가격 산출방법으로 따로 산출해야 함(이 도구는 산출하지 않음)",
+               "국조법의 특수관계(지분 50% 이상 소유·공통 지배 등)는 법인세법의 특수관계와 범위가 다름 — 국외특수관계인 해당 여부는 호출자 판정"]
+        if law.get("주의"): 판단.append(law["주의"])
+        return _ok({"시가총액": int(base), "차액": int(gap), "차액비율": round(gap / base, 4) if base else None,
+                    "부당행위계산": False, "적용_규정": "국조법 정상가격 조정", "정상가격_조정_대상": gap > 0, "조정대상_차액": int(gap)},
+                   law["근거"], 판단=판단)
+    extra = {"판단": [law["결론"]] + ([law["주의"]] if law.get("주의") else [])} if foreign_related else {}
+    basis = law["근거"] + ", 시행령 제88조③" if foreign_related else "법인세법 제52조, 시행령 제88조③"
+    규정 = {"적용_규정": "법인세법 제52조"} if foreign_related else {}
     if wholly_owned_capital_increase and gap > 0:          # 100% 단독 인수 액면 증자 — 시가 0이든 액면 미만이든 부당행위 아님
         return _ok({"시가총액": int(base), "차액": int(gap), "차액비율": None,
-                    "부당행위계산": False}, "법인세법 제52조, 시행령 제88조③",
-                   판단=["100% 자회사 액면 증자 단독 인수 — 부당행위계산 부인 대상 아님(서이46012-12126, 조심-2014-전-0041)"])
+                    "부당행위계산": False, **규정}, basis,
+                   판단=extra.get("판단", []) + ["100% 자회사 액면 증자 단독 인수 — 부당행위계산 부인 대상 아님(서이46012-12126, 조심-2014-전-0041)"])
     return _ok({"시가총액": int(base), "차액": int(gap), "차액비율": round(gap / base, 4) if base else None,
-                "부당행위계산": bool(gap >= 300_000_000 or (base and gap >= base * 0.05))}, "법인세법 제52조, 시행령 제88조③")
+                "부당행위계산": bool(gap >= 300_000_000 or (base and gap >= base * 0.05)), **규정}, basis, **extra)
 
 
 @mcp.tool(annotations=CALC)
