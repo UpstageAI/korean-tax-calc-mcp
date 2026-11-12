@@ -945,13 +945,14 @@ def loss_carryforward_ledger(years: Annotated[list, Field(description="사업연
 
 @mcp.tool(annotations=CALC)
 @_guard
-def tax_adjustment_schedule(years: Annotated[list, Field(description="사업연도별 [{year(2016~2026), book_income(결산서상 당기순손익, 원 — 손실이면 음수), adjustments: [{name, amount(원), kind('익금산입'|'손금불산입'|'손금산입'|'익금불산입'), disposition}], sme?}] — 연도 오름차순, 빠진 해 없이. disposition: 익금산입·손금불산입은 유보|상여|배당|기타소득|기타사외유출|기타, 손금산입·익금불산입은 유보(△유보)|기타. 같은 유보 항목은 같은 name으로")],
+def tax_adjustment_schedule(years: Annotated[list, Field(description="사업연도별 [{year(2016~2026), book_income(결산서상 당기순손익, 원 — 손실이면 음수), adjustments: [{name, amount(원), kind('익금산입'|'손금불산입'|'손금산입'|'익금불산입'), disposition}], sme?}] — 연도 오름차순, 빠진 해 없이. disposition: 익금산입·손금불산입은 유보|상여|배당|기타소득|기타사외유출|기타|출자의 증가(국외 자회사와의 이전가격·인정이자 조정액을 반환받지 않은 경우), 손금산입·익금불산입은 유보(△유보)|기타. 같은 유보 항목은 같은 name으로")],
                             sme: Annotated[bool, Field(description="중소기업 등(이월결손금 공제 한도 100%) 여부. 연도별로 다르면 years의 sme")] = True,
                             opening_reserves: Annotated[list | None, Field(description="첫 사업연도 기초 유보 잔액 [{name, amount(원, △유보 잔액이면 음수)}]")] = None,
                             opening_losses: Annotated[list | None, Field(description="첫 사업연도 전에 생긴 미공제 결손금 [{year(2009 이후), amount(원)}]")] = None) -> dict:
     """연도별 세무조정 묶음 — 여러 사업연도의 결산서상 순손익과 세무조정을 넣으면 각 사업연도 소득, 이월결손금 공제, 과세표준, 산출세액, 항목별 유보 잔액을 해마다 이어서 계산(법인세법 제14조·제13조·제55조·제67조). 언제: 여러 해에 걸친 세무조정(인정이자, 충당부채, 이전가격 조정, 한도초과 등)을 한 표로 모아 연도별 세액과 유보·결손금 잔액을 볼 때.
     입력: 사업연도별 순손익과 조정 → years, 중소기업 등 여부 → sme, 기초 유보 → opening_reserves, 기초 결손금 → opening_losses.
     계산: 각 사업연도 소득 = 결산서상 당기순손익 + 익금산입·손금불산입 − 손금산입·익금불산입. 유보로 처분한 조정은 항목별 잔액(기초·증가·감소·기말)으로 다음 해에 넘김.
+      출자의 증가로 조정한 금액은 유보·사외유출과 따로 항목별 당기·누계로 보여 줌(국제조세조정에 관한 법률 제13조, 시행령 제23조).
       결손이 난 해의 결손금은 먼저 발생한 것부터 뒤 사업연도 소득에서 공제(loss_carryforward_ledger와 같은 규칙) → 과세표준 × 그 해 세율 = 산출세액.
     결과: 합계(각 사업연도 소득·과세표준·산출세액·기말 유보·기말 결손금 잔액), 계산(연도별 순손익·가산·차감·각 사업연도 소득·소득처분 사외유출 합계·유보 표·이월결손금 공제·과세표준·산출세액), 판단·근거·서식·주의.
     범위 밖: 각 조정 금액이 맞는지(각 계산 도구로 구해 넣음), 세액공제·감면·최저한세, 다른 조정 뒤 소득으로 다시 계산하는 한도(기부금 등), 1년 미만 사업연도."""
