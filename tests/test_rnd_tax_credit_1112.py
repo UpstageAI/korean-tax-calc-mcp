@@ -99,3 +99,13 @@ def test_foreign_tax_credit_excess_not_carried_here():
     # 외국납부세액공제(101)는 법인세법 제57조의 한도·이월을 따로 계산 — 이 도구는 종전처럼 차감만
     r = mt(**BOOK23, reductions=[{"code": "111", "amount": 18_500_000}], credits=[{"code": "101", "current": 30 * M}])
     assert r["적용제외_차감후세액"] == 0 and r["이월_미공제"] == [] and r["별지8"]["101"] == {"대상세액": 30 * M, "감면세액": 30 * M}
+
+
+def test_requirements_are_pointed_to_the_statute_server():
+    # 요건·연도별 판단은 조문 MCP에서 — 세 공제 도구의 첫 주의와 서버 안내문
+    r = f(year=2024, size="중소기업", current=200 * M, prior4=[0, 0, 0, 0])
+    assert "rnd_credit_requirements_guide" in r["주의"][0] and "korean-tax-mcp" in r["주의"][0]
+    e = getattr(S.integrated_employment_credit, "fn", S.integrated_employment_credit)(year=2024, size="중소기업", headcounts=[{"year": 2023, "total": 20, "youth": 8}, {"year": 2024, "total": 30, "youth": 12}])
+    i = getattr(S.integrated_investment_credit, "fn", S.integrated_investment_credit)(year=2024, size="중소기업", investments=[{"kind": "일반", "amount": 100 * M}])
+    assert "korean-tax-mcp" in e["주의"][0] and "as_of" in e["주의"][0] and "korean-tax-mcp" in i["주의"][0]
+    assert "rnd_credit_requirements_guide" in S.mcp.instructions and "요건은 판정하지 않는다" in S.mcp.instructions
