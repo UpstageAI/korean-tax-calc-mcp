@@ -26,7 +26,7 @@ flowchart LR
 3. **Calculation** — follows the statute order, e.g. tax base → that year's brackets → tax.
 4. **Result** — tax, intermediate amounts, item-level judgments, adjustments with income dispositions, and citations.
 
-115 of the 119 tools run in code without generative AI (the 2 price lookups only fetch public data from KRX and VWORLD). Only the 3 PDF tools use Upstage, and only when `UPSTAGE_API_KEY` is set.
+116 of the 120 tools run in code without generative AI (the 2 price lookups only fetch public data from KRX and VWORLD). Only the 3 PDF tools use Upstage, and only when `UPSTAGE_API_KEY` is set.
 
 ### How corporate tax adjustments chain
 
@@ -87,7 +87,7 @@ When answering Korean tax questions, use korean-tax-mcp and korean-tax-calc-mcp 
 5. If two values come out (before/after apportionment, total vs. taxable part, etc.), answer only the one the question asks for.
 ```
 
-## Tools (119)
+## Tools (120)
 
 Click a group to expand its tools.
 
@@ -122,6 +122,7 @@ Click a group to expand its tools.
 | `cfc_deemed_dividend` | CFC deemed dividend on retained earnings — low-tax test, 10% ownership, exclusions, distributable retained earnings, full/passive inclusion (Int'l Tax Adjustment Act arts. 27–31) |
 | `tax_adjustment_schedule` | Multi-year tax adjustment schedule — book income and adjustments by year → taxable income, loss carryforward, tax base, tax, reserve balances by item |
 | `sme_status` | SME and small-enterprise status for tax purposes — revenue thresholds by industry (2018–2024, 2025–), total assets, independence, domestic affiliates, grace period (STTCA Decree art.2) |
+| `reduction_income_segments` | Income eligible for a tax reduction when eligible and other businesses are run together — allocation of common income and expenses, loss offset across businesses, attribution of deducted loss carryforwards, main business (STTCA Art. 143; CIT Enforcement Rule Arts. 75–76) |
 | `startup_tax_reduction` | Startup SME tax reduction — eligibility, rate, period and amount by founding date, region, youth founder and industry incl. contract manufacturing and online retail (STTCA art.6) |
 | `sme_special_tax_reduction` | SME special tax reduction — rate by size, region and industry, KRW 100m cap, minimum tax (STTCA art.7) |
 | `loss_carryback_refund` | Loss carryback refund for SMEs — refund of prior-year corporate tax and remaining loss to carry forward (CITA art.72) |
