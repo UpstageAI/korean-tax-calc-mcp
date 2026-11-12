@@ -22,6 +22,7 @@ from .engine import calc_foreign as F
 from .engine import calc_provision as PV
 from .engine import calc_tp as ALR
 from .engine import calc_multiyear as MY
+from .engine import calc_incentive as INC
 from .engine.calc_cit import min_tax_adjust
 from .engine import calc_inhgift as IG
 from .engine import calc_gold_gaps6 as GG
@@ -958,6 +959,75 @@ def tax_adjustment_schedule(years: Annotated[list, Field(description="사업연�
     if "error" in r:
         return r
     return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 서식=r["서식"], 주의=r["주의"])
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def startup_tax_reduction(founded_on: Annotated[str, Field(description="창업일(법인 설립등기일) YYYY-MM-DD — 2016.1.1.~2026.12.31.")],
+                          region: Annotated[str, Field(description="창업 지역: 수도권과밀억제권역 | 수도권(과밀억제권역도 인구감소지역도 아닌 수도권) | 수도권 인구감소지역 | 수도권 밖")],
+                          year: YEAR,
+                          first_income_year: Annotated[int, Field(description="해당 사업에서 최초로 소득이 발생한 과세연도(벤처 확인으로 적용받으면 확인일 이후 최초 소득 과세연도)")],
+                          tax: Annotated[int, Field(description="그 과세연도 법인세 산출세액(원)", ge=0)],
+                          taxable_base: Annotated[int, Field(description="그 과세연도 과세표준(원)", gt=0)],
+                          eligible_income: Annotated[int | None, Field(description="감면 대상 사업에서 발생한 소득(원). 비우면 과세표준 전부", ge=0)] = None,
+                          youth: Annotated[bool, Field(description="청년창업중소기업 여부 — 대표자가 창업 당시 15~34세(병역 기간 6년 한도 차감)이고 법인의 최대주주")] = False,
+                          industry: Annotated[str, Field(description="업종: 제조업 | 위탁제조(제조업체에 맡겨 생산) | 통신판매업 | 그 밖의 대상 업종 | 도매업 | 소매업")] = "제조업",
+                          oem: Annotated[dict | None, Field(description="위탁제조일 때 {domestic_maker(국내 제조업체 위탁), own_planning(직접 기획), own_name(자기 명의 제조), own_sale(인수해 자기 책임으로 직접 판매)} 각 true/false")] = None,
+                          venture_confirmed_on: Annotated[str, Field(description="벤처기업 확인일 YYYY-MM-DD(창업 후 3년 안에 확인받은 경우)")] = "",
+                          business_started_on: Annotated[str, Field(description="사업 개시일 YYYY-MM-DD(창업일과 다르면)")] = "") -> dict:
+    """창업중소기업 세액감면 — 창업일·지역·청년 여부·업종으로 감면 대상인지와 감면율, 감면기간, 그 과세연도 감면세액(조세특례제한법 제6조). 언제: 창업한 지 몇 해 안 된 중소기업이 이익이 난 해에 법인세를 얼마나 감면받는지, 위탁생산·온라인 판매 회사가 대상인지 볼 때.
+    입력: 창업일 → founded_on, 지역 → region, 과세연도 → year, 최초 소득 과세연도 → first_income_year, 산출세액 → tax, 과세표준 → taxable_base, 청년창업 → youth, 업종 → industry, 위탁제조 요건 → oem, 벤처 확인일 → venture_confirmed_on.
+    계산: 감면세액 = 산출세액 × 감면 대상 소득 ÷ 과세표준 × 감면율. 감면기간은 최초 소득 과세연도(사업 개시 후 5년이 되는 해까지 소득이 없으면 그 해)부터 5개 과세연도.
+      감면율은 창업일 기준 — 2016년 과밀억제권역 밖 50%, 2017년 청년 75%·50%, 2018.5.29.~2025년 청년 100%·50%와 과밀억제권역 밖 일반 50%, 2026년부터 100·75·50·25%.
+      위탁제조는 국내 제조업체 위탁·직접 기획·자기 명의·자기 책임 직접 판매를 모두 갖추면 제조업(시행규칙 제4조의2). 도매업·소매업은 대상 아님. 100%가 아니면 최저한세 적용.
+    결과: 감면세액, 적용(제1항·제2항·대상 아님·감면기간 아님), 감면율, 감면 후 세액, 계산(감면기간·연차·감면 대상 세액·최저한세), 판단·근거·주의.
+    범위 밖: 2018.1.1.~5.28. 창업, 수입금액이 작은 창업기업 감면(제6항), 고용 증가 추가 감면(제7항), 창업보육센터·에너지신기술기업, 1년 미만 과세연도, 개인사업자."""
+    r = INC.startup_tax_reduction(founded_on, region, year, first_income_year, tax, taxable_base, eligible_income, youth, industry, oem, venture_confirmed_on, business_started_on)
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 주의=r["주의"])
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def sme_special_tax_reduction(year: YEAR,
+                              size: Annotated[str, Field(description="소기업 | 중기업(중소기업 중 소기업이 아닌 기업) — 소기업은 매출액이 중소기업기본법 시행령 별표 3 기준 이내")],
+                              hq_in_capital_area: Annotated[bool, Field(description="본점(사업장)이 수도권에 있으면 true — 본점이 수도권이면 모든 사업장을 수도권으로 봄")],
+                              industry_group: Annotated[str, Field(description="도매업등(도매·소매·의료업) | 그 밖의 감면 업종(제조업 등)")],
+                              tax: Annotated[int, Field(description="그 과세연도 법인세 산출세액(원)", ge=0)],
+                              taxable_base: Annotated[int, Field(description="그 과세연도 과세표준(원)", gt=0)],
+                              eligible_income: Annotated[int | None, Field(description="감면 업종 사업장에서 발생한 소득(원). 비우면 과세표준 전부", ge=0)] = None,
+                              employees_prev: Annotated[float | None, Field(description="직전 과세연도 상시근로자 수(한도 계산용)", ge=0)] = None,
+                              employees_now: Annotated[float | None, Field(description="해당 과세연도 상시근로자 수", ge=0)] = None) -> dict:
+    """중소기업 특별세액감면 — 기업 규모·지역·업종별 감면율과 한도를 적용한 감면세액(조세특례제한법 제7조). 언제: 창업감면 대상이 아니거나 감면기간이 끝난 중소기업(도매·소매 포함)이 해마다 받을 수 있는 법인세 감면을 계산할 때.
+    입력: 과세연도 → year, 소기업·중기업 → size, 본점 수도권 여부 → hq_in_capital_area, 업종 묶음 → industry_group, 산출세액 → tax, 과세표준 → taxable_base, 상시근로자 수 → employees_prev·employees_now.
+    계산: 감면세액 = 산출세액 × 감면 대상 소득 ÷ 과세표준 × 감면율. 소기업 도매업등 10%, 소기업 그 밖 업종 수도권 20%·수도권 밖 30%, 중기업 수도권 밖 도매업등 5%·그 밖 15%, 중기업 수도권은 없음.
+      2018년부터 한도 1억원(상시근로자가 줄면 1명당 500만원 차감). 최저한세(과세표준 × 7%) 적용.
+    결과: 감면세액, 감면율, 감면 후 세액, 계산(감면 대상 세액·한도·최저한세), 판단·근거·주의.
+    범위 밖: 소기업 매출액 기준 판정, 수도권 중기업 예외 업종 10%, 성실사업자 110% 특례, 전기·수소차 임대업, 알뜰주유소 특례, 개인사업자."""
+    r = INC.sme_special_tax_reduction(year, size, hq_in_capital_area, industry_group, tax, taxable_base, eligible_income, employees_prev, employees_now)
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 주의=r["주의"])
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def loss_carryback_refund(year: Annotated[int, Field(description="결손금이 발생한 사업연도(2017~2026)")],
+                          loss: Annotated[int, Field(description="그 사업연도 결손금(원, 양수)", gt=0)],
+                          prior_base: Annotated[int, Field(description="직전 사업연도 과세표준(원)", ge=0)],
+                          prior_credits: Annotated[int, Field(description="직전 사업연도에 공제·감면받은 법인세액(원)", ge=0)] = 0,
+                          carryback: Annotated[int | None, Field(description="소급공제 받으려는 결손금(원). 비우면 결손금과 직전 과세표준 중 작은 금액", gt=0)] = None) -> dict:
+    """결손금 소급공제 환급 — 중소기업이 결손이 난 해에 직전 사업연도에 낸 법인세를 돌려받는 금액과 이월할 결손금(법인세법 제72조). 언제: 전년도에 법인세를 냈는데 올해 적자가 난 중소기업이 이월공제 대신 환급을 받을 수 있는지 볼 때.
+    입력: 결손 사업연도 → year, 결손금 → loss, 직전 과세표준 → prior_base, 직전 공제·감면세액 → prior_credits, 소급공제 신청액 → carryback.
+    계산: 환급세액 = 직전 산출세액 − (직전 과세표준 − 소급공제 결손금) × 직전 사업연도 세율. 한도 = 직전 산출세액 − 공제·감면세액(시행령 제110조제1항).
+      한도에 걸리면 한도만큼 환급받는 가장 작은 소급공제액을 함께 표시(나머지는 이월하는 편이 유리).
+    결과: 환급세액, 소급공제 결손금, 이월할 결손금, 계산(직전 산출세액·소급공제 후 세액·차액·한도), 판단·근거·주의.
+    범위 밖: 2020·2021년 한시 특례(조세특례제한법 제8조의4), 1년 미만 사업연도, 개인사업자, 환급 후 경정에 따른 추징세액."""
+    r = INC.loss_carryback_refund(year, loss, prior_base, prior_credits, carryback)
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 주의=r["주의"])
 
 
 @mcp.tool(annotations=CALC)
@@ -9596,6 +9666,9 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "면세전용": ["vat_exempt_use_deemed_supply"], "간주공급": ["vat_deemed_supply_items", "vat_exempt_use_deemed_supply"],
     "세무조정 다년도": ["tax_adjustment_schedule"], "유보 잔액": ["tax_adjustment_schedule", "provision_reserve_ledger"], "소득금액조정합계표": ["tax_adjustment_schedule"],
     "각 사업연도 소득": ["tax_adjustment_schedule"], "자본금과 적립금 조정명세서": ["tax_adjustment_schedule"],
+    "창업감면": ["startup_tax_reduction"], "창업중소기업": ["startup_tax_reduction"], "청년창업": ["startup_tax_reduction"], "창업벤처": ["startup_tax_reduction"], "벤처기업 감면": ["startup_tax_reduction"],
+    "위탁제조": ["startup_tax_reduction"], "특별세액감면": ["sme_special_tax_reduction"], "중소기업 감면": ["sme_special_tax_reduction", "startup_tax_reduction"], "소기업": ["sme_special_tax_reduction"],
+    "소급공제": ["loss_carryback_refund"], "결손금 환급": ["loss_carryback_refund"], "결손금 소급": ["loss_carryback_refund"],
     "이월결손금 추적": ["loss_carryforward_ledger"], "결손금 잔액": ["loss_carryforward_ledger"], "결손금 소멸": ["loss_carryforward_ledger"], "이월결손금": ["loss_carryforward_ledger", "loss_carryforward_limit"],
     "해외법인 청산": ["foreign_subsidiary_liquidation", "foreign_exchange_reporting"], "자회사 청산 손실": ["foreign_subsidiary_liquidation"], "투자주식 손실": ["foreign_subsidiary_liquidation"],
     "정상가격 범위": ["arm_length_range"], "사분위": ["arm_length_range"], "이전가격 조정액": ["arm_length_range"], "비교대상 이익률": ["arm_length_range"],
