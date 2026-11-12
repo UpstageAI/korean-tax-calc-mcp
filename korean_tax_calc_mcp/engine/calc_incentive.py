@@ -599,3 +599,393 @@ def rural_special_tax(year, items):
                    "비과세 목록은 그 과세연도 말 시행본 기준. 연중 개정으로 들어오거나 빠진 조문은 부칙 적용례에 따라 달라질 수 있음",
                    "창업중소기업 감면(제6조)·중소기업 특별세액감면(제7조)·연구인력개발비 세액공제(제10조)는 비과세. 통합투자세액공제(제24조)·통합고용세액공제(제29조의8)처럼 목록에 없는 공제는 20% 과세",
                    "농어촌특별세는 본세(법인세·소득세)와 함께 신고·납부. 저축·이자·배당 감면, 관세·취득세·등록면허세 감면, 지방세특례제한법 감면은 계산하지 않음"]}
+
+
+# ── 통합고용세액공제(조세특례제한법 제29조의8) — 2023~2025 과세연도 ─────────────────────────────────────────
+# 근거(2023·2024·2025 연말 시행본과 2026.11.12. 시행본 대조): 법 제29조의8①(기본공제: 상시근로자 증가 인원 × 1인당 금액, 해당 과세연도와 그 뒤 1년 — 중소·중견 2년),
+#   ②(2025.3.14. 개정 뒤 ③ — 최초 공제 과세연도보다 전체가 줄면 그 해부터 제1항 미적용, 청년등이 줄면 제1항제1호 미적용, 공제세액 추가 납부),
+#   ③(개정 뒤 ④ — 정규직 전환 1,300만원·중견 900만원), ④(개정 뒤 ⑤ — 육아휴직 복귀 1,300만원·중견 900만원),
+#   시행령 제26조의8⑥(상시근로자 수 = 매월 말 인원 합 ÷ 개월 수, 100분의 1 미만 버림)·⑧(창업한 해는 직전 0), 제23조⑩(상시근로자 범위).
+# 1인당 금액(2023~2025 같음): 청년등 — 중소기업 수도권 1,450만·수도권 밖 1,550만, 중견 800만, 그 밖 400만 / 청년등 외 — 중소기업 수도권 850만·수도권 밖 950만, 중견 450만, 그 밖 0.
+# 정규직 전환: 2023 과세연도는 2022.6.30. 당시 고용자를 2023.12.31.까지, 2024 과세연도는 2023.6.30. 당시 고용자를 2024.1.1.~12.31. 전환(2023.12.31. 개정). 2025년 전환분 규정 없음.
+# 2026 과세연도부터는 직전 3개 과세연도 대비 증가 인원별 계산식으로 바뀜(2025.12.23. 개정) — 계산하지 않음.
+_IEC_YEARS = (2023, 2024, 2025)
+_IEC_AMT = {("중소기업", False): (14_500_000, 8_500_000), ("중소기업", True): (15_500_000, 9_500_000), ("중견기업", False): (8_000_000, 4_500_000),
+            ("중견기업", True): (8_000_000, 4_500_000), ("일반", False): (4_000_000, 0), ("일반", True): (4_000_000, 0)}
+
+
+def _iec_first(prev, cur, size, outside):
+    """최초 공제 과세연도의 증가 인원과 공제액. prev·cur = (전체, 청년등) — Fraction."""
+    from fractions import Fraction as F
+    inc = cur[0] - prev[0]
+    if inc <= 0:
+        return None
+    youth = min(max(cur[1] - prev[1], F(0)), inc)
+    other = min(max((cur[0] - cur[1]) - (prev[0] - prev[1]), F(0)), inc)
+    a_y, a_o = _IEC_AMT[(size, outside)]
+    return {"전체_증가": inc, "청년등_증가": youth, "청년등_외_증가": other, "청년등_공제": int(youth * a_y), "청년등_외_공제": int(other * a_o)}
+
+
+def _iec_recapture(hc, first, at, base, a_y, a_o, count):
+    """시행령 제26조의8제4항 산식 — 최초 공제 과세연도(first) 대비 at 과세연도의 감소분. hc[y] = (전체, 청년등, 추가 납부 계산용 청년등)."""
+    from fractions import Fraction as F
+    dt = hc[first][0] - hc[at][0]
+    dy = hc[first][1] - hc[at][2]
+    do = (hc[first][0] - hc[first][1]) - (hc[at][0] - hc[at][2])
+    yi = base["청년등_증가"]
+    if dt > 0:
+        if dy >= dt:
+            return int((max(min(dy, yi) - dt, F(0)) * (a_y - a_o) + dt * a_y) * count), "전체 감소, 청년등 감소 인원이 전체 감소 인원 이상"
+        return int((min(max(dy, F(0)), dt) * a_y + min(max(do, F(0)), dt) * a_o) * count), "전체 감소, 그 밖의 경우"
+    if dy > 0:
+        return int(min(dy, yi) * (a_y - a_o) * count), "전체 유지, 청년등 감소"
+    return 0, ""
+
+
+def integrated_employment_credit(year, size, headcounts, outside_capital_area=False, converted=0, returned_from_leave=0, credits_taken=None, carryforward_left=None):
+    from fractions import Fraction as F
+    문제 = []
+    if not isinstance(year, int) or isinstance(year, bool):
+        문제.append("year — 과세연도(정수)")
+    elif year >= 2026:
+        return {"error": "계산하지 않음", "문제": ["2026 과세연도부터 통합고용세액공제는 직전 3개 과세연도 대비 증가 인원별 계산식으로 바뀜(조세특례제한법 제29조의8제1항, 2025.12.23. 개정) — 이 도구는 2023~2025 과세연도만 계산"]}
+    elif year <= 2022:
+        return {"error": "계산하지 않음", "문제": ["통합고용세액공제는 2023 과세연도부터. 2022 과세연도까지 늘어난 인원은 고용을 증대시킨 기업에 대한 세액공제(조세특례제한법 제29조의7) 대상 — 이 도구는 계산하지 않음"]}
+    if size not in ("중소기업", "중견기업", "일반"):
+        문제.append(f"size={size!r} — 중소기업 | 중견기업 | 일반")
+    hc = {}
+    if not isinstance(headcounts, list) or not headcounts:
+        문제.append("headcounts — [{year, total(상시근로자 수), youth(청년등상시근로자 수)}] 해당 과세연도와 직전 과세연도는 반드시")
+    for i, h in enumerate(headcounts if isinstance(headcounts, list) else []):
+        h = h or {}
+        y, t, yo = h.get("year"), h.get("total"), h.get("youth")
+        ok = True
+        if not isinstance(y, int) or isinstance(y, bool):
+            문제.append(f"headcounts[{i}].year — 과세연도"); ok = False
+        for nm, v in (("total", t), ("youth", yo)):
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or v < 0:
+                문제.append(f"headcounts[{i}].{nm} — 0 이상(매월 말 인원 합 ÷ 개월 수)"); ok = False
+        if ok and yo > t:
+            문제.append(f"headcounts[{i}] — 청년등({yo})이 전체({t})보다 많음"); ok = False
+        yr_ = h.get("youth_for_recapture", yo)
+        if ok and (isinstance(yr_, bool) or not isinstance(yr_, (int, float)) or yr_ < yo or yr_ > t):
+            문제.append(f"headcounts[{i}].youth_for_recapture — 최초 공제 과세연도에 청년등이던 사람을 계속 청년등으로 본 인원(youth 이상, total 이하)"); ok = False
+        if ok:
+            tr = lambda v: F(int(F(str(v)) * 100), 100)                                # 100분의 1 미만 버림
+            hc[y] = (tr(t), tr(yo), tr(yr_))
+    for nm, v in (("converted", converted), ("returned_from_leave", returned_from_leave)):
+        if isinstance(v, bool) or not isinstance(v, int) or v < 0:
+            문제.append(f"{nm} — 인원(0 이상 정수)")
+    taken, left = {}, {}
+    for i, c in enumerate(credits_taken or []):
+        c = c or {}
+        if not isinstance(c.get("first_year"), int) or not isinstance(c.get("year"), int) or not _won(c.get("amount"), f"credits_taken[{i}].amount", 문제):
+            문제.append(f"credits_taken[{i}] — {{first_year(최초 공제 과세연도), year(공제받은 과세연도), amount(그 해에 실제로 공제받은 세액, 원)}}")
+        else:
+            taken.setdefault(c["first_year"], {})[c["year"]] = taken.get(c["first_year"], {}).get(c["year"], 0) + c["amount"]
+    for i, c in enumerate(carryforward_left or []):
+        c = c or {}
+        if not isinstance(c.get("first_year"), int) or not _won(c.get("amount"), f"carryforward_left[{i}].amount", 문제):
+            문제.append(f"carryforward_left[{i}] — {{first_year, amount(그 최초 공제 과세연도분 가운데 아직 공제받지 못하고 이월된 세액, 원)}}")
+        else:
+            left[c["first_year"]] = left.get(c["first_year"], 0) + c["amount"]
+    if not 문제 and (year not in hc or year - 1 not in hc):
+        문제.append(f"headcounts에 {year - 1}·{year} 과세연도가 모두 있어야 함(창업한 해면 직전 과세연도를 0으로)")
+    if not 문제 and converted and year == 2025:
+        문제.append("converted — 정규직 전환 공제는 2024.12.31.까지 전환한 인원까지(2025년 전환분 규정 없음)")
+    if not 문제 and (converted or returned_from_leave) and size == "일반":
+        문제.append("정규직 전환·육아휴직 복귀 공제는 중소기업·중견기업만")
+    if 문제:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제}
+    outside = bool(outside_capital_area)
+    keep_years = 2 if size in ("중소기업", "중견기업") else 1
+    num = lambda x: float(x) if x.denominator != 1 else int(x)
+    rows, 판단, total_credit, total_recapture = [], [], 0, 0
+    a_y, a_o = _IEC_AMT[(size, outside)]
+    for first in (year, year - 1, year - 2):
+        if first < 2023 or first - 1 not in hc or first not in hc or year - first > keep_years:
+            if first < 2023 and first in hc and first - 1 in hc and hc[first][0] > hc[first - 1][0] and year - first <= 2:
+                판단.append(f"{first} 과세연도에 늘어난 인원은 고용을 증대시킨 기업에 대한 세액공제(제29조의7) 대상 — 이 도구에 넣지 않음")
+            continue
+        base = _iec_first(hc[first - 1], hc[first], size, outside)
+        if base is None:
+            if first == year:
+                판단.append(f"{year} 과세연도 상시근로자 수가 직전보다 늘지 않아 새로 생기는 기본공제 없음")
+            continue
+        nth = year - first + 1
+        row = {"최초_공제_과세연도": first, "차수": nth, "전체_증가": num(base["전체_증가"]), "청년등_증가": num(base["청년등_증가"]), "청년등_외_증가": num(base["청년등_외_증가"])}
+        y_credit, o_credit, status = base["청년등_공제"], base["청년등_외_공제"], "공제"
+        if nth > 1:
+            mids = [y for y in range(first + 1, year + 1)]
+            if any(y not in hc for y in mids):
+                return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"{first} 과세연도분의 {nth}차 공제를 보려면 headcounts에 {mids} 과세연도가 모두 있어야 함"]}
+            if any(hc[y][0] < hc[first][0] for y in mids):
+                y_credit = o_credit = 0
+                status = "중단"
+                판단.append(f"{first} 과세연도분: 전체 상시근로자 수가 최초 공제 과세연도({num(hc[first][0])}명)보다 줄어 그 해부터 공제하지 않음(제29조의8 사후관리)")
+            elif any(hc[y][1] < hc[first][1] for y in mids):
+                y_credit = int(base["청년등_증가"] * a_o)
+                status = "청년등 외 금액으로 공제"
+                판단.append(f"{first} 과세연도분: 청년등상시근로자 수가 최초 공제 과세연도({num(hc[first][1])}명)보다 줄어 청년등 금액(제1항제1호)을 적용하지 않고, 남은 공제연도에는 청년등 증가 인원에도 청년등 외 금액을 적용. "
+                          "근거는 같은 문언인 제29조의7에 대한 해석(기획재정부 조세특례제도과-215, 2023.3.6.; 서면-2022-법규법인-4716, 2023.9.4.) — 제29조의8에 대한 해석은 따로 확인하지 못함")
+            # 추가 납부(시행령 제26조의8제4항): 1년 이내는 제1호, 2년 이내는 제2호(제1호 금액 제외, 공제받은 횟수를 곱함)
+            amt1, why1 = _iec_recapture(hc, first, first + 1, base, a_y, a_o, 1)
+            if nth == 2:
+                formula, why, count, period = amt1, why1, 1, "1년 이내(제4항제1호)"
+            else:
+                count = 1 + (0 if hc[first + 1][0] < hc[first][0] else 1)      # 직전 2년 이내 과세연도에 공제받은 횟수(2차 연도에 전체가 줄어 중단됐으면 1)
+                amt2, why = _iec_recapture(hc, first, year, base, a_y, a_o, count)
+                formula, period = max(0, amt2 - amt1), "2년 이내(제4항제2호)"
+            if formula:
+                rec = {"구분": period, "사유": why, "공제받은_횟수": count, "산식_금액": formula}
+                if first in taken:
+                    cap = sum(v for y, v in taken[first].items() if first <= y < year)
+                    pay = min(formula, cap)
+                    rec.update({"공제받은_세액_한도": cap, "납부액": pay, "이월액_차감": min(formula - pay, left.get(first, 0))})
+                else:
+                    pay = formula
+                    rec.update({"납부액": pay, "확인": "공제받은 세액(credits_taken)을 넣지 않아 한도를 적용하지 않은 산식 금액"})
+                    판단.append(f"{first} 과세연도분 추가 납부: 실제로 공제받은 세액을 넣지 않아 산식 금액 {formula:,}원을 그대로 표시 — 공제받은 세액이 한도이고, 못 쓰고 이월한 금액은 납부 대신 이월액에서 차감")
+                row["추가_납부"] = rec
+                total_recapture += pay
+                if amt1 and nth == 3:
+                    판단.append(f"{first} 과세연도분: 2차 연도 감소분으로 계산한 {amt1:,}원은 제외(시행령 제26조의8제4항제2호)")
+        row.update({"청년등_공제": y_credit, "청년등_외_공제": o_credit, "공제액": y_credit + o_credit, "상태": status})
+        total_credit += y_credit + o_credit
+        rows.append(row)
+    extra = {"정규직_전환": 0, "육아휴직_복귀": 0}
+    if converted or returned_from_leave:
+        per = 13_000_000 if size == "중소기업" else 9_000_000
+        if hc[year][0] < hc[year - 1][0]:
+            판단.append("상시근로자 수가 직전 과세연도보다 줄어 정규직 전환·육아휴직 복귀 공제는 적용하지 않음(제29조의8 단서)")
+        else:
+            extra = {"정규직_전환": converted * per, "육아휴직_복귀": returned_from_leave * per}
+            if converted:
+                판단.append(f"정규직 전환 {converted}명 × {per:,}원 — {year - 1}.6.30. 당시 고용하던 기간제·단시간·파견 근로자를 "
+                          + ("2023.12.31.까지" if year == 2023 else "2024.1.1.~12.31.에") + " 전환한 인원만")
+            if returned_from_leave:
+                판단.append(f"육아휴직 복귀 {returned_from_leave}명 × {per:,}원 — 1년 이상 근무, 육아휴직 연속 6개월 이상, 자녀 1명당 한 차례")
+    결과 = {"기본공제": total_credit, "정규직_전환_공제": extra["정규직_전환"], "육아휴직_복귀_공제": extra["육아휴직_복귀"], "공제_대상_세액": total_credit + sum(extra.values())}
+    if any("추가_납부" in r for r in rows):
+        결과["추가_납부세액"] = total_recapture
+    return {"결과": 결과,
+            "계산": {"기업": size, "지역": "수도권 밖" if outside else "수도권", "1인당_금액": {"청년등": a_y, "청년등_외": a_o}, "공제_기간": f"최초 공제 과세연도와 그 뒤 {keep_years}년",
+                   "최초_공제_과세연도별": rows, "상시근로자": {y: {"전체": num(v[0]), "청년등": num(v[1])} for y, v in sorted(hc.items())}},
+            "판단": 판단,
+            "근거": ["조세특례제한법 제29조의8제1항부터 제5항까지", "조세특례제한법 시행령 제26조의8(추가 납부는 제4항·제5항)", "조세특례제한법 시행령 제23조제10항·제11항·제13항"],
+            "주의": ["요건과 과세연도별 적용 여부는 이 도구가 판정하지 않음 — 계산 전에 조문 MCP(korean-tax-mcp)로 그 과세연도 요건을 확인: law_article(law_name='조세특례제한법', article='29의8', as_of=과세연도 말)과 시행령 제26조의8(상시근로자·청년등 범위)",
+                   "공제 대상 세액은 그 과세연도에 공제할 수 있는 금액 — 최저한세 대상이고 못 쓴 금액은 10년 이월(minimum_tax_adjustment의 코드 18S, 전환 1B4, 육아휴직 1B5). 공제받은 세액에는 농어촌특별세 20%(rural_special_tax)",
+                   "상시근로자 수는 매월 말 인원 합 ÷ 개월 수(100분의 1 미만 버림). 근로계약 1년 미만, 월 60시간 미만 단시간근로자, 임원, 최대주주와 그 배우자·친족, 원천징수·4대 보험 납부 사실이 없는 사람은 제외. 월 60시간 이상 단시간근로자는 0.5명(요건을 갖추면 0.75명)",
+                   "청년등: 15~34세(병역 기간 6년 한도 차감) 정규직, 장애인 등, 근로계약일 현재 60세 이상, 경력단절 여성(2025.3.14. 개정 뒤 경력단절 근로자, 2025.6.30. 시행령 개정으로 북한이탈주민 추가). 최초 공제 과세연도의 청년은 사후관리에서 계속 청년등으로 봄",
+                   "창업한 과세연도는 직전 과세연도 인원을 0으로 봄(합병·분할·사업 양수·법인 전환은 승계 인원 조정 — 계산하지 않음). 소비성서비스업은 제외. 기업 규모가 중간에 바뀐 경우와 지역이 섞인 경우는 계산하지 않음",
+                   "창업중소기업 감면(제6조)과의 관계: 2024.12.31.까지 창업한 기업은 제7항 추가 감면을 받는 경우에만 함께 적용하지 못하고, 2025.1.1. 이후 창업한 기업은 함께 적용하지 못함(제127조제4항 단서, 법률 제20617호 부칙 제2조)",
+                   "추가 납부(인원이 최초 공제 과세연도보다 준 해): 시행령 제26조의8제4항 산식 금액을 실제로 공제받은 세액(credits_taken)을 한도로 그 해 법인세에 더해 납부하고, 남는 금액은 이월된 공제액에서 차감(사전-2020-법령해석소득-0478 — 제29조의7에 대한 해석). "
+                   "추가 납부 계산에서는 최초 공제 과세연도에 청년이던 사람을 나이가 넘어도 청년등으로 봄(제5항) — 그 인원은 headcounts의 youth_for_recapture에. 제4항제2호가목2)는 문장으로 규정되어 감소 인원 × 1인당 금액 × 공제받은 횟수로 계산",
+                   "2022 과세연도 이전 증가분(제29조의7), 2026 과세연도 이후 계산식은 계산하지 않음"]}
+
+
+# ── 통합투자세액공제(조세특례제한법 제24조) — 2021~2026 과세연도 ────────────────────────────────────────────
+# 근거(2021~2025 각 연말과 2026.11.12. 시행본 대조): 법 제24조①2호(기본공제·추가공제)·3호(임시 투자 세액공제, 2023~2025 과세연도),
+#   시행령 제21조①(소비성서비스업, 부동산임대 및 공급업 제외)·⑦(투자금액)·⑧(직전 3년간 연평균 투자금액)·⑨(평균이 없으면 추가공제 없음), 제130조(수도권과밀억제권역 증설투자 배제).
+# 부칙: 국가전략기술 시설은 2021.7.1. 이후 투자분부터(법률 제18634호 부칙 제7조), 15%·25%는 2023.1.1. 이후 투자분부터(제19328호 부칙 제3조),
+#   2023 임시는 2023.12.31.이 속하는 과세연도 투자분(같은 부칙 제3조③), 2024 임시는 2025.1.1. 이후 신고분부터·2025 임시는 2025.1.1. 이후 개시 과세연도 투자분(2025.3.14. 개정 부칙 제4조②③),
+#   반도체·연구개발시설은 2025.1.1. 이후 투자분부터(같은 부칙 제4조①).
+# 기본공제율(%) — (일반기업, 중견기업, 중소기업). 2025년부터 '중소기업 졸업 뒤 3년'(최초로 중소기업에 해당하지 않게 된 과세연도 개시일부터 3년 안에 끝나는 과세연도) 구간 추가.
+_IIC_MAIN = {
+    2021: {"일반": (1, 3, 10), "신성장": (3, 5, 12), "국가전략": (6, 8, 16)},
+    2022: {"일반": (1, 3, 10), "신성장": (3, 5, 12), "국가전략": (6, 8, 16)},
+    2023: {"일반": (1, 5, 10), "신성장": (3, 6, 12), "국가전략": (15, 15, 25)},
+    2024: {"일반": (1, 5, 10), "신성장": (3, 6, 12), "국가전략": (15, 15, 25)},
+}
+_IIC_2025 = {"일반": {"일반": 1, "중견기업": 5, "졸업 뒤 3년": "7.5", "중소기업": 10}, "신성장": {"일반": 3, "중견기업": 6, "졸업 뒤 3년": 9, "중소기업": 12},
+             "국가전략": {"일반": 15, "중견기업": 15, "졸업 뒤 3년": 20, "중소기업": 25}, "반도체": {"일반": 20, "중견기업": 20, "졸업 뒤 3년": 25, "중소기업": 30}}
+_IIC_TEMP = {2023: {"일반": (3, 7, 12), "신성장": (6, 10, 18)}, 2024: {"일반": (1, 7, 12), "신성장": (3, 8, 14)}, 2025: {"일반": (1, 7, 12), "신성장": (3, 8, 14)}}
+_IIC_SIZE = {"일반": 0, "중견기업": 1, "중소기업": 2}
+
+
+def _iic_rate(year, kind, size, temp):
+    from fractions import Fraction as F
+    if temp and kind in _IIC_TEMP[year]:
+        return None if size == "졸업 뒤 3년" else F(_IIC_TEMP[year][kind][_IIC_SIZE[size]], 100)
+    if year >= 2025:
+        return F(str(_IIC_2025[kind][size])) / 100
+    return F(_IIC_MAIN[year][kind][_IIC_SIZE[size]], 100)
+
+
+def integrated_investment_credit(year, size, investments, prior3_total=0, history_months=None, months=12, in_overconcentration_zone=False, expansion=False):
+    from fractions import Fraction as F
+    문제 = []
+    if not isinstance(year, int) or isinstance(year, bool) or not 2021 <= year <= 2026:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"year={year!r} — 2021~2026 과세연도(통합투자세액공제는 2021년부터. 2020년 이전은 자산별 투자세액공제라 계산하지 않음)"]}
+    sizes = ("중소기업", "중견기업", "일반") + (("졸업 뒤 3년",) if year >= 2025 else ())
+    if size not in sizes:
+        문제.append(f"size={size!r} — {' | '.join(sizes)}" + ("" if year >= 2025 else " ('졸업 뒤 3년' 구간은 2025 과세연도부터)"))
+    kinds = ("일반", "신성장", "국가전략") + (("반도체",) if year >= 2025 else ())
+    inv = {}
+    if not isinstance(investments, list) or not investments:
+        문제.append("investments — [{kind(일반|신성장|국가전략|반도체), amount(그 과세연도 투자금액, 원)}] 1건 이상")
+    for i, it in enumerate(investments if isinstance(investments, list) else []):
+        it = it or {}
+        if it.get("kind") not in kinds:
+            문제.append(f"investments[{i}].kind={it.get('kind')!r} — {' | '.join(kinds)}" + ("" if year >= 2025 else " (반도체 구분은 2025.1.1. 이후 투자분부터)"))
+        elif _won(it.get("amount"), f"investments[{i}].amount", 문제):
+            inv[it["kind"]] = inv.get(it["kind"], 0) + it["amount"]
+    _won(prior3_total, "prior3_total(직전 3년간 투자한 금액의 합계)", 문제)
+    if history_months is not None and (isinstance(history_months, bool) or not isinstance(history_months, int) or not 1 <= history_months <= 36):
+        문제.append("history_months — 투자금액이 처음 생긴 과세연도 개시일부터 해당 과세연도 개시일까지의 개월 수(36 미만일 때만, 1~36)")
+    if isinstance(months, bool) or not isinstance(months, int) or not 1 <= months <= 12:
+        문제.append("months — 해당 과세연도 개월 수(1~12)")
+    if 문제:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제}
+    판단 = []
+    if in_overconcentration_zone and (expansion or size != "중소기업"):
+        why = ("수도권과밀억제권역 안 사업장의 증설투자는 통합투자세액공제를 적용하지 않음(조세특례제한법 제130조제1항)" if size == "중소기업"
+               else "중소기업이 아닌 자가 1990.1.1. 이후 수도권과밀억제권역에 새로 설치·이전한 사업장의 사업용 고정자산은 통합투자세액공제를 적용하지 않음(제130조제2항)")
+        return {"결과": {"기본공제": 0, "추가공제": 0, "공제_대상_세액": 0, "적용": "배제"}, "계산": {"투자금액": inv}, "판단": [why],
+                "근거": ["조세특례제한법 제130조", "조세특례제한법 제24조"],
+                "주의": ["산업단지·공업지역 안 증설투자와 시행령이 정하는 사업용 고정자산(제130조 단서)은 배제되지 않음 — 해당하면 in_overconcentration_zone을 false로 넣어 계산",
+                       "증설투자가 아닌 대체투자는 중소기업이면 공제 대상. 증설·대체 구분과 1989.12.31. 이전부터 사업하던 사업장인지는 이 도구가 판정하지 않음"]}
+    total = sum(inv.values())
+    base_total = prior3_total if not history_months or history_months >= 36 else int(F(prior3_total) * 36 / history_months)
+    avg = F(base_total, 3) * months / 12
+    excess = max(F(0), total - avg) if avg > 0 else F(0)
+    if avg == 0:
+        판단.append("직전 3년간 연평균 투자금액이 없어 추가공제 없음(시행령 제21조제9항)")
+    elif history_months and history_months < 36:
+        판단.append(f"투자 이력이 {history_months}개월이라 그 기간 투자액 {prior3_total:,}원을 36개월로 환산({base_total:,}원)해 3년 합계로 봄(시행령 제21조제8항)")
+
+    def scheme(temp):
+        rows, basic = [], F(0)
+        for k, a in inv.items():
+            r = _iic_rate(year, k, size, temp)
+            if r is None:
+                return None
+            rows.append({"구분": k, "투자금액": a, "공제율": float(r), "기본공제": int(a * r)})
+            basic += int(a * r)
+        if temp or year >= 2025:
+            add_rate, mixed = F(10, 100), False
+        else:
+            rates = {F(4, 100) if k == "국가전략" else F(3, 100) for k in inv}
+            add_rate, mixed = (rates.pop(), False) if len(rates) == 1 else (None, True)
+        if mixed and excess > 0:
+            add, note = None, "국가전략기술 시설(4%)과 그 밖의 자산(3%)이 섞여 있어 초과 투자액을 어느 쪽으로 나눌지 조문만으로 정할 수 없음 — 추가공제는 계산하지 않음"
+        else:
+            raw = int(excess * add_rate) if add_rate is not None else 0
+            cap = int(basic * 2)
+            add, note = min(raw, cap), (f"추가공제 {raw:,}원이 기본공제의 2배 {cap:,}원을 넘어 한도 적용" if raw > cap else "")
+        return {"구분별": rows, "기본공제": int(basic), "추가공제율": float(add_rate) if add_rate is not None else None, "추가공제": add, "한도_안내": note,
+                "합계": int(basic) + (add or 0)}
+
+    main = scheme(False)
+    temp = scheme(True) if year in _IIC_TEMP else None
+    if year == 2023:
+        chosen, label = temp, "임시 투자 세액공제(2023 과세연도 투자분은 제3호 적용)"
+        if temp is None:
+            return {"error": "계산하지 않음", "문제": ["2023 과세연도 임시 투자 세액공제에는 '졸업 뒤 3년' 구간이 없음"]}
+    elif temp is not None and temp["합계"] > main["합계"]:
+        chosen, label = temp, f"임시 투자 세액공제(제3호) — 본칙(제2호) {main['합계']:,}원보다 커서 선택"
+    else:
+        chosen, label = main, "본칙(제2호)" + (f" — 임시(제3호) {temp['합계']:,}원 이하" if temp is not None else "")
+    if year in (2024, 2025) and size == "졸업 뒤 3년":
+        판단.append("임시 투자 세액공제(제3호)에는 '졸업 뒤 3년' 구간이 따로 없어 본칙만 계산 — 중견기업 율로 임시 공제를 받을 수 있는지는 확인 필요")
+    if chosen["한도_안내"]:
+        판단.append(chosen["한도_안내"])
+    판단.append(f"적용: {label}")
+    if "국가전략" in inv and year == 2021:
+        판단.append("국가전략기술 시설의 공제율은 2021.7.1. 이후 투자분부터(법률 제18634호 부칙 제7조) — 그 전 투자분은 일반·신성장으로 넣을 것")
+    if year == 2024 and chosen is temp:
+        판단.append("2024 과세연도 임시 공제는 2025.1.1. 이후 과세표준을 신고하는 경우부터 적용(2025.3.14. 개정 부칙 제4조제2항)")
+    결과 = {"기본공제": chosen["기본공제"], "추가공제": chosen["추가공제"], "공제_대상_세액": chosen["합계"], "적용": "임시" if chosen is temp else "본칙"}
+    return {"결과": 결과,
+            "계산": {"기업": size, "투자금액_합계": total, "직전_3년_합계": base_total, "직전_3년_연평균": int(avg), "초과_투자액": int(excess),
+                   "본칙": main, **({"임시": temp} if temp is not None else {})},
+            "판단": 판단,
+            "근거": ["조세특례제한법 제24조제1항·제2항", "조세특례제한법 시행령 제21조제1항·제7항·제8항·제9항", "조세특례제한법 제130조"],
+            "주의": ["요건과 과세연도별 적용 여부는 이 도구가 판정하지 않음 — 계산 전에 조문 MCP(korean-tax-mcp)로 그 과세연도 요건을 확인: law_article(law_name='조세특례제한법', article='24', as_of=과세연도 말)과 시행령 제21조·시행규칙(대상 자산), 제130조(수도권과밀억제권역)",
+                   "대상: 기계장치 등 사업용 유형자산과 시행령·시행규칙이 정하는 자산(연구·시험, 직업훈련, 에너지 절약, 환경보전 또는 근로자복지 증진 등의 목적으로 쓰는 사업용자산, 중소·중견기업이 취득한 특허권 등). 토지·건축물 등 시행규칙이 뺀 자산, 중고품, 리스 투자, 임대용 자산(2025년부터)은 제외 — 대상 여부는 이 도구가 판정하지 않음",
+                   "투자금액은 총투자금액 × 작업진행률과 그 과세연도까지 실제 지출액 중 큰 금액에서 이미 공제받은 투자금액을 뺀 금액(시행령 제21조제7항). 신성장·국가전략·반도체 시설은 시설 인정을 받은 금액만",
+                   "소비성서비스업, 부동산임대 및 공급업은 제외. 수도권과밀억제권역 안 증설투자는 배제(제130조) — in_overconcentration_zone·expansion으로 판정",
+                   "창업중소기업 감면(제6조)·중소기업 특별세액감면(제7조)과는 하나만 선택(제127조제4항). 최저한세 대상이고 못 쓴 금액은 10년 이월(minimum_tax_adjustment 코드 13W 일반·13X 신성장·13Y 국가전략·13Z 반도체, 임시 1B1·1B2·1B3·1B9). 공제받은 세액에는 농어촌특별세 20%(rural_special_tax)",
+                   "투자 완료 뒤 일정 기간 안에 다른 목적으로 쓰면 공제세액과 이자 상당액을 납부(제24조제3항) — 계산하지 않음. 2023.1.1. 전 투자분의 종전 공제율 경과조치, 국가전략 시설과 그 밖의 자산이 섞였을 때의 추가공제(2021·2022·2024 본칙)는 계산하지 않음"]}
+
+
+# ── 일반 연구·인력개발비 세액공제(조세특례제한법 제10조제1항제3호) — 2016~2026 과세연도 ──────────────────────────
+# 근거(2016~2025 각 연말과 2026.11.12. 시행본 대조): 법 제10조①3호 — 가목(증가분: 직전 과세연도 초과액 × 율)과 나목(당기분: 발생액 × 율) 중 선택.
+#   단서: 소급 4년간 발생하지 않았거나 직전 과세연도 발생액이 4년 연평균 발생액보다 적으면 나목만. 시행령 제9조⑨(연평균 = 4년 합계 ÷ 발생한 과세연도 수(4 한도) × 개월 수/12).
+# 증가분 율: 2016 일반·중견 40%·중소 50% / 2017 일반 30%·중견 40%·중소 50% / 2018~ 일반 25%·중견 40%·중소 50%
+# 당기분 율: 중소 25%, 졸업 뒤 3년 15%·그 뒤 2년 10%(2025.1.1. 이후 개시 과세연도에 처음 졸업한 기업은 20%·15% — 법률 제20617호 부칙 제3조①), 중견 8%,
+#   일반기업 2016 min(3%, 2% + 비율/2) / 2017 min(3%, 1% + 비율/2) / 2018~ min(2%, 비율/2) — 비율 = 일반연구·인력개발비 ÷ 수입금액
+_RND_SIZES = ("중소기업", "졸업 뒤 3년", "졸업 뒤 4~5년", "중견기업", "일반")
+
+
+def rnd_tax_credit(year, size, current, prior4, revenue=None, graduated_year=None, months=12):
+    from fractions import Fraction as F
+    문제 = []
+    if not isinstance(year, int) or isinstance(year, bool) or not YEAR_MIN <= year <= YEAR_MAX:
+        문제.append(f"year={year!r} — {YEAR_MIN}~{YEAR_MAX} 과세연도")
+    if size not in _RND_SIZES:
+        문제.append(f"size={size!r} — {' | '.join(_RND_SIZES)}")
+    _won(current, "current(해당 과세연도 일반연구·인력개발비)", 문제)
+    if not isinstance(prior4, list) or len(prior4) != 4 or any(isinstance(v, bool) or not isinstance(v, int) or v < 0 for v in prior4):
+        문제.append("prior4 — 직전 4개 과세연도의 일반연구·인력개발비 [직전, 2년 전, 3년 전, 4년 전](원, 없던 해는 0)")
+    if size == "일반" and (isinstance(revenue, bool) or not isinstance(revenue, int) or revenue <= 0):
+        문제.append("revenue — 일반기업은 당기분 공제율 계산에 해당 과세연도 수입금액(원)이 필요")
+    if size in ("졸업 뒤 3년", "졸업 뒤 4~5년") and isinstance(year, int) and year >= 2025 and (not isinstance(graduated_year, int) or isinstance(graduated_year, bool)):
+        문제.append("graduated_year — 2025 과세연도부터는 최초로 중소기업에 해당하지 않게 된 과세연도가 필요(2025년 이후면 20%·15%, 그 전이면 15%·10%)")
+    if isinstance(months, bool) or not isinstance(months, int) or not 1 <= months <= 12:
+        문제.append("months — 해당 과세연도 개월 수(1~12)")
+    if 문제:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제}
+    판단 = []
+    # 당기분
+    if size == "중소기업":
+        cur_rate, cur_why = F(25, 100), "중소기업 25%"
+    elif size in ("졸업 뒤 3년", "졸업 뒤 4~5년"):
+        new = year >= 2025 and graduated_year >= 2025
+        pct = {("졸업 뒤 3년", False): 15, ("졸업 뒤 4~5년", False): 10, ("졸업 뒤 3년", True): 20, ("졸업 뒤 4~5년", True): 15}[(size, new)]
+        cur_rate, cur_why = F(pct, 100), f"{size} {pct}%" + (" (2025.1.1. 이후 개시 과세연도에 처음 졸업 — 법률 제20617호 부칙 제3조)" if new else "")
+    elif size == "중견기업":
+        cur_rate, cur_why = F(8, 100), "중견기업 8%"
+    else:
+        ratio = F(current, revenue)
+        if year == 2016:
+            cur_rate, formula = min(F(3, 100), F(2, 100) + ratio / 2), "2% + 비율 × 1/2, 3% 한도"
+        elif year == 2017:
+            cur_rate, formula = min(F(3, 100), F(1, 100) + ratio / 2), "1% + 비율 × 1/2, 3% 한도"
+        else:
+            cur_rate, formula = min(F(2, 100), ratio / 2), "비율 × 1/2, 2% 한도"
+        cur_why = f"일반기업 — 수입금액 대비 비율 {float(ratio):.4%} → {formula}"
+    cur_credit = int(current * cur_rate)
+    # 증가분
+    inc_pct = 50 if size == "중소기업" else (40 if size != "일반" or year == 2016 else (30 if year == 2017 else 25))
+    if size in ("졸업 뒤 3년", "졸업 뒤 4~5년"):
+        판단.append("증가분 공제율은 중견기업 율(40%)로 계산 — 졸업 뒤 기업이 시행령의 중견기업 요건을 갖추지 못하면 일반기업 율")
+    prior1, n = prior4[0], sum(1 for v in prior4 if v > 0)
+    avg = F(sum(prior4), n) * months / 12 if n else F(0)
+    if n == 0:
+        inc_ok, why = False, "소급 4년간 일반연구·인력개발비가 발생하지 않아 당기분만"
+    elif prior1 < avg:
+        inc_ok, why = False, f"직전 과세연도 발생액 {prior1:,}원이 4년 연평균 {int(avg):,}원보다 적어 당기분만"
+    else:
+        inc_ok, why = True, ""
+    inc_credit = int(max(0, current - prior1) * F(inc_pct, 100)) if inc_ok else None
+    if not inc_ok:
+        판단.append(why + "(제10조제1항제3호 단서)")
+    if inc_credit is not None and inc_credit > cur_credit:
+        chosen, credit = "증가분", inc_credit
+    else:
+        chosen, credit = "당기분", cur_credit
+    판단.append(f"당기분 {cur_credit:,}원({cur_why})" + (f", 증가분 {inc_credit:,}원(초과액 × {inc_pct}%)" if inc_credit is not None else "") + f" → {chosen} 선택")
+    sme = size == "중소기업"
+    return {"결과": {"공제_대상_세액": credit, "선택": chosen, "당기분": cur_credit, "증가분": inc_credit},
+            "계산": {"기업": size, "당기_발생액": current, "직전_발생액": prior1, "4년_연평균": int(avg), "발생한_과세연도_수": n, "당기분_공제율": float(cur_rate),
+                   "증가분_공제율": inc_pct / 100, "증가분_적용_가능": inc_ok},
+            "판단": 판단,
+            "근거": ["조세특례제한법 제10조제1항제3호·제2항", "조세특례제한법 시행령 제9조제8항·제9항·제10항"],
+            "주의": ["요건과 과세연도별 적용 여부는 이 도구가 판정하지 않음 — 계산 전에 조문 MCP(korean-tax-mcp)로 그 과세연도 요건을 확인: rnd_credit_requirements_guide(year=과세연도, staff·costs·outsourced_to) — 전담부서등 인정, 인건비 대상자, 주주인 임원 제외, 위탁 기관, 정부 출연금 제외가 연도별로 다름",
+                   "일반연구·인력개발비만 계산. 신성장·원천기술(제1호)과 국가전략기술(제2호) 연구개발비는 공제율과 구분경리 요건이 달라 계산하지 않음",
+                   "연구·인력개발비에 해당하는 비용(시행령 별표 6 — 전담부서 인건비, 재료비, 위탁·공동연구개발비 등)인지와 연구소·전담부서 인정 여부는 이 도구가 판정하지 않음. 정부 출연금 등으로 지출한 금액은 제외",
+                   ("중소기업의 이 공제는 최저한세 적용제외(minimum_tax_adjustment 코드 16B)" if sme else "중소기업이 아니면 최저한세 대상(minimum_tax_adjustment 코드 13M)")
+                   + ". 못 쓴 금액은 10년 이월. 농어촌특별세는 비과세(농어촌특별세법 시행령 제4조)",
+                   "창업중소기업 감면(제6조)·중소기업 특별세액감면(제7조)과 함께 적용 가능(제127조제4항에 제10조가 없음 — 2024·2025 시행본)",
+                   "4년 연평균은 4년 합계 ÷ 발생한 과세연도 수(4 한도) × 개월 수/12(시행령 제9조제9항). 합병·분할·사업 양수 등으로 승계한 발생액 조정(제10항)은 계산하지 않음"]}

@@ -188,6 +188,8 @@ mcp = MCPServer(
     instructions="도구가 70개가 넘으므로 맞는 도구 이름을 모르면 먼저 find_tool(query=평소 말)로 찾고, '도구가 없다'고 판단하기 전에도 find_tool을 부를 것. "
                  "답에 들어가는 금액과 판단마다 직접 계산하기 전에 맞는 도구가 있는지 먼저 확인하고, 도구가 있는 항목은 직접 계산보다 먼저 도구를 부를 것. 질문의 자료를 도구 입력으로 옮겨 계산하고, 도구 없이 답을 끝내지 않는다. "
                  "귀속·공급시기·성립시기 판단은 korean-tax-mcp의 timing_rules를 먼저 본다. "
+                 "세액공제·세액감면처럼 요건과 과세연도에 따라 적용 여부가 갈리는 제도는 계산하기 전에 korean-tax-mcp로 그 과세연도의 요건을 먼저 확인한다"
+                 "(연구·인력개발비는 rnd_credit_requirements_guide, 중소기업 조세지원은 sme_tax_incentives_guide, 그 밖은 law_article에 as_of=과세연도 말). 계산 도구는 요건을 갖춘 금액을 받아 계산만 하고 요건은 판정하지 않는다 — 사용자에게도 이 점을 알린다. "
                  "도구 결과의 단계별 값을 그대로 인용하고, 결과의 근거 조문을 함께 제시한다. "
                  "도구 결과가 직접 계산이나 기억과 다르면 바로 어느 쪽을 고르지 않는다. 입력을 다시 확인하고, 두 값을 가르는 조문을 korean-tax-mcp의 law_article로 열어 요건을 사실관계에 하나씩 대조한다. "
                  "입력 오류나 도구가 틀렸다는 조문 근거를 찾지 못하면 도구 값을 최종 답으로 쓴다. 도구 값과 다른 값을 쓸 때는 그 이유(입력 오류 내용 또는 조문 번호)를 한 줄 밝힌다. "
@@ -1025,6 +1027,73 @@ def rural_special_tax(year: YEAR,
 
 @mcp.tool(annotations=CALC)
 @_guard
+def integrated_employment_credit(year: Annotated[int, Field(description="과세연도(2023~2025)")],
+                                 size: Annotated[str, Field(description="중소기업 | 중견기업 | 일반")],
+                                 headcounts: Annotated[list, Field(description="과세연도별 상시근로자 수 [{year, total(전체), youth(청년등), youth_for_recapture?(추가 납부 계산용 — 최초 공제 과세연도의 청년을 계속 청년등으로 본 인원)}] — 해당 과세연도와 직전 과세연도는 반드시, 앞 해의 2차·3차 공제까지 보려면 2022년부터. 인원은 매월 말 인원 합 ÷ 개월 수")],
+                                 outside_capital_area: Annotated[bool, Field(description="인원이 수도권 밖에서 늘었으면 true(중소기업만 금액이 달라짐)")] = False,
+                                 converted: Annotated[int, Field(description="정규직으로 전환한 인원(중소·중견기업, 2023·2024 과세연도)", ge=0)] = 0,
+                                 returned_from_leave: Annotated[int, Field(description="육아휴직에서 복귀한 인원(중소·중견기업)", ge=0)] = 0,
+                                 credits_taken: Annotated[list | None, Field(description="추가 납부 한도용 — 실제로 공제받은 세액 [{first_year(최초 공제 과세연도), year(공제받은 과세연도), amount(원)}]. 비우면 산식 금액을 그대로 표시")] = None,
+                                 carryforward_left: Annotated[list | None, Field(description="추가 납부 때 차감할 이월 공제액 [{first_year, amount(아직 공제받지 못하고 이월된 세액, 원)}]")] = None) -> dict:
+    """통합고용세액공제 — 상시근로자가 늘어난 기업의 과세연도별 세액공제 대상액(조세특례제한법 제29조의8). 언제: 직원 수가 늘어난 회사가 그 해와 뒤 1~2년에 걸쳐 공제받을 금액을 구하거나, 창업감면·투자 세액공제와 함께 적용했을 때의 세 부담을 비교할 때.
+    입력: 과세연도 → year, 기업 규모 → size, 연도별 상시근로자 수 → headcounts, 수도권 밖 여부 → outside_capital_area, 정규직 전환·육아휴직 복귀 인원 → converted·returned_from_leave.
+    계산: 직전보다 늘어난 인원(전체 증가 인원 한도) × 1인당 금액 — 청년등은 중소기업 수도권 1,450만원·수도권 밖 1,550만원, 중견 800만원, 그 밖 400만원. 청년등 외는 중소기업 850만원·950만원, 중견 450만원, 그 밖 0.
+      최초 공제 과세연도와 그 뒤 1년(중소·중견기업 2년) 동안 같은 금액을 공제. 뒤 연도에 전체 인원이 최초 공제 과세연도보다 줄면 중단, 청년등만 줄면 청년등 외 금액으로 공제.
+      인원이 준 해에는 이미 공제받은 세액의 추가 납부액을 시행령 산식으로 계산하고, 실제로 공제받은 세액을 한도로 함.
+      정규직 전환·육아휴직 복귀는 1명당 1,300만원(중견 900만원), 상시근로자가 줄지 않은 해만.
+    결과: 기본공제, 정규직 전환·육아휴직 복귀 공제, 공제 대상 세액, 추가 납부세액, 계산(최초 공제 과세연도별 증가 인원·차수·공제액·추가 납부), 판단·근거·주의.
+    범위 밖: 2022년 이전 증가분(고용증대 세액공제), 2026 과세연도 이후 계산식, 최저한세·이월(minimum_tax_adjustment), 농어촌특별세(rural_special_tax), 합병·분할 승계 인원 조정."""
+    r = INC.integrated_employment_credit(year, size, headcounts, outside_capital_area, converted, returned_from_leave, credits_taken, carryforward_left)
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 주의=r["주의"])
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def integrated_investment_credit(year: Annotated[int, Field(description="과세연도(2021~2026)")],
+                                 size: Annotated[str, Field(description="중소기업 | 중견기업 | 일반 | 졸업 뒤 3년(2025년부터 — 최초로 중소기업에 해당하지 않게 된 과세연도 개시일부터 3년 안에 끝나는 과세연도)")],
+                                 investments: Annotated[list, Field(description="그 과세연도 투자금액 [{kind(일반 | 신성장 | 국가전략 | 반도체), amount(원)}] — 신성장·국가전략·반도체는 시설 인정을 받은 금액")],
+                                 prior3_total: Annotated[int, Field(description="해당 과세연도 개시일부터 소급해 3년간 투자한 금액의 합계(원). 추가공제 계산용", ge=0)] = 0,
+                                 history_months: Annotated[int | None, Field(description="투자금액이 처음 생긴 과세연도 개시일부터 해당 과세연도 개시일까지의 개월 수(36개월 미만일 때만)")] = None,
+                                 months: Annotated[int, Field(description="해당 과세연도 개월 수", ge=1, le=12)] = 12,
+                                 in_overconcentration_zone: Annotated[bool, Field(description="투자한 사업장이 수도권과밀억제권역 안이면 true(산업단지·공업지역은 false)")] = False,
+                                 expansion: Annotated[bool, Field(description="증설투자면 true, 낡은 설비를 바꾸는 대체투자면 false")] = False) -> dict:
+    """통합투자세액공제 — 사업용 자산 투자금액에 대한 기본공제와 추가공제(조세특례제한법 제24조). 언제: 기계장치 등 설비에 투자한 회사가 그 해 공제받을 금액을 구하거나, 창업감면·특별세액감면과 어느 쪽이 유리한지 비교할 때.
+    입력: 과세연도 → year, 기업 규모 → size, 자산 구분별 투자금액 → investments, 직전 3년 투자 합계 → prior3_total, 수도권과밀억제권역·증설 여부 → in_overconcentration_zone·expansion.
+    계산: 기본공제 = 투자금액 × 공제율(연도·규모·자산 구분별 — 중소기업 일반 자산 10%, 2023~2025 임시 12%). 추가공제 = 직전 3년 연평균 투자금액을 넘는 금액 × 3%(국가전략 4%, 임시·2025년부터 10%), 기본공제의 2배 한도.
+      2024·2025 과세연도는 본칙과 임시 공제 중 큰 쪽, 2023 과세연도는 임시 공제. 수도권과밀억제권역 안 증설투자는 배제.
+    결과: 기본공제, 추가공제, 공제 대상 세액, 적용(본칙·임시·배제), 계산(구분별 공제율·3년 연평균·초과 투자액·본칙과 임시 비교), 판단·근거·주의.
+    범위 밖: 공제 대상 자산 판정, 2020년 이전 투자세액공제, 다른 목적 전용 시 납부세액, 최저한세·이월(minimum_tax_adjustment), 농어촌특별세(rural_special_tax)."""
+    r = INC.integrated_investment_credit(year, size, investments, prior3_total, history_months, months, in_overconcentration_zone, expansion)
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 주의=r["주의"])
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def rnd_tax_credit(year: YEAR,
+                   size: Annotated[str, Field(description="중소기업 | 졸업 뒤 3년(최초로 중소기업에 해당하지 않게 된 과세연도 개시일부터 3년 안에 끝나는 과세연도) | 졸업 뒤 4~5년 | 중견기업 | 일반")],
+                   current: Annotated[int, Field(description="해당 과세연도에 발생한 일반연구·인력개발비(원)", ge=0)],
+                   prior4: Annotated[list, Field(description="직전 4개 과세연도의 일반연구·인력개발비 [직전, 2년 전, 3년 전, 4년 전](원, 없던 해는 0)")],
+                   revenue: Annotated[int | None, Field(description="해당 과세연도 수입금액(원) — 일반기업의 당기분 공제율 계산용", gt=0)] = None,
+                   graduated_year: Annotated[int | None, Field(description="최초로 중소기업에 해당하지 않게 된 과세연도(졸업 뒤 구간, 2025 과세연도부터 필요)")] = None,
+                   months: Annotated[int, Field(description="해당 과세연도 개월 수", ge=1, le=12)] = 12) -> dict:
+    """연구·인력개발비 세액공제 — 일반연구·인력개발비의 당기분과 증가분을 계산해 큰 쪽을 고른 공제 대상 세액(조세특례제한법 제10조제1항제3호). 언제: 연구소·전담부서를 둔 회사가 그 해 연구개발비로 공제받을 세액을 구하거나, 창업감면과 함께 적용했을 때의 세 부담을 볼 때.
+    입력: 과세연도 → year, 기업 규모 → size, 당기 발생액 → current, 직전 4개 과세연도 발생액 → prior4, 수입금액 → revenue, 졸업 연도 → graduated_year.
+    계산: 당기분 = 발생액 × 공제율(중소기업 25%, 졸업 뒤 3년 15%·그 뒤 2년 10% — 2025년 이후 졸업은 20%·15%, 중견기업 8%, 일반기업은 수입금액 대비 비율의 절반·2% 한도).
+      증가분 = 직전 과세연도를 넘는 금액 × 50%(중견 40%, 일반 25%). 소급 4년간 발생이 없거나 직전 발생액이 4년 연평균보다 적으면 당기분만.
+    결과: 공제 대상 세액, 선택(당기분·증가분), 당기분, 증가분, 계산(공제율·4년 연평균·증가분 적용 가능 여부), 판단·근거·주의.
+    범위 밖: 신성장·원천기술과 국가전략기술 연구개발비, 연구·인력개발비 해당 여부 판정, 합병·분할 승계분 조정, 최저한세·이월(minimum_tax_adjustment)."""
+    r = INC.rnd_tax_credit(year, size, current, prior4, revenue, graduated_year, months)
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 주의=r["주의"])
+
+
+@mcp.tool(annotations=CALC)
+@_guard
 def startup_tax_reduction(founded_on: Annotated[str, Field(description="창업일(법인 설립등기일) YYYY-MM-DD — 2016.1.1.~2026.12.31.")],
                           region: Annotated[str, Field(description="창업 지역: 수도권과밀억제권역 | 수도권(과밀억제권역도 인구감소지역도 아닌 수도권) | 수도권 인구감소지역 | 수도권 밖")],
                           year: YEAR,
@@ -1177,7 +1246,8 @@ def minimum_tax_adjustment(
   배제 순서 근거: exclusion_order가 있으면 납세의무자 선택 순서, 없으면 시행령 제126조제5항(경정 때 순서 — 신고 때는 납세의무자가 고를 수 있음).
   소득 항목(105·106·114·113·117) 배제 시 세무조정: 손금불산입(유보)·익금산입 등.
 근거: 조세특례제한법 제132조제1항·제144조, 시행령 제126조제5항, 법인세법 시행규칙 별지 제4호·제8호서식(갑).
-한계: 선박표준이익(119), 법인세법 제59조 감면·공제 순서와 적용제외 항목 한도, 기부금 한도 재계산, 공제감면세액계산서(부표)·추가납부세액(을)은 다루지 않음."""
+  최저한세 적용제외 공제 가운데 조세특례제한법 제144조제1항에 적힌 공제(연구·인력개발비 16A·10D·16B, 10A·10B·10C)는 차감세액에서 적용제외 감면을 뺀 금액까지만 공제하고 넘는 금액은 이월_미공제로 돌려줌(이월분 먼저, 먼저 발생한 것부터).
+한계: 선박표준이익(119), 외국납부세액공제·재해손실세액공제·동업기업 배분액의 한도와 이월, 적용제외 감면이 차감세액을 넘는 경우, 기부금 한도 재계산, 공제감면세액계산서(부표)·추가납부세액(을)은 다루지 않음."""
     reductions = reductions or []
     credits = credits or []
     exclusion_order = exclusion_order or []

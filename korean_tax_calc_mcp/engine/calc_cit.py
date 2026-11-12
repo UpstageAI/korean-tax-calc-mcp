@@ -1190,14 +1190,37 @@ def min_tax_adjust(
         ct = 코드표.get(코드, {})
         if ct.get("묶음") == "제외감면":
             적용제외감면 += rd.get("amount", 0)
+    차감세액 = (조정["차감세액"] if 조정 else after_tax)
+    # 적용제외 공제의 한도와 이월(0.39.0): 조세특례제한법 제144조①에 적힌 공제(제10조 연구·인력개발비 등)는 납부할 세액이 없어 공제받지 못한 부분도 10년 이월.
+    #   순서는 법인세법 제59조① — 감면, 이월되지 않는 공제, 이월되는 공제(이월분 먼저, 먼저 발생한 것부터 — 제144조②).
+    #   외국납부(101)·재해손실(102)·동업기업 배분액(12D)은 종전처럼 한도 없이 차감(각 규정의 한도·이월은 따로 계산).
+    _CARRY_EXEMPT = ("16A", "10D", "16B", "10A", "10B", "10C")
+    남은세액 = max(0, 차감세액 - 적용제외감면)
+    제외공제_적용 = {}
+    이월미공제 = list(이월미공제 or [])
     for cr in credits:
         코드 = cr.get("code", "")
         ct = 코드표.get(코드, {})
-        if ct.get("묶음") == "제외공제":
-            적용제외공제 += cr.get("current", 0) + sum(cf.get("amount", 0) for cf in (cr.get("carryforward") or []))
-
-    차감세액 = (조정["차감세액"] if 조정 else after_tax)
-    적용제외차감후세액 = max(0, 차감세액 - 적용제외감면 - 적용제외공제)
+        if ct.get("묶음") == "제외공제" and 코드 not in _CARRY_EXEMPT:
+            amt = cr.get("current", 0) + sum(cf.get("amount", 0) for cf in (cr.get("carryforward") or []))
+            적용제외공제 += amt
+            제외공제_적용[코드] = amt
+            남은세액 = max(0, 남은세액 - amt)
+    for cr in credits:
+        코드 = cr.get("code", "")
+        if 코드표.get(코드, {}).get("묶음") != "제외공제" or 코드 not in _CARRY_EXEMPT:
+            continue
+        lots = sorted(((cf.get("year", 0), cf.get("amount", 0)) for cf in (cr.get("carryforward") or [])), key=lambda x: x[0]) + [(year, cr.get("current", 0))]
+        used_total = 0
+        for yr, amt in lots:
+            used = min(남은세액, amt)
+            남은세액 -= used
+            used_total += used
+            if amt - used > 0:
+                이월미공제.append({"코드": 코드, "발생연도": yr, "금액": amt - used})
+        적용제외공제 += used_total
+        제외공제_적용[코드] = used_total
+    적용제외차감후세액 = 남은세액
 
     # ── 별지8 ──
     별지8 = {}
@@ -1228,7 +1251,10 @@ def min_tax_adjust(
             이월합계 = sum(cf.get("amount", 0) for cf in carryforward)
             총공제 = current + 이월합계
             if ct["묶음"] == "제외공제":
-                별지8[코드] = {"대상세액": 총공제, "감면세액": 총공제}
+                적용 = 제외공제_적용.get(코드, 총공제)
+                별지8[코드] = {"대상세액": 총공제, "감면세액": 적용}
+                if 적용 != 총공제 or 이월합계:
+                    별지8[코드].update({"전기이월액": 이월합계, "당기발생액": current, "공제세액": 적용})
             else:
                 배제 = 0
                 for bn in 배제내역:
