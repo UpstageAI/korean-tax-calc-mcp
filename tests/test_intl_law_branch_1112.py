@@ -67,3 +67,15 @@ def test_deemed_interest_note_points_to_exceptions():
                                rate_mode="당좌선택", foreign_related=True)
     assert "국외특수관계인과의 국제거래" in r["결과"]["판단"] and "transaction_type" in r["결과"]["판단"]
     assert r["결과"]["익금산입"] == 38_564_383
+
+
+def test_notes_say_arms_length_is_not_judged_and_deemed_rate_is_fallback():
+    u = _fn(S.unfair_transaction)(10_000, 9_700, 100_000, foreign_related=True)
+    assert any("정상가격인지 판정하지 않음" in p for p in u["판단"]) and any("제13조" in p for p in u["판단"])
+    d = _fn(S.deemed_interest)(movements=[S.Movement(date="2025-03-01", amount=1_000_000_000)], year_end="2025-12-31",
+                               rate_mode="당좌선택", foreign_related=True)
+    assert "제8조① 단서" in d["결과"]["판단"] and "산출할 수 없는 경우에만" in d["결과"]["판단"]
+    assert any("제13조" in x for x in d["주의"])
+    e = _fn(S.deemed_interest)(movements=[S.Movement(date="2025-03-01", amount=1_000_000_000)], year_end="2025-12-31",
+                               rate_mode="입력", market_rate=0.06, foreign_related=True)
+    assert "정상이자율인지 판정하지 않음" in e["결과"]["판단"] and e["결과"]["익금산입"] == int(1_000_000_000 * 0.06 * 306 / 365)
