@@ -626,7 +626,23 @@ def _iec_first(prev, cur, size, outside):
     return {"전체_증가": inc, "청년등_증가": youth, "청년등_외_증가": other, "청년등_공제": int(youth * a_y), "청년등_외_공제": int(other * a_o)}
 
 
-def integrated_employment_credit(year, size, headcounts, outside_capital_area=False, converted=0, returned_from_leave=0):
+def _iec_recapture(hc, first, at, base, a_y, a_o, count):
+    """시행령 제26조의8제4항 산식 — 최초 공제 과세연도(first) 대비 at 과세연도의 감소분. hc[y] = (전체, 청년등, 추가 납부 계산용 청년등)."""
+    from fractions import Fraction as F
+    dt = hc[first][0] - hc[at][0]
+    dy = hc[first][1] - hc[at][2]
+    do = (hc[first][0] - hc[first][1]) - (hc[at][0] - hc[at][2])
+    yi = base["청년등_증가"]
+    if dt > 0:
+        if dy >= dt:
+            return int((max(min(dy, yi) - dt, F(0)) * (a_y - a_o) + dt * a_y) * count), "전체 감소, 청년등 감소 인원이 전체 감소 인원 이상"
+        return int((min(max(dy, F(0)), dt) * a_y + min(max(do, F(0)), dt) * a_o) * count), "전체 감소, 그 밖의 경우"
+    if dy > 0:
+        return int(min(dy, yi) * (a_y - a_o) * count), "전체 유지, 청년등 감소"
+    return 0, ""
+
+
+def integrated_employment_credit(year, size, headcounts, outside_capital_area=False, converted=0, returned_from_leave=0, credits_taken=None, carryforward_left=None):
     from fractions import Fraction as F
     문제 = []
     if not isinstance(year, int) or isinstance(year, bool):
@@ -651,11 +667,28 @@ def integrated_employment_credit(year, size, headcounts, outside_capital_area=Fa
                 문제.append(f"headcounts[{i}].{nm} — 0 이상(매월 말 인원 합 ÷ 개월 수)"); ok = False
         if ok and yo > t:
             문제.append(f"headcounts[{i}] — 청년등({yo})이 전체({t})보다 많음"); ok = False
+        yr_ = h.get("youth_for_recapture", yo)
+        if ok and (isinstance(yr_, bool) or not isinstance(yr_, (int, float)) or yr_ < yo or yr_ > t):
+            문제.append(f"headcounts[{i}].youth_for_recapture — 최초 공제 과세연도에 청년등이던 사람을 계속 청년등으로 본 인원(youth 이상, total 이하)"); ok = False
         if ok:
-            hc[y] = (F(int(F(str(t)) * 100), 100), F(int(F(str(yo)) * 100), 100))      # 100분의 1 미만 버림
+            tr = lambda v: F(int(F(str(v)) * 100), 100)                                # 100분의 1 미만 버림
+            hc[y] = (tr(t), tr(yo), tr(yr_))
     for nm, v in (("converted", converted), ("returned_from_leave", returned_from_leave)):
         if isinstance(v, bool) or not isinstance(v, int) or v < 0:
             문제.append(f"{nm} — 인원(0 이상 정수)")
+    taken, left = {}, {}
+    for i, c in enumerate(credits_taken or []):
+        c = c or {}
+        if not isinstance(c.get("first_year"), int) or not isinstance(c.get("year"), int) or not _won(c.get("amount"), f"credits_taken[{i}].amount", 문제):
+            문제.append(f"credits_taken[{i}] — {{first_year(최초 공제 과세연도), year(공제받은 과세연도), amount(그 해에 실제로 공제받은 세액, 원)}}")
+        else:
+            taken.setdefault(c["first_year"], {})[c["year"]] = taken.get(c["first_year"], {}).get(c["year"], 0) + c["amount"]
+    for i, c in enumerate(carryforward_left or []):
+        c = c or {}
+        if not isinstance(c.get("first_year"), int) or not _won(c.get("amount"), f"carryforward_left[{i}].amount", 문제):
+            문제.append(f"carryforward_left[{i}] — {{first_year, amount(그 최초 공제 과세연도분 가운데 아직 공제받지 못하고 이월된 세액, 원)}}")
+        else:
+            left[c["first_year"]] = left.get(c["first_year"], 0) + c["amount"]
     if not 문제 and (year not in hc or year - 1 not in hc):
         문제.append(f"headcounts에 {year - 1}·{year} 과세연도가 모두 있어야 함(창업한 해면 직전 과세연도를 0으로)")
     if not 문제 and converted and year == 2025:
@@ -667,7 +700,8 @@ def integrated_employment_credit(year, size, headcounts, outside_capital_area=Fa
     outside = bool(outside_capital_area)
     keep_years = 2 if size in ("중소기업", "중견기업") else 1
     num = lambda x: float(x) if x.denominator != 1 else int(x)
-    rows, 판단, total_credit = [], [], 0
+    rows, 판단, total_credit, total_recapture = [], [], 0, 0
+    a_y, a_o = _IEC_AMT[(size, outside)]
     for first in (year, year - 1, year - 2):
         if first < 2023 or first - 1 not in hc or first not in hc or year - first > keep_years:
             if first < 2023 and first in hc and first - 1 in hc and hc[first][0] > hc[first - 1][0] and year - first <= 2:
@@ -688,12 +722,34 @@ def integrated_employment_credit(year, size, headcounts, outside_capital_area=Fa
             if any(hc[y][0] < hc[first][0] for y in mids):
                 y_credit = o_credit = 0
                 status = "중단"
-                판단.append(f"{first} 과세연도분: 전체 상시근로자 수가 최초 공제 과세연도({num(hc[first][0])}명)보다 줄어 그 해부터 공제하지 않음. 이미 공제받은 세액의 추가 납부액(시행령 제26조의8제4항)은 계산하지 않음")
+                판단.append(f"{first} 과세연도분: 전체 상시근로자 수가 최초 공제 과세연도({num(hc[first][0])}명)보다 줄어 그 해부터 공제하지 않음(제29조의8 사후관리)")
             elif any(hc[y][1] < hc[first][1] for y in mids):
-                y_credit = 0
-                status = "청년등 공제 중단"
-                판단.append(f"{first} 과세연도분: 청년등상시근로자 수가 최초 공제 과세연도({num(hc[first][1])}명)보다 줄어 청년등 증가분 공제(제1항제1호)를 하지 않음. "
-                          "그 인원에 청년등 외 금액을 적용할 수 있는지는 해석 확인 필요 — 0으로 계산. 추가 납부액은 계산하지 않음")
+                y_credit = int(base["청년등_증가"] * a_o)
+                status = "청년등 외 금액으로 공제"
+                판단.append(f"{first} 과세연도분: 청년등상시근로자 수가 최초 공제 과세연도({num(hc[first][1])}명)보다 줄어 청년등 금액(제1항제1호)을 적용하지 않고, 남은 공제연도에는 청년등 증가 인원에도 청년등 외 금액을 적용. "
+                          "근거는 같은 문언인 제29조의7에 대한 해석(기획재정부 조세특례제도과-215, 2023.3.6.; 서면-2022-법규법인-4716, 2023.9.4.) — 제29조의8에 대한 해석은 따로 확인하지 못함")
+            # 추가 납부(시행령 제26조의8제4항): 1년 이내는 제1호, 2년 이내는 제2호(제1호 금액 제외, 공제받은 횟수를 곱함)
+            amt1, why1 = _iec_recapture(hc, first, first + 1, base, a_y, a_o, 1)
+            if nth == 2:
+                formula, why, count, period = amt1, why1, 1, "1년 이내(제4항제1호)"
+            else:
+                count = 1 + (0 if hc[first + 1][0] < hc[first][0] else 1)      # 직전 2년 이내 과세연도에 공제받은 횟수(2차 연도에 전체가 줄어 중단됐으면 1)
+                amt2, why = _iec_recapture(hc, first, year, base, a_y, a_o, count)
+                formula, period = max(0, amt2 - amt1), "2년 이내(제4항제2호)"
+            if formula:
+                rec = {"구분": period, "사유": why, "공제받은_횟수": count, "산식_금액": formula}
+                if first in taken:
+                    cap = sum(v for y, v in taken[first].items() if first <= y < year)
+                    pay = min(formula, cap)
+                    rec.update({"공제받은_세액_한도": cap, "납부액": pay, "이월액_차감": min(formula - pay, left.get(first, 0))})
+                else:
+                    pay = formula
+                    rec.update({"납부액": pay, "확인": "공제받은 세액(credits_taken)을 넣지 않아 한도를 적용하지 않은 산식 금액"})
+                    판단.append(f"{first} 과세연도분 추가 납부: 실제로 공제받은 세액을 넣지 않아 산식 금액 {formula:,}원을 그대로 표시 — 공제받은 세액이 한도이고, 못 쓰고 이월한 금액은 납부 대신 이월액에서 차감")
+                row["추가_납부"] = rec
+                total_recapture += pay
+                if amt1 and nth == 3:
+                    판단.append(f"{first} 과세연도분: 2차 연도 감소분으로 계산한 {amt1:,}원은 제외(시행령 제26조의8제4항제2호)")
         row.update({"청년등_공제": y_credit, "청년등_외_공제": o_credit, "공제액": y_credit + o_credit, "상태": status})
         total_credit += y_credit + o_credit
         rows.append(row)
@@ -709,16 +765,19 @@ def integrated_employment_credit(year, size, headcounts, outside_capital_area=Fa
                           + ("2023.12.31.까지" if year == 2023 else "2024.1.1.~12.31.에") + " 전환한 인원만")
             if returned_from_leave:
                 판단.append(f"육아휴직 복귀 {returned_from_leave}명 × {per:,}원 — 1년 이상 근무, 육아휴직 연속 6개월 이상, 자녀 1명당 한 차례")
-    a_y, a_o = _IEC_AMT[(size, outside)]
     결과 = {"기본공제": total_credit, "정규직_전환_공제": extra["정규직_전환"], "육아휴직_복귀_공제": extra["육아휴직_복귀"], "공제_대상_세액": total_credit + sum(extra.values())}
+    if any("추가_납부" in r for r in rows):
+        결과["추가_납부세액"] = total_recapture
     return {"결과": 결과,
             "계산": {"기업": size, "지역": "수도권 밖" if outside else "수도권", "1인당_금액": {"청년등": a_y, "청년등_외": a_o}, "공제_기간": f"최초 공제 과세연도와 그 뒤 {keep_years}년",
                    "최초_공제_과세연도별": rows, "상시근로자": {y: {"전체": num(v[0]), "청년등": num(v[1])} for y, v in sorted(hc.items())}},
             "판단": 판단,
-            "근거": ["조세특례제한법 제29조의8제1항부터 제5항까지", "조세특례제한법 시행령 제26조의8", "조세특례제한법 시행령 제23조제10항·제11항·제13항"],
+            "근거": ["조세특례제한법 제29조의8제1항부터 제5항까지", "조세특례제한법 시행령 제26조의8(추가 납부는 제4항·제5항)", "조세특례제한법 시행령 제23조제10항·제11항·제13항"],
             "주의": ["공제 대상 세액은 그 과세연도에 공제할 수 있는 금액 — 최저한세 대상이고 못 쓴 금액은 10년 이월(minimum_tax_adjustment의 코드 18S, 전환 1B4, 육아휴직 1B5). 공제받은 세액에는 농어촌특별세 20%(rural_special_tax)",
                    "상시근로자 수는 매월 말 인원 합 ÷ 개월 수(100분의 1 미만 버림). 근로계약 1년 미만, 월 60시간 미만 단시간근로자, 임원, 최대주주와 그 배우자·친족, 원천징수·4대 보험 납부 사실이 없는 사람은 제외. 월 60시간 이상 단시간근로자는 0.5명(요건을 갖추면 0.75명)",
                    "청년등: 15~34세(병역 기간 6년 한도 차감) 정규직, 장애인 등, 근로계약일 현재 60세 이상, 경력단절 여성(2025.3.14. 개정 뒤 경력단절 근로자, 2025.6.30. 시행령 개정으로 북한이탈주민 추가). 최초 공제 과세연도의 청년은 사후관리에서 계속 청년등으로 봄",
                    "창업한 과세연도는 직전 과세연도 인원을 0으로 봄(합병·분할·사업 양수·법인 전환은 승계 인원 조정 — 계산하지 않음). 소비성서비스업은 제외. 기업 규모가 중간에 바뀐 경우와 지역이 섞인 경우는 계산하지 않음",
                    "창업중소기업 감면(제6조)과의 관계: 2024.12.31.까지 창업한 기업은 제7항 추가 감면을 받는 경우에만 함께 적용하지 못하고, 2025.1.1. 이후 창업한 기업은 함께 적용하지 못함(제127조제4항 단서, 법률 제20617호 부칙 제2조)",
-                   "인원이 줄었을 때의 추가 납부액, 2022 과세연도 이전 증가분(제29조의7), 2026 과세연도 이후 계산식은 계산하지 않음"]}
+                   "추가 납부(인원이 최초 공제 과세연도보다 준 해): 시행령 제26조의8제4항 산식 금액을 실제로 공제받은 세액(credits_taken)을 한도로 그 해 법인세에 더해 납부하고, 남는 금액은 이월된 공제액에서 차감(사전-2020-법령해석소득-0478 — 제29조의7에 대한 해석). "
+                   "추가 납부 계산에서는 최초 공제 과세연도에 청년이던 사람을 나이가 넘어도 청년등으로 봄(제5항) — 그 인원은 headcounts의 youth_for_recapture에. 제4항제2호가목2)는 문장으로 규정되어 감소 인원 × 1인당 금액 × 공제받은 횟수로 계산",
+                   "2022 과세연도 이전 증가분(제29조의7), 2026 과세연도 이후 계산식은 계산하지 않음"]}
