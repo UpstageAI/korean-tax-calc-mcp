@@ -989,6 +989,42 @@ def sme_status(year: Annotated[int, Field(description="과세연도(2018~2026)")
 
 @mcp.tool(annotations=CALC)
 @_guard
+def reduction_income_segments(segments: Annotated[list, Field(description="사업별 [{name(사업 이름), eligible(세액감면 대상 사업이면 true), revenue(수입금액, 원), direct_expenses(그 사업에만 속하는 개별손금, 원), direct_income?(수입금액 외 개별익금, 원)}] — 2개 이상")],
+                              common_income: Annotated[int, Field(description="사업별로 나눌 수 없는 공통익금(원)", ge=0)] = 0,
+                              common_expenses: Annotated[int, Field(description="사업별로 나눌 수 없는 공통손금(원)", ge=0)] = 0,
+                              same_industry: Annotated[bool, Field(description="사업들의 업종이 한국표준산업분류 소분류로 같으면 true(공통손금을 수입금액으로 나눔). 다르면 false(개별손금으로 나눔)")] = False,
+                              deductions: Annotated[dict | None, Field(description="과세표준 계산에서 공제한 이월결손금·비과세소득·소득공제액 {eligible(감면 사업에서 발생, 원), other(그 밖의 사업에서 발생, 원), unclear(어느 사업인지 불분명, 원)}")] = None) -> dict:
+    """구분경리 감면 대상 소득 — 세액감면 대상 사업과 그 밖의 사업을 함께 하는 법인의 사업별 소득금액과 감면 대상 소득, 주된 사업(조세특례제한법 제143조, 법인세법 시행규칙 제75조·제76조). 언제: 온라인 직접 판매와 도매처럼 감면 대상 사업과 대상이 아닌 사업의 매출이 섞여 있어 감면세액 계산에 넣을 소득을 나눠야 할 때, 또는 매출 구성으로 주된 사업을 볼 때.
+    입력: 사업별 수입금액·개별손금·감면 대상 여부 → segments, 공통익금 → common_income, 공통손금 → common_expenses, 업종이 같은지 → same_industry, 공제한 이월결손금 등 → deductions.
+    계산: 공통익금은 수입금액에 비례해, 공통손금은 업종이 같으면 수입금액·다르면 개별손금에 비례해 나눔 → 사업별 소득금액.
+      결손이 난 사업이 있으면 그 결손금 합계를 소득이 난 사업의 소득금액에 비례해 나눠 공제.
+      공제한 이월결손금 등은 감면 사업 발생분 전액, 불분명한 금액은 소득금액 비례분을 감면 대상 소득에서 뺌. 과세표준을 넘으면 과세표준까지.
+    결과: 감면 대상 소득, 과세표준, 감면 소득 비율, 각 사업연도 소득, 주된 사업(수입금액이 가장 큰 사업), 계산(사업별 표), 판단·근거·주의.
+    범위 밖: 업종 분류 판정, 개별손금이 없을 때의 작업시간·사용면적 기준, 감면세액 계산(startup_tax_reduction·sme_special_tax_reduction에 결과를 넣음), 개인사업자."""
+    r = INC.reduction_income_segments(segments, common_income, common_expenses, same_industry, deductions)
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 주의=r["주의"])
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def rural_special_tax(year: YEAR,
+                      items: Annotated[list, Field(description="감면 항목 [{article(조세특례제한법 조문 — '제24조'·'제29조의8'·'제76조제1항'), amount(그 조문으로 그 과세연도에 실제 적용받은 세액공제·감면세액, 원), name?(항목 이름)}]")]) -> dict:
+    """농어촌특별세 — 조세특례제한법에 따라 법인세·소득세를 감면받은 세액에 붙는 농어촌특별세와 조문별 비과세 여부(농어촌특별세법 제4조·제5조). 언제: 세액공제·세액감면을 받는 회사가 본세와 함께 낼 농어촌특별세를 구하거나, 창업감면과 투자·고용 세액공제 중 어느 쪽이 실제로 유리한지 비교할 때.
+    입력: 과세연도 → year, 감면 조문과 감면세액 → items.
+    계산: 비과세 조문이 아니면 감면세액 × 20%. 비과세는 그 과세연도 말 시행본의 농어촌특별세법 제4조와 시행령 제4조 목록으로 판정(2016~2026 연도별).
+      창업중소기업 감면(제6조)·중소기업 특별세액감면(제7조)·연구인력개발비 세액공제(제10조)는 비과세, 통합투자세액공제(제24조)·통합고용세액공제(제29조의8)는 과세.
+    결과: 농어촌특별세 합계, 과세 대상·비과세 감면세액, 계산(항목별 과세 여부·세액·근거·확인할 것), 판단·근거·주의.
+    범위 밖: 저축·이자·배당 감면(세율 10%), 소득공제·비과세의 감면세액 환산, 관세·취득세·등록면허세·지방세특례제한법 감면, 연중 개정 조문의 부칙 적용례 판정."""
+    r = INC.rural_special_tax(year, items)
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 주의=r["주의"])
+
+
+@mcp.tool(annotations=CALC)
+@_guard
 def startup_tax_reduction(founded_on: Annotated[str, Field(description="창업일(법인 설립등기일) YYYY-MM-DD — 2016.1.1.~2026.12.31.")],
                           region: Annotated[str, Field(description="창업 지역: 수도권과밀억제권역 | 수도권(과밀억제권역도 인구감소지역도 아닌 수도권) | 수도권 인구감소지역 | 수도권 밖")],
                           year: YEAR,
@@ -9379,7 +9415,7 @@ def foreign_exchange_reporting(
     recovered_usd: Annotated[float | None, Field(description="청산 시 회수액(USD, 선택)")] = None,
     largest_shareholder: Annotated[bool | None, Field(description="유보금증자에서 거주자가 그 외국법인의 최대주주인지 — 2019.5.2.까지는 최대주주가 아닌 경우만 사후보고")] = None,
 ) -> dict:
-    """해외직접투자 외국환 신고·사후보고·청산 판정. 뷰티 브랜드의 해외법인 설립·대여·증자·청산 시 외국환거래법 의무와 세무(국조법 §58, 법인세 손금) 연결을 함께 본다.
+    """해외직접투자 외국환 신고·사후보고·청산 판정. 해외법인 설립·대여·증자·청산 시 외국환거래법 의무와 세무(국조법 §58, 법인세 손금) 연결을 함께 본다.
 
     언제: 해외법인 신설출자·증자·지분양수·금전대여·임원파견·지점설치·지분매각·청산·내용변경 이벤트의 해외직접투자 해당 여부,
     신고(사전신고/사후보고) 구분·기한·기관·첨부서류, 사후관리 보고서 일정(외화증권취득·송금·연간사업실적·청산·지분매각 등),

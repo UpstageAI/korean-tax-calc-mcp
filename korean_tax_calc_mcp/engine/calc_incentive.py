@@ -186,7 +186,8 @@ def startup_tax_reduction(founded_on, region, year, first_income_year, tax, taxa
     근거.append("조세특례제한법 제132조제1항제4호")
     판단.insert(0, f"{route} — {why}, 감면기간 {k}번째 과세연도")
     주의 += ["제10항: 합병·분할·현물출자·사업 양수, 개인사업의 법인 전환, 폐업 후 같은 사업 재개, 사업 확장·업종 추가는 창업으로 보지 않음",
-           "같은 과세연도에 중소기업 특별세액감면(제7조)이나 통합투자·고용 관련 세액공제 등과 함께 적용할 수 있으면 하나만 선택(제127조제4항)",
+           "같은 과세연도에 중소기업 특별세액감면(제7조)이나 통합투자세액공제(제24조) 등 제127조제4항에 적힌 세액공제와 함께 적용할 수 있으면 하나만 선택. 연구인력개발비 세액공제(제10조)는 2024·2025 시행본의 같은 항에 없음",
+              "고용증대·통합고용세액공제(제29조의7·제29조의8): 2024.12.31.까지 창업한 기업은 제7항 추가 감면을 받는 경우에만 함께 적용하지 못하고, 2025.1.1. 이후 창업한 기업은 제6조 감면과 함께 적용하지 못함(제127조제4항 단서, 법률 제20617호 부칙 제2조). 2018년 이전 시행본의 단서는 대조하지 않음",
            "과세표준 신고와 함께 세액감면신청서를 내야 함(제12항). 최저한세 계산은 다른 공제·감면이 없다고 보고 한 것",
            "수입금액이 작은 창업기업 감면(제6항)과 상시근로자 증가에 따른 추가 감면(제7항)은 계산하지 않음"]
     if youth:
@@ -399,3 +400,202 @@ def sme_status(year, industry_code, revenue, total_assets, domestic_affiliates=N
            "관계기업은 국내기업만 — 해외 자회사 매출은 합산하지 않음(중소기업기본법 시행령 제3조의2제1항). 손자기업 간접 지배, 개인 최다출자자를 통한 합산은 계산하지 않음",
            "별표 비고의 예외(자동차·철도·항공기용 의자 제조업)와 벤처투자회사 등 관계기업 제외는 반영하지 않음"]
     return {"결과": {"중소기업": 중소, "구분": 구분}, "계산": 계산, "판단": 판단, "근거": 근거, "주의": 주의}
+
+
+# ── 구분경리: 감면 사업과 그 밖의 사업을 함께 할 때 감면 대상 소득 ──────────────────────────────────────────
+# 근거(2016·2025 시행본 대조 — 아래 조문은 두 시행본의 내용이 같음):
+#   조세특례제한법 제143조①(감면대상사업과 그 밖의 사업 겸영 시 구분경리)·③(결손 사업의 결손금은 소득이 난 사업의 소득금액에 비례해 안분해 공제),
+#   시행령 제136조(법인세법 제113조 준용), 법인세법 시행규칙 제75조②(감면 사업 겸영 법인은 제76조⑥⑦ 준용, 업종 구분은 한국표준산업분류 소분류),
+#   제76조⑥(공통익금은 수입금액 비례, 공통손금은 업종이 같으면 수입금액 비례·다르면 개별손금 비례)·⑦,
+#   법인세법 제59조②(감면세액 = 산출세액 × 감면소득 ÷ 과세표준, 100% 한도), 시행령 제96조(공제한 이월결손금 등: 감면사업 발생분은 전액, 불분명하면 소득금액 비례),
+#   조세특례제한법 시행령 제2조③(둘 이상 사업이면 사업수입금액이 큰 사업이 주된 사업).
+def _split(total, weights):
+    """total을 weights 비율로 나눔(원 미만 버림, 남는 원은 마지막 0 아닌 몫에)."""
+    s = sum(weights)
+    parts = [total * w // s for w in weights]
+    rest = total - sum(parts)
+    for i in range(len(weights) - 1, -1, -1):
+        if weights[i]:
+            parts[i] += rest
+            break
+    return parts
+
+
+def reduction_income_segments(segments, common_income=0, common_expenses=0, same_industry=False, deductions=None):
+    문제 = []
+    if not isinstance(segments, list) or len(segments) < 2:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["segments — 사업 2개 이상 [{name, eligible(감면 대상이면 true), revenue, direct_expenses, direct_income?}]"]}
+    names = set()
+    for i, s in enumerate(segments):
+        s = s or {}
+        if not s.get("name") or s.get("name") in names:
+            문제.append(f"segments[{i}].name — 사업 이름(겹치지 않게)")
+        names.add(s.get("name"))
+        if not isinstance(s.get("eligible"), bool):
+            문제.append(f"segments[{i}].eligible — 감면 대상 사업이면 true, 아니면 false")
+        _won(s.get("revenue"), f"segments[{i}].revenue(수입금액)", 문제)
+        _won(s.get("direct_expenses"), f"segments[{i}].direct_expenses(개별손금)", 문제)
+        if s.get("direct_income") is not None:
+            _won(s.get("direct_income"), f"segments[{i}].direct_income(수입금액 외 개별익금)", 문제)
+    _won(common_income, "common_income(공통익금)", 문제)
+    _won(common_expenses, "common_expenses(공통손금)", 문제)
+    ded = {"eligible": 0, "other": 0, "unclear": 0}
+    for k, v in (deductions or {}).items():
+        if k not in ded:
+            문제.append(f"deductions.{k} — eligible(감면 사업에서 발생) | other(그 밖의 사업에서 발생) | unclear(어느 사업인지 불분명)")
+        elif _won(v, f"deductions.{k}", 문제):
+            ded[k] = v
+    if 문제:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제}
+    rev = [s["revenue"] for s in segments]
+    dexp = [s["direct_expenses"] for s in segments]
+    if common_income and not sum(rev):
+        return {"error": "계산하지 않음", "문제": ["공통익금을 나눌 수입금액이 없음 — 시행규칙 제76조⑥ 단서(국세청장이 정하는 작업시간·사용시간·사용면적 등 기준)는 계산하지 않음"]}
+    exp_w = rev if same_industry else dexp
+    if common_expenses and not sum(exp_w):
+        return {"error": "계산하지 않음", "문제": [("수입금액" if same_industry else "개별손금") + "이 없어 공통손금을 나눌 수 없음 — 시행규칙 제76조⑥ 단서(국세청장이 정하는 작업시간·사용시간·사용면적 등 기준)는 계산하지 않음"]}
+    ci = _split(common_income, rev) if common_income else [0] * len(segments)
+    ce = _split(common_expenses, exp_w) if common_expenses else [0] * len(segments)
+    inc = [s["revenue"] + (s.get("direct_income") or 0) - s["direct_expenses"] + a - b for s, a, b in zip(segments, ci, ce)]
+    loss_total = -sum(x for x in inc if x < 0)
+    pos_total = sum(x for x in inc if x > 0)
+    total = pos_total - loss_total
+    판단, rows, elig_sum = [], [], 0
+    for s, r, d, a, b, x in zip(segments, rev, dexp, ci, ce, inc):
+        cut = loss_total * x // pos_total if (x > 0 and loss_total) else 0
+        after = max(0, x - cut) if x > 0 else 0
+        rows.append({"사업": s["name"], "감면_대상": s["eligible"], "수입금액": r, "개별익금_외": s.get("direct_income") or 0, "개별손금": d, "공통익금_배분": a, "공통손금_배분": b,
+                     "소득금액": x, "결손금_안분_공제": cut, "공제_후_소득금액": after})
+        if s["eligible"]:
+            elig_sum += after
+    if loss_total:
+        판단.append(f"결손이 난 사업의 결손금 합계 {loss_total:,}원을 소득이 난 사업의 소득금액에 비례해 나눠 공제(조세특례제한법 제143조③)")
+    ded_total = ded["eligible"] + ded["other"] + ded["unclear"]
+    unclear_cut = ded["unclear"] * elig_sum // total if (ded["unclear"] and total > 0) else 0
+    base = max(0, total - ded_total)
+    elig = max(0, elig_sum - ded["eligible"] - unclear_cut)
+    if ded_total:
+        판단.append(f"과세표준 계산에서 공제한 이월결손금 등 {ded_total:,}원 가운데 감면 사업 발생분 {ded['eligible']:,}원은 전액, 불분명한 {ded['unclear']:,}원은 소득금액 비례로 {unclear_cut:,}원을 감면 대상 소득에서 뺌(법인세법 시행령 제96조)")
+    capped = min(elig, base)
+    if elig > base:
+        판단.append("감면 대상 소득이 과세표준보다 커 비율을 100%로 제한(법인세법 제59조②)")
+    top = max(range(len(segments)), key=lambda i: rev[i])
+    tie = [s["name"] for s, r in zip(segments, rev) if r == rev[top]]
+    판단.append(f"주된 사업: {segments[top]['name']}(사업수입금액 {rev[top]:,}원이 가장 큼 — 조세특례제한법 시행령 제2조③)" if len(tie) == 1
+              else f"사업수입금액이 같은 사업이 여럿({', '.join(tie)}) — 주된 사업을 정하지 않음")
+    판단.append("공통손금은 " + ("업종이 같아 수입금액에 비례해" if same_industry else "업종이 달라 개별손금에 비례해") + " 나눔(법인세법 시행규칙 제76조⑥)")
+    결과 = {"감면_대상_소득": capped, "과세표준": base, "감면_소득_비율": (capped / base if base else 0.0), "각사업연도소득": total,
+           "주된_사업": segments[top]["name"] if len(tie) == 1 else None}
+    계산 = {"사업별": rows, "공통익금": common_income, "공통손금": common_expenses, "공통손금_기준": "수입금액" if same_industry else "개별손금",
+           "결손_사업_결손금_합계": loss_total, "감면_사업_소득금액_합계": elig_sum, "공제액등": ded, "불분명_공제액_안분": unclear_cut, "한도_전_감면_대상_소득": elig}
+    return {"결과": 결과, "계산": 계산, "판단": 판단,
+            "근거": ["조세특례제한법 제143조제1항·제3항", "조세특례제한법 시행령 제136조", "법인세법 시행규칙 제75조제2항·제76조제6항·제7항", "법인세법 제59조제2항", "법인세법 시행령 제96조", "조세특례제한법 시행령 제2조제3항"],
+            "주의": ["감면_대상_소득을 startup_tax_reduction·sme_special_tax_reduction의 eligible_income에, 과세표준을 taxable_base에 넣어 감면세액을 계산",
+                   "업종이 같은지는 한국표준산업분류 소분류(없으면 중분류)로 구분(시행규칙 제75조제2항) — 온라인 직접 판매(무점포 소매업)와 도매업은 서로 다른 업종. 분류 자체는 이 도구가 판정하지 않음",
+                   "수입금액·개별손금은 세무조정을 사업별로 반영한 금액을 넣는다. 공통익금은 과세표준이 되는 것, 공통손금은 익금에 대응하는 것만(시행규칙 제76조제7항)",
+                   "개별손금이 없거나 위 기준을 쓰기 불합리한 경우의 작업시간·사용시간·사용면적 기준(제76조제6항 단서), 감면율이 다른 감면 사업이 여럿일 때 사업별 감면세액, 비과세소득·소득공제의 사업별 귀속 판단은 계산하지 않음",
+                   "주된 사업은 중소기업 해당 업종·규모 기준을 볼 때 쓰는 기준(시행령 제2조제3항). 세액감면은 주된 사업과 관계없이 감면 대상 사업에서 생긴 소득에 적용"]}
+
+
+# ── 농어촌특별세: 조세특례제한법에 따른 법인세·소득세 감면세액 × 20% ────────────────────────────────────────
+# 근거(2016~2025 각 연말과 2026.11.12. 시행본 대조): 농어촌특별세법 제2조①(감면 = 비과세·세액면제·세액감면·세액공제·소득공제), 제3조1호, 제5조①1호(감면세액의 20%),
+#   제4조(비과세) 3호·3의3호·11의2호·11의3호·11의4호·12호, 시행령 제4조(법 제4조제12호의 목록 — 2022년까지 제6항, 2023년부터 제7항)제1호.
+# 비과세 목록의 연도별 변화(각 연말 시행본):
+#   법 제4조 3의3호(조특법 제16조 소득공제): 2017년 시행본부터.
+#   시행령 목록 2016~2018: 제10조, 제10조의2, 제11조, 제12조, 제12조의2, 제13조, 제14조, 제18조, 제18조의2, 제29조의6, 제30조, 제30조의3, 제33조, 제63조, 제63조의2, 제64조,
+#     제76조①, 제95조의2, 제98조의3, 제98조의5, 제104조의8①③, 제104조의21, 제104조의28, 제121조의2~제121조의4, 제121조의13, 제126조의2, 제126조의6, 제126조의7⑨
+#   2019: + 제19조②, 제99조의9, 제104조의24 / 2020: + 제18조의3, 제25조①, 제99조의11, 제118조의2, − 제11조 / 2021: − 제25조① / 2022: + 제104조의31
+#   2023: + 제16조의2 / 2025: + 제92조 / 2024·2026: 변화 없음
+_RST_LAW = {"제6조": "제3호", "제7조": "제3호", "제20조": "제11호의2", "제100조": "제11호의2", "제140조": "제11호의2", "제141조": "제11호의2",
+            "제30조의2": "제11호의3", "제30조의4": "제11호의3", "제121조의24": "제11호의4"}
+_RST_DECREE_BASE = {"제10조": None, "제10조의2": None, "제11조": None, "제12조": None, "제12조의2": None, "제13조": None, "제14조": None, "제18조": None, "제18조의2": None,
+                    "제29조의6": None, "제30조": None, "제30조의3": None, "제33조": None, "제63조": None, "제63조의2": None, "제64조": None, "제76조": "제1항",
+                    "제95조의2": None, "제98조의3": None, "제98조의5": None, "제104조의8": "제1항·제3항", "제104조의21": None, "제104조의28": None,
+                    "제121조의2": None, "제121조의3": None, "제121조의4": None, "제121조의13": None, "제126조의2": None, "제126조의6": None, "제126조의7": "제9항"}
+_RST_DECREE_CHANGES = {2019: ({"제19조": "제2항", "제99조의9": None, "제104조의24": None}, ()),
+                       2020: ({"제18조의3": None, "제25조": "제1항", "제99조의11": None, "제118조의2": None}, ("제11조",)),
+                       2021: ({}, ("제25조",)), 2022: ({"제104조의31": None}, ()), 2023: ({"제16조의2": None}, ()), 2025: ({"제92조": None}, ())}
+_RST_SAVINGS = range(86, 92)       # 제86조의3~제91조의…: 저축·이자·배당 감면(세율 10%, 법 제5조①2호) — 계산하지 않음
+
+
+def _rst_decree(year):
+    cur, changed = dict(_RST_DECREE_BASE), {}
+    for y in sorted(_RST_DECREE_CHANGES):
+        if y > year:
+            break
+        add, rem = _RST_DECREE_CHANGES[y]
+        cur.update(add)
+        for r in rem:
+            cur.pop(r, None)
+        if y == year:
+            changed = {**{a: "추가" for a in add}, **{r: "삭제" for r in rem}}
+    return cur, changed
+
+
+def _rst_article(s):
+    import re
+    m = re.fullmatch(r"\s*(?:조세특례제한법\s*)?제?\s*(\d+)\s*조?(?:\s*의\s*(\d+))?\s*(?:제?\s*(\d+)\s*항)?\s*", str(s or ""))
+    if not m:
+        return None, None, None
+    return f"제{m.group(1)}조" + (f"의{m.group(2)}" if m.group(2) else ""), int(m.group(1)), (f"제{m.group(3)}항" if m.group(3) else None)
+
+
+def rural_special_tax(year, items):
+    문제 = []
+    if not isinstance(year, int) or isinstance(year, bool) or not YEAR_MIN <= year <= YEAR_MAX:
+        문제.append(f"year={year!r} — {YEAR_MIN}~{YEAR_MAX} 과세연도")
+    if not isinstance(items, list) or not items:
+        문제.append("items — [{article('제24조'처럼 조세특례제한법 조문), amount(그 조문으로 실제 적용받은 감면세액, 원), name?}] 1건 이상")
+    parsed = []
+    for i, it in enumerate(items if isinstance(items, list) else []):
+        it = it or {}
+        art, num, para = _rst_article(it.get("article"))
+        if art is None:
+            문제.append(f"items[{i}].article={it.get('article')!r} — 조세특례제한법 조문을 '제24조'·'제29조의8'·'제76조제1항'처럼")
+        ok = _won(it.get("amount"), f"items[{i}].amount(감면세액)", 문제)
+        if art and ok and num in _RST_SAVINGS:
+            문제.append(f"items[{i}].article={art} — 저축·이자소득·배당소득 감면(제86조의3~제91조의…)은 세율과 비과세 범위가 달라 계산하지 않음(농어촌특별세법 제5조①2호·④, 제4조4호)")
+        parsed.append((art, para, it.get("amount"), it.get("name")))
+    if 문제:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제}
+    decree, changed = _rst_decree(year)
+    항_번호 = "제6항" if year <= 2022 else "제7항"
+    rows, 판단, total_base, total_tax = [], [], 0, 0
+    for art, para, amt, name in parsed:
+        row = {"조문": art + (para or ""), **({"이름": name} if name else {}), "감면세액": amt}
+        exempt, why = False, ""
+        if art in _RST_LAW:
+            exempt, why = True, f"농어촌특별세법 제4조{_RST_LAW[art]}"
+        elif art == "제16조" and year >= 2017:
+            exempt, why = True, "농어촌특별세법 제4조제3호의3"
+        elif art in decree:
+            limit = decree[art]
+            exempt, why = True, f"농어촌특별세법 제4조제12호, 시행령 제4조{항_번호}제1호"
+            if limit and (para is None or para not in limit):
+                row["확인"] = f"시행령 목록은 {art}{limit}만 — 적용받은 항이 맞는지 확인"
+                판단.append(f"{art}: 비과세 목록에는 {limit}만 있음. 다른 항의 감면이면 과세(20%)")
+        if art in changed:
+            판단.append(f"{art}: {year}년 시행령 개정으로 비과세 목록에 {changed[art]} — 어느 과세연도·감면분부터 적용하는지는 그 개정 부칙을 확인")
+            row["확인"] = f"{year}년 개정으로 {changed[art]} — 부칙 적용례 확인"
+        if art == "제21조":
+            row["확인"] = "비거주자·외국법인에 대한 감면이면 비과세(법 제4조제5호) — 이 도구는 과세로 계산"
+        if exempt:
+            row.update({"과세": False, "농어촌특별세": 0, "근거": why})
+        else:
+            tax = amt * 20 // 100
+            row.update({"과세": True, "세율": 0.2, "농어촌특별세": tax, "근거": "농어촌특별세법 제5조제1항제1호"})
+            total_base += amt
+            total_tax += tax
+        rows.append(row)
+    if total_tax:
+        판단.append(f"과세 대상 감면세액 {total_base:,}원 × 20% = {total_tax:,}원")
+    else:
+        판단.append("입력한 감면은 모두 비과세 — 농어촌특별세 없음")
+    return {"결과": {"농어촌특별세": total_tax, "과세_대상_감면세액": total_base, "비과세_감면세액": sum(r["감면세액"] for r in rows if not r["과세"])},
+            "계산": {"항목별": rows, "세율": 0.2},
+            "판단": 판단,
+            "근거": ["농어촌특별세법 제2조제1항·제3조제1호", "농어촌특별세법 제4조", "농어촌특별세법 제5조제1항제1호", f"농어촌특별세법 시행령 제4조{항_번호}"],
+            "주의": ["감면세액은 한도·최저한세를 적용한 뒤 그 과세연도에 실제로 적용받은 금액(이월되어 공제받는 해에 과세). 세액공제·세액감면만 넣는다 — 소득공제·비과세의 감면세액 환산은 계산하지 않음",
+                   "비과세 목록은 그 과세연도 말 시행본 기준. 연중 개정으로 들어오거나 빠진 조문은 부칙 적용례에 따라 달라질 수 있음",
+                   "창업중소기업 감면(제6조)·중소기업 특별세액감면(제7조)·연구인력개발비 세액공제(제10조)는 비과세. 통합투자세액공제(제24조)·통합고용세액공제(제29조의8)처럼 목록에 없는 공제는 20% 과세",
+                   "농어촌특별세는 본세(법인세·소득세)와 함께 신고·납부. 저축·이자·배당 감면, 관세·취득세·등록면허세 감면, 지방세특례제한법 감면은 계산하지 않음"]}
