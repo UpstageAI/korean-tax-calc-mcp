@@ -20,6 +20,7 @@ from .engine import calc as K, calc_cit as C, calc_income as I, calc_vat as V, c
 from .engine import calc_nonprofit as NP
 from .engine import calc_foreign as F
 from .engine import calc_provision as PV
+from .engine import calc_tp as ALR
 from .engine.calc_cit import min_tax_adjust
 from .engine import calc_inhgift as IG
 from .engine import calc_gold_gaps6 as GG
@@ -829,6 +830,29 @@ def deemed_interest(movements: Annotated[list[Movement], Field(description="가�
     if all_notes:
         result["판단"] = "; ".join(all_notes)
     return _ok(result, "법인세법 제52조, 시행령 제88조③·제89조③, 시행규칙 제43조(이자율)")
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def arm_length_range(comparables: Annotated[list, Field(description="비교대상의 지표 값 — 숫자 목록 [0.021, 0.035, ...] 또는 [{이름, 값}]. 이익률은 소수(3.5% = 0.035). 둘 이상")],
+                     tested_value: Annotated[float, Field(description="분석대상 당사자의 같은 지표 값(소수)")],
+                     base_amount: Annotated[float | None, Field(description="지표의 분모 금액(원) — 매출액 대비 이익률이면 분석대상 당사자의 매출액, 원가 대비면 원가, 영업비용 대비면 영업비용. 주면 조정액 = 차이 × 이 금액", ge=0)] = None,
+                     range_type: Annotated[Literal["사분위", "전체"], Field(description="정상가격 범위 — '사분위'(제1사분위~제3사분위, 기본) 또는 '전체'(최솟값~최댓값)")] = "사분위",
+                     point: Annotated[Literal["중위값", "평균값", "직접입력"], Field(description="범위를 벗어났을 때 조정 기준점 — 중위값(기본)·평균값·직접입력(point_value)")] = "중위값",
+                     point_value: Annotated[float | None, Field(description="point='직접입력'일 때 기준점 값(범위 안의 값)")] = None,
+                     tested_is_resident: Annotated[bool, Field(description="분석대상 당사자가 거주자(내국법인)인지 — False면 국외특수관계인(해외 판매법인 등)을 분석대상으로 한 경우")] = True,
+                     higher_is_more_income: Annotated[bool, Field(description="지표가 높을수록 분석대상 당사자의 소득이 큰 지표인지(이익률은 True). 분석대상이 지급하는 가격·수수료율처럼 높을수록 소득이 줄면 False")] = True,
+                     quartile_method: Annotated[Literal["inclusive", "exclusive"], Field(description="사분위 계산법 — inclusive(엑셀 QUARTILE.INC, 기본) / exclusive(엑셀 QUARTILE.EXC, 비교대상 셋 이상)")] = "inclusive",
+                     year: Annotated[int | None, Field(description="사업연도(2021~2026, 선택) — 2020년까지는 구 시행령을 대조하지 않아 지원하지 않음")] = None) -> dict:
+    """정상가격 범위와 조정액 — 비교대상 이익률 등으로 사분위·전체 범위, 중위값·평균값을 구하고 분석대상 당사자의 값이 범위 안인지, 벗어나면 기준점까지의 차이와 조정액(국제조세조정에 관한 법률 시행령 제15조제5항·제6항). 언제: 국외특수관계인 거래의 이익률이 정상가격 범위 안인지 확인하고 범위를 벗어난 경우 조정액을 구할 때.
+    입력: 비교대상 값 → comparables, 분석대상 값 → tested_value, 지표 분모 금액 → base_amount, 범위 종류 → range_type, 기준점 → point·point_value, 분석대상이 거주자인지 → tested_is_resident, 지표 방향 → higher_is_more_income, 사분위 계산법 → quartile_method, 사업연도 → year.
+    계산: 범위 안이면 조정 없음. 벗어나면 기준점(중위값·평균값·직접입력)과의 차이 × base_amount = 조정액(원 미만 절사). 분석대상이 거주자가 아니면 방향을 뒤집어 거주자 소득이 과소인지 과다인지 표시.
+    결과: 비교대상 수·최솟값·제1사분위·중위값·제3사분위·최댓값·평균값, 범위, 범위 안 여부, 조정 필요 여부, 기준점, 차이, 거주자 소득(과소·과다), 조정액, 판단·근거·주의.
+    범위 밖: 비교대상이 적절한지(비교가능성·차이 조정·손실 기업 처리)는 판단하지 않음. 범위를 사분위로 좁히는 방법과 기준점 선택은 국조법령이 특정하지 않음(사분위는 OECD 이전가격지침 3.57의 통계적 도구) — 선택 이유는 보고서에 밝혀야 함."""
+    r = ALR.arm_length_range(comparables, tested_value, base_amount, range_type, point, point_value, tested_is_resident, higher_is_more_income, quartile_method, year)
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 주의=r["주의"])
 
 
 @mcp.tool(annotations=CALC)
@@ -9515,6 +9539,7 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "제47조의5": ["withholding_late_payment_penalty"],
     "세금계산서": ["invoice_penalty", "vat_input_tax_deduction"], "공통매입세액": ["common_input_tax", "vat_common_input_allocation", "input_tax_recalculation"],
     "면세전용": ["vat_exempt_use_deemed_supply"], "간주공급": ["vat_deemed_supply_items", "vat_exempt_use_deemed_supply"],
+    "정상가격 범위": ["arm_length_range"], "사분위": ["arm_length_range"], "이전가격 조정액": ["arm_length_range"], "비교대상 이익률": ["arm_length_range"],
     "마일리지충당부채": ["provision_reserve_ledger"], "포인트충당부채": ["provision_reserve_ledger"], "판매보증충당부채": ["provision_reserve_ledger"],
     "충당부채": ["provision_reserve_ledger"], "유효기간 소멸": ["provision_reserve_ledger"], "마일리지 유보": ["provision_reserve_ledger"],
     "마일리지": ["vat_tax_base_adjustments", "provision_reserve_ledger"], "포인트 결제": ["vat_tax_base_adjustments"], "반품": ["vat_tax_base_adjustments"], "환입": ["vat_tax_base_adjustments"],
