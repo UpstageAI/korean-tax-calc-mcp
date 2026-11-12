@@ -1025,6 +1025,27 @@ def rural_special_tax(year: YEAR,
 
 @mcp.tool(annotations=CALC)
 @_guard
+def integrated_employment_credit(year: Annotated[int, Field(description="과세연도(2023~2025)")],
+                                 size: Annotated[str, Field(description="중소기업 | 중견기업 | 일반")],
+                                 headcounts: Annotated[list, Field(description="과세연도별 상시근로자 수 [{year, total(전체), youth(청년등)}] — 해당 과세연도와 직전 과세연도는 반드시, 앞 해의 2차·3차 공제까지 보려면 2022년부터. 인원은 매월 말 인원 합 ÷ 개월 수")],
+                                 outside_capital_area: Annotated[bool, Field(description="인원이 수도권 밖에서 늘었으면 true(중소기업만 금액이 달라짐)")] = False,
+                                 converted: Annotated[int, Field(description="정규직으로 전환한 인원(중소·중견기업, 2023·2024 과세연도)", ge=0)] = 0,
+                                 returned_from_leave: Annotated[int, Field(description="육아휴직에서 복귀한 인원(중소·중견기업)", ge=0)] = 0) -> dict:
+    """통합고용세액공제 — 상시근로자가 늘어난 기업의 과세연도별 세액공제 대상액(조세특례제한법 제29조의8). 언제: 직원 수가 늘어난 회사가 그 해와 뒤 1~2년에 걸쳐 공제받을 금액을 구하거나, 창업감면·투자 세액공제와 함께 적용했을 때의 세 부담을 비교할 때.
+    입력: 과세연도 → year, 기업 규모 → size, 연도별 상시근로자 수 → headcounts, 수도권 밖 여부 → outside_capital_area, 정규직 전환·육아휴직 복귀 인원 → converted·returned_from_leave.
+    계산: 직전보다 늘어난 인원(전체 증가 인원 한도) × 1인당 금액 — 청년등은 중소기업 수도권 1,450만원·수도권 밖 1,550만원, 중견 800만원, 그 밖 400만원. 청년등 외는 중소기업 850만원·950만원, 중견 450만원, 그 밖 0.
+      최초 공제 과세연도와 그 뒤 1년(중소·중견기업 2년) 동안 같은 금액을 공제. 뒤 연도에 전체 인원이 최초 공제 과세연도보다 줄면 중단, 청년등만 줄면 청년등 증가분 공제를 중단.
+      정규직 전환·육아휴직 복귀는 1명당 1,300만원(중견 900만원), 상시근로자가 줄지 않은 해만.
+    결과: 기본공제, 정규직 전환·육아휴직 복귀 공제, 공제 대상 세액, 계산(최초 공제 과세연도별 증가 인원·차수·공제액), 판단·근거·주의.
+    범위 밖: 2022년 이전 증가분(고용증대 세액공제), 2026 과세연도 이후 계산식, 인원이 줄었을 때의 추가 납부액, 최저한세·이월(minimum_tax_adjustment), 농어촌특별세(rural_special_tax), 합병·분할 승계 인원 조정."""
+    r = INC.integrated_employment_credit(year, size, headcounts, outside_capital_area, converted, returned_from_leave)
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 주의=r["주의"])
+
+
+@mcp.tool(annotations=CALC)
+@_guard
 def startup_tax_reduction(founded_on: Annotated[str, Field(description="창업일(법인 설립등기일) YYYY-MM-DD — 2016.1.1.~2026.12.31.")],
                           region: Annotated[str, Field(description="창업 지역: 수도권과밀억제권역 | 수도권(과밀억제권역도 인구감소지역도 아닌 수도권) | 수도권 인구감소지역 | 수도권 밖")],
                           year: YEAR,
