@@ -26,7 +26,7 @@ flowchart LR
 3. **Calculation** — follows the statute order, e.g. tax base → that year's brackets → tax.
 4. **Result** — tax, intermediate amounts, item-level judgments, adjustments with income dispositions, and citations.
 
-120 of the 124 tools run in code without generative AI (the 2 price lookups only fetch public data from KRX and VWORLD). Only the 3 PDF tools use Upstage, and only when `UPSTAGE_API_KEY` is set.
+121 of the 125 tools run in code without generative AI (the 2 price lookups only fetch public data from KRX and VWORLD). Only the 3 PDF tools use Upstage, and only when `UPSTAGE_API_KEY` is set.
 
 ### How corporate tax adjustments chain
 
@@ -87,7 +87,7 @@ When answering Korean tax questions, use korean-tax-mcp and korean-tax-calc-mcp 
 5. If two values come out (before/after apportionment, total vs. taxable part, etc.), answer only the one the question asks for.
 ```
 
-## Tools (124)
+## Tools (125)
 
 Click a group to expand its tools.
 
@@ -125,6 +125,7 @@ Click a group to expand its tools.
 | `reduction_income_segments` | Income eligible for a tax reduction when eligible and other businesses are run together — allocation of common income and expenses, loss offset across businesses, attribution of deducted loss carryforwards, main business (STTCA Art. 143; CIT Enforcement Rule Arts. 75–76) |
 | `rural_special_tax` | Special tax for rural development — 20% of income or corporate tax reduced under the STTCA, with exemption status by article (Act Art. 4 and Decree Art. 4 lists by year, 2016–2026) |
 | `integrated_employment_credit` | Integrated employment tax credit — increase in regular employees × per-person amount, credited in the first year and the following 1–2 years, stopped on a decrease, plus conversion to regular status and return from childcare leave, recapture on a decrease (STTCA Art. 29-8, 2023–2025) |
+| `employment_increase_credit` | Tax credit for increased employment — headcount increases in 2018–2024 × per-person amount, second- and third-year credits, stop and recapture on a decrease, choice against the integrated employment credit (STTCA Arts. 29-7 and 127(11)) |
 | `integrated_investment_credit` | Integrated investment tax credit — basic rate by year, company size and asset class, additional credit on the excess over the prior three-year average, temporary credit for 2023–2025, exclusion of expansion investment in the Seoul overconcentration control zone (STTCA Arts. 24 and 130, 2021–2026) |
 | `rnd_tax_credit` | R&D tax credit — general research and workforce development expenses: current-year amount versus incremental amount, with the four-year average condition (STTCA Art. 10(1)(3), 2016–2026) |
 | `startup_tax_reduction` | Startup SME tax reduction — eligibility, rate, period and amount by founding date, region, youth founder and industry incl. contract manufacturing and online retail (STTCA art.6) |
