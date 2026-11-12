@@ -1804,6 +1804,28 @@ def vat_input_tax_deduction(period: Annotated[str, Field(description="과세기�
 
 @mcp.tool(annotations=CALC)
 @_guard
+def vat_tax_base_adjustments(period: Annotated[str, Field(description="과세기간('YYYY-1' 또는 'YYYY-2', 2016-1~2026-2)")],
+                             sales: Annotated[int, Field(description="조정 전 매출 공급가액 합계(원, 부가세 제외) — 마일리지등으로 결제받은 거래는 빼고 mileage_sales에 따로 넣는다", ge=0)] = 0,
+                             adjustments: Annotated[list | None, Field(description="조정 항목 [{종류, 금액(원, 공급가액 기준), 이름?, 발생일?(YYYY-MM-DD)}] — 종류: 매출에누리·환입·도달전파손·매출할인·연체이자·보조금(공급가액에 포함하지 않음) / 판매장려금·대손금(과세표준에서 공제하지 않음). 환입은 발생일(환입된 날)이 과세기간 밖이면 차감하지 않음")] = None,
+                             mileage_sales: Annotated[list | None, Field(description="마일리지·포인트 등으로 대금 일부를 결제받은 거래 [{이름?, 공급일(YYYY-MM-DD, 2017-04-01 이후), 현금등(마일리지등 외 결제액), 자기적립마일리지(자기가 적립해 준 마일리지등 결제액), 그외마일리지(제휴사 등 다른 사업자가 적립한 마일리지등 결제액), 보전금액(그외마일리지 결제분에 대해 제3자에게서 보전받는 금액), 시가?, 자기생산취득재화?(bool), 특수관계_저가보전?(bool)}]")] = None,
+                             vat_included: Annotated[bool, Field(description="mileage_sales의 금액이 부가세 포함 결제액인지(소비자 판매면 True → ×100/110). sales·adjustments에는 적용하지 않음")] = False) -> dict:
+    """과세표준 조정 — 반품(환입)·에누리·할인·장려금·대손금, 마일리지·포인트 결제 거래의 공급가액(부가가치세법 제29조, 시행령 제61조·제70조). 언제: 반품·할인·장려금·포인트 결제가 있는 과세기간의 부가가치세 과세표준을 구할 때.
+    입력: 과세기간 → period, 조정 전 매출 공급가액 → sales, 조정 항목 → adjustments, 마일리지등 결제 거래 → mileage_sales, 부가세 포함 여부 → vat_included.
+    계산: 과세표준 = sales − 공급가액에 포함하지 않는 금액 + 마일리지등 결제 거래의 공급가액.
+      공급가액에 포함하지 않음(제29조제5항): 매출에누리, 환입, 도달 전 파손·훼손·멸실, 약정기일 전 수령 할인, 연체이자, 공급과 직접 관련 없는 보조금.
+      과세표준에서 공제하지 않음(제29조제6항): 판매장려금, 대손금.
+      마일리지등 결제(시행령 제61조 9호·10호, 2017.4.1. 이후 공급분): 공급가액 = 마일리지등 외 결제액 + 자기적립 외 마일리지등 결제분에 대해 제3자에게서 보전받는 금액. 자기적립마일리지등 결제분은 포함하지 않음.
+        자기적립 외 마일리지등 결제분을 보전받지 않고 자기생산·취득재화를 공급했거나(자기생산취득재화=True) 특수관계인에게서 부당하게 낮게 보전받으면(특수관계_저가보전=True) 시가가 공급가액(시가 입력 필요).
+    연도: 제29조제5항·제6항은 2016~2026 같음. 마일리지등 규정은 2017.4.1. 공급분부터(대통령령 제27838호 부칙 제1조), 2017.3.31.까지 공급분은 계산하지 않음.
+    결과: 과세표준·조정 전 매출·차감 합계·마일리지등 거래 공급가액·매출세액, 계산(항목별), 판단·근거."""
+    r = V.vat_tax_base_adjustments(period, sales, adjustments, mileage_sales, vat_included)
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 주의=r["주의"])
+
+
+@mcp.tool(annotations=CALC)
+@_guard
 def vat_deemed_supply_items(period: Annotated[str, Field(description="과세기간('YYYY-1' 또는 'YYYY-2')")],
                             items: Annotated[list, Field(description="[{항목, 거래, 매입세액공제(bool), 금액?|시가?|감가상각?, 사용인_구분?('경조사'|'설날·추석'|'창립기념일·생일'), 인원?, 1인당_연간금액?, 견본_광고선전물?, 취득구분?('자기매입'|'사업양수'|'수출영세율'), 반출?('국내'|'국외')}]")]) -> dict:
     """간주공급·판매 과세표준 판정(부가가치세법 제10조, 시행령 제19조의2·제20조·제66조). 언제: 재화의 판매·간주공급에 대한 부가가치세 과세표준을 항목별로 판정할 때.
@@ -9468,6 +9490,8 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "제47조의5": ["withholding_late_payment_penalty"],
     "세금계산서": ["invoice_penalty", "vat_input_tax_deduction"], "공통매입세액": ["common_input_tax", "vat_common_input_allocation", "input_tax_recalculation"],
     "면세전용": ["vat_exempt_use_deemed_supply"], "간주공급": ["vat_deemed_supply_items", "vat_exempt_use_deemed_supply"],
+    "마일리지": ["vat_tax_base_adjustments"], "포인트 결제": ["vat_tax_base_adjustments"], "반품": ["vat_tax_base_adjustments"], "환입": ["vat_tax_base_adjustments"],
+    "매출에누리": ["vat_tax_base_adjustments"], "판매장려금": ["vat_tax_base_adjustments"], "매출할인": ["vat_tax_base_adjustments"],
     "의제매입": ["vat_deemed_input_credit"], "농산물": ["vat_deemed_input_credit"], "간이과세": ["simplified_vat_return", "vat_simplified_taxpayer"],
     "신용카드매출": ["vat_card_sales_credit"], "일괄공급": ["bundled_supply_split"], "토지 건물 안분": ["bundled_supply_split"],
     "공급시기": ["vat_supply_timing"], "장기할부": ["vat_supply_timing"], "중간지급조건부": ["vat_supply_timing"],

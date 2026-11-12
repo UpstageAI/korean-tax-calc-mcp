@@ -1357,3 +1357,121 @@ def vat_reverse_charge(year, items, taxable_supply=None, exempt_supply=None):
         "주의": 주의,
         "근거": 근거,
     }
+
+
+# ── 과세표준 조정: 에누리·환입·할인·장려금·대손, 마일리지등 결제(부가가치세법 제29조③6호·⑤·⑥, 시행령 제61조) ──────────
+# 조문 대조(Claude 2026-11-12): 법 제29조⑤⑥은 2016·2017·2026 시행본 동일. 마일리지등 결제 공급가액은 2017.2.7. 개정 영 제61조①9호·10호
+# (2017.4.1. 시행 — 대통령령 제27838호 부칙 제1조 단서, 시행 이후 공급분), 2018.2.13.부터 제61조②9호·10호로 이동(내용 같음).
+# 2017.3.31.까지는 구 영 제61조④(마일리지 상당액을 공급가액에 포함) — 판례와 문언이 갈려 계산하지 않음.
+TAX_BASE_ADJ = {
+    "매출에누리": (True, "공급조건에 따라 통상의 대가에서 직접 깎아 준 금액 — 공급가액에 포함하지 않음", "부가가치세법 제29조⑤1호"),
+    "환입": (True, "환입된 재화의 가액 — 공급가액에 포함하지 않음(환입된 날이 속하는 과세기간에 차감, 수정세금계산서 작성일 = 환입된 날)",
+            "부가가치세법 제29조⑤2호, 시행령 제70조①1호"),
+    "도달전파손": (True, "공급받는 자에게 도달하기 전에 파손·훼손·멸실한 재화의 가액 — 공급가액에 포함하지 않음", "부가가치세법 제29조⑤3호"),
+    "매출할인": (True, "대가를 약정기일 전에 받아 당초 공급가액에서 할인해 준 금액 — 공급가액에 포함하지 않음", "부가가치세법 제29조⑤6호"),
+    "연체이자": (True, "대가 지급 지체로 받는 연체이자 — 공급가액에 포함하지 않음(sales에 들어 있는 금액을 뺌)", "부가가치세법 제29조⑤5호"),
+    "보조금": (True, "공급과 직접 관련되지 않는 국고보조금·공공보조금 — 공급가액에 포함하지 않음(sales에 들어 있는 금액을 뺌)", "부가가치세법 제29조⑤4호"),
+    "판매장려금": (False, "공급받는 자에게 지급하는 장려금이나 이와 유사한 금액 — 과세표준에서 공제하지 않음", "부가가치세법 제29조⑥"),
+    "대손금": (False, "대손금액 — 과세표준에서 공제하지 않음(요건을 갖추면 대손세액공제, 제45조)", "부가가치세법 제29조⑥·제45조①"),
+}
+_MILEAGE_FROM = "2017-04-01"
+
+
+def _won_ex_vat(v, vat_included):
+    return _floor(v, 100, div=110) if vat_included else int(v)
+
+
+def vat_tax_base_adjustments(period, sales=0, adjustments=None, mileage_sales=None, vat_included=False):
+    """과세기간 과세표준 = sales − (공급가액에 포함하지 않는 금액) + 마일리지등 결제 거래의 공급가액.
+    sales·adjustments 금액은 공급가액(부가세 제외). mileage_sales의 금액은 vat_included=True면 부가세 포함 결제액(×100/110).
+    mileage_sales 항목: {이름?, 공급일, 현금등, 자기적립마일리지, 그외마일리지, 보전금액, 시가?, 자기생산취득재화?, 특수관계_저가보전?}."""
+    문제 = []
+    try:
+        y, h = _period(period)
+        if len(str(period)) != 6: raise ValueError
+    except ValueError:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"period {period!r} — 'YYYY-1' 또는 'YYYY-2'(2016-1~2026-2)"]}
+    p_start, p_end = (f"{y}-01-01", f"{y}-06-30") if h == 1 else (f"{y}-07-01", f"{y}-12-31")
+    if not isinstance(sales, int) or sales < 0:
+        문제.append("sales — 조정 전 매출 공급가액(원, 0 이상 정수)")
+    adjustments, mileage_sales = adjustments or [], mileage_sales or []
+    for i, a in enumerate(adjustments):
+        k, amt = a.get("종류"), a.get("금액")
+        if k not in TAX_BASE_ADJ:
+            문제.append(f"adjustments[{i}].종류={k!r} — 허용값: {list(TAX_BASE_ADJ)}")
+        if not isinstance(amt, int) or amt < 0:
+            문제.append(f"adjustments[{i}].금액 — 원(0 이상 정수, 공급가액 기준)")
+        d = a.get("발생일")
+        if d is not None:
+            try:
+                _date(d)
+                if len(str(d)) != 10: raise ValueError
+            except ValueError:
+                문제.append(f"adjustments[{i}].발생일={d!r} — YYYY-MM-DD(2016~2026)")
+    for i, m in enumerate(mileage_sales):
+        d = m.get("공급일")
+        try:
+            if d is None or len(str(d)) != 10: raise ValueError
+            _date(d)
+        except ValueError:
+            문제.append(f"mileage_sales[{i}].공급일={d!r} — YYYY-MM-DD(2016~2026) 필요(마일리지등 규정이 2017.4.1. 공급분부터 달라짐)"); continue
+        if str(d) < _MILEAGE_FROM:
+            문제.append(f"mileage_sales[{i}].공급일={d} — 2017.3.31.까지 공급분은 구 시행령 제61조④(마일리지 상당액을 공급가액에 포함) 적용 시기라 계산하지 않음(판례 확인)")
+        if not (p_start <= str(d) <= p_end):
+            문제.append(f"mileage_sales[{i}].공급일={d} — 과세기간 {period}({p_start}~{p_end}) 밖")
+        for key in ("현금등", "자기적립마일리지", "그외마일리지", "보전금액", "시가"):
+            v = m.get(key, 0)
+            if v is not None and (not isinstance(v, int) or v < 0):
+                문제.append(f"mileage_sales[{i}].{key} — 원(0 이상 정수)")
+    if 문제:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제}
+
+    항목별, 판단, 차감 = [], [], 0
+    for a in adjustments:
+        k, amt = a["종류"], a["금액"]
+        빼기, 설명, 근거 = TAX_BASE_ADJ[k]
+        row = {"종류": k, "이름": a.get("이름", k), "금액": amt, "과세표준_차감": amt if 빼기 else 0, "근거": 근거}
+        d = a.get("발생일")
+        if 빼기 and d is not None and not (p_start <= str(d) <= p_end):
+            row["과세표준_차감"] = 0
+            row["사유"] = f"발생일 {d}이 과세기간 {period} 밖 — 그 날이 속하는 과세기간에서 차감"
+        else:
+            row["사유"] = 설명
+        차감 += row["과세표준_차감"]
+        항목별.append(row)
+        판단.append({"항목": row["이름"], "결론": row["사유"], "근거": 근거})
+    마일_근거 = "부가가치세법 시행령 제61조" + ("①" if y == 2017 else "②") + "9호·10호" + ("" if y == 2017 else ", 법 제29조③6호")
+    마일리지, 마일합 = [], 0
+    for m in mileage_sales:
+        cash, own, other = m.get("현금등", 0) or 0, m.get("자기적립마일리지", 0) or 0, m.get("그외마일리지", 0) or 0
+        comp, fmv = m.get("보전금액", 0) or 0, m.get("시가")
+        name = m.get("이름", "마일리지등 결제 거래")
+        시가과세 = None
+        if m.get("특수관계_저가보전"):
+            시가과세 = "특수관계인에게서 부당하게 낮은 금액을 보전받거나 보전받지 않음 — 공급한 재화·용역의 시가(10호 나목)"
+        elif other > 0 and comp == 0 and m.get("자기생산취득재화"):
+            시가과세 = "자기적립 외 마일리지등 결제분을 보전받지 않고 자기생산·취득재화를 공급 — 공급한 재화의 시가(10호 가목)"
+        if 시가과세:
+            if fmv is None:
+                return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"'{name}': {시가과세} — 시가 입력 필요"]}
+            base = _won_ex_vat(fmv, vat_included)
+            사유 = 시가과세
+        else:
+            base = _won_ex_vat(cash + comp, vat_included)
+            사유 = ("마일리지등 외 결제액 + 자기적립 외 마일리지등 결제분에 대해 제3자에게서 보전받는 금액(9호). "
+                    "자기적립마일리지등 결제분은 공급가액에 포함하지 않음")
+            if other > 0 and comp == 0:
+                사유 += " — 자기적립 외 마일리지등 결제분을 보전받지 않음(자기생산·취득재화 공급이면 자기생산취득재화=True로 시가 과세 확인)"
+        마일합 += base
+        마일리지.append({"이름": name, "공급일": m["공급일"], "현금등": cash, "자기적립마일리지": own, "그외마일리지": other, "보전금액": comp,
+                       "공급가액": base, "사유": 사유})
+        판단.append({"항목": name, "결론": f"공급가액 {base:,}원 — {사유}", "근거": 마일_근거})
+    과세표준 = sales - 차감 + 마일합
+    if 과세표준 < 0:
+        판단.append({"항목": "과세표준", "결론": "차감액이 매출보다 커서 음수 — 환입·에누리가 당기 매출보다 큰 과세기간(음수 그대로 신고)", "근거": "부가가치세법 제29조①⑤"})
+    근거 = "부가가치세법 제29조①·⑤·⑥" + (", 시행령 제70조①1호" if any(a["종류"] == "환입" for a in adjustments) else "") + (f", {마일_근거}" if mileage_sales else "")
+    return {"결과": {"과세표준": 과세표준, "조정전_매출": sales, "차감_합계": 차감, "마일리지등_거래_공급가액": 마일합, "매출세액": _floor(과세표준, 0.1) if 과세표준 > 0 else 0},
+            "계산": {"조정_항목별": 항목별, "마일리지등_거래": 마일리지}, "판단": 판단, "근거": 근거,
+            "주의": ["장려금을 금전이 아닌 재화로 주면 사업상 증여 여부를 따로 판정(vat_deemed_supply_items)",
+                    "자기적립마일리지등 = 당초 공급하고 마일리지등을 적립해 준 그 사업자에게 사용한 것. 여러 사업자가 함께 쓰는 마일리지등은 적립·사용 실적 구분 관리 + 제3자 보전 없음 요건을 모두 갖춰야 함(영 제61조 9호 나목)",
+                    "마일리지등 거래의 금액은 sales에 넣지 않는다(이 도구가 공급가액을 따로 계산해 더함)"]}
