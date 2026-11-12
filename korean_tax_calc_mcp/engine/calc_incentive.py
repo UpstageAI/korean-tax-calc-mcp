@@ -905,3 +905,84 @@ def integrated_investment_credit(year, size, investments, prior3_total=0, histor
                    "소비성서비스업, 부동산임대 및 공급업은 제외. 수도권과밀억제권역 안 증설투자는 배제(제130조) — in_overconcentration_zone·expansion으로 판정",
                    "창업중소기업 감면(제6조)·중소기업 특별세액감면(제7조)과는 하나만 선택(제127조제4항). 최저한세 대상이고 못 쓴 금액은 10년 이월(minimum_tax_adjustment 코드 13W 일반·13X 신성장·13Y 국가전략·13Z 반도체, 임시 1B1·1B2·1B3·1B9). 공제받은 세액에는 농어촌특별세 20%(rural_special_tax)",
                    "투자 완료 뒤 일정 기간 안에 다른 목적으로 쓰면 공제세액과 이자 상당액을 납부(제24조제3항) — 계산하지 않음. 2023.1.1. 전 투자분의 종전 공제율 경과조치, 국가전략 시설과 그 밖의 자산이 섞였을 때의 추가공제(2021·2022·2024 본칙)는 계산하지 않음"]}
+
+
+# ── 일반 연구·인력개발비 세액공제(조세특례제한법 제10조제1항제3호) — 2016~2026 과세연도 ──────────────────────────
+# 근거(2016~2025 각 연말과 2026.11.12. 시행본 대조): 법 제10조①3호 — 가목(증가분: 직전 과세연도 초과액 × 율)과 나목(당기분: 발생액 × 율) 중 선택.
+#   단서: 소급 4년간 발생하지 않았거나 직전 과세연도 발생액이 4년 연평균 발생액보다 적으면 나목만. 시행령 제9조⑨(연평균 = 4년 합계 ÷ 발생한 과세연도 수(4 한도) × 개월 수/12).
+# 증가분 율: 2016 일반·중견 40%·중소 50% / 2017 일반 30%·중견 40%·중소 50% / 2018~ 일반 25%·중견 40%·중소 50%
+# 당기분 율: 중소 25%, 졸업 뒤 3년 15%·그 뒤 2년 10%(2025.1.1. 이후 개시 과세연도에 처음 졸업한 기업은 20%·15% — 법률 제20617호 부칙 제3조①), 중견 8%,
+#   일반기업 2016 min(3%, 2% + 비율/2) / 2017 min(3%, 1% + 비율/2) / 2018~ min(2%, 비율/2) — 비율 = 일반연구·인력개발비 ÷ 수입금액
+_RND_SIZES = ("중소기업", "졸업 뒤 3년", "졸업 뒤 4~5년", "중견기업", "일반")
+
+
+def rnd_tax_credit(year, size, current, prior4, revenue=None, graduated_year=None, months=12):
+    from fractions import Fraction as F
+    문제 = []
+    if not isinstance(year, int) or isinstance(year, bool) or not YEAR_MIN <= year <= YEAR_MAX:
+        문제.append(f"year={year!r} — {YEAR_MIN}~{YEAR_MAX} 과세연도")
+    if size not in _RND_SIZES:
+        문제.append(f"size={size!r} — {' | '.join(_RND_SIZES)}")
+    _won(current, "current(해당 과세연도 일반연구·인력개발비)", 문제)
+    if not isinstance(prior4, list) or len(prior4) != 4 or any(isinstance(v, bool) or not isinstance(v, int) or v < 0 for v in prior4):
+        문제.append("prior4 — 직전 4개 과세연도의 일반연구·인력개발비 [직전, 2년 전, 3년 전, 4년 전](원, 없던 해는 0)")
+    if size == "일반" and (isinstance(revenue, bool) or not isinstance(revenue, int) or revenue <= 0):
+        문제.append("revenue — 일반기업은 당기분 공제율 계산에 해당 과세연도 수입금액(원)이 필요")
+    if size in ("졸업 뒤 3년", "졸업 뒤 4~5년") and isinstance(year, int) and year >= 2025 and (not isinstance(graduated_year, int) or isinstance(graduated_year, bool)):
+        문제.append("graduated_year — 2025 과세연도부터는 최초로 중소기업에 해당하지 않게 된 과세연도가 필요(2025년 이후면 20%·15%, 그 전이면 15%·10%)")
+    if isinstance(months, bool) or not isinstance(months, int) or not 1 <= months <= 12:
+        문제.append("months — 해당 과세연도 개월 수(1~12)")
+    if 문제:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제}
+    판단 = []
+    # 당기분
+    if size == "중소기업":
+        cur_rate, cur_why = F(25, 100), "중소기업 25%"
+    elif size in ("졸업 뒤 3년", "졸업 뒤 4~5년"):
+        new = year >= 2025 and graduated_year >= 2025
+        pct = {("졸업 뒤 3년", False): 15, ("졸업 뒤 4~5년", False): 10, ("졸업 뒤 3년", True): 20, ("졸업 뒤 4~5년", True): 15}[(size, new)]
+        cur_rate, cur_why = F(pct, 100), f"{size} {pct}%" + (" (2025.1.1. 이후 개시 과세연도에 처음 졸업 — 법률 제20617호 부칙 제3조)" if new else "")
+    elif size == "중견기업":
+        cur_rate, cur_why = F(8, 100), "중견기업 8%"
+    else:
+        ratio = F(current, revenue)
+        if year == 2016:
+            cur_rate, formula = min(F(3, 100), F(2, 100) + ratio / 2), "2% + 비율 × 1/2, 3% 한도"
+        elif year == 2017:
+            cur_rate, formula = min(F(3, 100), F(1, 100) + ratio / 2), "1% + 비율 × 1/2, 3% 한도"
+        else:
+            cur_rate, formula = min(F(2, 100), ratio / 2), "비율 × 1/2, 2% 한도"
+        cur_why = f"일반기업 — 수입금액 대비 비율 {float(ratio):.4%} → {formula}"
+    cur_credit = int(current * cur_rate)
+    # 증가분
+    inc_pct = 50 if size == "중소기업" else (40 if size != "일반" or year == 2016 else (30 if year == 2017 else 25))
+    if size in ("졸업 뒤 3년", "졸업 뒤 4~5년"):
+        판단.append("증가분 공제율은 중견기업 율(40%)로 계산 — 졸업 뒤 기업이 시행령의 중견기업 요건을 갖추지 못하면 일반기업 율")
+    prior1, n = prior4[0], sum(1 for v in prior4 if v > 0)
+    avg = F(sum(prior4), n) * months / 12 if n else F(0)
+    if n == 0:
+        inc_ok, why = False, "소급 4년간 일반연구·인력개발비가 발생하지 않아 당기분만"
+    elif prior1 < avg:
+        inc_ok, why = False, f"직전 과세연도 발생액 {prior1:,}원이 4년 연평균 {int(avg):,}원보다 적어 당기분만"
+    else:
+        inc_ok, why = True, ""
+    inc_credit = int(max(0, current - prior1) * F(inc_pct, 100)) if inc_ok else None
+    if not inc_ok:
+        판단.append(why + "(제10조제1항제3호 단서)")
+    if inc_credit is not None and inc_credit > cur_credit:
+        chosen, credit = "증가분", inc_credit
+    else:
+        chosen, credit = "당기분", cur_credit
+    판단.append(f"당기분 {cur_credit:,}원({cur_why})" + (f", 증가분 {inc_credit:,}원(초과액 × {inc_pct}%)" if inc_credit is not None else "") + f" → {chosen} 선택")
+    sme = size == "중소기업"
+    return {"결과": {"공제_대상_세액": credit, "선택": chosen, "당기분": cur_credit, "증가분": inc_credit},
+            "계산": {"기업": size, "당기_발생액": current, "직전_발생액": prior1, "4년_연평균": int(avg), "발생한_과세연도_수": n, "당기분_공제율": float(cur_rate),
+                   "증가분_공제율": inc_pct / 100, "증가분_적용_가능": inc_ok},
+            "판단": 판단,
+            "근거": ["조세특례제한법 제10조제1항제3호·제2항", "조세특례제한법 시행령 제9조제8항·제9항·제10항"],
+            "주의": ["일반연구·인력개발비만 계산. 신성장·원천기술(제1호)과 국가전략기술(제2호) 연구개발비는 공제율과 구분경리 요건이 달라 계산하지 않음",
+                   "연구·인력개발비에 해당하는 비용(시행령 별표 6 — 전담부서 인건비, 재료비, 위탁·공동연구개발비 등)인지와 연구소·전담부서 인정 여부는 이 도구가 판정하지 않음. 정부 출연금 등으로 지출한 금액은 제외",
+                   ("중소기업의 이 공제는 최저한세 적용제외(minimum_tax_adjustment 코드 16B)" if sme else "중소기업이 아니면 최저한세 대상(minimum_tax_adjustment 코드 13M)")
+                   + ". 못 쓴 금액은 10년 이월. 농어촌특별세는 비과세(농어촌특별세법 시행령 제4조)",
+                   "창업중소기업 감면(제6조)·중소기업 특별세액감면(제7조)과 함께 적용 가능(제127조제4항에 제10조가 없음 — 2024·2025 시행본)",
+                   "4년 연평균은 4년 합계 ÷ 발생한 과세연도 수(4 한도) × 개월 수/12(시행령 제9조제9항). 합병·분할·사업 양수 등으로 승계한 발생액 조정(제10항)은 계산하지 않음"]}

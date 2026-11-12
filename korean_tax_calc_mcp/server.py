@@ -1071,6 +1071,27 @@ def integrated_investment_credit(year: Annotated[int, Field(description="과세�
 
 @mcp.tool(annotations=CALC)
 @_guard
+def rnd_tax_credit(year: YEAR,
+                   size: Annotated[str, Field(description="중소기업 | 졸업 뒤 3년(최초로 중소기업에 해당하지 않게 된 과세연도 개시일부터 3년 안에 끝나는 과세연도) | 졸업 뒤 4~5년 | 중견기업 | 일반")],
+                   current: Annotated[int, Field(description="해당 과세연도에 발생한 일반연구·인력개발비(원)", ge=0)],
+                   prior4: Annotated[list, Field(description="직전 4개 과세연도의 일반연구·인력개발비 [직전, 2년 전, 3년 전, 4년 전](원, 없던 해는 0)")],
+                   revenue: Annotated[int | None, Field(description="해당 과세연도 수입금액(원) — 일반기업의 당기분 공제율 계산용", gt=0)] = None,
+                   graduated_year: Annotated[int | None, Field(description="최초로 중소기업에 해당하지 않게 된 과세연도(졸업 뒤 구간, 2025 과세연도부터 필요)")] = None,
+                   months: Annotated[int, Field(description="해당 과세연도 개월 수", ge=1, le=12)] = 12) -> dict:
+    """연구·인력개발비 세액공제 — 일반연구·인력개발비의 당기분과 증가분을 계산해 큰 쪽을 고른 공제 대상 세액(조세특례제한법 제10조제1항제3호). 언제: 연구소·전담부서를 둔 회사가 그 해 연구개발비로 공제받을 세액을 구하거나, 창업감면과 함께 적용했을 때의 세 부담을 볼 때.
+    입력: 과세연도 → year, 기업 규모 → size, 당기 발생액 → current, 직전 4개 과세연도 발생액 → prior4, 수입금액 → revenue, 졸업 연도 → graduated_year.
+    계산: 당기분 = 발생액 × 공제율(중소기업 25%, 졸업 뒤 3년 15%·그 뒤 2년 10% — 2025년 이후 졸업은 20%·15%, 중견기업 8%, 일반기업은 수입금액 대비 비율의 절반·2% 한도).
+      증가분 = 직전 과세연도를 넘는 금액 × 50%(중견 40%, 일반 25%). 소급 4년간 발생이 없거나 직전 발생액이 4년 연평균보다 적으면 당기분만.
+    결과: 공제 대상 세액, 선택(당기분·증가분), 당기분, 증가분, 계산(공제율·4년 연평균·증가분 적용 가능 여부), 판단·근거·주의.
+    범위 밖: 신성장·원천기술과 국가전략기술 연구개발비, 연구·인력개발비 해당 여부 판정, 합병·분할 승계분 조정, 최저한세·이월(minimum_tax_adjustment)."""
+    r = INC.rnd_tax_credit(year, size, current, prior4, revenue, graduated_year, months)
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 주의=r["주의"])
+
+
+@mcp.tool(annotations=CALC)
+@_guard
 def startup_tax_reduction(founded_on: Annotated[str, Field(description="창업일(법인 설립등기일) YYYY-MM-DD — 2016.1.1.~2026.12.31.")],
                           region: Annotated[str, Field(description="창업 지역: 수도권과밀억제권역 | 수도권(과밀억제권역도 인구감소지역도 아닌 수도권) | 수도권 인구감소지역 | 수도권 밖")],
                           year: YEAR,
