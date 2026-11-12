@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from .engine import calc as K, calc_cit as C, calc_income as I, calc_vat as V, calc_capgains as CG
 from .engine import calc_nonprofit as NP
 from .engine import calc_foreign as F
+from .engine import calc_provision as PV
 from .engine.calc_cit import min_tax_adjust
 from .engine import calc_inhgift as IG
 from .engine import calc_gold_gaps6 as GG
@@ -828,6 +829,27 @@ def deemed_interest(movements: Annotated[list[Movement], Field(description="가�
     if all_notes:
         result["판단"] = "; ".join(all_notes)
     return _ok(result, "법인세법 제52조, 시행령 제88조③·제89조③, 시행규칙 제43조(이자율)")
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def provision_reserve_ledger(grants: Annotated[list, Field(description="연도별 적립액 [{year(2016~2026), amount(원)}] — 포인트는 그해 고객에게 적립해 준 금액(액면), 판매보증은 그해 판매분에서 생길 보증 대상 금액. 가장 이른 적립 연도부터 넣는다")],
+                             valid_years: Annotated[int, Field(description="유효기간(년) — 적립한 해 뒤 몇 년까지 쓸 수 있는지. 2면 적립한 해와 그 뒤 2개 연도까지 사용, 2년 되는 해 말에 미사용분 소멸", ge=0, le=10)],
+                             usage_pattern: Annotated[list, Field(description="경과연수별 실제 사용률 목록(적립한 해부터) — 예: [0.3, 0.4, 0.1]이면 적립한 해 30%, 1년 뒤 40%, 2년 뒤 10% 사용, 나머지 20%는 소멸. 합계 1 이하, 길이는 valid_years+1 이하")],
+                             expected_usage_rate: Annotated[float | None, Field(description="회계가 충당부채를 설정할 때 본 사용률(0~1). 생략하면 실제 사용률 합계와 같다고 봄(환입 없음). 1.0이면 적립액 전부를 설정했다가 소멸 때 환입", ge=0, le=1)] = None,
+                             cost_ratio: Annotated[float, Field(description="적립액 1원을 쓸 때 회사가 부담하는 금액의 비율(0 초과 1 이하, 기본 1.0) — 원가 기준으로 설정하면 원가율", gt=0, le=1)] = 1.0,
+                             kind: Annotated[Literal["포인트", "판매보증", "기타"], Field(description="충당부채 종류(안내 문구용)")] = "포인트") -> dict:
+    """충당부채(포인트·마일리지, 판매보증) 세무조정 다기간 추적 — 연도별 적립, 사용, 유효기간 소멸에 따른 손금불산입·손금산입·유보 잔액(법인세법 제40조). 언제: 포인트·마일리지나 판매보증 충당부채를 여러 사업연도에 걸쳐 설정·사용·환입할 때 연도별 세무조정과 유보 잔액을 구할 때.
+    입력: 연도별 적립액 → grants, 유효기간(년) → valid_years, 경과연수별 실제 사용률 → usage_pattern, 회계 설정 사용률 → expected_usage_rate, 부담률 → cost_ratio, 종류 → kind.
+    계산(적립 연도별 묶음): 적립한 해에 충당부채 = 적립액 × 설정 사용률 × 부담률 → 손금불산입(유보). 실제 사용한 해에 충당부채와 상계한 금액 → 손금산입(△유보).
+      설정 잔액을 넘는 사용분은 그해 비용(세무조정 없음). 적립 후 유효기간이 되는 해 말에 남은 충당부채를 환입 → 익금불산입(△유보), 미사용 적립액은 소멸.
+    근거: 손금으로 인정하는 충당금은 법에 따로 정한 것뿐(제33조~제35조)이고 그 밖의 충당부채는 손금이 확정된 사업연도에 손금(제40조제1항). 2016~2026 같음.
+    결과: 유보 기말 잔액·합계, 계산(연도별 적립액·설정·사용·환입·소멸·유보 기말·세무조정 순액), 판단·근거·해석·주의. 2027년 이후에 생길 사용·환입·소멸은 예정으로 따로 표시.
+    범위 밖: 매출을 이연수익(계약부채)으로 잡는 방식(K-IFRS 제1115호 고객충성제도)의 세무조정, 회사 장부의 실제 전입·환입액과의 대사."""
+    r = PV.provision_reserve_ledger(grants, valid_years, usage_pattern, expected_usage_rate, cost_ratio, kind)
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 해석=r["해석"], 주의=r["주의"])
 
 
 @mcp.tool(annotations=CALC)
@@ -9493,7 +9515,9 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "제47조의5": ["withholding_late_payment_penalty"],
     "세금계산서": ["invoice_penalty", "vat_input_tax_deduction"], "공통매입세액": ["common_input_tax", "vat_common_input_allocation", "input_tax_recalculation"],
     "면세전용": ["vat_exempt_use_deemed_supply"], "간주공급": ["vat_deemed_supply_items", "vat_exempt_use_deemed_supply"],
-    "마일리지": ["vat_tax_base_adjustments"], "포인트 결제": ["vat_tax_base_adjustments"], "반품": ["vat_tax_base_adjustments"], "환입": ["vat_tax_base_adjustments"],
+    "마일리지충당부채": ["provision_reserve_ledger"], "포인트충당부채": ["provision_reserve_ledger"], "판매보증충당부채": ["provision_reserve_ledger"],
+    "충당부채": ["provision_reserve_ledger"], "유효기간 소멸": ["provision_reserve_ledger"], "마일리지 유보": ["provision_reserve_ledger"],
+    "마일리지": ["vat_tax_base_adjustments", "provision_reserve_ledger"], "포인트 결제": ["vat_tax_base_adjustments"], "반품": ["vat_tax_base_adjustments"], "환입": ["vat_tax_base_adjustments"],
     "매출에누리": ["vat_tax_base_adjustments"], "판매장려금": ["vat_tax_base_adjustments"], "매출할인": ["vat_tax_base_adjustments"],
     "의제매입": ["vat_deemed_input_credit"], "농산물": ["vat_deemed_input_credit"], "간이과세": ["simplified_vat_return", "vat_simplified_taxpayer"],
     "신용카드매출": ["vat_card_sales_credit"], "일괄공급": ["bundled_supply_split"], "토지 건물 안분": ["bundled_supply_split"],
