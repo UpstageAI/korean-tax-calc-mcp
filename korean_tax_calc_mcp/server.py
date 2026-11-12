@@ -849,11 +849,12 @@ def arm_length_range(comparables: Annotated[list, Field(description="비교대�
     입력: 비교대상 값 → comparables, 분석대상 값 → tested_value, 지표 분모 금액 → base_amount, 범위 종류 → range_type, 기준점 → point·point_value, 분석대상이 거주자인지 → tested_is_resident, 지표 방향 → higher_is_more_income, 사분위 계산법 → quartile_method, 사업연도 → year.
     계산: 범위 안이면 조정 없음. 벗어나면 기준점(중위값·평균값·직접입력)과의 차이 × base_amount = 조정액(원 미만 절사). 분석대상이 거주자가 아니면 방향을 뒤집어 거주자 소득이 과소인지 과다인지 표시.
     결과: 비교대상 수·최솟값·제1사분위·중위값·제3사분위·최댓값·평균값, 범위, 범위 안 여부, 조정 필요 여부, 기준점, 차이, 거주자 소득(과소·과다), 조정액, 판단·근거·주의.
+    결과의 '비교대상_확인'은 비교가능 거래의 뜻(시행령 제14조제1항제1호), 분석요소(시행규칙 제6조제1항), 내부 비교가능 거래를 먼저 볼 것(시행규칙 제7조제1항제4호), 이익률 자료만으로는 타당성을 확인할 수 없다는 점을 알려 줌.
     범위 밖: 비교대상이 적절한지(비교가능성·차이 조정·손실 기업 처리)는 판단하지 않음. 범위를 사분위로 좁히는 방법과 기준점 선택은 국조법령이 특정하지 않음(사분위는 OECD 이전가격지침 3.57의 통계적 도구) — 선택 이유는 보고서에 밝혀야 함."""
     r = ALR.arm_length_range(comparables, tested_value, base_amount, range_type, point, point_value, tested_is_resident, higher_is_more_income, quartile_method, year)
     if "error" in r:
         return r
-    return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 주의=r["주의"])
+    return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 비교대상_확인=r["비교대상_확인"], 주의=r["주의"])
 
 
 @mcp.tool(annotations=CALC)
@@ -939,6 +940,24 @@ def loss_carryforward_ledger(years: Annotated[list, Field(description="사업연
     if "error" in r:
         return r
     return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 주의=r["주의"])
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def tax_adjustment_schedule(years: Annotated[list, Field(description="사업연도별 [{year(2016~2026), book_income(결산서상 당기순손익, 원 — 손실이면 음수), adjustments: [{name, amount(원), kind('익금산입'|'손금불산입'|'손금산입'|'익금불산입'), disposition}], sme?}] — 연도 오름차순, 빠진 해 없이. disposition: 익금산입·손금불산입은 유보|상여|배당|기타소득|기타사외유출|기타, 손금산입·익금불산입은 유보(△유보)|기타. 같은 유보 항목은 같은 name으로")],
+                            sme: Annotated[bool, Field(description="중소기업 등(이월결손금 공제 한도 100%) 여부. 연도별로 다르면 years의 sme")] = True,
+                            opening_reserves: Annotated[list | None, Field(description="첫 사업연도 기초 유보 잔액 [{name, amount(원, △유보 잔액이면 음수)}]")] = None,
+                            opening_losses: Annotated[list | None, Field(description="첫 사업연도 전에 생긴 미공제 결손금 [{year(2009 이후), amount(원)}]")] = None) -> dict:
+    """연도별 세무조정 묶음 — 여러 사업연도의 결산서상 순손익과 세무조정을 넣으면 각 사업연도 소득, 이월결손금 공제, 과세표준, 산출세액, 항목별 유보 잔액을 해마다 이어서 계산(법인세법 제14조·제13조·제55조·제67조). 언제: 여러 해에 걸친 세무조정(인정이자, 충당부채, 이전가격 조정, 한도초과 등)을 한 표로 모아 연도별 세액과 유보·결손금 잔액을 볼 때.
+    입력: 사업연도별 순손익과 조정 → years, 중소기업 등 여부 → sme, 기초 유보 → opening_reserves, 기초 결손금 → opening_losses.
+    계산: 각 사업연도 소득 = 결산서상 당기순손익 + 익금산입·손금불산입 − 손금산입·익금불산입. 유보로 처분한 조정은 항목별 잔액(기초·증가·감소·기말)으로 다음 해에 넘김.
+      결손이 난 해의 결손금은 먼저 발생한 것부터 뒤 사업연도 소득에서 공제(loss_carryforward_ledger와 같은 규칙) → 과세표준 × 그 해 세율 = 산출세액.
+    결과: 합계(각 사업연도 소득·과세표준·산출세액·기말 유보·기말 결손금 잔액), 계산(연도별 순손익·가산·차감·각 사업연도 소득·소득처분 사외유출 합계·유보 표·이월결손금 공제·과세표준·산출세액), 판단·근거·서식·주의.
+    범위 밖: 각 조정 금액이 맞는지(각 계산 도구로 구해 넣음), 세액공제·감면·최저한세, 다른 조정 뒤 소득으로 다시 계산하는 한도(기부금 등), 1년 미만 사업연도."""
+    r = MY.tax_adjustment_schedule(years, sme, opening_reserves, opening_losses)
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 서식=r["서식"], 주의=r["주의"])
 
 
 @mcp.tool(annotations=CALC)
@@ -9575,6 +9594,8 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "제47조의5": ["withholding_late_payment_penalty"],
     "세금계산서": ["invoice_penalty", "vat_input_tax_deduction"], "공통매입세액": ["common_input_tax", "vat_common_input_allocation", "input_tax_recalculation"],
     "면세전용": ["vat_exempt_use_deemed_supply"], "간주공급": ["vat_deemed_supply_items", "vat_exempt_use_deemed_supply"],
+    "세무조정 다년도": ["tax_adjustment_schedule"], "유보 잔액": ["tax_adjustment_schedule", "provision_reserve_ledger"], "소득금액조정합계표": ["tax_adjustment_schedule"],
+    "각 사업연도 소득": ["tax_adjustment_schedule"], "자본금과 적립금 조정명세서": ["tax_adjustment_schedule"],
     "이월결손금 추적": ["loss_carryforward_ledger"], "결손금 잔액": ["loss_carryforward_ledger"], "결손금 소멸": ["loss_carryforward_ledger"], "이월결손금": ["loss_carryforward_ledger", "loss_carryforward_limit"],
     "해외법인 청산": ["foreign_subsidiary_liquidation", "foreign_exchange_reporting"], "자회사 청산 손실": ["foreign_subsidiary_liquidation"], "투자주식 손실": ["foreign_subsidiary_liquidation"],
     "정상가격 범위": ["arm_length_range"], "사분위": ["arm_length_range"], "이전가격 조정액": ["arm_length_range"], "비교대상 이익률": ["arm_length_range"],

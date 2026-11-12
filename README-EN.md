@@ -26,7 +26,7 @@ flowchart LR
 3. **Calculation** — follows the statute order, e.g. tax base → that year's brackets → tax.
 4. **Result** — tax, intermediate amounts, item-level judgments, adjustments with income dispositions, and citations.
 
-110 of the 114 tools run in code without generative AI (the 2 price lookups only fetch public data from KRX and VWORLD). Only the 3 PDF tools use Upstage, and only when `UPSTAGE_API_KEY` is set.
+111 of the 115 tools run in code without generative AI (the 2 price lookups only fetch public data from KRX and VWORLD). Only the 3 PDF tools use Upstage, and only when `UPSTAGE_API_KEY` is set.
 
 ### How corporate tax adjustments chain
 
@@ -87,12 +87,12 @@ When answering Korean tax questions, use korean-tax-mcp and korean-tax-calc-mcp 
 5. If two values come out (before/after apportionment, total vs. taxable part, etc.), answer only the one the question asks for.
 ```
 
-## Tools (114)
+## Tools (115)
 
 Click a group to expand its tools.
 
 <details>
-<summary><b>Corporate tax</b> (25)</summary>
+<summary><b>Corporate tax</b> (26)</summary>
 
 | Tool | What it does |
 |---|---|
@@ -120,6 +120,7 @@ Click a group to expand its tools.
 | `capital_gains_unfair_transaction` | capital-gains unfair transaction: low-price transfer / high-price acquisition at market value (KRW 300m or 5%), gift-then-transfer within 10 years (art. 101) |
 | `corporate_filing_obligations` | external audit, tax adjustment, international transaction filing obligations |
 | `cfc_deemed_dividend` | CFC deemed dividend on retained earnings — low-tax test, 10% ownership, exclusions, distributable retained earnings, full/passive inclusion (Int'l Tax Adjustment Act arts. 27–31) |
+| `tax_adjustment_schedule` | Multi-year tax adjustment schedule — book income and adjustments by year → taxable income, loss carryforward, tax base, tax, reserve balances by item |
 | `loss_carryforward_ledger` | Multi-year loss carryforward ledger — balance by year of origin, annual deduction and tax base, expiry (CITA art.13(1), Decree art.10(2)) |
 | `foreign_subsidiary_liquidation` | Liquidation of a foreign subsidiary — deemed dividend or liquidation loss and the fiscal year of deduction (CITA art.16(1)4) |
 | `arm_length_range` | Arm's length range and adjustment — interquartile/full range, median, whether the tested value is inside, adjustment amount (ITA Decree art.15(5)(6)) |
