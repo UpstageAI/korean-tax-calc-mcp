@@ -21,6 +21,7 @@ from .engine import calc_nonprofit as NP
 from .engine import calc_foreign as F
 from .engine import calc_provision as PV
 from .engine import calc_tp as ALR
+from .engine import calc_multiyear as MY
 from .engine.calc_cit import min_tax_adjust
 from .engine import calc_inhgift as IG
 from .engine import calc_gold_gaps6 as GG
@@ -921,6 +922,41 @@ def loss_carryforward_limit(year: YEAR, sme: Annotated[bool, Field(description="
 입력: 사업연도(2016~2026) → year, 중소기업 등 여부 → sme.
 결과: 한도율(소수)과 근거(법인세법 제13조제1항 단서). Limit on using loss carryforwards in a year; returns the deduction limit ratio by fiscal year start."""
     return _ok({"한도율": C.loss_limit_ratio(year, sme)}, "법인세법 제13조① 단서")
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def loss_carryforward_ledger(years: Annotated[list, Field(description="사업연도별 각 사업연도 소득 [{year(2016~2026), income(원, 결손이면 음수), sme?(그 해만 다르면)}] — 연도 오름차순, 빠진 해 없이")],
+                             sme: Annotated[bool, Field(description="중소기업 등(공제 한도 100%) 여부 — 회생계획 이행 법인 등 시행령 제10조제1항의 법인도 True. 연도별로 다르면 years의 sme로 지정")] = True,
+                             opening_losses: Annotated[list | None, Field(description="첫 사업연도 전에 생겨 아직 공제하지 못한 결손금 [{year(발생연도, 2009 이후), amount(원)}]")] = None) -> dict:
+    """이월결손금 다기간 추적 — 여러 사업연도의 소득·결손을 넣으면 발생 연도별 결손금 잔액, 연도별 공제액·과세표준, 공제기간이 지나 소멸하는 금액(법인세법 제13조제1항, 시행령 제10조제2항). 언제: 적자와 흑자가 섞인 여러 사업연도에 걸쳐 이월결손금을 어느 해에 얼마 공제하고 얼마가 남는지 볼 때.
+    입력: 사업연도별 소득 → years, 중소기업 등 여부 → sme, 기초 결손금 → opening_losses.
+    계산: 먼저 발생한 사업연도의 결손금부터 공제(시행령 제10조제2항). 공제 한도 = 각 사업연도 소득 × 한도율(중소기업 등 100%, 그 외 2017년까지 80%·2018년 70%·2019~2022년 60%·2023년부터 80%).
+      공제기간: 2019년까지 발생한 결손금은 10년, 2020년부터 발생한 결손금은 15년 안에 개시한 사업연도까지(법률 제17652호 부칙 제4조·제15조).
+    결과: 공제액 합계·과세표준 합계·소멸 합계·기말 결손금 잔액, 계산(연도별 한도율·공제한도·발생 연도별 공제·과세표준·결손금 잔액·소멸), 판단·근거·주의.
+    범위 밖: 채무면제이익 충당, 결손금 소급공제, 합병·분할 승계 결손금, 1년 미만 사업연도, 2008년 이전 발생 결손금."""
+    r = MY.loss_carryforward_ledger(years, sme, opening_losses)
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 주의=r["주의"])
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def foreign_subsidiary_liquidation(tax_basis: Annotated[int, Field(description="청산하는 자회사 주식의 세무상 취득가액(원) — 출자액에 손금불산입된 평가손실·지분법손실 등 유보를 반영한 금액", ge=0)],
+                                   distribution: Annotated[int, Field(description="잔여재산 분배로 받은 금전과 그 밖의 재산의 가액(원, 없으면 0)", ge=0)],
+                                   completed_on: Annotated[str, Field(description="청산이 끝나 잔여재산 분배가 완료된 날(배분 가능한 잔여재산이 없음이 확인된 날) YYYY-MM-DD. 비우면 손금 귀속을 정하지 않음")] = "",
+                                   fy_end: Annotated[str, Field(description="내국법인의 사업연도 종료일 YYYY-MM-DD(12월 결산이 아니면)")] = "",
+                                   book_value: Annotated[int | None, Field(description="회계 장부가액(원, 선택) — 세무상 취득가액과 다르면 유보 정리액을 함께 표시", ge=0)] = None) -> dict:
+    """해외 자회사 청산 손익 — 잔여재산 분배액과 주식 취득가액을 비교해 의제배당 또는 청산손실, 손실의 손금 귀속 사업연도(법인세법 제16조제1항제4호). 언제: 해외현지법인을 청산하면서 투자주식에서 생기는 손익과 그 귀속 시기를 정할 때.
+    입력: 세무상 취득가액 → tax_basis, 잔여재산 분배액 → distribution, 청산·분배 완료일 → completed_on, 사업연도 종료일 → fy_end, 회계 장부가액 → book_value.
+    계산: 분배액이 취득가액을 넘으면 초과액은 의제배당. 못 미치면 차액은 청산손실 — 청산이 끝나 잔여재산 분배가 완료된 날이 속하는 사업연도의 손금(법인46012-442, 사전-2015-법령해석법인-0057, 사전-2021-법령해석법인-1372).
+    결과: 구분(의제배당·청산손실·손익 없음), 의제배당, 청산손실, 손금 귀속(사업연도 종료일·기준일), 유보 정리, 판단·근거·주의.
+    범위 밖: 자회사에 대한 대여금·미수금의 대손과 채권 포기(따로 판정), 의제배당의 익금불산입 요건(foreign_subsidiary_dividend), 외국환 청산보고(foreign_exchange_reporting)."""
+    r = MY.foreign_subsidiary_liquidation(tax_basis, distribution, completed_on, fy_end, 1.0, book_value)
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 판단=r["판단"], 주의=r["주의"])
 
 
 @mcp.tool(annotations=CALC)
@@ -9539,6 +9575,8 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "제47조의5": ["withholding_late_payment_penalty"],
     "세금계산서": ["invoice_penalty", "vat_input_tax_deduction"], "공통매입세액": ["common_input_tax", "vat_common_input_allocation", "input_tax_recalculation"],
     "면세전용": ["vat_exempt_use_deemed_supply"], "간주공급": ["vat_deemed_supply_items", "vat_exempt_use_deemed_supply"],
+    "이월결손금 추적": ["loss_carryforward_ledger"], "결손금 잔액": ["loss_carryforward_ledger"], "결손금 소멸": ["loss_carryforward_ledger"], "이월결손금": ["loss_carryforward_ledger", "loss_carryforward_limit"],
+    "해외법인 청산": ["foreign_subsidiary_liquidation", "foreign_exchange_reporting"], "자회사 청산 손실": ["foreign_subsidiary_liquidation"], "투자주식 손실": ["foreign_subsidiary_liquidation"],
     "정상가격 범위": ["arm_length_range"], "사분위": ["arm_length_range"], "이전가격 조정액": ["arm_length_range"], "비교대상 이익률": ["arm_length_range"],
     "마일리지충당부채": ["provision_reserve_ledger"], "포인트충당부채": ["provision_reserve_ledger"], "판매보증충당부채": ["provision_reserve_ledger"],
     "충당부채": ["provision_reserve_ledger"], "유효기간 소멸": ["provision_reserve_ledger"], "마일리지 유보": ["provision_reserve_ledger"],
