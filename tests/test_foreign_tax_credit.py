@@ -728,5 +728,5 @@ def test_all_tools_listed():
             "foreign_subsidiary_dividend", "expat_cost_recharge", "corporate_filing_obligations",
             "foreign_exchange_reporting", "individual_foreign_tax_credit",
             "overseas_account_reporting", "capital_gains_unfair_transaction",
-            "cfc_deemed_dividend", "vat_tax_base_adjustments", "provision_reserve_ledger", "arm_length_range"}
+            "cfc_deemed_dividend", "vat_tax_base_adjustments", "provision_reserve_ledger", "arm_length_range", "loss_carryforward_ledger", "foreign_subsidiary_liquidation"}
     assert 기존 <= names  # 기존 도구들이 사라지지 않았는지 확인
