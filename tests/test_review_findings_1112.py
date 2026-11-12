@@ -42,3 +42,10 @@ def test_loss_allocation_remainder_goes_to_last_income_business():
     # 결손이 소득 합계보다 크면 소득 사업 전부 0
     r = fn(S.reduction_income_segments)(segments=[seg("A", True, 10, 0), seg("D", False, 0, 30)])
     assert r["계산"]["사업별"][0]["공제_후_소득금액"] == 0 and r["결과"]["감면_대상_소득"] == 0
+
+
+def test_employment_credits_point_to_requirements_guide():
+    # 0.40.2: 요건은 조문 MCP의 요건 안내 도구로 확인하도록 주의 첫 줄에서 안내
+    a = fn(S.integrated_employment_credit)(year=2025, size="중소기업", headcounts=H((2024, 80, 35), (2025, 110, 45)))
+    b = fn(S.employment_increase_credit)(year=2024, size="중소기업", headcounts=H((2023, 45, 20), (2024, 80, 35)))
+    assert "employment_credit_requirements_guide(year=과세연도, credit='통합고용'" in a["주의"][0] and "employment_credit_requirements_guide(year=과세연도, credit='고용증대'" in b["주의"][0]
