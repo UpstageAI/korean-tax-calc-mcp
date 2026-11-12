@@ -147,9 +147,12 @@ def foreign_subsidiary_liquidation(tax_basis, distribution, completed_on="", fy_
 # ── 연도별 세무조정 묶음: 결산서상 순손익 → 각 사업연도 소득 → 이월결손금 → 과세표준 → 산출세액, 유보 잔액 ──────────
 # 근거(2016·2026 시행본 대조): 법인세법 제14조(각 사업연도 소득 = 익금 총액 − 손금 총액), 제67조(소득처분), 제13조①, 제55조.
 # 서식: 소득금액조정합계표(시행규칙 별지 제15호), 자본금과 적립금조정명세서(을)(별지 제50호).
+# 출자의 증가(0.37.1): 국조법에 따라 익금에 산입한 금액이 반환된 것으로 확인되지 않고 상대방이 내국법인이 출자한 법인이면 「법인세법」 제67조에도 불구하고 출자의 증가로 조정.
+#   2016~2020 시행본: 구 국조법 제9조①, 구 시행령 제16조①2호 / 2021 시행본부터: 국조법 제13조①, 시행령 제23조①1호(각 시행본 대조). 유보·사외유출과 따로 누계만 보여 줌.
 _ADD = ("익금산입", "손금불산입")
 _SUB = ("손금산입", "익금불산입")
-_DISP_ADD = ("유보", "상여", "배당", "기타소득", "기타사외유출", "기타")
+_DISP_ADD = ("유보", "상여", "배당", "기타소득", "기타사외유출", "기타", "출자의 증가")
+_EQUITY = "출자의 증가"
 _DISP_SUB = ("유보", "기타")
 
 
@@ -183,17 +186,20 @@ def tax_adjustment_schedule(years, sme=True, opening_reserves=None, opening_loss
     for o in opening_reserves or []:
         reserves[o["name"]] = reserves.get(o["name"], 0) + o["amount"]
     rows, incomes, 판단 = [], [], []
+    equity_cum = {}
     for y in years:
         yr, bi = y["year"], y["book_income"]
         begin = dict(reserves)
         add = sub_ = 0
-        disp_tot, inc, dec = {}, {}, {}
+        disp_tot, inc, dec, eq = {}, {}, {}, {}
         for a in y.get("adjustments") or []:
             nm, amt, kind, disp = a["name"], a["amount"], a["kind"], a["disposition"]
             if kind in _ADD:
                 add += amt
                 if disp == "유보":
                     reserves[nm] = reserves.get(nm, 0) + amt; inc[nm] = inc.get(nm, 0) + amt
+                elif disp == _EQUITY:
+                    eq[nm] = eq.get(nm, 0) + amt; equity_cum[nm] = equity_cum.get(nm, 0) + amt
                 elif disp != "기타":
                     disp_tot[disp] = disp_tot.get(disp, 0) + amt
             else:
@@ -210,6 +216,13 @@ def tax_adjustment_schedule(years, sme=True, opening_reserves=None, opening_loss
                      "소득처분_사외유출": disp_tot,
                      "유보": [{"항목": n, "기초": begin.get(n, 0), "증가": inc.get(n, 0), "감소": dec.get(n, 0), "기말": reserves.get(n, 0)} for n in names if begin.get(n, 0) or inc.get(n, 0) or dec.get(n, 0) or reserves.get(n, 0)],
                      "유보_기말_합계": sum(reserves.values())})
+        if equity_cum:
+            rows[-1]["출자의_증가"] = [{"항목": n, "당기": eq.get(n, 0), "누계": equity_cum[n]} for n in sorted(equity_cum)]
+            rows[-1]["출자의_증가_누계"] = sum(equity_cum.values())
+        if eq:
+            old = yr <= 2020
+            판단.append({"항목": f"{yr}년 출자의 증가", "결론": f"{sum(eq.values()):,}원 — 국외특수관계인(내국법인이 출자한 법인)에게서 반환받은 것으로 확인되지 않은 익금산입액은 그 법인에 대한 출자의 증가로 조정. 사외유출이 아니어서 원천징수 대상 처분이 아니고, 유보 표와 따로 누계로 보여 줌",
+                       "근거": "구 국제조세조정에 관한 법률 제9조①, 구 시행령 제16조①2호" if old else "국제조세조정에 관한 법률 제13조①, 시행령 제23조①1호"})
     led = loss_carryforward_ledger(incomes, sme, opening_losses)
     if "error" in led:
         return led
@@ -223,9 +236,14 @@ def tax_adjustment_schedule(years, sme=True, opening_reserves=None, opening_loss
     판단 = led["판단"] + 판단
     tot = {"각사업연도소득": sum(r["각사업연도소득"] for r in rows), "과세표준": sum(r["과세표준"] for r in rows), "산출세액": sum(r["산출세액"] for r in rows),
            "기말_유보": rows[-1]["유보_기말_합계"], "기말_결손금_잔액": rows[-1]["결손금_잔액"]}
+    주의_출자 = []
+    if equity_cum:
+        tot["기말_출자의_증가_누계"] = sum(equity_cum.values())
+        주의_출자 = ["출자의 증가: 이전소득금액 반환 확인서를 시행령이 정한 기한(90일) 안에 내면 이 조정을 하지 않음. 상대방이 내국법인의 주주이거나 그 밖의 자이면 출자의 증가가 아니라 배당. "
+                  "출자의 증가 누계를 자본금과 적립금조정명세서에서 어떻게 관리하는지, 그 주식을 처분·청산할 때 세무상 취득가액에 더하는지는 이 도구가 판단하지 않음(해석 확인 필요)"]
     return {"결과": tot, "계산": {"연도별": rows}, "판단": 판단, "근거": "법인세법 제14조·제13조①·제55조·제67조, 시행령 제10조②·제106조",
             "서식": "소득금액조정합계표(법인세법 시행규칙 별지 제15호), 자본금과 적립금조정명세서(을)(별지 제50호)",
             "주의": ["조정 금액은 이미 계산한 값을 넣는다 — 이 도구는 연도별로 합치고 유보·결손금·세액을 이어 줄 뿐, 각 조정이 맞는지는 판단하지 않음",
                    "결산서상 당기순손익은 법인세비용을 뺀 뒤 금액 — 법인세비용은 손금불산입(기타사외유출) 조정으로 넣는다",
                    "산출세액은 과세표준 × 그 해 세율(12개월 사업연도). 세액공제·감면, 최저한세, 토지등 양도소득 법인세, 미환류소득은 반영하지 않음",
-                   "기부금·기업업무추진비 한도처럼 다른 조정 뒤의 소득으로 한도를 다시 계산하는 순서는 반영하지 않음 — 한도 조정은 각 도구로 따로 계산해 넣는다"]}
+                   "기부금·기업업무추진비 한도처럼 다른 조정 뒤의 소득으로 한도를 다시 계산하는 순서는 반영하지 않음 — 한도 조정은 각 도구로 따로 계산해 넣는다"] + 주의_출자}
