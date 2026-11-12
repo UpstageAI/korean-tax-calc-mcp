@@ -1051,6 +1051,27 @@ def integrated_employment_credit(year: Annotated[int, Field(description="과세�
 
 @mcp.tool(annotations=CALC)
 @_guard
+def employment_increase_credit(year: Annotated[int, Field(description="과세연도(2018~2026 — 새 증가분은 2024년까지, 2025·2026은 앞 해 분의 2차·3차 공제만)")],
+                               size: Annotated[str, Field(description="중소기업 | 중견기업 | 일반")],
+                               headcounts: Annotated[list, Field(description="과세연도별 상시근로자 수 [{year, total(전체), youth(청년등 — 15~29세 정규직 등), youth_for_recapture?(추가 납부 계산용)}] — 해당 과세연도와 직전 과세연도는 반드시, 앞 해 분의 2차·3차 공제까지 보려면 그 전 해도")],
+                               outside_capital_area: Annotated[bool, Field(description="인원이 수도권 밖에서 늘었으면 true")] = False,
+                               credits_taken: Annotated[list | None, Field(description="추가 납부 한도용 — 실제로 공제받은 세액 [{first_year, year, amount(원)}]")] = None,
+                               carryforward_left: Annotated[list | None, Field(description="추가 납부 때 차감할 이월 공제액 [{first_year, amount(원)}]")] = None,
+                               only_first_years: Annotated[list | None, Field(description="이 공제를 적용한 최초 공제 과세연도 목록(예: [2021, 2022] — 2023년부터는 통합고용세액공제를 고른 경우). 비우면 늘어난 해 전부")] = None) -> dict:
+    """고용을 증대시킨 기업에 대한 세액공제 — 2018~2024년에 상시근로자가 늘어난 기업의 과세연도별 공제 대상 세액과 인원 감소 시 추가 납부액(조세특례제한법 제29조의7). 언제: 2022년까지 직원이 늘어난 회사가 그 해와 뒤 1~2년의 공제를 구하거나, 2023·2024년 증가분을 통합고용세액공제와 비교할 때.
+    입력: 과세연도 → year, 기업 규모 → size, 연도별 상시근로자 수 → headcounts, 수도권 밖 여부 → outside_capital_area, 이 공제를 적용한 해 → only_first_years.
+    계산: 늘어난 인원(전체 증가 인원 한도) × 1인당 금액 — 청년등은 중소기업 1,100만원(수도권 밖 1,200만원, 2021·2022년 수도권 밖 1,300만원), 중견 800만원, 그 밖 400만원. 청년등 외는 중소기업 700만원·770만원, 중견 450만원, 그 밖 0.
+      최초 공제 과세연도와 그 뒤 1년(중소·중견기업 2년) 동안 공제. 전체 인원이 최초 공제 과세연도보다 줄면 중단, 청년등만 줄면 청년등 외 금액으로 공제. 준 해에는 추가 납부액 계산.
+    결과: 공제 대상 세액, 추가 납부세액, 계산(최초 공제 과세연도별 증가 인원·차수·1인당 금액·공제액·추가 납부), 판단·근거·주의.
+    범위 밖: 2020년에 인원이 준 2018·2019년 최초 공제분의 유예 특례, 2019.1.1. 전에 신고한 2018 과세연도분, 2017년 이전 제도, 최저한세·이월(minimum_tax_adjustment), 통합고용세액공제(integrated_employment_credit)."""
+    r = INC.employment_increase_credit(year, size, headcounts, outside_capital_area, credits_taken, carryforward_left, only_first_years)
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 주의=r["주의"])
+
+
+@mcp.tool(annotations=CALC)
+@_guard
 def integrated_investment_credit(year: Annotated[int, Field(description="과세연도(2021~2026)")],
                                  size: Annotated[str, Field(description="중소기업 | 중견기업 | 일반 | 졸업 뒤 3년(2025년부터 — 최초로 중소기업에 해당하지 않게 된 과세연도 개시일부터 3년 안에 끝나는 과세연도)")],
                                  investments: Annotated[list, Field(description="그 과세연도 투자금액 [{kind(일반 | 신성장 | 국가전략 | 반도체), amount(원)}] — 신성장·국가전략·반도체는 시설 인정을 받은 금액")],
