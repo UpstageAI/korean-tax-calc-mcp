@@ -1009,6 +1009,22 @@ def reduction_income_segments(segments: Annotated[list, Field(description="사�
 
 @mcp.tool(annotations=CALC)
 @_guard
+def rural_special_tax(year: YEAR,
+                      items: Annotated[list, Field(description="감면 항목 [{article(조세특례제한법 조문 — '제24조'·'제29조의8'·'제76조제1항'), amount(그 조문으로 그 과세연도에 실제 적용받은 세액공제·감면세액, 원), name?(항목 이름)}]")]) -> dict:
+    """농어촌특별세 — 조세특례제한법에 따라 법인세·소득세를 감면받은 세액에 붙는 농어촌특별세와 조문별 비과세 여부(농어촌특별세법 제4조·제5조). 언제: 세액공제·세액감면을 받는 회사가 본세와 함께 낼 농어촌특별세를 구하거나, 창업감면과 투자·고용 세액공제 중 어느 쪽이 실제로 유리한지 비교할 때.
+    입력: 과세연도 → year, 감면 조문과 감면세액 → items.
+    계산: 비과세 조문이 아니면 감면세액 × 20%. 비과세는 그 과세연도 말 시행본의 농어촌특별세법 제4조와 시행령 제4조 목록으로 판정(2016~2026 연도별).
+      창업중소기업 감면(제6조)·중소기업 특별세액감면(제7조)·연구인력개발비 세액공제(제10조)는 비과세, 통합투자세액공제(제24조)·통합고용세액공제(제29조의8)는 과세.
+    결과: 농어촌특별세 합계, 과세 대상·비과세 감면세액, 계산(항목별 과세 여부·세액·근거·확인할 것), 판단·근거·주의.
+    범위 밖: 저축·이자·배당 감면(세율 10%), 소득공제·비과세의 감면세액 환산, 관세·취득세·등록면허세·지방세특례제한법 감면, 연중 개정 조문의 부칙 적용례 판정."""
+    r = INC.rural_special_tax(year, items)
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 주의=r["주의"])
+
+
+@mcp.tool(annotations=CALC)
+@_guard
 def startup_tax_reduction(founded_on: Annotated[str, Field(description="창업일(법인 설립등기일) YYYY-MM-DD — 2016.1.1.~2026.12.31.")],
                           region: Annotated[str, Field(description="창업 지역: 수도권과밀억제권역 | 수도권(과밀억제권역도 인구감소지역도 아닌 수도권) | 수도권 인구감소지역 | 수도권 밖")],
                           year: YEAR,
