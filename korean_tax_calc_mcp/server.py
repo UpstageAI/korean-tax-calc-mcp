@@ -963,6 +963,31 @@ def tax_adjustment_schedule(years: Annotated[list, Field(description="사업연�
 
 @mcp.tool(annotations=CALC)
 @_guard
+def sme_status(year: Annotated[int, Field(description="과세연도(2018~2026)")],
+               industry_code: Annotated[str, Field(description="주된 업종의 한국표준산업분류 기호 — 제조업은 중분류(C10~C34, 화장품·화학제품 C20), 도매 및 소매업 G, 정보통신업 J, 수도업 E36, 임대업 N76 등")],
+               revenue: Annotated[int, Field(description="해당 과세연도 손익계산서 매출액(원)", ge=0)],
+               total_assets: Annotated[int, Field(description="과세연도 종료일 재무상태표 자산총액(원)", ge=0)],
+               domestic_affiliates: Annotated[list | None, Field(description="관계기업(국내기업만) [{revenue(원), ownership(소유비율 0.3~1)}] — 30% 이상 소유하면서 최다출자자인 지배·종속 관계")] = None,
+               in_disclosure_group: Annotated[bool, Field(description="공시대상기업집단 소속(계열 편입 통지 포함) 여부")] = False,
+               large_corp_owner: Annotated[bool, Field(description="자산총액 5천억원 이상 법인이 주식의 30% 이상을 소유한 최다출자자인지")] = False,
+               excluded_business: Annotated[bool, Field(description="부동산임대업 또는 소비성서비스업이 주된 사업인지")] = False,
+               first_exceeded_year: Annotated[int | None, Field(description="규모 기준을 처음 넘은 과세연도(이전에 이미 넘었으면). 비우면 해당 과세연도")] = None,
+               founded_on: Annotated[str, Field(description="창업일 YYYY-MM-DD(선택) — 창업 후 2년 안에 기준을 넘으면 유예기간이 없음")] = "") -> dict:
+    """중소기업·소기업 해당 여부 — 업종별 매출 기준, 자산총액, 독립성, 유예기간으로 세법상 중소기업인지와 소기업·중기업 구분(조세특례제한법 시행령 제2조). 언제: 매출이 빠르게 커진 회사가 창업감면·특별세액감면·결손금 소급공제·최저한세 7% 같은 중소기업 규정을 그 해에도 적용받는지 볼 때.
+    입력: 과세연도 → year, 업종 기호 → industry_code, 매출액 → revenue, 자산총액 → total_assets, 국내 관계기업 → domestic_affiliates, 독립성 → in_disclosure_group·large_corp_owner, 처음 넘은 해 → first_exceeded_year, 창업일 → founded_on.
+    계산: 매출액(국내 관계기업 합산 — 50% 이상 소유는 전액, 미만은 소유비율만큼)이 업종별 기준(중소기업기본법 시행령 별표 1) 이내이고 자산총액 5천억원 미만이면 중소기업.
+      기준을 넘으면 처음 넘은 과세연도와 그 다음 5개 과세연도(2023년까지 처음 넘었으면 3개)는 유예기간. 독립성을 잃거나 창업 후 2년 안에 넘으면 유예 없음.
+      소기업은 매출액이 별표 3 기준 이내. 2025 과세연도부터 2025.9.1. 개정 기준(예: 화학제품 제조업·도소매 1,200억원, 소기업 120억원·60억원).
+    결과: 중소기업(참·거짓), 구분(소기업·중기업·유예기간 중·중소기업 아님), 계산(기준 금액·합산 매출액·유예기간), 판단·근거·주의.
+    범위 밖: 2017년 이전, 주된 업종 판정, 해외 자회사(합산 대상 아님), 손자기업 간접 지배, 상장법인 유예 7년, 합병에 따른 유예 배제, 1년 미만 과세연도 환산."""
+    r = INC.sme_status(year, industry_code, revenue, total_assets, domestic_affiliates, in_disclosure_group, large_corp_owner, excluded_business, first_exceeded_year, founded_on)
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 주의=r["주의"])
+
+
+@mcp.tool(annotations=CALC)
+@_guard
 def startup_tax_reduction(founded_on: Annotated[str, Field(description="창업일(법인 설립등기일) YYYY-MM-DD — 2016.1.1.~2026.12.31.")],
                           region: Annotated[str, Field(description="창업 지역: 수도권과밀억제권역 | 수도권(과밀억제권역도 인구감소지역도 아닌 수도권) | 수도권 인구감소지역 | 수도권 밖")],
                           year: YEAR,
@@ -9666,6 +9691,7 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "면세전용": ["vat_exempt_use_deemed_supply"], "간주공급": ["vat_deemed_supply_items", "vat_exempt_use_deemed_supply"],
     "세무조정 다년도": ["tax_adjustment_schedule"], "유보 잔액": ["tax_adjustment_schedule", "provision_reserve_ledger"], "소득금액조정합계표": ["tax_adjustment_schedule"],
     "각 사업연도 소득": ["tax_adjustment_schedule"], "자본금과 적립금 조정명세서": ["tax_adjustment_schedule"],
+    "중소기업 판정": ["sme_status"], "중소기업 범위": ["sme_status"], "중소기업 졸업": ["sme_status"], "유예기간": ["sme_status"], "소기업 판정": ["sme_status"], "관계기업": ["sme_status"],
     "창업감면": ["startup_tax_reduction"], "창업중소기업": ["startup_tax_reduction"], "청년창업": ["startup_tax_reduction"], "창업벤처": ["startup_tax_reduction"], "벤처기업 감면": ["startup_tax_reduction"],
     "위탁제조": ["startup_tax_reduction"], "특별세액감면": ["sme_special_tax_reduction"], "중소기업 감면": ["sme_special_tax_reduction", "startup_tax_reduction"], "소기업": ["sme_special_tax_reduction"],
     "소급공제": ["loss_carryback_refund"], "결손금 환급": ["loss_carryback_refund"], "결손금 소급": ["loss_carryback_refund"],
