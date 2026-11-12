@@ -99,3 +99,7 @@ def test_form15_codes(tmp_path):
     assert "700" in code("정상가격 조정(국외특수관계인 거래)") and "임시유보" in code("정상가격 조정(국외특수관계인 거래)")
     assert "810" in code("이전소득 배당 예") and "820" in code("출자 증가 예") and "300" in code("출자 감소 예")
     assert "400" in code("특정외국법인 배당간주금액")
+    # 별지 제50호서식(을): 충당부채 설정·사용은 한 과목으로, 임시유보는 유보 표에 넣지 않음
+    ws50 = openpyxl.load_workbook(r["결과"]["파일"])[next(s for s in r["결과"]["시트"] if s.startswith("별지50"))]
+    names = [row[0] for row in ws50.iter_rows(values_only=True) if row[0]]
+    assert names.count("포인트 충당부채") == 1 and not any("설정" in str(n) or "정상가격" in str(n) for n in names)
