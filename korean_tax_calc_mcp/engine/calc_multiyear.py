@@ -142,3 +142,90 @@ def foreign_subsidiary_liquidation(tax_basis, distribution, completed_on="", fy_
                    "거래의 실질이 주식을 시가로 평가하려는 것이면 손금으로 보지 않음(사전-2021-법령해석법인-1372). 회수할 수 있는 재산을 남기고 청산하면 손금 부인·가지급금 위험",
                    "자회사에 대한 대여금·미수금을 못 받은 금액은 이 계산에 넣지 않음 — 대손 요건(법 제19조의2)과 채권 포기의 부당행위·기부금 여부를 따로 판정(업무와 관련 없는 가지급금인지는 사실 판단, 법인세과-568)",
                    "외국환거래규정의 청산보고는 foreign_exchange_reporting(event='청산')"]}
+
+
+# ── 연도별 세무조정 묶음: 결산서상 순손익 → 각 사업연도 소득 → 이월결손금 → 과세표준 → 산출세액, 유보 잔액 ──────────
+# 근거(2016·2026 시행본 대조): 법인세법 제14조(각 사업연도 소득 = 익금 총액 − 손금 총액), 제67조(소득처분), 제13조①, 제55조.
+# 서식: 소득금액조정합계표(시행규칙 별지 제15호), 자본금과 적립금조정명세서(을)(별지 제50호).
+_ADD = ("익금산입", "손금불산입")
+_SUB = ("손금산입", "익금불산입")
+_DISP_ADD = ("유보", "상여", "배당", "기타소득", "기타사외유출", "기타")
+_DISP_SUB = ("유보", "기타")
+
+
+def tax_adjustment_schedule(years, sme=True, opening_reserves=None, opening_losses=None):
+    문제 = []
+    if not isinstance(years, list) or not years:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["years — [{year, book_income, adjustments: [{name, amount, kind, disposition}]}] 1건 이상"]}
+    for i, y in enumerate(years):
+        yr, bi = (y or {}).get("year"), (y or {}).get("book_income")
+        if not isinstance(yr, int) or not YEAR_MIN <= yr <= YEAR_MAX:
+            문제.append(f"years[{i}].year={yr!r} — {YEAR_MIN}~{YEAR_MAX}")
+        if isinstance(bi, bool) or not isinstance(bi, int):
+            문제.append(f"years[{i}].book_income — 결산서상 당기순손익(원, 정수. 손실이면 음수)")
+        for j, a in enumerate((y or {}).get("adjustments") or []):
+            nm, amt, kind, disp = a.get("name"), a.get("amount"), a.get("kind"), a.get("disposition")
+            if not nm: 문제.append(f"years[{i}].adjustments[{j}].name — 조정 항목 이름")
+            if isinstance(amt, bool) or not isinstance(amt, int) or amt < 0:
+                문제.append(f"years[{i}].adjustments[{j}].amount — 원(0 이상 정수)")
+            if kind not in _ADD + _SUB:
+                문제.append(f"years[{i}].adjustments[{j}].kind={kind!r} — {list(_ADD + _SUB)}")
+            elif disp not in (_DISP_ADD if kind in _ADD else _DISP_SUB):
+                문제.append(f"years[{i}].adjustments[{j}].disposition={disp!r} — {kind}은 {list(_DISP_ADD if kind in _ADD else _DISP_SUB)}"
+                          + ("(손금산입·익금불산입의 '유보'는 △유보)" if kind in _SUB else ""))
+    for i, o in enumerate(opening_reserves or []):
+        if not (o or {}).get("name") or isinstance(o.get("amount"), bool) or not isinstance(o.get("amount"), int):
+            문제.append(f"opening_reserves[{i}] — {{name, amount(원, △유보 잔액이면 음수)}}")
+    if 문제:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제}
+
+    reserves = {}
+    for o in opening_reserves or []:
+        reserves[o["name"]] = reserves.get(o["name"], 0) + o["amount"]
+    rows, incomes, 판단 = [], [], []
+    for y in years:
+        yr, bi = y["year"], y["book_income"]
+        begin = dict(reserves)
+        add = sub_ = 0
+        disp_tot, inc, dec = {}, {}, {}
+        for a in y.get("adjustments") or []:
+            nm, amt, kind, disp = a["name"], a["amount"], a["kind"], a["disposition"]
+            if kind in _ADD:
+                add += amt
+                if disp == "유보":
+                    reserves[nm] = reserves.get(nm, 0) + amt; inc[nm] = inc.get(nm, 0) + amt
+                elif disp != "기타":
+                    disp_tot[disp] = disp_tot.get(disp, 0) + amt
+            else:
+                sub_ += amt
+                if disp == "유보":
+                    before = reserves.get(nm, 0)
+                    reserves[nm] = before - amt; dec[nm] = dec.get(nm, 0) + amt
+                    if before > 0 and amt > before:
+                        판단.append({"항목": f"{yr}년 {nm}", "결론": f"유보 잔액 {before:,}원보다 많은 {amt:,}원을 △유보로 정리 — 항목 이름·금액 확인(새로 생긴 △유보면 그대로)", "근거": "자본금과 적립금조정명세서(을)"})
+        income = bi + add - sub_
+        incomes.append({"year": yr, "income": income, **({"sme": y["sme"]} if "sme" in y else {})})
+        names = sorted(set(begin) | set(reserves))
+        rows.append({"year": yr, "결산서상_당기순손익": bi, "익금산입_손금불산입": add, "손금산입_익금불산입": sub_, "각사업연도소득": income,
+                     "소득처분_사외유출": disp_tot,
+                     "유보": [{"항목": n, "기초": begin.get(n, 0), "증가": inc.get(n, 0), "감소": dec.get(n, 0), "기말": reserves.get(n, 0)} for n in names if begin.get(n, 0) or inc.get(n, 0) or dec.get(n, 0) or reserves.get(n, 0)],
+                     "유보_기말_합계": sum(reserves.values())})
+    led = loss_carryforward_ledger(incomes, sme, opening_losses)
+    if "error" in led:
+        return led
+    for r, lr in zip(rows, led["계산"]["연도별"]):
+        base = lr["과세표준"]
+        r.update({"이월결손금_공제": lr["공제액"], "이월결손금_공제_내역": lr["공제"], "과세표준": base,
+                  "산출세액": CC.corp_tax(base, r["year"], 12) if base > 0 else 0,
+                  "결손금_잔액": lr["결손금_잔액_합계"], "결손금_소멸": sum(x["금액"] for x in lr["소멸"])})
+        if any(k in r["소득처분_사외유출"] for k in ("상여", "배당", "기타소득")):
+            판단.append({"항목": f"{r['year']}년 소득처분", "결론": "상여·배당·기타소득 처분액은 원천징수와 귀속자의 소득세 신고가 따름(상여는 deemed_bonus_resettlement)", "근거": "법인세법 제67조, 시행령 제106조"})
+    판단 = led["판단"] + 판단
+    tot = {"각사업연도소득": sum(r["각사업연도소득"] for r in rows), "과세표준": sum(r["과세표준"] for r in rows), "산출세액": sum(r["산출세액"] for r in rows),
+           "기말_유보": rows[-1]["유보_기말_합계"], "기말_결손금_잔액": rows[-1]["결손금_잔액"]}
+    return {"결과": tot, "계산": {"연도별": rows}, "판단": 판단, "근거": "법인세법 제14조·제13조①·제55조·제67조, 시행령 제10조②·제106조",
+            "서식": "소득금액조정합계표(법인세법 시행규칙 별지 제15호), 자본금과 적립금조정명세서(을)(별지 제50호)",
+            "주의": ["조정 금액은 이미 계산한 값을 넣는다 — 이 도구는 연도별로 합치고 유보·결손금·세액을 이어 줄 뿐, 각 조정이 맞는지는 판단하지 않음",
+                   "결산서상 당기순손익은 법인세비용을 뺀 뒤 금액 — 법인세비용은 손금불산입(기타사외유출) 조정으로 넣는다",
+                   "산출세액은 과세표준 × 그 해 세율(12개월 사업연도). 세액공제·감면, 최저한세, 토지등 양도소득 법인세, 미환류소득은 반영하지 않음",
+                   "기부금·기업업무추진비 한도처럼 다른 조정 뒤의 소득으로 한도를 다시 계산하는 순서는 반영하지 않음 — 한도 조정은 각 도구로 따로 계산해 넣는다"]}
