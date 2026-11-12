@@ -69,3 +69,11 @@ def test_input_errors():
     assert "error" in f(year=2024, items=[{"article": "통합투자", "amount": 1}])
     assert "error" in f(year=2024, items=[{"article": "제87조", "amount": 1}])       # 저축·이자·배당 감면은 계산하지 않음
     assert "error" in f(year=2024, items=[{"article": "제24조", "amount": -1}])
+
+
+def test_startup_reduction_notice_on_employment_credit():
+    # 제127조④ 단서: 2024.12.31.까지 창업은 제7항 추가 감면만 고용 공제와 배제, 2025.1.1. 이후 창업은 제6조 전체(법률 제20617호 부칙 제2조)
+    s = getattr(S.startup_tax_reduction, "fn", S.startup_tax_reduction)(founded_on="2021-03-02", region="수도권과밀억제권역", year=2024, first_income_year=2023, tax=550 * M,
+                                                                       taxable_base=3_000 * M, youth=True, industry="통신판매업")
+    assert s["결과"]["감면세액"] == 275 * M
+    assert any("제29조의8" in x and "부칙 제2조" in x and "2025.1.1. 이후 창업" in x for x in s["주의"]) and any("제24조" in x and "제10조" in x for x in s["주의"])
