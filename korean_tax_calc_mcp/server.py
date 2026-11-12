@@ -1049,6 +1049,28 @@ def integrated_employment_credit(year: Annotated[int, Field(description="과세�
 
 @mcp.tool(annotations=CALC)
 @_guard
+def integrated_investment_credit(year: Annotated[int, Field(description="과세연도(2021~2026)")],
+                                 size: Annotated[str, Field(description="중소기업 | 중견기업 | 일반 | 졸업 뒤 3년(2025년부터 — 최초로 중소기업에 해당하지 않게 된 과세연도 개시일부터 3년 안에 끝나는 과세연도)")],
+                                 investments: Annotated[list, Field(description="그 과세연도 투자금액 [{kind(일반 | 신성장 | 국가전략 | 반도체), amount(원)}] — 신성장·국가전략·반도체는 시설 인정을 받은 금액")],
+                                 prior3_total: Annotated[int, Field(description="해당 과세연도 개시일부터 소급해 3년간 투자한 금액의 합계(원). 추가공제 계산용", ge=0)] = 0,
+                                 history_months: Annotated[int | None, Field(description="투자금액이 처음 생긴 과세연도 개시일부터 해당 과세연도 개시일까지의 개월 수(36개월 미만일 때만)")] = None,
+                                 months: Annotated[int, Field(description="해당 과세연도 개월 수", ge=1, le=12)] = 12,
+                                 in_overconcentration_zone: Annotated[bool, Field(description="투자한 사업장이 수도권과밀억제권역 안이면 true(산업단지·공업지역은 false)")] = False,
+                                 expansion: Annotated[bool, Field(description="증설투자면 true, 낡은 설비를 바꾸는 대체투자면 false")] = False) -> dict:
+    """통합투자세액공제 — 사업용 자산 투자금액에 대한 기본공제와 추가공제(조세특례제한법 제24조). 언제: 기계장치 등 설비에 투자한 회사가 그 해 공제받을 금액을 구하거나, 창업감면·특별세액감면과 어느 쪽이 유리한지 비교할 때.
+    입력: 과세연도 → year, 기업 규모 → size, 자산 구분별 투자금액 → investments, 직전 3년 투자 합계 → prior3_total, 수도권과밀억제권역·증설 여부 → in_overconcentration_zone·expansion.
+    계산: 기본공제 = 투자금액 × 공제율(연도·규모·자산 구분별 — 중소기업 일반 자산 10%, 2023~2025 임시 12%). 추가공제 = 직전 3년 연평균 투자금액을 넘는 금액 × 3%(국가전략 4%, 임시·2025년부터 10%), 기본공제의 2배 한도.
+      2024·2025 과세연도는 본칙과 임시 공제 중 큰 쪽, 2023 과세연도는 임시 공제. 수도권과밀억제권역 안 증설투자는 배제.
+    결과: 기본공제, 추가공제, 공제 대상 세액, 적용(본칙·임시·배제), 계산(구분별 공제율·3년 연평균·초과 투자액·본칙과 임시 비교), 판단·근거·주의.
+    범위 밖: 공제 대상 자산 판정, 2020년 이전 투자세액공제, 다른 목적 전용 시 납부세액, 최저한세·이월(minimum_tax_adjustment), 농어촌특별세(rural_special_tax)."""
+    r = INC.integrated_investment_credit(year, size, investments, prior3_total, history_months, months, in_overconcentration_zone, expansion)
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 주의=r["주의"])
+
+
+@mcp.tool(annotations=CALC)
+@_guard
 def startup_tax_reduction(founded_on: Annotated[str, Field(description="창업일(법인 설립등기일) YYYY-MM-DD — 2016.1.1.~2026.12.31.")],
                           region: Annotated[str, Field(description="창업 지역: 수도권과밀억제권역 | 수도권(과밀억제권역도 인구감소지역도 아닌 수도권) | 수도권 인구감소지역 | 수도권 밖")],
                           year: YEAR,

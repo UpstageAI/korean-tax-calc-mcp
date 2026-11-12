@@ -781,3 +781,127 @@ def integrated_employment_credit(year, size, headcounts, outside_capital_area=Fa
                    "추가 납부(인원이 최초 공제 과세연도보다 준 해): 시행령 제26조의8제4항 산식 금액을 실제로 공제받은 세액(credits_taken)을 한도로 그 해 법인세에 더해 납부하고, 남는 금액은 이월된 공제액에서 차감(사전-2020-법령해석소득-0478 — 제29조의7에 대한 해석). "
                    "추가 납부 계산에서는 최초 공제 과세연도에 청년이던 사람을 나이가 넘어도 청년등으로 봄(제5항) — 그 인원은 headcounts의 youth_for_recapture에. 제4항제2호가목2)는 문장으로 규정되어 감소 인원 × 1인당 금액 × 공제받은 횟수로 계산",
                    "2022 과세연도 이전 증가분(제29조의7), 2026 과세연도 이후 계산식은 계산하지 않음"]}
+
+
+# ── 통합투자세액공제(조세특례제한법 제24조) — 2021~2026 과세연도 ────────────────────────────────────────────
+# 근거(2021~2025 각 연말과 2026.11.12. 시행본 대조): 법 제24조①2호(기본공제·추가공제)·3호(임시 투자 세액공제, 2023~2025 과세연도),
+#   시행령 제21조①(소비성서비스업, 부동산임대 및 공급업 제외)·⑦(투자금액)·⑧(직전 3년간 연평균 투자금액)·⑨(평균이 없으면 추가공제 없음), 제130조(수도권과밀억제권역 증설투자 배제).
+# 부칙: 국가전략기술 시설은 2021.7.1. 이후 투자분부터(법률 제18634호 부칙 제7조), 15%·25%는 2023.1.1. 이후 투자분부터(제19328호 부칙 제3조),
+#   2023 임시는 2023.12.31.이 속하는 과세연도 투자분(같은 부칙 제3조③), 2024 임시는 2025.1.1. 이후 신고분부터·2025 임시는 2025.1.1. 이후 개시 과세연도 투자분(2025.3.14. 개정 부칙 제4조②③),
+#   반도체·연구개발시설은 2025.1.1. 이후 투자분부터(같은 부칙 제4조①).
+# 기본공제율(%) — (일반기업, 중견기업, 중소기업). 2025년부터 '중소기업 졸업 뒤 3년'(최초로 중소기업에 해당하지 않게 된 과세연도 개시일부터 3년 안에 끝나는 과세연도) 구간 추가.
+_IIC_MAIN = {
+    2021: {"일반": (1, 3, 10), "신성장": (3, 5, 12), "국가전략": (6, 8, 16)},
+    2022: {"일반": (1, 3, 10), "신성장": (3, 5, 12), "국가전략": (6, 8, 16)},
+    2023: {"일반": (1, 5, 10), "신성장": (3, 6, 12), "국가전략": (15, 15, 25)},
+    2024: {"일반": (1, 5, 10), "신성장": (3, 6, 12), "국가전략": (15, 15, 25)},
+}
+_IIC_2025 = {"일반": {"일반": 1, "중견기업": 5, "졸업 뒤 3년": "7.5", "중소기업": 10}, "신성장": {"일반": 3, "중견기업": 6, "졸업 뒤 3년": 9, "중소기업": 12},
+             "국가전략": {"일반": 15, "중견기업": 15, "졸업 뒤 3년": 20, "중소기업": 25}, "반도체": {"일반": 20, "중견기업": 20, "졸업 뒤 3년": 25, "중소기업": 30}}
+_IIC_TEMP = {2023: {"일반": (3, 7, 12), "신성장": (6, 10, 18)}, 2024: {"일반": (1, 7, 12), "신성장": (3, 8, 14)}, 2025: {"일반": (1, 7, 12), "신성장": (3, 8, 14)}}
+_IIC_SIZE = {"일반": 0, "중견기업": 1, "중소기업": 2}
+
+
+def _iic_rate(year, kind, size, temp):
+    from fractions import Fraction as F
+    if temp and kind in _IIC_TEMP[year]:
+        return None if size == "졸업 뒤 3년" else F(_IIC_TEMP[year][kind][_IIC_SIZE[size]], 100)
+    if year >= 2025:
+        return F(str(_IIC_2025[kind][size])) / 100
+    return F(_IIC_MAIN[year][kind][_IIC_SIZE[size]], 100)
+
+
+def integrated_investment_credit(year, size, investments, prior3_total=0, history_months=None, months=12, in_overconcentration_zone=False, expansion=False):
+    from fractions import Fraction as F
+    문제 = []
+    if not isinstance(year, int) or isinstance(year, bool) or not 2021 <= year <= 2026:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"year={year!r} — 2021~2026 과세연도(통합투자세액공제는 2021년부터. 2020년 이전은 자산별 투자세액공제라 계산하지 않음)"]}
+    sizes = ("중소기업", "중견기업", "일반") + (("졸업 뒤 3년",) if year >= 2025 else ())
+    if size not in sizes:
+        문제.append(f"size={size!r} — {' | '.join(sizes)}" + ("" if year >= 2025 else " ('졸업 뒤 3년' 구간은 2025 과세연도부터)"))
+    kinds = ("일반", "신성장", "국가전략") + (("반도체",) if year >= 2025 else ())
+    inv = {}
+    if not isinstance(investments, list) or not investments:
+        문제.append("investments — [{kind(일반|신성장|국가전략|반도체), amount(그 과세연도 투자금액, 원)}] 1건 이상")
+    for i, it in enumerate(investments if isinstance(investments, list) else []):
+        it = it or {}
+        if it.get("kind") not in kinds:
+            문제.append(f"investments[{i}].kind={it.get('kind')!r} — {' | '.join(kinds)}" + ("" if year >= 2025 else " (반도체 구분은 2025.1.1. 이후 투자분부터)"))
+        elif _won(it.get("amount"), f"investments[{i}].amount", 문제):
+            inv[it["kind"]] = inv.get(it["kind"], 0) + it["amount"]
+    _won(prior3_total, "prior3_total(직전 3년간 투자한 금액의 합계)", 문제)
+    if history_months is not None and (isinstance(history_months, bool) or not isinstance(history_months, int) or not 1 <= history_months <= 36):
+        문제.append("history_months — 투자금액이 처음 생긴 과세연도 개시일부터 해당 과세연도 개시일까지의 개월 수(36 미만일 때만, 1~36)")
+    if isinstance(months, bool) or not isinstance(months, int) or not 1 <= months <= 12:
+        문제.append("months — 해당 과세연도 개월 수(1~12)")
+    if 문제:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제}
+    판단 = []
+    if in_overconcentration_zone and (expansion or size != "중소기업"):
+        why = ("수도권과밀억제권역 안 사업장의 증설투자는 통합투자세액공제를 적용하지 않음(조세특례제한법 제130조제1항)" if size == "중소기업"
+               else "중소기업이 아닌 자가 1990.1.1. 이후 수도권과밀억제권역에 새로 설치·이전한 사업장의 사업용 고정자산은 통합투자세액공제를 적용하지 않음(제130조제2항)")
+        return {"결과": {"기본공제": 0, "추가공제": 0, "공제_대상_세액": 0, "적용": "배제"}, "계산": {"투자금액": inv}, "판단": [why],
+                "근거": ["조세특례제한법 제130조", "조세특례제한법 제24조"],
+                "주의": ["산업단지·공업지역 안 증설투자와 시행령이 정하는 사업용 고정자산(제130조 단서)은 배제되지 않음 — 해당하면 in_overconcentration_zone을 false로 넣어 계산",
+                       "증설투자가 아닌 대체투자는 중소기업이면 공제 대상. 증설·대체 구분과 1989.12.31. 이전부터 사업하던 사업장인지는 이 도구가 판정하지 않음"]}
+    total = sum(inv.values())
+    base_total = prior3_total if not history_months or history_months >= 36 else int(F(prior3_total) * 36 / history_months)
+    avg = F(base_total, 3) * months / 12
+    excess = max(F(0), total - avg) if avg > 0 else F(0)
+    if avg == 0:
+        판단.append("직전 3년간 연평균 투자금액이 없어 추가공제 없음(시행령 제21조제9항)")
+    elif history_months and history_months < 36:
+        판단.append(f"투자 이력이 {history_months}개월이라 그 기간 투자액 {prior3_total:,}원을 36개월로 환산({base_total:,}원)해 3년 합계로 봄(시행령 제21조제8항)")
+
+    def scheme(temp):
+        rows, basic = [], F(0)
+        for k, a in inv.items():
+            r = _iic_rate(year, k, size, temp)
+            if r is None:
+                return None
+            rows.append({"구분": k, "투자금액": a, "공제율": float(r), "기본공제": int(a * r)})
+            basic += int(a * r)
+        if temp or year >= 2025:
+            add_rate, mixed = F(10, 100), False
+        else:
+            rates = {F(4, 100) if k == "국가전략" else F(3, 100) for k in inv}
+            add_rate, mixed = (rates.pop(), False) if len(rates) == 1 else (None, True)
+        if mixed and excess > 0:
+            add, note = None, "국가전략기술 시설(4%)과 그 밖의 자산(3%)이 섞여 있어 초과 투자액을 어느 쪽으로 나눌지 조문만으로 정할 수 없음 — 추가공제는 계산하지 않음"
+        else:
+            raw = int(excess * add_rate) if add_rate is not None else 0
+            cap = int(basic * 2)
+            add, note = min(raw, cap), (f"추가공제 {raw:,}원이 기본공제의 2배 {cap:,}원을 넘어 한도 적용" if raw > cap else "")
+        return {"구분별": rows, "기본공제": int(basic), "추가공제율": float(add_rate) if add_rate is not None else None, "추가공제": add, "한도_안내": note,
+                "합계": int(basic) + (add or 0)}
+
+    main = scheme(False)
+    temp = scheme(True) if year in _IIC_TEMP else None
+    if year == 2023:
+        chosen, label = temp, "임시 투자 세액공제(2023 과세연도 투자분은 제3호 적용)"
+        if temp is None:
+            return {"error": "계산하지 않음", "문제": ["2023 과세연도 임시 투자 세액공제에는 '졸업 뒤 3년' 구간이 없음"]}
+    elif temp is not None and temp["합계"] > main["합계"]:
+        chosen, label = temp, f"임시 투자 세액공제(제3호) — 본칙(제2호) {main['합계']:,}원보다 커서 선택"
+    else:
+        chosen, label = main, "본칙(제2호)" + (f" — 임시(제3호) {temp['합계']:,}원 이하" if temp is not None else "")
+    if year in (2024, 2025) and size == "졸업 뒤 3년":
+        판단.append("임시 투자 세액공제(제3호)에는 '졸업 뒤 3년' 구간이 따로 없어 본칙만 계산 — 중견기업 율로 임시 공제를 받을 수 있는지는 확인 필요")
+    if chosen["한도_안내"]:
+        판단.append(chosen["한도_안내"])
+    판단.append(f"적용: {label}")
+    if "국가전략" in inv and year == 2021:
+        판단.append("국가전략기술 시설의 공제율은 2021.7.1. 이후 투자분부터(법률 제18634호 부칙 제7조) — 그 전 투자분은 일반·신성장으로 넣을 것")
+    if year == 2024 and chosen is temp:
+        판단.append("2024 과세연도 임시 공제는 2025.1.1. 이후 과세표준을 신고하는 경우부터 적용(2025.3.14. 개정 부칙 제4조제2항)")
+    결과 = {"기본공제": chosen["기본공제"], "추가공제": chosen["추가공제"], "공제_대상_세액": chosen["합계"], "적용": "임시" if chosen is temp else "본칙"}
+    return {"결과": 결과,
+            "계산": {"기업": size, "투자금액_합계": total, "직전_3년_합계": base_total, "직전_3년_연평균": int(avg), "초과_투자액": int(excess),
+                   "본칙": main, **({"임시": temp} if temp is not None else {})},
+            "판단": 판단,
+            "근거": ["조세특례제한법 제24조제1항·제2항", "조세특례제한법 시행령 제21조제1항·제7항·제8항·제9항", "조세특례제한법 제130조"],
+            "주의": ["대상: 기계장치 등 사업용 유형자산과 시행령·시행규칙이 정하는 자산(연구·시험, 직업훈련, 에너지 절약, 환경보전, 근로자복지 시설, 중소·중견기업이 취득한 특허권 등). 토지·건축물 등 시행규칙이 뺀 자산, 중고품, 리스 투자, 임대용 자산(2025년부터)은 제외 — 대상 여부는 이 도구가 판정하지 않음",
+                   "투자금액은 총투자금액 × 작업진행률과 그 과세연도까지 실제 지출액 중 큰 금액에서 이미 공제받은 투자금액을 뺀 금액(시행령 제21조제7항). 신성장·국가전략·반도체 시설은 시설 인정을 받은 금액만",
+                   "소비성서비스업, 부동산임대 및 공급업은 제외. 수도권과밀억제권역 안 증설투자는 배제(제130조) — in_overconcentration_zone·expansion으로 판정",
+                   "창업중소기업 감면(제6조)·중소기업 특별세액감면(제7조)과는 하나만 선택(제127조제4항). 최저한세 대상이고 못 쓴 금액은 10년 이월(minimum_tax_adjustment 코드 13W 일반·13X 신성장·13Y 국가전략·13Z 반도체, 임시 1B1·1B2·1B3·1B9). 공제받은 세액에는 농어촌특별세 20%(rural_special_tax)",
+                   "투자 완료 뒤 일정 기간 안에 다른 목적으로 쓰면 공제세액과 이자 상당액을 납부(제24조제3항) — 계산하지 않음. 2023.1.1. 전 투자분의 종전 공제율 경과조치, 국가전략 시설과 그 밖의 자산이 섞였을 때의 추가공제(2021·2022·2024 본칙)는 계산하지 않음"]}
