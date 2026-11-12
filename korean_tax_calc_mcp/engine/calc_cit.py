@@ -3338,8 +3338,9 @@ def foreign_subsidiary_dividend(args: dict):
     held_months = args.get("held_months", 0)
     dividend = args.get("dividend", 0)
     foreign_withholding = args.get("foreign_withholding", 0) or 0
-    subsidiary_tax = args.get("subsidiary_tax", None) or 0
-    subsidiary_income = args.get("subsidiary_income", None) or 0
+    _tax_in, _inc_in = args.get("subsidiary_tax", None), args.get("subsidiary_income", None)
+    subsidiary_tax = _tax_in or 0
+    subsidiary_income = _inc_in or 0
     hybrid = bool(args.get("hybrid", False))
     cfc_low_tax = bool(args.get("cfc_low_tax", False))
     resource_dev = bool(args.get("resource_development", False))
@@ -3367,11 +3368,12 @@ def foreign_subsidiary_dividend(args: dict):
         return {"error": "입력 오류: cfc_low_tax는 bool"}
     if not isinstance(resource_dev, bool):
         return {"error": "입력 오류: resource_development는 bool"}
-    if subsidiary_tax is not None and not isinstance(subsidiary_tax, int):
-        return {"error": "입력 오류: subsidiary_tax은 원 int"}
-    if subsidiary_income is not None and not isinstance(subsidiary_income, int):
+    if not isinstance(subsidiary_tax, int) or subsidiary_tax < 0:
+        return {"error": "입력 오류: subsidiary_tax은 원 int≥0"}
+    if not isinstance(subsidiary_income, int):
         return {"error": "입력 오류: subsidiary_income은 원 int"}
-    if subsidiary_income is not None and subsidiary_tax is not None and subsidiary_income <= subsidiary_tax:
+    # 자회사 법인세액·소득금액은 선택 입력 — 둘 다 넣었을 때만 대소를 본다(안 넣으면 간접외국납부세액 없이 계산)
+    if _tax_in is not None and _inc_in is not None and subsidiary_income <= subsidiary_tax:
         return {"error": "입력 오류: subsidiary_income(≤ subsidiary_tax) — 간접외국납부세액 계산 불가 (소득 ≤ 법인세)"}
 
     # ── 지분율 요건 ─────────────────────────────────────────────────────
@@ -3426,6 +3428,9 @@ def foreign_subsidiary_dividend(args: dict):
         else:
             간접외국납부세액 = 0
         grossup = 간접외국납부세액
+        if 지분충족 and (_tax_in is None or _inc_in is None):
+            판단.append({"항목": "간접외국납부세액", "결론": "자회사 법인세액·소득금액(subsidiary_tax·subsidiary_income)을 넣지 않아 간접외국납부세액은 0으로 둠 — 둘 다 넣으면 계산",
+                         "근거": "법인세법 제57조제4항"})
         공제대상_외국법인세액 = 직접외국납부세액 + 간접외국납부세액
         외국세_손금불산입 = 0
         # 사유 기록

@@ -638,10 +638,14 @@ def deemed_interest(movements: Annotated[list[Movement], Field(description="가�
                     fiscal_start: Annotated[str | None, Field(description="사업연도 개시일(YYYY-MM-DD). 생략 시 year_end의 1년 전 다음 날")] = None,
                     deposits: Annotated[list[Deposit] | None, Field(description="동일인 가수금 [{date, amount(원, 입금 +, 반환 -), offset_blocked(상계 불가 여부), 이름?}]")] = None,
                     rate_mode: Annotated[Literal["입력", "가중평균", "당좌선택"], Field(description="이자율 계산 방식: '입력'(기본, market_rate 사용) | '가중평균'(borrowings로 가중평균차입이자율) | '당좌선택'(당좌대출이자율 4.6%, 2016.3.6.까지 발생분은 6.9%로 기간 안분, 이후 2개 사업연도 적용)")] = "입력",
-                    borrowings: Annotated[list[Borrowing] | None, Field(description="차입금 [{borrowed_on, amount, rate, repaid_on?, related?, unclear_creditor?}] (rate_mode='가중평균'일 때)")] = None) -> dict:
+                    borrowings: Annotated[list[Borrowing] | None, Field(description="차입금 [{borrowed_on, amount, rate, repaid_on?, related?, unclear_creditor?}] (rate_mode='가중평균'일 때)")] = None,
+                    foreign_related: Annotated[bool, Field(description="대여 상대가 국외특수관계인(해외 자회사 등)인지 — True면 법인세법 제52조가 아니라 국제조세조정에 관한 법률 제7조 정상가격 조정으로 계산(3억·5% 기준 없이 정상이자와의 차액 전부 익금산입). 2021 사업연도부터 지원")] = False) -> dict:
     """가지급금 인정이자(적수 × 시가 이자율)와 부당행위계산 여부. 언제: 특수관계인 가지급금 이자와 부당행위 3억·5% 판정을 함께 구할 때.
     입력: 가지급금 증감 [{date, amount(원, 대여 +, 회수 -)}] → movements, 사업연도 종료일(YYYY-MM-DD) → year_end, 시가 이자율(소수) → market_rate(rate_mode='입력'일 때), 실제 이자율(소수) → charged_rate, 실제 받은 이자 금액(원) → received_interest, 사업연도 개시일(YYYY-MM-DD, 생략 시 year_end 기준 자동 계산) → fiscal_start, 동일인 가수금 [{date, amount(원, 입금 +, 반환 -), offset_blocked(상계 불가 여부), 이름?}] → deposits, 이자율 계산 방식('입력'|'가중평균'|'당좌선택') → rate_mode, 차입금 [{borrowed_on, amount, rate, repaid_on?, related?, unclear_creditor?}] → borrowings(rate_mode='가중평균'일 때).
-    결과: 적수(가수금 상계 후)·가지급금적수(상계 전)·가수금적수·시가이자·수령이자·차액·익금산입액·부당행위 여부·계산(대여건별, rate_mode='가중평균'일 때), 근거(법인세법 제52조, 시행령 제88조제3항·제89조제3항, 시행규칙 제43조)."""
+    결과: 적수(가수금 상계 후)·가지급금적수(상계 전)·가수금적수·시가이자·수령이자·차액·익금산입액·부당행위 여부·계산(대여건별, rate_mode='가중평균'일 때), 근거(법인세법 제52조, 시행령 제88조제3항·제89조제3항, 시행규칙 제43조).
+    국외특수관계인 대여(foreign_related=True): 국제거래에는 법인세법 제52조를 적용하지 않고(국조법 제4조제2항) 정상이자율과의 차액을 익금산입(국조법 제7조) — 3억·5% 기준 없음.
+      rate_mode='당좌선택'은 시행규칙 제3조제1호의 간주 정상이자율(당좌대출이자율), '입력'은 직접 산출한 정상이자율(시행령 제11조제1항: 채무액·만기·보증·신용). '가중평균'은 쓰지 않음.
+      2020 사업연도까지(구 국조령 제6조제7항)는 지원하지 않음."""
     from datetime import date as _date, timedelta
     from fractions import Fraction
     if received_interest is not None and charged_rate != 0.0:
@@ -650,6 +654,14 @@ def deemed_interest(movements: Annotated[list[Movement], Field(description="가�
     mv = [(m.date, int(m.amount)) for m in movements]
     y_end = _chk.to_date("year_end", year_end)
     _chk.supported_year("year_end", year_end)
+    if foreign_related:
+        문제 = []
+        if y_end.year <= 2020:
+            문제.append(f"year_end={year_end} — 국외특수관계인 대여는 2021 사업연도부터 지원(2020년까지는 구 국조령 제6조제7항 적용, 간주 정상이자율 조문을 대조하지 않음)")
+        if rate_mode == "가중평균":
+            문제.append("rate_mode='가중평균' — 가중평균차입이자율은 법인세법 방식. 국외특수관계인 대여는 rate_mode='당좌선택'(국조칙 제3조제1호 간주 정상이자율) 또는 '입력'(직접 산출한 정상이자율)")
+        if 문제:
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제}
     for d_str, _amt in mv:
         _chk.need(_chk.to_date("movements.date", d_str) <= y_end,
                   f"movements.date={d_str} — 사업연도 종료일 year_end={year_end} 뒤의 증감은 이 사업연도 적수에 넣지 않음")
@@ -798,6 +810,19 @@ def deemed_interest(movements: Annotated[list[Movement], Field(description="가�
     if rate_mode == "가중평균" and loan_tranches:
         basis_notes = [tx["이자율_근거"] for tx in loan_tranches if tx.get("이자율_근거")]
     all_notes = judge_notes + basis_notes
+    if foreign_related:
+        # 국제거래: 법인세법 제52조 적용 배제(국조법 제4조②) → 정상이자율과의 차액 전부를 익금산입(제7조), 3억·5% 기준 없음
+        result["부당행위"] = False
+        result["정상가격_조정"] = diff > 0
+        result["익금산입"] = diff if diff > 0 else 0
+        all_notes = [n for n in all_notes if "이후 2개 사업연도" not in n]
+        all_notes.insert(0, ("국외특수관계인 대여 — 법인세법 제52조(부당행위계산 부인) 대신 국조법 제7조 정상가격 조정. 정상이자율은 "
+                             + ("시행규칙 제3조제1호 간주 이자율(당좌대출이자율)" if rate_mode == "당좌선택" else f"입력한 이자율 {market_rate:.2%}(시행령 제11조①의 요소로 산출했는지 확인)")
+                             + ". 3억·5% 기준 없이 차액 전부 익금산입"))
+        result["판단"] = "; ".join(all_notes)
+        return _ok(result, "국제조세조정에 관한 법률 제4조②(법인세법 제52조 적용 배제)·제7조(정상가격에 의한 과세조정), 시행령 제11조, 시행규칙 제3조 1호(법인세법 시행규칙 제43조② 당좌대출이자율)",
+                   주의=["익금산입액을 국외특수관계인에게서 돌려받지 않으면 소득처분이 따름 — 국조법의 익금산입액 반환·처분 규정 확인",
+                         "외화 대여, 해외 자회사에서 빌리는 경우(차입)는 이 도구 범위 밖(차입은 통화별 지표금리 + 1.5%)"])
     if all_notes:
         result["판단"] = "; ".join(all_notes)
     return _ok(result, "법인세법 제52조, 시행령 제88조③·제89조③, 시행규칙 제43조(이자율)")
