@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.40.2 (2026-11-12)
+
+Claude 작성. 계산 결과는 그대로.
+
+- `integrated_employment_credit`·`employment_increase_credit`의 주의 첫 줄이 조문 MCP(korean-tax-mcp 0.12.26)의 `employment_credit_requirements_guide`를 안내하도록 바꿈 — 상시근로자·청년등 범위, 인원 계산, 창업감면과의 관계는 그 도구로 과세연도별 확인.
+
 ## 0.40.1 (2026-11-12)
 
 자동 코드 리뷰(#129·#133·#134·#135) 지적을 다시 확인해 고친 것. Claude 작성. 정답 테스트 `test_review_findings_1112.py` 4건.
