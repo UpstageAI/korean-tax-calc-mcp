@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from .engine import calc as K, calc_cit as C, calc_income as I, calc_vat as V, calc_capgains as CG
 from .engine import calc_nonprofit as NP
 from .engine import calc_foreign as F
+from .engine import calc_provision as PV
 from .engine.calc_cit import min_tax_adjust
 from .engine import calc_inhgift as IG
 from .engine import calc_gold_gaps6 as GG
@@ -644,7 +645,8 @@ def deemed_interest(movements: Annotated[list[Movement], Field(description="가�
     입력: 가지급금 증감 [{date, amount(원, 대여 +, 회수 -)}] → movements, 사업연도 종료일(YYYY-MM-DD) → year_end, 시가 이자율(소수) → market_rate(rate_mode='입력'일 때), 실제 이자율(소수) → charged_rate, 실제 받은 이자 금액(원) → received_interest, 사업연도 개시일(YYYY-MM-DD, 생략 시 year_end 기준 자동 계산) → fiscal_start, 동일인 가수금 [{date, amount(원, 입금 +, 반환 -), offset_blocked(상계 불가 여부), 이름?}] → deposits, 이자율 계산 방식('입력'|'가중평균'|'당좌선택') → rate_mode, 차입금 [{borrowed_on, amount, rate, repaid_on?, related?, unclear_creditor?}] → borrowings(rate_mode='가중평균'일 때).
     결과: 적수(가수금 상계 후)·가지급금적수(상계 전)·가수금적수·시가이자·수령이자·차액·익금산입액·부당행위 여부·계산(대여건별, rate_mode='가중평균'일 때), 근거(법인세법 제52조, 시행령 제88조제3항·제89조제3항, 시행규칙 제43조).
     국외특수관계인 대여(foreign_related=True): 국제거래에는 법인세법 제52조를 적용하지 않고(국조법 제4조제2항) 정상이자율과의 차액을 익금산입(국조법 제7조) — 3억·5% 기준 없음.
-      rate_mode='당좌선택'은 시행규칙 제3조제1호의 간주 정상이자율(당좌대출이자율), '입력'은 직접 산출한 정상이자율(시행령 제11조제1항: 채무액·만기·보증·신용). '가중평균'은 쓰지 않음.
+      원칙은 채무액·만기·보증·신용을 고려해 산출한 정상이자율(rate_mode='입력', 시행령 제11조제1항). rate_mode='당좌선택'은 시행규칙 제3조제1호의 간주 정상이자율(당좌대출이자율)로,
+      법 제8조제1항제6호의 방법이라 제1호~제5호로 산출할 수 없는 경우에만 쓴다(법 제8조제1항 단서). 입력한 이자율이 정상이자율인지는 판정하지 않음. '가중평균'은 쓰지 않음.
       2020 사업연도까지(구 국조령 제6조제7항)는 지원하지 않음."""
     from datetime import date as _date, timedelta
     from fractions import Fraction
@@ -817,15 +819,37 @@ def deemed_interest(movements: Annotated[list[Movement], Field(description="가�
         result["익금산입"] = diff if diff > 0 else 0
         all_notes = [n for n in all_notes if "이후 2개 사업연도" not in n]
         all_notes.insert(0, (F.related_party_law(True, "일반", y_end.year)["결론"] + " 정상이자율은 "
-                             + ("시행규칙 제3조제1호 간주 이자율(당좌대출이자율)" if rate_mode == "당좌선택" else f"입력한 이자율 {market_rate:.2%}(시행령 제11조①의 요소로 산출했는지 확인)")
+                             + ("시행규칙 제3조제1호 간주 이자율(당좌대출이자율) — 법 제8조①6호의 방법이라 비교가능 제3자 가격방법 등 제1호~제5호로 정상이자율을 산출할 수 없는 경우에만 적용(법 제8조① 단서). 산출할 수 있으면 rate_mode='입력'"
+                                if rate_mode == "당좌선택" else f"입력한 이자율 {market_rate:.2%}(채무액·만기·보증·신용을 고려해 법 제8조①의 방법으로 산출했는지 확인 — 이 도구는 정상이자율인지 판정하지 않음)")
                              + ". 대여금 면제(채무 면제)나 자회사 증자 참여는 국제거래라도 법인세법 제52조 대상(국조령 제4조) — unfair_transaction의 transaction_type으로 판정"))
         result["판단"] = "; ".join(all_notes)
         return _ok(result, "국제조세조정에 관한 법률 제4조②(법인세법 제52조 적용 배제)·제7조(정상가격에 의한 과세조정), 시행령 제11조, 시행규칙 제3조 1호(법인세법 시행규칙 제43조② 당좌대출이자율)",
-                   주의=["익금산입액을 국외특수관계인에게서 돌려받지 않으면 소득처분이 따름 — 국조법의 익금산입액 반환·처분 규정 확인",
+                   주의=["익금산입액이 국외특수관계인에게서 반환된 것으로 확인되지 않으면 국외특수관계인에 대한 배당으로 처분하거나 출자로 조정(국조법 제13조①)",
                          "외화 대여, 해외 자회사에서 빌리는 경우(차입)는 이 도구 범위 밖(차입은 통화별 지표금리 + 1.5%)"])
     if all_notes:
         result["판단"] = "; ".join(all_notes)
     return _ok(result, "법인세법 제52조, 시행령 제88조③·제89조③, 시행규칙 제43조(이자율)")
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def provision_reserve_ledger(grants: Annotated[list, Field(description="연도별 적립액 [{year(2016~2026), amount(원)}] — 포인트는 그해 고객에게 적립해 준 금액(액면), 판매보증은 그해 판매분에서 생길 보증 대상 금액. 가장 이른 적립 연도부터 넣는다")],
+                             valid_years: Annotated[int, Field(description="유효기간(년) — 적립한 해 뒤 몇 년까지 쓸 수 있는지. 2면 적립한 해와 그 뒤 2개 연도까지 사용, 2년 되는 해 말에 미사용분 소멸", ge=0, le=10)],
+                             usage_pattern: Annotated[list, Field(description="경과연수별 실제 사용률 목록(적립한 해부터) — 예: [0.3, 0.4, 0.1]이면 적립한 해 30%, 1년 뒤 40%, 2년 뒤 10% 사용, 나머지 20%는 소멸. 합계 1 이하, 길이는 valid_years+1 이하")],
+                             expected_usage_rate: Annotated[float | None, Field(description="회계가 충당부채를 설정할 때 본 사용률(0~1). 생략하면 실제 사용률 합계와 같다고 봄(환입 없음). 1.0이면 적립액 전부를 설정했다가 소멸 때 환입", ge=0, le=1)] = None,
+                             cost_ratio: Annotated[float, Field(description="적립액 1원을 쓸 때 회사가 부담하는 금액의 비율(0 초과 1 이하, 기본 1.0) — 원가 기준으로 설정하면 원가율", gt=0, le=1)] = 1.0,
+                             kind: Annotated[Literal["포인트", "판매보증", "기타"], Field(description="충당부채 종류(안내 문구용)")] = "포인트") -> dict:
+    """충당부채(포인트·마일리지, 판매보증) 세무조정 다기간 추적 — 연도별 적립, 사용, 유효기간 소멸에 따른 손금불산입·손금산입·유보 잔액(법인세법 제40조). 언제: 포인트·마일리지나 판매보증 충당부채를 여러 사업연도에 걸쳐 설정·사용·환입할 때 연도별 세무조정과 유보 잔액을 구할 때.
+    입력: 연도별 적립액 → grants, 유효기간(년) → valid_years, 경과연수별 실제 사용률 → usage_pattern, 회계 설정 사용률 → expected_usage_rate, 부담률 → cost_ratio, 종류 → kind.
+    계산(적립 연도별 묶음): 적립한 해에 충당부채 = 적립액 × 설정 사용률 × 부담률 → 손금불산입(유보). 실제 사용한 해에 충당부채와 상계한 금액 → 손금산입(△유보).
+      설정 잔액을 넘는 사용분은 그해 비용(세무조정 없음). 적립 후 유효기간이 되는 해 말에 남은 충당부채를 환입 → 익금불산입(△유보), 미사용 적립액은 소멸.
+    근거: 손금으로 인정하는 충당금은 법에 따로 정한 것뿐(제33조~제35조)이고 그 밖의 충당부채는 손금이 확정된 사업연도에 손금(제40조제1항). 2016~2026 같음.
+    결과: 유보 기말 잔액·합계, 계산(연도별 적립액·설정·사용·환입·소멸·유보 기말·세무조정 순액), 판단·근거·해석·주의. 2027년 이후에 생길 사용·환입·소멸은 예정으로 따로 표시.
+    범위 밖: 매출을 이연수익(계약부채)으로 잡는 방식(K-IFRS 제1115호 고객충성제도)의 세무조정, 회사 장부의 실제 전입·환입액과의 대사."""
+    r = PV.provision_reserve_ledger(grants, valid_years, usage_pattern, expected_usage_rate, cost_ratio, kind)
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 해석=r["해석"], 주의=r["주의"])
 
 
 @mcp.tool(annotations=CALC)
@@ -848,7 +872,8 @@ wholly_owned_capital_increase=True이고 시가가 액면 미만(액면=0 포함
     gap = abs(market_price - actual_price) * quantity; base = market_price * quantity
     if law["적용"] == "국조법":
         판단 = [law["결론"],
-               "차액은 입력한 시가를 정상가격으로 본 금액 — 정상가격은 국조법 " + ("제5조" if (year is not None and year <= 2020) else "제8조") + "의 정상가격 산출방법으로 따로 산출해야 함(이 도구는 산출하지 않음)",
+               "차액은 입력한 시가를 정상가격으로 본 금액 — 이 도구는 입력한 시가가 정상가격인지 판정하지 않음. 정상가격은 국조법 " + ("제5조" if (year is not None and year <= 2020) else "제8조") + "의 산출방법(비교가능 제3자 가격·재판매가격·원가가산·거래순이익률·이익분할, 그 밖의 방법은 앞의 방법으로 산출할 수 없을 때만)으로 따로 산출",
+               "익금산입액이 국외특수관계인에게서 반환된 것으로 확인되지 않으면 배당으로 처분하거나 출자로 조정(국조법 제13조①)" if not (year is not None and year <= 2020) else "익금산입액 미반환분의 처분은 당시 국조법 소득처분 규정 확인",
                "국조법의 특수관계(지분 50% 이상 소유·공통 지배 등)는 법인세법의 특수관계와 범위가 다름 — 국외특수관계인 해당 여부는 호출자 판정"]
         if law.get("주의"): 판단.append(law["주의"])
         return _ok({"시가총액": int(base), "차액": int(gap), "차액비율": round(gap / base, 4) if base else None,
@@ -1800,6 +1825,28 @@ def vat_input_tax_deduction(period: Annotated[str, Field(description="과세기�
     if calc and "판단" in calc:
         calc = {k: v for k, v in calc.items() if k != "판단"}
     return _ok(r, "부가가치세법 제38조·제39조·제46조, 시행령 제75조", 계산=calc, 판단=판단, **({"주의": 주의} if 주의 else {}))
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def vat_tax_base_adjustments(period: Annotated[str, Field(description="과세기간('YYYY-1' 또는 'YYYY-2', 2016-1~2026-2)")],
+                             sales: Annotated[int, Field(description="조정 전 매출 공급가액 합계(원, 부가세 제외) — 마일리지등으로 결제받은 거래는 빼고 mileage_sales에 따로 넣는다", ge=0)] = 0,
+                             adjustments: Annotated[list | None, Field(description="조정 항목 [{종류, 금액(원, 공급가액 기준), 이름?, 발생일?(YYYY-MM-DD)}] — 종류: 매출에누리·환입·도달전파손·매출할인·연체이자·보조금(공급가액에 포함하지 않음) / 판매장려금·대손금(과세표준에서 공제하지 않음). 환입은 발생일(환입된 날)이 과세기간 밖이면 차감하지 않음")] = None,
+                             mileage_sales: Annotated[list | None, Field(description="마일리지·포인트 등으로 대금 일부를 결제받은 거래 [{이름?, 공급일(YYYY-MM-DD, 2017-04-01 이후), 현금등(마일리지등 외 결제액), 자기적립마일리지(자기가 적립해 준 마일리지등 결제액), 그외마일리지(제휴사 등 다른 사업자가 적립한 마일리지등 결제액), 보전금액(그외마일리지 결제분에 대해 제3자에게서 보전받는 금액), 시가?, 자기생산취득재화?(bool), 특수관계_저가보전?(bool)}]")] = None,
+                             vat_included: Annotated[bool, Field(description="mileage_sales의 금액이 부가세 포함 결제액인지(소비자 판매면 True → ×100/110). sales·adjustments에는 적용하지 않음")] = False) -> dict:
+    """과세표준 조정 — 반품(환입)·에누리·할인·장려금·대손금, 마일리지·포인트 결제 거래의 공급가액(부가가치세법 제29조, 시행령 제61조·제70조). 언제: 반품·할인·장려금·포인트 결제가 있는 과세기간의 부가가치세 과세표준을 구할 때.
+    입력: 과세기간 → period, 조정 전 매출 공급가액 → sales, 조정 항목 → adjustments, 마일리지등 결제 거래 → mileage_sales, 부가세 포함 여부 → vat_included.
+    계산: 과세표준 = sales − 공급가액에 포함하지 않는 금액 + 마일리지등 결제 거래의 공급가액.
+      공급가액에 포함하지 않음(제29조제5항): 매출에누리, 환입, 도달 전 파손·훼손·멸실, 약정기일 전 수령 할인, 연체이자, 공급과 직접 관련 없는 보조금.
+      과세표준에서 공제하지 않음(제29조제6항): 판매장려금, 대손금.
+      마일리지등 결제(시행령 제61조 9호·10호, 2017.4.1. 이후 공급분): 공급가액 = 마일리지등 외 결제액 + 자기적립 외 마일리지등 결제분에 대해 제3자에게서 보전받는 금액. 자기적립마일리지등 결제분은 포함하지 않음.
+        자기적립 외 마일리지등 결제분을 보전받지 않고 자기생산·취득재화를 공급했거나(자기생산취득재화=True) 특수관계인에게서 부당하게 낮게 보전받으면(특수관계_저가보전=True) 시가가 공급가액(시가 입력 필요).
+    연도: 제29조제5항·제6항은 2016~2026 같음. 마일리지등 규정은 2017.4.1. 공급분부터(대통령령 제27838호 부칙 제1조), 2017.3.31.까지 공급분은 계산하지 않음.
+    결과: 과세표준·조정 전 매출·차감 합계·마일리지등 거래 공급가액·매출세액, 계산(항목별), 판단·근거."""
+    r = V.vat_tax_base_adjustments(period, sales, adjustments, mileage_sales, vat_included)
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 주의=r["주의"])
 
 
 @mcp.tool(annotations=CALC)
@@ -9468,6 +9515,10 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "제47조의5": ["withholding_late_payment_penalty"],
     "세금계산서": ["invoice_penalty", "vat_input_tax_deduction"], "공통매입세액": ["common_input_tax", "vat_common_input_allocation", "input_tax_recalculation"],
     "면세전용": ["vat_exempt_use_deemed_supply"], "간주공급": ["vat_deemed_supply_items", "vat_exempt_use_deemed_supply"],
+    "마일리지충당부채": ["provision_reserve_ledger"], "포인트충당부채": ["provision_reserve_ledger"], "판매보증충당부채": ["provision_reserve_ledger"],
+    "충당부채": ["provision_reserve_ledger"], "유효기간 소멸": ["provision_reserve_ledger"], "마일리지 유보": ["provision_reserve_ledger"],
+    "마일리지": ["vat_tax_base_adjustments", "provision_reserve_ledger"], "포인트 결제": ["vat_tax_base_adjustments"], "반품": ["vat_tax_base_adjustments"], "환입": ["vat_tax_base_adjustments"],
+    "매출에누리": ["vat_tax_base_adjustments"], "판매장려금": ["vat_tax_base_adjustments"], "매출할인": ["vat_tax_base_adjustments"],
     "의제매입": ["vat_deemed_input_credit"], "농산물": ["vat_deemed_input_credit"], "간이과세": ["simplified_vat_return", "vat_simplified_taxpayer"],
     "신용카드매출": ["vat_card_sales_credit"], "일괄공급": ["bundled_supply_split"], "토지 건물 안분": ["bundled_supply_split"],
     "공급시기": ["vat_supply_timing"], "장기할부": ["vat_supply_timing"], "중간지급조건부": ["vat_supply_timing"],
