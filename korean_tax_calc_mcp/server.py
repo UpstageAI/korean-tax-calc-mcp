@@ -981,7 +981,7 @@ def loss_carryforward_ledger(years: Annotated[list, Field(description="사업연
 
 @mcp.tool(annotations=CALC)
 @_guard
-def tax_adjustment_schedule(years: Annotated[list, Field(description="사업연도별 [{year(2016~2026), book_income(결산서상 당기순손익, 원 — 손실이면 음수), adjustments: [{name, amount(원), kind('익금산입'|'손금불산입'|'손금산입'|'익금불산입'), disposition}], sme?}] — 연도 오름차순, 빠진 해 없이. disposition: 익금산입·손금불산입은 유보|상여|배당|기타소득|기타사외유출|기타|출자의 증가(국외 자회사와의 이전가격·인정이자 조정액을 반환받지 않은 경우), 손금산입·익금불산입은 유보(△유보)|기타. 같은 유보 항목은 같은 name으로")],
+def tax_adjustment_schedule(years: Annotated[list, Field(description="사업연도별 [{year(2016~2026), book_income(결산서상 당기순손익, 원 — 손실이면 음수), adjustments: [{name, amount(원), kind('익금산입'|'손금불산입'|'손금산입'|'익금불산입'), disposition}], sme?}] — 연도 오름차순, 빠진 해 없이. disposition: 익금산입·손금불산입은 유보|상여|배당|기타소득|기타사외유출|기타와, 국외특수관계인 거래의 정상가격 조정에 쓰는 임시유보(반환 여부 확인 전 — 기본)|출자의 증가|이전소득 배당(2021 사업연도부터). 손금산입·익금불산입은 유보(△유보)|기타. 같은 유보 항목은 같은 name으로")],
                             sme: Annotated[bool, Field(description="중소기업 등(이월결손금 공제 한도 100%) 여부. 연도별로 다르면 years의 sme")] = True,
                             opening_reserves: Annotated[list | None, Field(description="첫 사업연도 기초 유보 잔액 [{name, amount(원, △유보 잔액이면 음수)}]")] = None,
                             opening_losses: Annotated[list | None, Field(description="첫 사업연도 전에 생긴 미공제 결손금 [{year(2009 이후), amount(원)}]")] = None) -> dict:
@@ -2251,6 +2251,13 @@ def nonbusiness_interest_disallowance(loans: Annotated[list[Loan], Field(descrip
     extra = {"계산": calc, "판단": 판단}
     if pointer:
         extra["인정이자_연결"] = pointer
+    if any((a or {}).get("대상") == "특수관계법인" and (a or {}).get("사유", "업무무관대여") in ("업무무관대여", "가지급금", "기타") for a in (advances or [])):
+        extra["주의"] = [
+            "특수관계법인 대여금이 '업무와 관련 없는' 것인지는 이 도구가 판정하지 않음 — 입력한 대로 업무무관 가지급금으로 계산. "
+            "자회사·해외현지법인에 시설·운영자금을 대여한 경우 그 대여가 사실상 내국법인의 영업활동과 관련되면 업무무관 가지급금으로 보지 않음"
+            "(법인세과-599, 2009.5.21.; 법인세과-45, 2011.1.13.; 조심2012서2206, 2013.7.24. — 수출 증대를 위한 판매·생산 현지법인의 시설·초기 운영자금 등). "
+            "두 법인 사이에 직접 거래가 없고 목적사업이 무관하면 업무무관으로 봄(조심2016중1733, 2016.7.26.). 사업 관련 정도를 따지는 사실판단 사항",
+            "해외 자회사 대여금은 정상이자 조정(국제조세조정에 관한 법률, deemed_interest의 foreign_related)과 이 지급이자 손금불산입이 따로 적용될 수 있음(서면인터넷방문상담2팀-1931, 2007.10.25.) — 업무무관 가지급금에 해당할 때에 한함"]
     return _ok(r, "법인세법 제28조①·" + ("⑤" if (r and calc["사업연도"][:4] <= "2018") else "③") +
                ", 시행령 제51조·제53조·제55조·제106조, 시행규칙 제28조·제44조" +
                ("; 특수관계인: " + ", ".join(dict.fromkeys(x["특수관계_판정"]["근거"] for x in calc["가지급금"] if "특수관계_판정" in x))
