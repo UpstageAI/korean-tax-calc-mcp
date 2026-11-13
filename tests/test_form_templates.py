@@ -34,8 +34,8 @@ def demo(tmp_path_factory):
 def test_sheet_order(demo):
     raw, _ = demo
     n = raw.sheetnames
-    assert n[0] == "목록" and n.index(EUL) == n.index(GAP) + 1, n
-    assert n[-2:] == ["입력·가정", "판단·근거"] and "요약" not in n
+    assert n[:2] == ["요약", "목록"] and n.index(EUL) == n.index(GAP) + 1, n
+    assert n[-2:] == ["입력·가정", "판단·근거"] and n.count("요약") == 1   # 0.42.0: 맨 앞 요약 시트 한 장
 
 
 def test_template_layout(demo):

@@ -20,7 +20,7 @@ def demo(tmp_path_factory):
 def test_sheet_order(demo):
     raw, _ = demo
     n = raw.sheetnames
-    assert n[:8] == ["목록", S3, S15, "별지23(갑) 기업업무추진비", "별지23(을) 기업업무추진비", S20, S16, S50], n
+    assert n[:9] == ["요약", "목록", S3, S15, "별지23(갑) 기업업무추진비", "별지23(을) 기업업무추진비", S20, S16, S50], n
     assert n[-2:] == ["입력·가정", "판단·근거"]
 
 

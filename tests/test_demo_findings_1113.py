@@ -60,4 +60,35 @@ def test_nonbusiness_advance_to_affiliate_warns():
 def test_server_instructions_point_to_export_workbook():
     # 0.41.2: 같은 요청에서 모델이 서식 엑셀을 직접 그린 경우가 있어 서버 안내문에 export_workbook 사용을 적음
     ins = S.mcp.instructions
-    assert "export_workbook" in ins and "직접 만들지 말고" in ins
+    assert "export_workbook" in ins and "직접 만들지 말고" in ins and "review_notes" in ins
+
+
+def test_summary_sheet(tmp_path):
+    # 0.42.0: 맨 앞 '요약' 시트 — 세액 요약, 세무조정 항목(근거·계산 시트), call별 주요 값, 검토·확인 필요 사항
+    div = dict(received_on="2025-06-30", ownership_ratio=1.0, held_months=16, dividend=200 * M, foreign_withholding=10 * M)
+    items = [{"항목": "법인세비용", "종류": "법인세비용", "금액": 190 * M}] + _fn(S.foreign_subsidiary_dividend)(**div)["세무조정"]
+    calls = [{"label": "일본 배당", "tool": "foreign_subsidiary_dividend", "args": div},
+             {"label": "집계", "tool": "income_adjustment_total", "args": {"net_income": 850 * M, "items": items}},
+             {"label": "세액", "tool": "corporate_tax", "args": {"base": 860 * M, "year": 2025}}]
+    notes = [{"항목": "관계사 매출 대사", "내용": "본사 장부와 현지법인 매입이 다름 — 수출신고필증과 대조"}, "판매장려금 전표 확인"]
+    r = _fn(S.export_workbook)(title="t", calls=calls, output_dir=str(tmp_path), company="가상㈜", period="2025.01.01 ~ 2025.12.31", review_notes=notes)
+    assert r["결과"]["오류_call"] == [] and r["결과"]["시트"][:2] == ["요약", "목록"]
+    wb = openpyxl.load_workbook(r["결과"]["파일"])
+    assert wb.sheetnames[0] == "요약"
+    cells = [[c for c in row if c is not None] for row in wb["요약"].iter_rows(values_only=True)]
+    flat = [c for row in cells for c in row]
+    assert 860 * M in flat and 850 * M in flat                               # 각 사업연도 소득금액, 당기순이익
+    tax = _fn(S.corporate_tax)(base=860 * M, year=2025)["결과"]["산출세액"]
+    assert tax in flat
+    row = next(x for x in cells if "외국자회사 수입배당금" in x)
+    assert "익금불산입" in row and 190 * M in row and "기타" in row and any("제18조의4" in str(c) for c in row) and any(str(c).startswith("계산 1") for c in row)
+    row = next(x for x in cells if "법인세비용" in x)
+    assert any(str(c) == "계산 2" for c in row)                              # 금액이 같은 익금불산입(1.9억) 시트로 잘못 잇지 않음
+    assert any("관계사 매출 대사" in x for x in cells) and any("판매장려금 전표 확인" in str(c) for c in flat)
+    # 검토 의견을 주지 않으면 안내 한 줄, 소득금액 집계가 없어도 요약은 나옴
+    r2 = _fn(S.export_workbook)(title="t2", calls=calls[:1], output_dir=str(tmp_path))
+    f2 = [c for row in openpyxl.load_workbook(r2["결과"]["파일"])["요약"].iter_rows(values_only=True) for c in row if c is not None]
+    assert any("입력된 검토 의견 없음" in str(c) for c in f2) and "세액 요약" not in f2 and "계산 결과 한눈에" in f2
+    # steps 배치는 종전 그대로(자체 요약 시트)
+    r3 = _fn(S.export_workbook)(title="t3", calls=calls[:1], output_dir=str(tmp_path), layout="steps")
+    assert r3["결과"]["시트"].count("요약") == 1

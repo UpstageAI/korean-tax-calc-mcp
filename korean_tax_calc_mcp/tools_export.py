@@ -536,8 +536,95 @@ def _judgement_rows(data: dict, calc_sheet: str) -> list[dict]:
              "근거": 근거 if isinstance(근거, str) else _cell_value(근거), "이유": data.get("주의", "")}]
 
 
+def _summary_sheet(wb, title, company, period, calls, 결과들, review_notes, bold, header_fill, set_money):
+    """맨 앞 '요약' 시트(0.42.0) — 세액 요약, 세무조정 항목(근거·계산 시트), 계산 결과 한눈에, 검토·확인 필요 사항, 범례. 값은 각 call 결과에서 옮긴다."""
+    from openpyxl.styles import Alignment, Font
+    ws = wb.create_sheet("요약")
+    wb.move_sheet(ws, offset=-(len(wb.sheetnames) - 1))
+    wrap = Alignment(wrap_text=True, vertical="top")
+    ws.cell(1, 1, f"{title} — 요약").font = Font(bold=True, size=14)
+    ws.cell(2, 1, " | ".join(x for x in (company, period, "단위: 원") if x))
+    r = 4
+    def head(cols):
+        nonlocal r
+        for j, h in enumerate(cols, 1):
+            c = ws.cell(r, j, h); c.font = bold; c.fill = header_fill
+        r += 1
+    ok = [(i, cd) for i, cd in enumerate(결과들) if not cd.get("error")]
+    tot = next(((i, cd) for i, cd in reversed(ok) if cd.get("tool") == "income_adjustment_total"), None)
+    if tot:
+        i, cd = tot
+        res = (cd.get("data") or {}).get("결과") or {}
+        args = (calls[i] or {}).get("args") or {}
+        ws.cell(r, 1, "세액 요약").font = bold; r += 1
+        head(["항목", "금액", "출처"])
+        rows = [("결산서상 당기순이익", args.get("net_income"), "입력"), ("(+) 익금산입·손금불산입", res.get("익금산입_손금불산입"), f"계산 {i + 1}"),
+                ("(−) 손금산입·익금불산입", res.get("손금산입_익금불산입"), f"계산 {i + 1}"), ("각 사업연도 소득금액", res.get("각사업연도소득금액"), f"계산 {i + 1}")]
+        tax = next(((k, c2) for k, c2 in reversed(ok) if c2.get("tool") == "corporate_tax"), None)
+        if tax:
+            tr = (tax[1].get("data") or {}).get("결과") or {}
+            rows += [("과세표준", tr.get("과세표준"), f"계산 {tax[0] + 1}"), ("산출세액", tr.get("산출세액"), f"계산 {tax[0] + 1}")]
+        for nm, v, src in rows:
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                ws.cell(r, 1, nm); set_money(ws.cell(r, 2), v); ws.cell(r, 3, src); r += 1
+        r += 1
+        basis = {str(p.get("항목")): p.get("근거", "") for p in (cd.get("data") or {}).get("판단") or [] if isinstance(p, dict)}
+        def src_sheet(amount, kind):
+            # 같은 금액·같은 조정(익금산입 등)을 낸 계산 call의 시트 — 없으면 집계 시트
+            for k, c2 in ok:
+                if k == i: continue
+                for a in (c2.get("data") or {}).get("세무조정") or []:
+                    if isinstance(a, dict) and a.get("금액") == amount and a.get("조정") == kind:
+                        return f"계산 {k + 1} ({c2.get('label', '')})"
+            return f"계산 {i + 1}"
+        ws.cell(r, 1, "세무조정 항목").font = bold; r += 1
+        head(["번호", "조정", "과목", "금액", "소득처분", "근거", "계산 시트"])
+        for n, a in enumerate(res.get("세무조정") or [], 1):
+            ws.cell(r, 1, n); ws.cell(r, 2, a.get("조정", "")); ws.cell(r, 3, a.get("구분", "")).alignment = wrap
+            set_money(ws.cell(r, 4), a.get("금액", 0)); ws.cell(r, 5, a.get("소득처분", ""))
+            ws.cell(r, 6, str(basis.get(str(a.get("구분")), ""))).alignment = wrap
+            ws.cell(r, 7, src_sheet(a.get("금액"), a.get("조정"))); r += 1
+        r += 1
+    ws.cell(r, 1, "계산 결과 한눈에").font = bold; r += 1
+    head(["call", "계산", "주요 값", "", "", "", "계산 시트"])
+    for i, cd in enumerate(결과들):
+        ws.cell(r, 1, i + 1); ws.cell(r, 2, cd.get("label", "")).alignment = wrap
+        if cd.get("error"):
+            ws.cell(r, 3, "오류 — 계산 시트 참고")
+        else:
+            res = (cd.get("data") or {}).get("결과")
+            if isinstance(res, dict) and isinstance(res.get("합계"), dict) and not any(isinstance(v, (int, float, str)) and not isinstance(v, bool) for v in res.values()):
+                res = res["합계"]           # 결과가 합계·항목별로만 된 도구(파견 인건비 등)
+            vals = [f"{k} {v:,}" if isinstance(v, int) else f"{k} {v}" for k, v in (res.items() if isinstance(res, dict) else [])
+                    if isinstance(v, (int, float, str)) and not isinstance(v, bool) and v not in ("", None)][:4]
+            ws.cell(r, 3, " / ".join(str(x) for x in vals)[:300]).alignment = wrap
+            ws.merge_cells(start_row=r, start_column=3, end_row=r, end_column=6)
+        ws.cell(r, 7, f"계산 {i + 1}"); r += 1
+    r += 1
+    ws.cell(r, 1, "검토·확인 필요 사항").font = bold; r += 1
+    notes = [n for n in (review_notes or []) if n]
+    if notes:
+        head(["번호", "항목", "내용"])
+        for n, x in enumerate(notes, 1):
+            if isinstance(x, dict):
+                nm, body = x.get("항목") or x.get("제목") or "", x.get("내용") or x.get("메모") or ""
+            else:
+                nm, body = "", str(x)
+            ws.cell(r, 1, n); ws.cell(r, 2, str(nm)).alignment = wrap
+            c = ws.cell(r, 3, str(body)); c.alignment = wrap
+            ws.merge_cells(start_row=r, start_column=3, end_row=r, end_column=7)
+            ws.row_dimensions[r].height = min(120, 16 * max(1, len(str(body)) // 55 + 1)); r += 1
+    else:
+        ws.cell(r, 1, "입력된 검토 의견 없음 — 각 계산 시트의 주의와 '판단·근거' 시트를 확인"); r += 1
+    r += 1
+    ws.cell(r, 1, "이 시트의 금액은 계산 도구 결과를 옮긴 값입니다. 서식 시트의 금액 칸은 수식이고 도구 값과의 대조 칸이 있습니다. 세무 자문이 아니며 신고 전에 세무 전문가와 확인하세요.").alignment = Alignment(wrap_text=False)
+    for col, w in zip("ABCDEFG", (8, 26, 40, 18, 14, 44, 30)):
+        ws.column_dimensions[col].width = w
+    return ws
+
+
 def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str | None = None, layout: str = "forms",
-                        company: str = "", period: str = "", biz_no: str = "") -> dict:
+                        company: str = "", period: str = "", biz_no: str = "", review_notes=None) -> dict:
     """server.export_workbook의 본문(서명·설명은 그쪽 참조). mcp는 순환 import를 피해 호출 시점에 가져온다."""
     from .server import mcp
     # ── calls가 문자열이면 JSON으로 풀기 ──
@@ -2133,6 +2220,14 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
     ws_jud.freeze_panes = "A2"
     # ── 결과 문구('= 순손익액' 등)가 수식으로 저장되지 않게 — 도구 결과·call 입력에서 온 '='로 시작하는 문자열은 문자열 칸 ──
     _labels_as_text(wb, [calls, [cd.get("data") or cd.get("result") for cd in 결과들]])
+    if layout == "forms":
+        if isinstance(review_notes, str):
+            try:
+                review_notes = _json.loads(review_notes)
+            except Exception:
+                review_notes = [review_notes]
+        _summary_sheet(wb, title, company, period, calls, 결과들, review_notes if isinstance(review_notes, list) else None, bold, header_fill, _set_money)
+        시트이름들.insert(0, "요약")
     # ── 저장 ──
     base = filename if filename else title
     fpath = _unique_path(output_dir, base)

@@ -196,7 +196,7 @@ mcp = MCPServer(
                  "같은 항목에 값이 둘 나오면(안분 전후, 전체와 과세분 등) 질문이 묻는 금액 하나만 최종 답으로 쓰고 다른 값은 과정에만 둔다. "
                  "연도표가 없는 해는 오류로 멈추므로 추정하지 않는다. 계산 근거 원문·해석은 korean-tax-mcp로 확인한다. "
                  "계산 결과를 엑셀이나 법정서식으로 달라고 하면 엑셀 파일을 직접 만들지 말고 export_workbook(calls=이미 부른 도구 호출 목록)을 쓴다 — 법정서식 틀(금액 칸은 수식), 계산 근거, 입력·가정, 판단·근거 시트가 함께 나온다. "
-                 "서식 틀이 없는 항목과 검토 의견만 따로 정리해 덧붙인다. "
+                 "자료 불일치·가정·확인할 서류·판단이 갈리는 쟁점은 export_workbook의 review_notes에 넣어 '요약' 시트에 싣는다. 서식 틀이 없는 항목은 따로 정리해 덧붙여도 된다. "
                  + AUDIT_INSTRUCTIONS)
 CALC = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
 YEAR = Annotated[int, Field(description="사업연도·귀속연도(2016~2026)", ge=2016, le=2026)]
@@ -9080,6 +9080,7 @@ def export_workbook(
     company: Annotated[str, Field(description="법인명 또는 상호·성명(개인 세목) — 서식 머리에 표시, 기본 빈 문자열")] = "",
     period: Annotated[str, Field(description="사업연도 표기(예 '2025.01.01 ~ 2025.12.31', 기본 빈 문자열)")] = "",
     biz_no: Annotated[str, Field(description="사업자등록번호(서식 머리에 표시, 기본 빈 문자열)")] = "",
+    review_notes: Annotated[list | str | None, Field(description="검토·확인 필요 사항 [{항목, 내용}] 또는 문장 목록(선택) — 자료 불일치, 가정, 확인할 서류, 판단이 갈리는 쟁점을 적으면 맨 앞 '요약' 시트에 실림")] = None,
 ) -> dict:
     """계산 도구 결과를 엑셀(.xlsx)로 정리한다. 각 call은 서버가 직접 다시 실행하며, 결과·계산·세무조정·판단·산식을 탭으로 펼친다.
 언제: 계산 결과(세무조정·소득처분·판단·산식)를 실무자가 검토할 수 있는 엑셀 파일로 남길 때.
@@ -9092,6 +9093,8 @@ def export_workbook(
   company — 법인명 또는 상호·성명(개인 세목) — 서식 머리에 표시, 기본 ''.
   period — 사업연도 표기(예 '2025.01.01 ~ 2025.12.31', 기본 '').
   biz_no — 사업자등록번호(서식 머리에 표시, 기본 '').
+  review_notes — 검토·확인 필요 사항 [{항목, 내용}](선택). 맨 앞 '요약' 시트에 실림.
+  '요약' 시트(layout='forms'): 세액 요약(소득금액 집계·산출세액 call이 있을 때), 세무조정 항목별 근거와 계산 시트, call별 주요 값, 검토·확인 필요 사항.
   시트 규칙: '계산 N'은 N번째 call(오류 call 포함, call마다 한 장). 같은 도구를 여러 번 부르면 신고서 한 부에 한 장인
     서식(별지3·15·34, 부가 별지19 등)은 마지막 call이 본 시트, 앞선 call은 '<시트> (호출 N)' 시트. 자산·거래·소득자마다 한 장인
     서식(별지20·별지84·증여 별지10·원천 별지23 등)은 첫 call이 본 시트, 다음 call은 '<시트> (2)'·'(3)'. 여러 call을 한 장의 행·합계로
@@ -9103,7 +9106,7 @@ def export_workbook(
   결과.call_수 — calls 길이.
   결과.오류_call — 오류 발생한 call의 label 목록.
   근거 — '계산 도구 결과 정리(세무 자문 아님)'."""
-    return _export_workbook_impl(title, calls, output_dir, filename, layout, company, period, biz_no)
+    return _export_workbook_impl(title, calls, output_dir, filename, layout, company, period, biz_no, review_notes)
 
 
 # ── 국세 우선권에 따른 매각대금 배분(국세기본법 제35조·제36조) ──────────────────────

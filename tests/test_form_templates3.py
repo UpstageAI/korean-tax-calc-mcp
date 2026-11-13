@@ -19,7 +19,7 @@ def demo(tmp_path_factory):
 def test_all_demo_calls_have_forms(demo):
     raw, _ = demo
     n = raw.sheetnames
-    assert n[8:13] == [V22, V63, V64, IDIV, IWAGE], n
+    assert n[9:14] == [V22, V63, V64, IDIV, IWAGE], n   # 0.42.0: 맨 앞에 요약 시트
     assert [x for x in n if re.fullmatch(r"계산 \d+", x)] == [f"계산 {i}" for i in range(1, len(CALLS) + 1)]   # call마다 한 장
     assert n[-2:] == ["입력·가정", "판단·근거"]
     assert "2025년 제1기" in raw[V22]["A3"].value and "대표 갑 금융소득" in raw[IDIV]["A3"].value
