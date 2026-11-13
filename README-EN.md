@@ -14,36 +14,81 @@
 
 ```mermaid
 flowchart LR
-  Q["AI input<br/>year, amounts, items"] --> V["Input check<br/>unknown or missing fields"]
-  V --> T["That year's values<br/>rates, limits, ratios"]
-  T --> E["Calculation<br/>in statute order"]
-  E --> R["Result<br/>tax, adjustments, citations"]
-  T -.->|no table for the year| X["Stop<br/>no estimate"]
+  D["Closing files<br/>ledgers, registers, contracts"] --> M["AI<br/>maps the facts to tool inputs"]
+  M --> V["Check input<br/>reject unknown or missing fields"]
+  V --> T["Values for that year<br/>rates, limits, credit rates"]
+  T --> E["Item calculation<br/>in the order of the statute"]
+  E --> A["Adjustment items<br/>type, amount, disposition, basis"]
+  A --> S["Aggregation<br/>taxable income, VAT return<br/>withholding return"]
+  S --> X["Review workbook<br/>summary, statutory forms, calculation, basis"]
+  T -.->|no table for the year| N["Stop<br/>no guessed calculation"]
+  M -.->|requirements, rulings| K["korean-tax-mcp<br/>statutes, rulings, requirement guides"]
 ```
 
-1. **Input check** — unknown or missing fields stop the calculation with a list of what to provide.
-2. **That year's values** — rates and limits come from year tables in the code (corporate and income tax 2016–2026, VAT 2016-1 to 2026-2); item-level criteria come from `facts_vocab.json` with effective periods and statute references.
-3. **Calculation** — follows the statute order, e.g. tax base → that year's brackets → tax.
-4. **Result** — tax, intermediate amounts, item-level judgments, adjustments with income dispositions, and citations.
+1. **Check input** — if a field is unknown or missing, it does not calculate and says what is needed.
+2. **Values for that year** — rates and limits come from year tables in code (corporate and income tax 2016–2026, VAT 2016 H1–2026 H2); item-level criteria come from `facts_vocab.json` (107 items with periods and statutory basis). The tables were checked against each year's statute and addenda.
+3. **Calculate** — in the order of the statute, e.g. tax base → that year's brackets → tax.
+4. **Adjustment items** — adjustment tools return the adjustment type and amount, the income disposition (reserve, bonus, other outflow; provisional reserve for cross-border adjustments) and the statutory basis. These items go straight into the aggregation tools.
+5. **Aggregation and forms** — `income_adjustment_total` for corporate tax, `vat_return_general` for VAT and `withholding_return` for withholding tax collect the figures in form order, and `export_workbook` re-runs the same calls to build a review workbook.
+
+Requirements and year-specific judgments (credit eligibility, arm's-length methods) belong to the companion server [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp). This server computes from amounts that meet the requirements and points to the statute check in its output.
 
 122 of the 126 tools run in code without generative AI (the 2 price lookups only fetch public data from KRX and VWORLD). Only the 3 PDF tools use Upstage, and only when `UPSTAGE_API_KEY` is set.
 
-### How corporate tax adjustments chain
-
-Tools can be used one at a time, but for corporate tax each tool's result feeds the next.
+### How the tools chain by tax type
 
 ```mermaid
 flowchart TD
-  L["Ledger and facts<br/>item name, amount, receipt"] --> A["Item adjustments<br/>entertainment, depreciation, bad debts<br/>deemed interest, interest, cars"]
-  A -->|adjustment list| T["Income after adjustments<br/>income_adjustment_total"]
+  L["Ledger and facts<br/>item, amount, evidence"] --> A["Item adjustments<br/>entertainment, depreciation, bad debts<br/>deemed interest, interest, cars"]
+  L --> I["Cross-border<br/>arm's-length range, loan interest, secondees<br/>foreign dividends, CFC"]
+  A -->|adjustment items| T["Adjusted income<br/>income_adjustment_total"]
+  I -->|adjustment items| T
   T -->|base income| D["Donation limit<br/>donation_limit"]
   D -->|excess| T
   T --> B["Tax base<br/>loss carryforward limit"]
-  B --> C["Tax and minimum tax<br/>corporate_tax · minimum_tax"]
-  C --> X["Review workbook<br/>export_workbook"]
+  B --> C["Tax<br/>corporate_tax"]
+  C --> G["Credits, reductions, minimum tax<br/>employment, investment, R and D, startup"]
+  G --> X["Review workbook<br/>export_workbook"]
+  V1["VAT parts<br/>tax base, deemed supply, input tax, FX"] --> V2["VAT return<br/>vat_return_general"] --> X
+  W1["Withholding<br/>residents, non-residents, wages"] --> W2["Withholding return<br/>withholding_return"] --> X
 ```
 
-Item adjustment tools return the income disposition as well, and `export_workbook` re-runs the same calls to build a workbook whose statutory forms are linked by formulas. If you do not know which tool to use, ask `find_tool` in plain words.
+If you do not know which tool to use, ask `find_tool` in plain words.
+
+### What the review workbook contains
+
+| Sheet | Content |
+|---|---|
+| Summary | tax summary; each adjustment with type, amount, disposition, statutory basis and source sheet; key values per call; review notes passed in `review_notes` (data mismatches, assumptions, open issues) |
+| List | source of each form, tools without a form template, sheet map per call |
+| Statutory forms | the forms below. Amount cells are formulas pointing to named inputs or earlier cells, with a match / check column against the tool value on each line |
+| Calculation N | one sheet per tool call — result, steps, judgments, basis |
+| Inputs | the named input values the form formulas use |
+| Judgments | conclusion, amount, statutory basis and reason per item |
+
+| Tax | Forms |
+|---|---|
+| Corporate tax | Forms 3, 4, 8(a), 15 (with disposition codes), 16-2, 20(1)(2), 21, 23(a)(b), 26(a)(b), 29, 32, 33, 34, 50(b) of the Corporate Tax Act Enforcement Rule |
+| VAT | Form 21 return page 1 lines 1–30 and page 4 penalty schedule, Form 22, Form 15, Form 19(1), Form 25, and calculation sheets for common input tax and bundled supply (no statutory form) |
+| Withholding | withholding tax return (Income Tax Act Enforcement Rule Form 21) page 1, Form 23(1) interest and dividend statement, Form 23(5) non-resident statement |
+| Income, capital gains, gift | Form 40(1) schedules for interest, dividend, wage, pension and other income; Form 84 capital gains tax calculation and Schedule 1; gift tax Form 10 |
+
+Form templates were built by checking cell layout against the official form PDFs on law.go.kr. Some pages and cells are not carried over (personal details, sub-schedules); the List sheet says which. The workbook is a reference for review, not a filed return.
+
+## Sources
+
+| Source | Used for | How it was checked |
+|---|---|---|
+| Statutes in force (Acts, Decrees, Rules) | year tables of rates, limits and credit rates; when requirements change | the version in force for each supported year; lookups go through korean-tax-mcp (law.go.kr Open API) |
+| Addenda of amendments | from which tax year or transaction an amendment applies | application and transitional clauses; where none exists, rulings are searched, and if still unconfirmed the tool refuses and says so |
+| Official forms | cell layout, line numbers and instructions for form templates | form PDFs on law.go.kr |
+| NTS rulings and tribunal decisions | points the statute alone does not settle, cited by document number in the output | summary and full text on taxlaw.nts.go.kr |
+| NTS filing guides | e.g. the formula for deemed gifts from related-party transactions | the published guide |
+| Fact vocabulary (`facts_vocab.json`) | criteria, periods, statutory basis and aliases for 107 items | bundled after checking against the statute |
+| KRX and VWORLD public data | listed share prices, official land and housing prices | per call |
+| Foreign Exchange Transactions Regulation | outbound investment filing and follow-up reports | all editions 2015–2026 |
+
+Each result carries its statutory basis, and its notes say what could not be confirmed. The [changelog](CHANGELOG.md) records what each version was checked against.
 
 ## Try asking
 
@@ -92,48 +137,25 @@ When answering Korean tax questions, use korean-tax-mcp and korean-tax-calc-mcp 
 Click a group to expand its tools.
 
 <details>
-<summary><b>Corporate tax</b> (26)</summary>
+<summary><b>Corporate tax</b> (20)</summary>
 
 | Tool | What it does |
 |---|---|
 | `corporate_tax` | tax |
-| `foreign_tax_credit` | foreign tax credit |
 | `entertainment_limit` | entertainment limit |
 | `deemed_interest` | deemed interest |
 | `unfair_transaction` | unfair transaction test |
 | `loss_carryforward_limit` | loss carryforward limit |
-| `minimum_tax` | minimum tax |
-| `minimum_tax_adjustment` | minimum tax adjustment (exclusion order, Forms 4 and 8(a)) |
 | `nonbusiness_interest_disallowance` | non-business interest (advance exclusions, day-balances, ordering) |
 | `business_car_expense` | company cars |
 | `donation_limit` | donation limit |
 | `nonprofit_reserve_limit` | nonprofit reserve limit for inherent purpose business (Article 29) |
 | `bad_debt_allowance` | bad debt allowance |
-| `thin_capitalization` | thin capitalization |
 | `missing_receipt_disallowance` | missing receipts |
 | `dividend_received_deduction` | dividends received deduction |
-| `foreign_subsidiary_dividend` | foreign subsidiary dividend — exclusion vs foreign tax credit |
-| `expat_cost_recharge` | expat cost recharge — arm-length fee, deduction, overseas work exemption |
-| `foreign_exchange_reporting` | overseas direct investment: FX reporting (prior/post) deadline, bank, documents, follow-up reports, liquidation, NTS investment statement deadline |
-| `individual_foreign_tax_credit` | individual foreign tax credit: per-country limit, treaty-rate cap, 10-year carryforward, retirement income (Income Tax Act art. 57) |
-| `overseas_account_reporting` | overseas financial account reporting: duty (month-end balance over KRW 500m), exemptions, deadline, penalties and reductions (Int'l Tax Adjustment Act arts. 53, 90) |
-| `capital_gains_unfair_transaction` | capital-gains unfair transaction: low-price transfer / high-price acquisition at market value (KRW 300m or 5%), gift-then-transfer within 10 years (art. 101) |
-| `corporate_filing_obligations` | external audit, tax adjustment, international transaction filing obligations |
-| `cfc_deemed_dividend` | CFC deemed dividend on retained earnings — low-tax test, 10% ownership, exclusions, distributable retained earnings, full/passive inclusion (Int'l Tax Adjustment Act arts. 27–31) |
 | `tax_adjustment_schedule` | Multi-year tax adjustment schedule — book income and adjustments by year → taxable income, loss carryforward, tax base, tax, reserve balances by item |
-| `sme_status` | SME and small-enterprise status for tax purposes — revenue thresholds by industry (2018–2024, 2025–), total assets, independence, domestic affiliates, grace period (STTCA Decree art.2) |
-| `reduction_income_segments` | Income eligible for a tax reduction when eligible and other businesses are run together — allocation of common income and expenses, loss offset across businesses, attribution of deducted loss carryforwards, main business (STTCA Art. 143; CIT Enforcement Rule Arts. 75–76) |
-| `rural_special_tax` | Special tax for rural development — 20% of income or corporate tax reduced under the STTCA, with exemption status by article (Act Art. 4 and Decree Art. 4 lists by year, 2016–2026) |
-| `integrated_employment_credit` | Integrated employment tax credit — increase in regular employees × per-person amount, credited in the first year and the following 1–2 years, stopped on a decrease, plus conversion to regular status and return from childcare leave, recapture on a decrease (STTCA Art. 29-8, 2023–2025) |
-| `employment_increase_credit` | Tax credit for increased employment — headcount increases in 2018–2024 × per-person amount, second- and third-year credits, stop and recapture on a decrease, choice against the integrated employment credit (STTCA Arts. 29-7 and 127(11)) |
-| `integrated_investment_credit` | Integrated investment tax credit — basic rate by year, company size and asset class, additional credit on the excess over the prior three-year average, temporary credit for 2023–2025, exclusion of expansion investment in the Seoul overconcentration control zone (STTCA Arts. 24 and 130, 2021–2026) |
-| `rnd_tax_credit` | R&D tax credit — general research and workforce development expenses: current-year amount versus incremental amount, with the four-year average condition (STTCA Art. 10(1)(3), 2016–2026) |
-| `startup_tax_reduction` | Startup SME tax reduction — eligibility, rate, period and amount by founding date, region, youth founder and industry incl. contract manufacturing and online retail (STTCA art.6) |
-| `sme_special_tax_reduction` | SME special tax reduction — rate by size, region and industry, KRW 100m cap, minimum tax (STTCA art.7) |
 | `loss_carryback_refund` | Loss carryback refund for SMEs — refund of prior-year corporate tax and remaining loss to carry forward (CITA art.72) |
 | `loss_carryforward_ledger` | Multi-year loss carryforward ledger — balance by year of origin, annual deduction and tax base, expiry (CITA art.13(1), Decree art.10(2)) |
-| `foreign_subsidiary_liquidation` | Liquidation of a foreign subsidiary — deemed dividend or liquidation loss and the fiscal year of deduction (CITA art.16(1)4) |
-| `arm_length_range` | Arm's length range and adjustment — interquartile/full range, median, whether the tested value is inside, adjustment amount (ITA Decree art.15(5)(6)) |
 | `provision_reserve_ledger` | Multi-year tax adjustments for provisions (loyalty points, warranties) — add-back on accrual, deduction on use, reversal on expiry, reserve balance (CITA art.40) |
 | `asset_grant_reserve` | asset grant reserve |
 | `corporate_deemed_rent_income` | deemed rent income on deposits |
@@ -142,7 +164,43 @@ Click a group to expand its tools.
 
 </details>
 <details>
-<summary><b>Income, withholding, transfer, inheritance</b> (25)</summary>
+<summary><b>International tax and cross-border</b> (11)</summary>
+
+| Tool | What it does |
+|---|---|
+| `foreign_tax_credit` | foreign tax credit |
+| `thin_capitalization` | thin capitalization |
+| `arm_length_range` | Arm's length range and adjustment — interquartile/full range, median, whether the tested value is inside, adjustment amount (ITA Decree art.15(5)(6)) |
+| `foreign_subsidiary_dividend` | foreign subsidiary dividend — exclusion vs foreign tax credit |
+| `foreign_subsidiary_liquidation` | Liquidation of a foreign subsidiary — deemed dividend or liquidation loss and the fiscal year of deduction (CITA art.16(1)4) |
+| `cfc_deemed_dividend` | CFC deemed dividend on retained earnings — low-tax test, 10% ownership, exclusions, distributable retained earnings, full/passive inclusion (Int'l Tax Adjustment Act arts. 27–31) |
+| `expat_cost_recharge` | expat cost recharge — arm-length fee, deduction, overseas work exemption |
+| `individual_foreign_tax_credit` | individual foreign tax credit: per-country limit, treaty-rate cap, 10-year carryforward, retirement income (Income Tax Act art. 57) |
+| `foreign_exchange_reporting` | overseas direct investment: FX reporting (prior/post) deadline, bank, documents, follow-up reports, liquidation, NTS investment statement deadline |
+| `overseas_account_reporting` | overseas financial account reporting: duty (month-end balance over KRW 500m), exemptions, deadline, penalties and reductions (Int'l Tax Adjustment Act arts. 53, 90) |
+| `corporate_filing_obligations` | external audit, tax adjustment, international transaction filing obligations |
+
+</details>
+<details>
+<summary><b>Tax incentives (credits, reductions) and minimum tax</b> (11)</summary>
+
+| Tool | What it does |
+|---|---|
+| `sme_status` | SME and small-enterprise status for tax purposes — revenue thresholds by industry (2018–2024, 2025–), total assets, independence, domestic affiliates, grace period (STTCA Decree art.2) |
+| `startup_tax_reduction` | Startup SME tax reduction — eligibility, rate, period and amount by founding date, region, youth founder and industry incl. contract manufacturing and online retail (STTCA art.6) |
+| `sme_special_tax_reduction` | SME special tax reduction — rate by size, region and industry, KRW 100m cap, minimum tax (STTCA art.7) |
+| `reduction_income_segments` | Income eligible for a tax reduction when eligible and other businesses are run together — allocation of common income and expenses, loss offset across businesses, attribution of deducted loss carryforwards, main business (STTCA Art. 143; CIT Enforcement Rule Arts. 75–76) |
+| `integrated_employment_credit` | Integrated employment tax credit — increase in regular employees × per-person amount, credited in the first year and the following 1–2 years, stopped on a decrease, plus conversion to regular status and return from childcare leave, recapture on a decrease (STTCA Art. 29-8, 2023–2025) |
+| `employment_increase_credit` | Tax credit for increased employment — headcount increases in 2018–2024 × per-person amount, second- and third-year credits, stop and recapture on a decrease, choice against the integrated employment credit (STTCA Arts. 29-7 and 127(11)) |
+| `integrated_investment_credit` | Integrated investment tax credit — basic rate by year, company size and asset class, additional credit on the excess over the prior three-year average, temporary credit for 2023–2025, exclusion of expansion investment in the Seoul overconcentration control zone (STTCA Arts. 24 and 130, 2021–2026) |
+| `rnd_tax_credit` | R&D tax credit — general research and workforce development expenses: current-year amount versus incremental amount, with the four-year average condition (STTCA Art. 10(1)(3), 2016–2026) |
+| `minimum_tax` | minimum tax |
+| `minimum_tax_adjustment` | minimum tax adjustment (exclusion order, Forms 4 and 8(a)) |
+| `rural_special_tax` | Special tax for rural development — 20% of income or corporate tax reduced under the STTCA, with exemption status by article (Act Art. 4 and Decree Art. 4 lists by year, 2016–2026) |
+
+</details>
+<details>
+<summary><b>Income, withholding, transfer, inheritance</b> (26)</summary>
 
 | Tool | What it does |
 |---|---|
@@ -171,10 +229,11 @@ Click a group to expand its tools.
 | `dividend_tax_credit` | dividend tax credit |
 | `religious_income` | religious income |
 | `individual_donation_expense` | donation expense limit for sole proprietors |
+| `capital_gains_unfair_transaction` | capital-gains unfair transaction: low-price transfer / high-price acquisition at market value (KRW 300m or 5%), gift-then-transfer within 10 years (art. 101) |
 
 </details>
 <details>
-<summary><b>VAT, penalties, limitation, refund claims</b> (17)</summary>
+<summary><b>VAT, penalties, limitation, refund claims</b> (18)</summary>
 
 | Tool | What it does |
 |---|---|
@@ -188,6 +247,7 @@ Click a group to expand its tools.
 | `late_payment_penalty` | late payment penalty |
 | `withholding_late_payment_penalty` | withholding tax late-payment penalty (Framework Act Art. 47-5: 3% + daily, capped) |
 | `invoice_penalty` | invoice penalty |
+| `invoice_penalty_bundle` | tax invoice penalties for one supply with several grounds — overlap excluded (VAT Act art. 60(2), (9)), then totals |
 | `assessment_limitation` | assessment period |
 | `refund_claim_deadline` | refund claim (경정청구) deadline — ordinary 5 years, subsequent-event 3 months, increased-assessment 3 months; weekend/holiday rule applied |
 | `vat_exempt_use_deemed_supply` | exempt-use deemed supply |
@@ -198,7 +258,7 @@ Click a group to expand its tools.
 
 </details>
 <details>
-<summary><b>Facts and ledgers → tax adjustments</b> (15)</summary>
+<summary><b>Facts and ledgers → tax adjustments</b> (18)</summary>
 
 | Tool | What it does |
 |---|---|
@@ -287,7 +347,7 @@ Click a group to expand its tools.
 
 </details>
 
-- **Excel export**: `export_workbook` re-runs several tool calls and produces a review workbook shaped like the statutory forms (Article 3, Article 4, Article 8 (a), Article 15, Article 21, Article 23 (a)/(b), Article 29, Article 32, Article 33, Article 34, Article 20(1), Article 16-2, Article 26 (a)/(b), Article 50(b); VAT input-tax-not-deductible statement; global-income-tax supplementary statements; capital-gains-tax Article 84 return tax computation and Appendix 1 capital-gains computation statement; etc.). Entertainment expense limits from `entertainment_limit` also produce Article 23 (a)/(b). Every amount cell is a formula that points to a named input on the '입력·가정' (inputs) sheet or to earlier cells — tool values are never pasted in as numbers. The first sheet is a summary: tax summary, each adjustment with its statutory basis and source sheet, key values per call, and review notes passed in `review_notes`. The workbook also covers page 1 of the general VAT return (lines 1–30) and page 1 of the withholding tax return.
+- **Excel export**: see 'What the review workbook contains' above for the sheets and forms. `entertainment_limit` also produces Form 23(a) and (b).
 - **Ledger input**: adjustment tools take ledger lines as written (name, amount, receipt, nature) and return item judgments, adjustments and income dispositions.
 - **Issue flags**: non-resident withholding and thin capitalization results list points that may be disputed and what to check (no conclusion).
 - **Years**: corporate tax FY2016–2026, income tax 2016–2026, VAT 2016-1 to 2026-2; penalties and limitation periods follow current law. Other years stop with an error. Local income tax is separate.
