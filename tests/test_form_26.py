@@ -84,7 +84,7 @@ def hand(tmp_path_factory):
 
 def test_sheets_and_list(hand):
     _, wb, _ = hand
-    assert wb.sheetnames == ["목록", GAP, EUL, "계산 1", "입력·가정", "판단·근거"]   # 계산 N = N번째 call
+    assert wb.sheetnames == ["요약", "목록", GAP, EUL, "계산 1", "입력·가정", "판단·근거"]   # 계산 N = N번째 call
     listed = [wb["목록"].cell(r, 2).value for r in range(2, 4)]
     assert listed == ["법인세법 시행규칙 별지 제26호서식(갑)", "법인세법 시행규칙 별지 제26호서식(을)"]
 
