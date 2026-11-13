@@ -55,3 +55,9 @@ def test_nonbusiness_advance_to_affiliate_warns():
     assert any("서면인터넷방문상담2팀-1931" in x for x in r["주의"])
     p = _fn(S.nonbusiness_interest_disallowance)(**args, advances=[{"대상": "대표이사", "이름": "대표", "사유": "업무무관대여", "금액": 100 * M, "지급일": "2025-03-01"}])
     assert "주의" not in p
+
+
+def test_server_instructions_point_to_export_workbook():
+    # 0.41.2: 같은 요청에서 모델이 서식 엑셀을 직접 그린 경우가 있어 서버 안내문에 export_workbook 사용을 적음
+    ins = S.mcp.instructions
+    assert "export_workbook" in ins and "직접 만들지 말고" in ins

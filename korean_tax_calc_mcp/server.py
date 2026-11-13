@@ -195,6 +195,8 @@ mcp = MCPServer(
                  "입력 오류나 도구가 틀렸다는 조문 근거를 찾지 못하면 도구 값을 최종 답으로 쓴다. 도구 값과 다른 값을 쓸 때는 그 이유(입력 오류 내용 또는 조문 번호)를 한 줄 밝힌다. "
                  "같은 항목에 값이 둘 나오면(안분 전후, 전체와 과세분 등) 질문이 묻는 금액 하나만 최종 답으로 쓰고 다른 값은 과정에만 둔다. "
                  "연도표가 없는 해는 오류로 멈추므로 추정하지 않는다. 계산 근거 원문·해석은 korean-tax-mcp로 확인한다. "
+                 "계산 결과를 엑셀이나 법정서식으로 달라고 하면 엑셀 파일을 직접 만들지 말고 export_workbook(calls=이미 부른 도구 호출 목록)을 쓴다 — 법정서식 틀(금액 칸은 수식), 계산 근거, 입력·가정, 판단·근거 시트가 함께 나온다. "
+                 "서식 틀이 없는 항목과 검토 의견만 따로 정리해 덧붙인다. "
                  + AUDIT_INSTRUCTIONS)
 CALC = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
 YEAR = Annotated[int, Field(description="사업연도·귀속연도(2016~2026)", ge=2016, le=2026)]
