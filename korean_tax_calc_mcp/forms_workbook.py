@@ -886,7 +886,7 @@ def vat_period_text(args: dict | None) -> str:
     m = _re.match(r"^(\d{4})-([12])(?:기)?$", p)
     if m:
         y, h = int(m.group(1)), int(m.group(2))
-    elif p in ("1기", "2기") and isinstance(a.get("year"), int):
+    elif p in ("1기", "2기", "1", "2") and isinstance(a.get("year"), int):
         y, h = a["year"], int(p[0])
     else:
         m = _re.match(r"^(\d{4})-(\d{2})-\d{2}$", str(a.get("supplied_on") or ""))
