@@ -2,9 +2,9 @@
 
 <!-- mcp-name: io.github.UpstageAI/korean-tax-calc-mcp -->
 
-![데모: 손익계산서·계정별 원장 엑셀 → 적격증빙 미수취 선별·비지정기부금 손금불산입 → 세무조정 → 별지 제3·15·23·29호 법정서식에 수식 연결](https://raw.githubusercontent.com/UpstageAI/korean-tax-calc-mcp/main/docs/demo.gif)
+![데모: 결산 자료 폴더(계정별 원장·대장·계약서) → 법인세 세무조정과 해외법인 거래 검토 → 부가가치세 신고서 → 원천징수이행상황신고서, 탭마다 법정서식인 검토용 엑셀](https://raw.githubusercontent.com/UpstageAI/korean-tax-calc-mcp/main/docs/demo.gif)
 
-<sub>영상: Claude 앱(코워크) + 이 서버. 손익계산서와 계정별 원장 엑셀을 주면 세무조정부터 법정서식 초안까지 한 번에 이어집니다(2026-11-08 공개, 회사·숫자는 가상 예시).</sub>
+<sub>영상: Claude 앱 + 이 서버와 짝 서버 korean-tax-mcp. 결산 자료 폴더를 주고 한 줄씩 세 번 요청하면 법인세 세무조정, 부가가치세 신고서, 원천징수이행상황신고서가 법정서식 엑셀로 나옵니다(2026-11-13, 회사·인물·금액은 가상 예시).</sub>
 
 [![PyPI](https://img.shields.io/pypi/v/korean-tax-calc-mcp)](https://pypi.org/project/korean-tax-calc-mcp/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-korean--tax--calc--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=korean-tax-calc-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Built with Upstage Solar Pro 4](https://img.shields.io/badge/Built%20with-Upstage%20Solar%20Pro%204-7A3FF2)](https://www.upstage.ai/) · [English](README-EN.md)
 
