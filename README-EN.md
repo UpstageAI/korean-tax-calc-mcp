@@ -172,7 +172,7 @@ Click a group to expand its tools.
 |---|---|
 | `foreign_tax_credit` | foreign tax credit |
 | `thin_capitalization` | thin capitalization |
-| `arm_length_range` | Arm's length range and adjustment — interquartile/full range, median, whether the tested value is inside, adjustment amount (ITA Decree art.15(5)(6)) |
+| `arm_length_range` | Arm's length range and adjustment — interquartile/full range, median, whether the tested value is inside, adjustment amount and direction (ITA Decree art.15(5)(6)). Whether the tested party is domestic or foreign is required |
 | `foreign_subsidiary_dividend` | foreign subsidiary dividend — exclusion vs foreign tax credit |
 | `foreign_subsidiary_liquidation` | Liquidation of a foreign subsidiary — deemed dividend or liquidation loss and the fiscal year of deduction (CITA art.16(1)4) |
 | `cfc_deemed_dividend` | CFC deemed dividend on retained earnings — low-tax test, 10% ownership, exclusions, distributable retained earnings, full/passive inclusion (Int'l Tax Adjustment Act arts. 27–31) |

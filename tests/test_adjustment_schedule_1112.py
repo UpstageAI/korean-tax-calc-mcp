@@ -81,7 +81,7 @@ def test_input_errors():
 
 
 def test_arm_length_range_comparable_notice():
-    r = getattr(S.arm_length_range, "fn", S.arm_length_range)(comparables=[0.01, 0.02, 0.03], tested_value=0.02)
+    r = getattr(S.arm_length_range, "fn", S.arm_length_range)(comparables=[0.01, 0.02, 0.03], tested_value=0.02, tested_is_resident=True)
     items = {x["항목"]: x for x in r["비교대상_확인"]}
     assert set(items) == {"비교가능 거래의 뜻", "분석요소", "내부 비교가능 거래", "제외할 수 있는 거래", "이익률 자료의 한계", "과세당국의 재산정"}
     assert "제14조①1호" in items["비교가능 거래의 뜻"]["근거"] and "제7조①4호" in items["내부 비교가능 거래"]["근거"]

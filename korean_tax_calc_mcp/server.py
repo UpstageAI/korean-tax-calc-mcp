@@ -860,14 +860,14 @@ def arm_length_range(comparables: Annotated[list, Field(description="비교대�
                      range_type: Annotated[Literal["사분위", "전체"], Field(description="정상가격 범위 — '사분위'(제1사분위~제3사분위, 기본) 또는 '전체'(최솟값~최댓값)")] = "사분위",
                      point: Annotated[Literal["중위값", "평균값", "직접입력"], Field(description="범위를 벗어났을 때 조정 기준점 — 중위값(기본)·평균값·직접입력(point_value)")] = "중위값",
                      point_value: Annotated[float | None, Field(description="point='직접입력'일 때 기준점 값(범위 안의 값)")] = None,
-                     tested_is_resident: Annotated[bool, Field(description="분석대상 당사자가 거주자(내국법인)인지 — False면 국외특수관계인(해외 판매법인 등)을 분석대상으로 한 경우")] = True,
+                     tested_is_resident: Annotated[bool | None, Field(description="필수 — 분석대상 당사자가 국내 법인(거주자)이면 True, 국외특수관계인(해외 자회사·모회사 등)이면 False. 조정 방향이 반대가 되므로 비우면 계산하지 않음. 회사 이름으로 추측하지 말고 소재지 자료로 정할 것")] = None,
                      higher_is_more_income: Annotated[bool, Field(description="지표가 높을수록 분석대상 당사자의 소득이 큰 지표인지(이익률은 True). 분석대상이 지급하는 가격·수수료율처럼 높을수록 소득이 줄면 False")] = True,
                      quartile_method: Annotated[Literal["inclusive", "exclusive"], Field(description="사분위 계산법 — inclusive(엑셀 QUARTILE.INC, 기본) / exclusive(엑셀 QUARTILE.EXC, 비교대상 셋 이상)")] = "inclusive",
                      year: Annotated[int | None, Field(description="사업연도(2021~2026, 선택) — 2020년까지는 구 시행령을 대조하지 않아 지원하지 않음")] = None) -> dict:
     """정상가격 범위와 조정액 — 비교대상 이익률 등으로 사분위·전체 범위, 중위값·평균값을 구하고 분석대상 당사자의 값이 범위 안인지, 벗어나면 기준점까지의 차이와 조정액(국제조세조정에 관한 법률 시행령 제15조제5항·제6항). 언제: 국외특수관계인 거래의 이익률이 정상가격 범위 안인지 확인하고 범위를 벗어난 경우 조정액을 구할 때.
     입력: 비교대상 값 → comparables, 분석대상 값 → tested_value, 지표 분모 금액 → base_amount, 범위 종류 → range_type, 기준점 → point·point_value, 분석대상이 거주자인지 → tested_is_resident, 지표 방향 → higher_is_more_income, 사분위 계산법 → quartile_method, 사업연도 → year.
-    계산: 범위 안이면 조정 없음. 벗어나면 기준점(중위값·평균값·직접입력)과의 차이 × base_amount = 조정액(원 미만 절사). 분석대상이 거주자가 아니면 방향을 뒤집어 거주자 소득이 과소인지 과다인지 표시.
-    결과: 비교대상 수·최솟값·제1사분위·중위값·제3사분위·최댓값·평균값, 범위, 범위 안 여부, 조정 필요 여부, 기준점, 차이, 거주자 소득(과소·과다), 조정액, 판단·근거·주의.
+    계산: 범위 안이면 조정 없음. 벗어나면 기준점(중위값·평균값·직접입력)과의 차이 × base_amount = 조정액(원 미만 절사). 분석대상이 거주자가 아니면 방향을 뒤집어 거주자 소득이 과소인지 과다인지 표시하고, '방향'에 한 문장으로 적음. tested_is_resident를 비우면 계산하지 않고 되물음.
+    결과: 비교대상 수·최솟값·제1사분위·중위값·제3사분위·최댓값·평균값, 범위, 범위 안 여부, 조정 필요 여부, 기준점, 차이, 거주자 소득(과소·과다), 방향, 조정액, 판단·근거·주의.
     결과의 '비교대상_확인'은 비교가능 거래의 뜻(시행령 제14조제1항제1호), 분석요소(시행규칙 제6조제1항), 내부 비교가능 거래를 먼저 볼 것(시행규칙 제7조제1항제4호), 이익률 자료만으로는 타당성을 확인할 수 없다는 점을 알려 줌.
     범위 밖: 비교대상이 적절한지(비교가능성·차이 조정·손실 기업 처리)는 판단하지 않음. 범위를 사분위로 좁히는 방법과 기준점 선택은 국조법령이 특정하지 않음(사분위는 OECD 이전가격지침 3.57의 통계적 도구) — 선택 이유는 보고서에 밝혀야 함."""
     r = ALR.arm_length_range(comparables, tested_value, base_amount, range_type, point, point_value, tested_is_resident, higher_is_more_income, quartile_method, year)
