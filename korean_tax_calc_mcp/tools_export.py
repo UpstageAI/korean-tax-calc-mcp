@@ -370,12 +370,21 @@ _유보_과목명 = {"퇴직연금충당금": "퇴직연금충당금", "퇴직�
                "포인트 충당부채": "포인트 충당부채", "판매보증 충당부채": "판매보증 충당부채"}
 
 
+def _유보_가족(text: str) -> str | None:
+    """과목 이름에서 묶음 키 찾기 — 띄어쓰기가 달라도 같은 과목('포인트충당부채 설정' = '포인트 충당부채 사용')."""
+    t = str(text).replace(" ", "")
+    for fam in ("퇴직연금충당금", "퇴직급여충당금", "대손충당금", "대손금", "미지급기부금", "포인트 충당부채", "판매보증 충당부채"):
+        if fam.replace(" ", "") in t:
+            return fam
+    return None
+
+
 def _유보_과목(s: dict, tool: str) -> str | None:
     """세무조정 한 줄의 별지50(을) 과목 묶음 키(없으면 None — 그 줄 이름 그대로)."""
     for text in (str(s.get("종류") or ""), str(s.get("구분") or "")):
-        for fam in ("퇴직연금충당금", "퇴직급여충당금", "대손충당금", "대손금", "미지급기부금", "포인트 충당부채", "판매보증 충당부채"):
-            if fam in text:
-                return fam
+        fam = _유보_가족(text)
+        if fam:
+            return fam
     구분 = str(s.get("구분") or "")
     if tool == "bad_debt_adjustment":
         return "대손충당금" if "한도초과" in 구분 else "대손금"
@@ -403,6 +412,14 @@ def _유보_기초(last_call, calls: list, 결과들: list) -> dict[str, int]:
         pen = a.get("pension")
         if isinstance(pen, dict) and "prior_deducted" in pen and not (pen.get("book_provision") or 0):
             out["퇴직연금충당금"] = -int(pen.get("prior_deducted") or 0)  # 신고조정 손금산입 누계(△유보)
+    # 연도별 세무조정 묶음에 넣은 기초 유보(전기 자본금과 적립금조정명세서(을) 기말잔액) — 이름이 같은 과목의 ②기초잔액으로
+    i = last_call("tax_adjustment_schedule")
+    if i is not None:
+        for o in ((calls[i] or {}).get("args") or {}).get("opening_reserves") or []:
+            if isinstance(o, dict) and o.get("name") and isinstance(o.get("amount"), (int, float)):
+                key = _유보_가족(o["name"]) or str(o["name"])
+                out.setdefault(key, 0)
+                out[key] += int(o["amount"])
     return out
 
 
@@ -1380,7 +1397,7 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
             if v and fam not in _묶음:
                 _묶음[fam] = {"과목": _유보_과목명.get(fam, fam), "가족": fam, "감소": 0, "증가": 0}
         for key, g in _묶음.items():
-            기초 = _기초.get(g["가족"]) if g["가족"] else None
+            기초 = _기초.get(g["가족"] or key)
             if 기초 is not None:
                 _유보_rows.append({"과목": g["과목"], "기초": 기초, "감소": g["감소"], "증가": g["증가"],
                                   "기말": "=B{r}-C{r}+D{r}", "비고": ""})

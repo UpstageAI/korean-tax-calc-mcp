@@ -151,8 +151,11 @@ def foreign_subsidiary_liquidation(tax_basis, distribution, completed_on="", fy_
 #   2016~2020 시행본: 구 국조법 제9조①, 구 시행령 제16조①2호 / 2021 시행본부터: 국조법 제13조①, 시행령 제23조①1호(각 시행본 대조). 유보·사외유출과 따로 누계만 보여 줌.
 _ADD = ("익금산입", "손금불산입")
 _SUB = ("손금산입", "익금불산입")
-_DISP_ADD = ("유보", "상여", "배당", "기타소득", "기타사외유출", "기타", "출자의 증가")
+_DISP_ADD = ("유보", "상여", "배당", "기타소득", "기타사외유출", "기타", "출자의 증가", "임시유보", "이전소득 배당")
 _EQUITY = "출자의 증가"
+# 임시유보·이전소득 배당(0.41.1): 국조령 제22조~제25조(2021·2022·2023·2025·2026 시행본 대조). 임시유보는 반환 여부 확인 전의 처분이라 유보 표에 넣지 않고 그 해 금액만 따로 보여 줌.
+_TEMP = "임시유보"
+_TP_ONLY = (_TEMP, "이전소득 배당")
 _DISP_SUB = ("유보", "기타")
 
 
@@ -173,6 +176,8 @@ def tax_adjustment_schedule(years, sme=True, opening_reserves=None, opening_loss
                 문제.append(f"years[{i}].adjustments[{j}].amount — 원(0 이상 정수)")
             if kind not in _ADD + _SUB:
                 문제.append(f"years[{i}].adjustments[{j}].kind={kind!r} — {list(_ADD + _SUB)}")
+            elif disp in _TP_ONLY and kind in _ADD and isinstance(yr, int) and yr <= 2020:
+                문제.append(f"years[{i}].adjustments[{j}].disposition={disp!r} — 2021 사업연도부터 지원(2020년까지는 구 시행령을 대조하지 않음)")
             elif disp not in (_DISP_ADD if kind in _ADD else _DISP_SUB):
                 문제.append(f"years[{i}].adjustments[{j}].disposition={disp!r} — {kind}은 {list(_DISP_ADD if kind in _ADD else _DISP_SUB)}"
                           + ("(손금산입·익금불산입의 '유보'는 △유보)" if kind in _SUB else ""))
@@ -191,7 +196,7 @@ def tax_adjustment_schedule(years, sme=True, opening_reserves=None, opening_loss
         yr, bi = y["year"], y["book_income"]
         begin = dict(reserves)
         add = sub_ = 0
-        disp_tot, inc, dec, eq = {}, {}, {}, {}
+        disp_tot, inc, dec, eq, tmp = {}, {}, {}, {}, {}
         for a in y.get("adjustments") or []:
             nm, amt, kind, disp = a["name"], a["amount"], a["kind"], a["disposition"]
             if kind in _ADD:
@@ -200,6 +205,8 @@ def tax_adjustment_schedule(years, sme=True, opening_reserves=None, opening_loss
                     reserves[nm] = reserves.get(nm, 0) + amt; inc[nm] = inc.get(nm, 0) + amt
                 elif disp == _EQUITY:
                     eq[nm] = eq.get(nm, 0) + amt; equity_cum[nm] = equity_cum.get(nm, 0) + amt
+                elif disp == _TEMP:
+                    tmp[nm] = tmp.get(nm, 0) + amt
                 elif disp != "기타":
                     disp_tot[disp] = disp_tot.get(disp, 0) + amt
             else:
@@ -219,6 +226,11 @@ def tax_adjustment_schedule(years, sme=True, opening_reserves=None, opening_loss
         if equity_cum:
             rows[-1]["출자의_증가"] = [{"항목": n, "당기": eq.get(n, 0), "누계": equity_cum[n]} for n in sorted(equity_cum)]
             rows[-1]["출자의_증가_누계"] = sum(equity_cum.values())
+        if tmp:
+            rows[-1]["임시유보"] = [{"항목": n, "당기": v} for n, v in sorted(tmp.items())]
+            판단.append({"항목": f"{yr}년 임시유보", "결론": f"{sum(tmp.values()):,}원 — 국외특수관계인 거래의 정상가격 조정으로 익금에 넣은 금액은 반환 여부를 확인하기 전까지 임시유보. 신고한 날부터 90일 안에 이전소득금액 반환 확인서를 내지 않으면 "
+                       "상대방이 내국법인이 출자한 법인이면 출자의 증가, 주주이거나 그 밖의 자이면 배당으로 처분. 유보 표에는 넣지 않고 그 해 금액만 보여 줌",
+                       "근거": "국제조세조정에 관한 법률 제13조①, 시행령 제22조~제24조"})
         if eq:
             old = yr <= 2020
             판단.append({"항목": f"{yr}년 출자의 증가", "결론": f"{sum(eq.values()):,}원 — 국외특수관계인(내국법인이 출자한 법인)에게서 반환받은 것으로 확인되지 않은 익금산입액은 그 법인에 대한 출자의 증가로 조정. 사외유출이 아니어서 원천징수 대상 처분이 아니고, 유보 표와 따로 누계로 보여 줌",
@@ -231,7 +243,7 @@ def tax_adjustment_schedule(years, sme=True, opening_reserves=None, opening_loss
         r.update({"이월결손금_공제": lr["공제액"], "이월결손금_공제_내역": lr["공제"], "과세표준": base,
                   "산출세액": CC.corp_tax(base, r["year"], 12) if base > 0 else 0,
                   "결손금_잔액": lr["결손금_잔액_합계"], "결손금_소멸": sum(x["금액"] for x in lr["소멸"])})
-        if any(k in r["소득처분_사외유출"] for k in ("상여", "배당", "기타소득")):
+        if any(k in r["소득처분_사외유출"] for k in ("상여", "배당", "기타소득", "이전소득 배당")):
             판단.append({"항목": f"{r['year']}년 소득처분", "결론": "상여·배당·기타소득 처분액은 원천징수와 귀속자의 소득세 신고가 따름(상여는 deemed_bonus_resettlement)", "근거": "법인세법 제67조, 시행령 제106조"})
     판단 = led["판단"] + 판단
     tot = {"각사업연도소득": sum(r["각사업연도소득"] for r in rows), "과세표준": sum(r["과세표준"] for r in rows), "산출세액": sum(r["산출세액"] for r in rows),
