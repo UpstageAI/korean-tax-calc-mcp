@@ -2,7 +2,9 @@
 
 <!-- mcp-name: io.github.UpstageAI/korean-tax-calc-mcp -->
 
-![Demo: income statement and ledger spreadsheets → missing-receipt screening, non-designated donations → tax adjustments → statutory forms (Forms 3, 15, 23, 29) linked by formulasnd minimum tax](https://raw.githubusercontent.com/UpstageAI/korean-tax-calc-mcp/main/docs/demo.gif)
+![Demo: a folder of closing files (ledgers, registers, contracts) → corporate tax adjustments with cross-border review → VAT return → withholding tax return, a review workbook with one statutory form per sheet](https://raw.githubusercontent.com/UpstageAI/korean-tax-calc-mcp/main/docs/demo.gif)
+
+<sub>Video: the Claude app with this server and its companion korean-tax-mcp. Three one-line requests on a folder of closing files produce corporate tax adjustments, a VAT return and a withholding tax return as statutory-form workbooks (2026-11-13; the company, people and amounts are fictional).</sub>
 
 [![PyPI](https://img.shields.io/pypi/v/korean-tax-calc-mcp)](https://pypi.org/project/korean-tax-calc-mcp/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-korean--tax--calc--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=korean-tax-calc-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Built with Upstage Solar Pro 4](https://img.shields.io/badge/Built%20with-Upstage%20Solar%20Pro%204-7A3FF2)](https://www.upstage.ai/) · [한국어](README.md)
 
