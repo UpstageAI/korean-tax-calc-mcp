@@ -9471,6 +9471,30 @@ def foreign_subsidiary_dividend(
                주의=["세무조정의 외국법인세액 손금불산입은 그 세액을 결산에서 비용으로 계상한 경우의 조정 — 비용으로 계상하지 않았으면 넣지 않음"])
 
 
+@mcp.tool(annotations=CALC)
+@_guard
+def withholding_return(
+    year: Annotated[int, Field(description="귀속연도 — 2025만 지원")],
+    month: Annotated[int, Field(description="귀속월(1~12)", ge=1, le=12)],
+    lines: Annotated[list, Field(description="[{코드, 인원, 총지급액, 소득세, 농어촌특별세?, 가산세?, 비거주자?, 메모?}] — 코드: A01 간이세액·A02 중도퇴사·A03 일용근로·A04 연말정산 합계·A05 분납신청·A06 납부금액·A21·A22 퇴직·A25 사업 매월징수·A26 사업 연말정산·A41·A43·A44·A49·A59 인적용역·A42 기타 그 외·A48·A45·A46 연금·A50 이자·A60 배당·A69·A70·A80 법인원천·A90 수정신고. 환급할 세액은 음수. 금액은 원")],
+    paid_month: Annotated[int | None, Field(description="지급월(1~12) — 생략하면 귀속월과 같음", ge=1, le=12)] = None,
+    prior_unrefunded: Annotated[int, Field(description="전월 미환급세액(원)", ge=0)] = 0,
+    prior_refund_claimed: Annotated[int, Field(description="기환급 신청세액(원)", ge=0)] = 0,
+    trust_refund: Annotated[int, Field(description="신탁재산(금융회사 등) 환급세액(원)", ge=0)] = 0,
+    other_refund: Annotated[int, Field(description="그 밖의 환급세액(원)", ge=0)] = 0,
+    refund_claim: Annotated[int, Field(description="환급신청액(원) — 차월이월 환급세액 이내", ge=0)] = 0,
+) -> dict:
+    """원천징수이행상황신고서(소득세법 시행규칙 별지 제21호서식 제1쪽) 집계 — 소득 코드별 인원·총지급액·징수세액을 넣으면 가감계, 총합계, 조정환급, 납부세액을 서식 칸대로 계산. 언제: 한 달치 원천징수 내역을 이행상황신고서로 모으거나, 이미 낸 신고서가 지급 내역과 맞는지 대조할 때.
+    입력: 귀속연도·귀속월 → year·month, 지급월 → paid_month, 코드별 줄 → lines, 전월 미환급세액 등 환급 조정 → prior_unrefunded·prior_refund_claimed·trust_refund·other_refund·refund_claim.
+    계산: 근로·퇴직·사업·기타·연금소득은 가감계(A10·A20·A30·A40·A47) 기준. 환급할 세액은 총합계에 넣지 않고 일반환급으로 모아, 조정대상 환급세액을 납부할 세액에 코드 순서대로 충당한 뒤 남은 금액이 납부세액.
+    세액 자체는 계산하지 않음 — 소득별 원천징수세액은 withholding_tax(거주자), nonresident_withholding(비거주자), wage_income_tax 등으로, 가산세는 withholding_late_payment_penalty로 구해 넣는다.
+    비거주자 개인의 인적용역·임대·사용료소득은 사업소득 칸(A25)에, 외국법인분은 법인원천 칸(A80)에 합산(줄에 비거주자=true를 주면 안내).
+    결과: 귀속·지급연월, 총지급액, 징수세액, 가산세, 당월조정환급세액, 납부세액, 차월이월 환급세액, 계산(코드별 행·환급세액 조정), 판단·근거·주의. export_workbook에 넣으면 '원천 별지21 이행상황신고서' 시트.
+    범위 밖: 2026년(개정 서식의 적용 시기 미확인)·2024년 이전, 부표, 반기별 납부, 수정신고서 표기, 지방소득세."""
+    from .engine.calc_withholding_return import withholding_return as _wr
+    return _wr(year, month, lines, paid_month, prior_unrefunded, prior_refund_claimed, trust_refund, other_refund, refund_claim)
+
+
 # ── 도구 2: 해외 파견 인건비 청구 — 원가·정상가격·손금·비과세 ──────────────────────────
 # SPEC_foreign_sub_tools_1110 §2. 근거: 법인세법 제15조·제19조, 시행령 제106조제1항제1호 라목,
 # 국조법 제7조, 소득세법 제12조제3호거목·시행령 제16조제1항제1호.

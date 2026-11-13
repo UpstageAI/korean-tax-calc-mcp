@@ -26,7 +26,7 @@ flowchart LR
 3. **Calculation** — follows the statute order, e.g. tax base → that year's brackets → tax.
 4. **Result** — tax, intermediate amounts, item-level judgments, adjustments with income dispositions, and citations.
 
-121 of the 125 tools run in code without generative AI (the 2 price lookups only fetch public data from KRX and VWORLD). Only the 3 PDF tools use Upstage, and only when `UPSTAGE_API_KEY` is set.
+122 of the 126 tools run in code without generative AI (the 2 price lookups only fetch public data from KRX and VWORLD). Only the 3 PDF tools use Upstage, and only when `UPSTAGE_API_KEY` is set.
 
 ### How corporate tax adjustments chain
 
@@ -87,7 +87,7 @@ When answering Korean tax questions, use korean-tax-mcp and korean-tax-calc-mcp 
 5. If two values come out (before/after apportionment, total vs. taxable part, etc.), answer only the one the question asks for.
 ```
 
-## Tools (125)
+## Tools (126)
 
 Click a group to expand its tools.
 
@@ -142,13 +142,14 @@ Click a group to expand its tools.
 
 </details>
 <details>
-<summary><b>Income, withholding, transfer, inheritance</b> (24)</summary>
+<summary><b>Income, withholding, transfer, inheritance</b> (25)</summary>
 
 | Tool | What it does |
 |---|---|
 | `income_tax` | income tax |
 | `withholding_tax` | withholding |
 | `nonresident_withholding` | non-resident withholding |
+| `withholding_return` | monthly withholding tax return (Form 21, page 1) — subtotals by income code, grand total, refund offset and tax payable (2025 only) |
 | `retirement_income_tax` | retirement income |
 | `wage_income_tax` | wage income |
 | `daily_worker_withholding` | daily workers |
@@ -286,7 +287,7 @@ Click a group to expand its tools.
 
 </details>
 
-- **Excel export**: `export_workbook` re-runs several tool calls and produces a review workbook shaped like the statutory forms (Article 3, Article 4, Article 8 (a), Article 15, Article 21, Article 23 (a)/(b), Article 29, Article 32, Article 33, Article 34, Article 20(1), Article 16-2, Article 26 (a)/(b), Article 50(b); VAT input-tax-not-deductible statement; global-income-tax supplementary statements; capital-gains-tax Article 84 return tax computation and Appendix 1 capital-gains computation statement; etc.). Entertainment expense limits from `entertainment_limit` also produce Article 23 (a)/(b). Every amount cell is a formula that points to a named input on the '입력·가정' (inputs) sheet or to earlier cells — tool values are never pasted in as numbers.
+- **Excel export**: `export_workbook` re-runs several tool calls and produces a review workbook shaped like the statutory forms (Article 3, Article 4, Article 8 (a), Article 15, Article 21, Article 23 (a)/(b), Article 29, Article 32, Article 33, Article 34, Article 20(1), Article 16-2, Article 26 (a)/(b), Article 50(b); VAT input-tax-not-deductible statement; global-income-tax supplementary statements; capital-gains-tax Article 84 return tax computation and Appendix 1 capital-gains computation statement; etc.). Entertainment expense limits from `entertainment_limit` also produce Article 23 (a)/(b). Every amount cell is a formula that points to a named input on the '입력·가정' (inputs) sheet or to earlier cells — tool values are never pasted in as numbers. The first sheet is a summary: tax summary, each adjustment with its statutory basis and source sheet, key values per call, and review notes passed in `review_notes`. The workbook also covers page 1 of the general VAT return (lines 1–30) and page 1 of the withholding tax return.
 - **Ledger input**: adjustment tools take ledger lines as written (name, amount, receipt, nature) and return item judgments, adjustments and income dispositions.
 - **Issue flags**: non-resident withholding and thin capitalization results list points that may be disputed and what to check (no conclusion).
 - **Years**: corporate tax FY2016–2026, income tax 2016–2026, VAT 2016-1 to 2026-2; penalties and limitation periods follow current law. Other years stop with an error. Local income tax is separate.
