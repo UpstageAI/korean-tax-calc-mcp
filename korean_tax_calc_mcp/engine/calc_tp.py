@@ -25,7 +25,7 @@ def _quantile(xs, q, method):
 
 
 def arm_length_range(comparables, tested_value, base_amount=None, range_type="사분위", point="중위값", point_value=None,
-                     tested_is_resident=True, higher_is_more_income=True, quartile_method="inclusive", year=None):
+                     tested_is_resident=None, higher_is_more_income=True, quartile_method="inclusive", year=None):
     문제 = []
     vals, names = [], []
     if not isinstance(comparables, list) or len(comparables) < 2:
@@ -36,6 +36,9 @@ def arm_length_range(comparables, tested_value, base_amount=None, range_type="�
             if isinstance(v, bool) or not isinstance(v, (int, float)):
                 문제.append(f"comparables[{i}] — 숫자(이익률은 소수, 예: 0.035)"); continue
             vals.append(_fr(v)); names.append(c.get("이름", f"비교대상{i + 1}") if isinstance(c, dict) else f"비교대상{i + 1}")
+    if not isinstance(tested_is_resident, bool):
+        문제.append("tested_is_resident — 분석대상 당사자가 국내 법인(거주자)이면 True, 국외특수관계인(해외 자회사·모회사 등)이면 False. "
+                  "어느 쪽이냐에 따라 조정 방향이 반대가 되므로 비워 두면 계산하지 않음(회사 이름으로 추측하지 않음)")
     if isinstance(tested_value, bool) or not isinstance(tested_value, (int, float)):
         문제.append("tested_value — 분석대상 당사자의 값(숫자)")
     if range_type not in ("사분위", "전체"):
@@ -82,7 +85,9 @@ def arm_length_range(comparables, tested_value, base_amount=None, range_type="�
         tested_income_low = below if higher_is_more_income else not below
         resident_income_low = tested_income_low if tested_is_resident else not tested_income_low
         결과.update({"조정_필요": True, "기준점": {"종류": point, "값": float(ref)}, "차이": float(diff),
-                   "거주자_소득": "과소" if resident_income_low else "과다"})
+                   "거주자_소득": "과소" if resident_income_low else "과다",
+                   "방향": (f"분석대상({'국내' if tested_is_resident else '국외'} 법인) 값 {float(t):.4%}이 범위 " + ("하한 미만" if below else "상한 초과")
+                          + " → 국내 법인 소득 " + ("과소 → 증액 조정 대상" if resident_income_low else "과다 → 정상가격 기준 신고·경정청구 검토"))})
         if base_amount is not None:
             amt = abs(diff) * _fr(base_amount)
             결과["조정액"] = int(amt)      # 원 미만 절사
