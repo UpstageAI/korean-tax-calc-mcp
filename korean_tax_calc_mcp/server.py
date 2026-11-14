@@ -41,6 +41,7 @@ from .engine import calc_batch0300 as B
 from .engine import calc_cfc as CF
 from .engine import calc_cfc_followup as CFF
 from .engine import calc_tax_crime_fine as TCF
+from .engine import calc_nominee as NOM
 from .engine.errors import NoYearTable as _NoYearTable
 from . import vocab
 from .tools_income import earned_income_gross_pay_impl as _earned_income_gross_pay_impl
@@ -10066,6 +10067,34 @@ def tax_crime_settlement_amount(offenses: Annotated[list[dict], Field(descriptio
     if "error" in r:
         return r
     return _ok(r["결과"], r["근거"], 판단=r["판단"], 경고=r["경고"], 주의=r["주의"])
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def nominee_gift_tax(asset_value: Annotated[int, Field(ge=0, description="명의신탁재산의 가액(원) — 타인명의는 증여의제일, 명의개서해태는 소유권취득일 기준 평가액")],
+                     trust_type: Annotated[Literal["타인명의", "명의개서해태"], Field(description="타인명의(명의자 명의로 등기등·명의개서) | 명의개서해태(취득 후 실제소유자 명의로 개서하지 않음)")] = "타인명의",
+                     deemed_gift_date: Annotated[str | None, Field(description="증여의제일 YYYY-MM-DD — 타인명의는 명의자 명의로 등기등·명의개서한 날. 명의개서해태는 acquisition_date로 자동 계산")] = None,
+                     acquisition_date: Annotated[str | None, Field(description="실제소유자의 소유권취득일 YYYY-MM-DD — 명의개서해태에 필요(증여의제일 = 다음 해 말일의 다음 날, 2018.12.31. 이전 취득분은 종전 규정)")] = None,
+                     appraisal_fee: Annotated[int, Field(ge=0, description="감정평가업자 평가수수료(원) — 시행령 한도 적용")] = 0,
+                     share_appraisal_fee: Annotated[int, Field(ge=0, description="비상장주식 신용평가전문기관 평가수수료(원)")] = 0,
+                     share_appraisal_count: Annotated[int, Field(ge=1, description="비상장주식 평가기관 수")] = 1,
+                     filed: Annotated[bool, Field(description="법정신고기한 내 신고 여부 — 신고세액공제, 부과제척기간 10년·15년")] = True,
+                     nominee_kind: Annotated[Literal["개인", "영리법인", "비영리법인"], Field(description="명의자 구분 — 2018.12.31. 이전 의제분에서 영리법인이면 실제소유자가 납부")] = "개인",
+                     prior_gifts_same_donor: Annotated[int, Field(ge=0, description="같은 증여자(실제소유자)로부터 10년 내 받은 다른 증여(원) — 2019.1.1. 이후 의제분은 합산배제라 쓰지 않음, 종전 규정 의제분에 넣으면 '확인 필요'")] = 0) -> dict:
+    """명의신탁재산 증여의제 증여세(상속세 및 증여세법 제45조의2) — 증여의제일의 시행본으로 과세표준(명의신탁재산의 금액 − 감정평가수수료, 증여재산공제 없음)·산출세액·신고세액공제·납부할세액, 납세의무자(2019.1.1. 이후 의제분 실제소유자, 명의자 물적납세의무), 신고기한과 부과제척기간 만료일. 언제: 차명주식·차명 등록재산이 증여의제로 과세될 때 세액과 누가 내는지, 언제까지 부과될 수 있는지 계산할 때.
+    입력: 재산 가액 → asset_value, 유형 → trust_type, 증여의제일 → deemed_gift_date(타인명의), 소유권취득일 → acquisition_date(명의개서해태), 감정평가수수료 → appraisal_fee·share_appraisal_fee, 신고 여부 → filed, 명의자 구분 → nominee_kind.
+    시점 구분(법률 제16102호 부칙 제3조·제6조): 2019.1.1. 이후 의제분은 실제소유자가 납세의무자(제4조의2제2항)이고 합산배제(제47조제1항). 2018.12.31. 이전 의제분과, 2018.12.31. 이전 취득 후 명의개서 해태로 2019.1.1. 이후 의제되는 분은 종전 규정(명의자 납세의무, 실제소유자 연대).
+    결과: 증여의제일·평가기준일·적용 규정·과세표준·산출세액·신고세액공제·납부할세액·납세의무자·연대·물적납세의무·법정신고기한·부과제척기간(assessment_limitation과 같은 계산). 2016~2026 의제분만.
+    범위 밖: 증여의제 요건(대상 재산, 조세회피목적, 반복 과세 제한 — 조문 MCP nominee_trust_guide), 세대생략 할증, 가산세. 부동산실명법 과징금은 시행령 별표 부과기준을 원문 대조하지 못해 계산 도구를 두지 않음."""
+    r = NOM.nominee_gift_tax(asset_value, trust_type, deemed_gift_date, acquisition_date, appraisal_fee, share_appraisal_fee,
+                             share_appraisal_count, filed, nominee_kind, prior_gifts_same_donor)
+    if "error" in r:
+        return r
+    lim = assessment_limitation.__wrapped__(r["결과"]["법정신고기한(이월 전)"], case="일반" if filed else "무신고", inheritance_gift=True)
+    if isinstance(lim, dict) and "결과" in lim:
+        r["결과"]["부과제척기간"] = {k: lim["결과"][k] for k in lim["결과"] if k in ("제척기간(년)", "법정신고기한(적용)", "기산일", "만료일", "만료일(역법)")}
+        r["근거"].append(["국세기본법", "제26조의2", "④", "상속세·증여세 부과제척기간(10년, 무신고 등 15년)"])
+    return _ok(r["결과"], r["근거"], 판단=r["판단"], 주의=r["주의"])
 
 
 # ── 도구: 양도소득 부당행위계산 (소득세법 제101조, 영 제167조③④⑤⑥) ─────────────────
