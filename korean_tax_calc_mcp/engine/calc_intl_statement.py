@@ -156,7 +156,7 @@ def statement(args: dict) -> dict:
     party_max = {t: max(r[1][t] + r[2][t] for r in rows) for t in ("재화", "용역", "무형")}
 
     # 제출 의무 — corporate_filing_obligations와 같은 판정(영 제36조 연도표, 통합·개별기업보고서 제출자 관계)
-    ob = C.corporate_filing_obligations({"year": year, "revenue": revenue,
+    ob = C.corporate_filing_obligations({"year": year, "revenue": revenue, "fy_start": fy_start.isoformat(), "fy_end": fy_end.isoformat(),
                                          "related_goods": by_type["재화"], "related_services": by_type["용역"],
                                          "related_intangibles": by_type["무형"], "party_max_goods": party_max["재화"],
                                          "party_max_services": party_max["용역"], "party_max_intangibles": party_max["무형"]})
@@ -165,12 +165,17 @@ def statement(args: dict) -> dict:
     판단 = [j for j in ob["판단"] if j["항목"] in keep]
     stmt, summ, tpdoc = obr["국제거래명세서"], obr["요약손익계산서"], obr["정상가격산출방법신고서"]
     anyobl = stmt or summ or tpdoc
-    deadline = (_month_end_plus(fy_end, 6) if year >= 2020 else _month_end_plus(fy_end, 3)) if anyobl else None
+    # 제출기한: 2021.1.1. 이후 개시 사업연도는 6개월(법 제16조②). 그 전 개시 사업연도는 종전 기한(법인세 신고기한 = 종료일이 속하는 달의 말일부터 3개월)이
+    #   2021.1.1. 현재 지나지 않았으면 6개월(법률 제17651호 부칙 제5조①), 이미 지났으면 종전 기한(부칙 제23조①).
+    종전기한 = _month_end_plus(fy_end, 3)
+    six = fy_start >= date(2021, 1, 1) or 종전기한 >= date(2021, 1, 1)
+    deadline = (_month_end_plus(fy_end, 6) if six else 종전기한) if anyobl else None
     if deadline:
-        판단.append({"항목": "제출기한", "결론": f"{deadline.isoformat()} — " + ("사업연도 종료일이 속하는 달의 말일부터 6개월" if year >= 2020
+        판단.append({"항목": "제출기한", "결론": f"{deadline.isoformat()} — " + ("사업연도 종료일이 속하는 달의 말일부터 6개월" if six
                                                                        else "법인세 신고기한(사업연도 종료일이 속하는 달의 말일부터 3개월)"),
-                   "근거": "국제조세조정에 관한 법률 제16조②" if year >= 2021 else
-                   ("법률 제17651호 부칙(2020 사업연도분도 6개월 — corporate_filing_obligations와 같음)" if year == 2020 else "구 국제조세조정에 관한 법률 제11조①")})
+                   "근거": "국제조세조정에 관한 법률 제16조②" if fy_start >= date(2021, 1, 1) else
+                   (f"법률 제17651호 부칙 제5조①(종전 기한 {종전기한.isoformat()}이 2021.1.1. 현재 지나지 않아 6개월 — corporate_filing_obligations와 같음)" if six
+                    else f"구 국제조세조정에 관한 법률 제11조①, 법률 제17651호 부칙 제23조①(종전 기한 {종전기한.isoformat()}이 2021.1.1. 전에 지남)")})
 
     # 함께 낼 서식(시행규칙 제27조, 별지 제16호서식(갑) 작성방법 7·8)
     has = lambda f: any(r[1][f] or r[2][f] for r in rows)           # noqa: E731
@@ -263,6 +268,8 @@ def statement(args: dict) -> dict:
             계산식_입력.append({"이름": nm, "값": filer.get(k) or "", "설명": "별지 제20호서식 신고인 칸(서식 칸용)"})
 
     주의 = []
+    if year == 2019 and not args.get("fy_start") and not args.get("fy_end"):
+        주의.append("사업연도를 역년으로 보고 제출기한을 정함 — 2019 개시 사업연도가 2020.10.1. 이후 끝나면(종전 기한이 2021.1.1. 이후) 6개월 기한이라 fy_start·fy_end를 넣는다(법률 제17651호 부칙 제5조①)")
     if year <= 2020:
         주의.append("2020 사업연도까지는 구 국제조세조정에 관한 법률 시행규칙 서식 — 구 서식 번호·칸 구성은 미확인. 칸 번호는 현행 별지 제16호서식(갑) 기준이고 엑셀 서식 틀도 만들지 않음")
     elif year <= 2022:
