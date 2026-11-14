@@ -84,7 +84,7 @@ def test_simple_rate_eligibility_2024_needs_current_revenue():
     assert r["계산"]["적용방법"] == "기준경비율"
 
 
-# ── 규칙 제67조: 배율 2.6/3.2(2020.3.12.까지), 2.8/3.4(2020.3.13.부터) ──
+# ── 규칙 제67조: 배율 2.6/3.2(2019 과세기간까지), 2.8/3.4(2020 과세기간부터, 규칙 제781호 부칙 제9조) ──
 
 _B = {"industry_group": "나", "prior_year_revenue": 40_000_000,
       "revenues": [{"구분": "매출", "금액": 100_000_000}], "expenses": [],
@@ -94,8 +94,8 @@ _B = {"industry_group": "나", "prior_year_revenue": 40_000_000,
 def test_multiplier_by_year():
     assert c("estimated_business_income", {**_B, "year": 2017})["결과"]["사업소득금액"] == 26_000_000   # × 2.6
     assert c("estimated_business_income", {**_B, "year": 2020})["결과"]["사업소득금액"] == 28_000_000   # × 2.8
-    r = c("estimated_business_income", {**_B, "year": 2019})
-    assert "error" in r and "multiplier" in r["문제"][0]
+    # 2019 과세기간은 종전 2.6(규칙 제781호 부칙 제9조) — 2026-11-14 원문 대조로 오류 반환을 계산으로 바꿈
+    assert c("estimated_business_income", {**_B, "year": 2019})["결과"]["사업소득금액"] == 26_000_000
     assert c("estimated_business_income", {**_B, "year": 2019, "multiplier": 2.6})["결과"]["사업소득금액"] == 26_000_000
 
 

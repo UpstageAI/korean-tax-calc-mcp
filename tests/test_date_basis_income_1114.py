@@ -84,10 +84,10 @@ def test_dividend_tax_credit_uses_exclusion_and_shows_rates():
     assert b["계산"]["Gross-up 가산율"].startswith("10%")
 
 
-# ── 우선순위 1: 고배당기업 배당 특례(조특법 제104조의27, 2026.1.1. 이후 받는 배당) — 계산하지 않고 표시 ──
+# ── 우선순위 1: 고배당기업 배당 특례(조특법 제104조의27, 2026.1.1. 이후 받는 배당) — 신청 여부를 받아 계산 ──
 def test_high_dividend_not_silently_listed():
     r = S.financial_income_aggregate(2026, [{"kind": "고배당기업배당", "amount": 5 * M}])
-    assert r["error"] == "미지원 — 확인 필요"
+    assert "error" in r and "separate_election" in r["문제"][0]                 # 신청 여부 없으면 계산하지 않음(2026-11-14 특례 계산 반영)
     r = S.financial_income_aggregate(2026, [{"kind": "고배당기업배당", "amount": 5 * M, "separate_election": False}])
     assert r["결과"]["Gross-up"] == 3_000_000 and any("특례 미신청" in n for n in r["주의"])
     r = S.financial_income_aggregate(2025, [{"kind": "고배당기업배당", "amount": 5 * M, "separate_election": False}])

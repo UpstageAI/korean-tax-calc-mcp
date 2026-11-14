@@ -48,7 +48,7 @@ def test_refund_offsets_in_code_order():
 
 def test_rejections():
     f = _fn(S.withholding_return)
-    assert "2026. 5. 22." in f(**{**MAY, "year": 2026})["문제"][0]
+    assert "filed_on" in f(**{**MAY, "year": 2026})["문제"][0]   # 신고일 없으면 2025 귀속만(2026-11-14 신고일 기준으로 바꿈)
     assert "error" in f(**{**MAY, "year": 2024})
     assert "A27" in f(year=2025, month=5, lines=[{"코드": "A27", "인원": 1, "총지급액": 1, "소득세": 1}])["문제"][0]
     assert "가감계" in f(year=2025, month=5, lines=[{"코드": "A30", "인원": 1, "총지급액": 1, "소득세": 1}])["문제"][0]

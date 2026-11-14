@@ -5,7 +5,13 @@
 - 환급할 세액(△)은 총합계에 넣지 않고 ⑮일반환급으로 모은다(작성방법 3.나). ⑱조정대상환급세액 = ⑭+⑮+⑯+⑰을
   납부할 세액에 코드 순서(A10, A20, …)대로 충당해 ⑨당월조정환급세액에 적고 남은 금액이 ⑩·⑪ 납부세액(작성방법 3.라).
 - 이 도구는 세액을 계산하지 않는다 — 소득별 원천징수세액은 각 계산 도구(withholding_tax·nonresident_withholding 등)로 구해 넣는다.
-범위 밖: 2026년(<개정 2026. 5. 22.> 서식에 A27·A28 칸 추가 — 적용 시기를 확인하지 못함), 2024년 이전, 부표(제4쪽 이후), 반기별 납부, 수정신고서의 상·하단 표기."""
+서식 선택(2026-11-14 원문 대조): 서식은 귀속연도가 아니라 신고·제출일로 고른다. 재정경제부령 제22호(2026.3.20. 공포·시행)가 제1쪽~제4쪽·제6쪽·제7쪽을
+  바꿔 사업소득 연말정산 분납신청 A27·납부금액 A28 칸을 두었고, 부칙 제2조는 "이 규칙 시행 이후 신고, 신청 또는 제출하는 경우부터 적용".
+  개정 서식 작성방법 3.다2): 인원·총지급액의 가감계(A30) = A25 + A26, 징수세액(⑥~⑧)의 가감계(A30) = A25 + A28.
+  재정경제부령 제33호(2026.5.22.)는 제21호서식 제4쪽만 바꿈(제1쪽 집계는 3.20. 서식과 같음).
+  filed_on(신고일)이 없으면 종전처럼 2025년 귀속분을 <개정 2025. 3. 21.> 서식으로 계산하고 주의에 신고일 기준을 적는다.
+범위 밖: 2025.3.21. 전 신고분과 2024년 이전 귀속, 부표(제4쪽 이후), 반기별 납부, 수정신고서의 상·하단 표기."""
+import datetime as _dt
 
 BASIS = "소득세법 제128조, 시행령 제185조, 시행규칙 별지 제21호서식(원천징수이행상황신고서) 작성방법"
 # (코드, 구분, 항목, 가감계 코드 또는 None)
@@ -22,22 +28,56 @@ SUBTOTAL = {"A10": "근로소득 가감계", "A20": "퇴직소득 가감계", "A
 # 납부·환급을 따지는 단위(작성방법 3.라: 근로·사업·기타·연금은 가감계 기준) — 충당 순서
 UNITS = ["A10", "A20", "A30", "A40", "A47", "A50", "A60", "A69", "A70", "A80", "A90"]
 CODES = {r[0]: r for r in ROWS}
+# <개정 2026. 3. 20.> 서식(재정경제부령 제22호): A26 다음에 A27 분납신청(가감계 밖)·A28 납부금액(세액 가감계 A30)
+ROWS_2026 = ROWS[:ROWS.index(("A26", "사업소득", "연말정산", "A30")) + 1] + [("A27", "사업소득", "연말정산 분납신청", None), ("A28", "사업소득", "연말정산 납부금액", "A30")] \
+    + ROWS[ROWS.index(("A26", "사업소득", "연말정산", "A30")) + 1:]
+FORM_OLD, FORM_NEW = "<개정 2025. 3. 21.>", "<개정 2026. 3. 20.>"
+NEW_FORM_FROM = _dt.date(2026, 3, 20)       # 재정경제부령 제22호 시행일
+OLD_FORM_FROM = _dt.date(2025, 3, 21)       # 기획재정부령(2025.3.21.) 서식 개정일 — 그 전 서식은 대조하지 않음
 ALIASES = {"근로소득 간이세액": "A01", "일용근로": "A03", "사업소득": "A25", "사업소득 매월징수": "A25", "기타소득": "A42", "기타소득 그 외": "A42", "인적용역 기타소득": "A59",
            "이자소득": "A50", "배당소득": "A60", "법인원천": "A80", "내·외국법인원천": "A80", "비거주자 양도소득": "A70", "퇴직소득": "A22"}
 _NUM = ("인원", "총지급액", "소득세", "농어촌특별세", "가산세")
 
 
-def withholding_return(year, month, lines, paid_month=None, prior_unrefunded=0, prior_refund_claimed=0, trust_refund=0, other_refund=0, refund_claim=0):
+def _parse_date(v):
+    if v is None or v == "":
+        return None
+    if isinstance(v, _dt.date):
+        return v
+    try:
+        return _dt.date.fromisoformat(str(v).strip())
+    except ValueError:
+        return False
+
+
+def withholding_return(year, month, lines, paid_month=None, prior_unrefunded=0, prior_refund_claimed=0, trust_refund=0, other_refund=0, refund_claim=0, filed_on=None):
     문제 = []
-    if year != 2025:
-        문제.append(f"year={year} — 2025년 귀속분만 지원(<개정 2025. 3. 21.> 서식 대조). 2026년은 <개정 2026. 5. 22.> 서식에 사업소득 연말정산 분납 칸(A27·A28)이 추가됐고 적용 시기를 확인하지 못함")
+    fd = _parse_date(filed_on)
+    if fd is False:
+        문제.append(f"filed_on={filed_on!r} — 신고·제출일 YYYY-MM-DD")
+        fd = None
+    new_form = fd is not None and fd >= NEW_FORM_FROM
+    form = FORM_NEW if new_form else FORM_OLD
+    rows = ROWS_2026 if new_form else ROWS
+    CODES_ = {r[0]: r for r in rows}
+    if fd is None:
+        if year != 2025:
+            문제.append(f"year={year} — 신고일(filed_on)이 없으면 2025년 귀속분만 지원(<개정 2025. 3. 21.> 서식 대조). 서식은 신고·제출일로 고름 — "
+                      "2026.3.20. 전 신고는 <개정 2025. 3. 21.>, 2026.3.20. 이후 신고는 <개정 2026. 3. 20.>(재정경제부령 제22호 부칙 제2조) 서식이므로 filed_on을 넣으면 계산")
+    else:
+        if fd < OLD_FORM_FROM:
+            문제.append(f"filed_on={fd} — 2025.3.21. 전 신고분은 그때 서식을 대조하지 않아 범위 밖")
+        if year not in (2025, 2026):
+            문제.append(f"year={year} — 2025·2026년 귀속분만 지원")
+        elif isinstance(month, int) and 1 <= month <= 12 and fd < _dt.date(year, month, 1):
+            문제.append(f"filed_on={fd} — 귀속연월({year}년 {month}월)보다 앞선 신고일")
     if not isinstance(month, int) or not 1 <= month <= 12:
         문제.append(f"month={month!r} — 귀속월 1~12")
     if paid_month is not None and (not isinstance(paid_month, int) or not 1 <= paid_month <= 12):
         문제.append(f"paid_month={paid_month!r} — 지급월 1~12")
     if not isinstance(lines, list) or not lines:
         문제.append("lines — [{코드, 인원, 총지급액, 소득세, 농어촌특별세?, 가산세?}] 1건 이상")
-    vals = {c: dict.fromkeys(_NUM, 0) for c in CODES}
+    vals = {c: dict.fromkeys(_NUM, 0) for c in CODES_}
     notes = []
     for i, ln in enumerate(lines if isinstance(lines, list) else []):
         if not isinstance(ln, dict):
@@ -45,12 +85,13 @@ def withholding_return(year, month, lines, paid_month=None, prior_unrefunded=0, 
         code = str(ln.get("코드") or ln.get("code") or "").strip().upper()
         if not code:
             code = ALIASES.get(str(ln.get("소득구분") or "").strip(), "")
-        if code in ("A27", "A28"):
-            문제.append(f"lines[{i}].코드={code} — <개정 2026. 5. 22.> 서식에서 추가된 칸. 2025년 서식에는 없음"); continue
+        if code in ("A27", "A28") and not new_form:
+            문제.append(f"lines[{i}].코드={code} — <개정 2026. 3. 20.>(재정경제부령 제22호) 서식에서 추가된 칸. 2026.3.20. 전 신고분(<개정 2025. 3. 21.> 서식)에는 없음"
+                      + ("" if fd else " — 2026.3.20. 이후 신고면 filed_on을 넣음")); continue
         if code in SUBTOTAL or code == "A99":
             문제.append(f"lines[{i}].코드={code} — 가감계·총합계는 도구가 계산(입력하지 않음)"); continue
-        if code not in CODES:
-            문제.append(f"lines[{i}] — 코드 {code or ln.get('소득구분')!r}를 모름. 쓸 수 있는 코드: {', '.join(CODES)}"); continue
+        if code not in CODES_:
+            문제.append(f"lines[{i}] — 코드 {code or ln.get('소득구분')!r}를 모름. 쓸 수 있는 코드: {', '.join(CODES_)}"); continue
         for k in _NUM:
             v = ln.get(k, 0)
             if isinstance(v, bool) or not isinstance(v, (int, float)) or v != int(v):
@@ -68,12 +109,15 @@ def withholding_return(year, month, lines, paid_month=None, prior_unrefunded=0, 
     if 문제:
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제}
 
-    행 = {c: {"구분": CODES[c][1], "항목": CODES[c][2], **vals[c]} for c in CODES}
+    행 = {c: {"구분": CODES_[c][1], "항목": CODES_[c][2], **vals[c]} for c in CODES_}
     # 가감계: 인원·총지급액은 A01+A02+A03+A04, 세액은 A01+A02+A03+A06(작성방법 3.다) — A05 분납신청은 가감계에 넣지 않음
     for sc, name in SUBTOTAL.items():
-        members = [c for c in CODES if CODES[c][3] == sc]
+        members = [c for c in CODES_ if CODES_[c][3] == sc]
         people = [c for c in members if c != "A06"] if sc == "A10" else members
         taxes = [c for c in members if c != "A04"] if sc == "A10" else members
+        if sc == "A30" and new_form:   # 개정 서식 작성방법 3.다2): 인원·총지급액 A25+A26, 징수세액 A25+A28
+            people = [c for c in members if c != "A28"]
+            taxes = [c for c in members if c != "A26"]
         행[sc] = {"구분": name.split()[0], "항목": "가감계", "인원": sum(vals[c]["인원"] for c in people), "총지급액": sum(vals[c]["총지급액"] for c in people),
                  **{k: sum(vals[c][k] for c in taxes) for k in ("소득세", "농어촌특별세", "가산세")}}
     # 납부·환급: 단위별로 소득세 등(가산세 포함)과 농어촌특별세를 따로 본다
@@ -105,11 +149,22 @@ def withholding_return(year, month, lines, paid_month=None, prior_unrefunded=0, 
            "⑰ 그 밖의 환급세액": other_refund, "⑱ 조정대상 환급세액": 조정대상, "⑲ 당월조정 환급세액계": 당월조정계, "⑳ 차월이월 환급세액": 차월이월, "㉑ 환급신청액": refund_claim}
     판단 = [{"항목": "가감계", "결론": "근로·퇴직·사업·기타·연금소득은 코드별 가감계(A10·A20·A30·A40·A47)로 납부·환급을 계산. 근로소득 세액 가감계는 A01+A02+A03+A06(분납신청 A05는 인원·세액만 적고 가감계에 넣지 않음)", "근거": "별지 제21호서식 작성방법 3.다·3.라"},
           {"항목": "총합계", "결론": "환급할 세액(△)은 총합계(A99)에 넣지 않고 ⑮일반환급에 합계", "근거": "별지 제21호서식 작성방법 3.나"}]
+    if new_form:
+        판단.insert(0, {"항목": "적용 서식", "결론": f"신고일 {fd} — 2026.3.20. 이후 신고라 {FORM_NEW} 서식(귀속연도와 무관). 사업소득 가감계(A30): 인원·총지급액 = A25 + A26, "
+                       f"징수세액 = A25 + A28 = {vals['A25']['소득세']:,} + {vals['A28']['소득세']:,} = {행['A30']['소득세']:,}원(소득세). A27 분납신청은 가감계에 넣지 않음",
+                       "근거": "소득세법 시행규칙 별지 제21호서식 <개정 2026. 3. 20.> 작성방법 3.다2), 재정경제부령 제22호 부칙 제2조"})
+        a26, a27, a28 = (vals[c]["소득세"] for c in ("A26", "A27", "A28"))
+        if (a26 or a27) and a26 != a27 + a28:
+            판단.append({"항목": "확인", "결론": f"A26 소득세 {a26:,} ≠ A27 {a27:,} + A28 {a28:,} — 서식은 연말정산 신고월에 A26 = A27 + A28이 되도록 적음"
+                         "(분납이 없으면 A28 = A26). 입력값 그대로 집계함", "근거": "별지 제21호서식 <개정 2026. 3. 20.> 작성방법 3.다"})
+    elif fd is not None:
+        판단.insert(0, {"항목": "적용 서식", "결론": f"신고일 {fd} — 2026.3.20. 전 신고라 {FORM_OLD} 서식(A27·A28 칸 없음, 가감계 A30 = A25 + A26)",
+                       "근거": "재정경제부령 제22호(2026.3.20.) 부칙 제2조 — 개정 서식은 시행 이후 신고·제출분부터"})
     if 조정대상:
         판단.append({"항목": "조정환급", "결론": f"⑱조정대상 환급세액 {조정대상:,}원을 납부할 세액에 코드 순서(A10, A20, …)대로 충당 → ⑲ {당월조정계:,}원, ⑳차월이월 {차월이월:,}원", "근거": "별지 제21호서식 작성방법 3.라3)"})
     for code, nonres, memo in notes:
         if nonres:
-            where = "법인원천[A80]란" if code == "A80" else f"{CODES[code][1]}[{code}]란"
+            where = "법인원천[A80]란" if code == "A80" else f"{CODES_[code][1]}[{code}]란"
             판단.append({"항목": f"비거주자분({code})", "결론": f"비거주자 국내원천소득 중 개인분은 소득 종류별로 거주자분과 합산해 해당 소득란에, 법인분은 법인원천[A80]란에 적음 — {where}에 합산. "
                        "비거주자·외국법인에 국내원천소득을 지급했으면 원천징수이행상황신고서 부표를 반드시 작성" + (f" ({memo})" if memo else ""),
                        "근거": "별지 제21호서식 작성방법 2.사, 참고사항 1."})
@@ -117,14 +172,20 @@ def withholding_return(year, month, lines, paid_month=None, prior_unrefunded=0, 
           "지방소득세는 이 서식에 칸이 없음(국세분만 적음)",
           f"신고·납부기한: 징수일이 속하는 달의 다음 달 10일({due_y}. {due_m}. 10.) — 공휴일·토요일이면 다음 날. 반기별 납부 승인을 받은 경우는 다루지 않음",
           "부표(제4쪽 이후), 원천징수세액환급신청서 부표, 수정신고서의 상·하단 표기는 다루지 않음"]
-    결과 = {"귀속연월": f"{year}년 {month}월", "지급연월": f"{year}년 {pm}월", "총지급액": 행["A99"]["총지급액"], "징수세액_소득세등": 행["A99"]["소득세"], "징수세액_농어촌특별세": 행["A99"]["농어촌특별세"],
+    if fd is None:
+        주의.append("서식은 귀속연도가 아니라 신고·제출일로 고름 — 이 결과는 <개정 2025. 3. 21.> 서식(2026.3.20. 전 신고). 2026.3.20. 이후 신고·제출(수정신고 포함)이면 "
+                  "<개정 2026. 3. 20.> 서식(사업소득 A27·A28 칸, 징수세액 가감계 A30 = A25 + A28)이므로 filed_on을 넣어 다시 계산(재정경제부령 제22호 부칙 제2조)")
+    if new_form:
+        주의.append("서식 엑셀 시트(export_workbook)는 <개정 2025. 3. 21.> 서식 틀만 있어 개정 서식 신고분은 만들지 않음(계산 시트만)")
+    결과 = {"적용서식": form, "귀속연월": f"{year}년 {month}월", "지급연월": f"{year}년 {pm}월", "총지급액": 행["A99"]["총지급액"], "징수세액_소득세등": 행["A99"]["소득세"], "징수세액_농어촌특별세": 행["A99"]["농어촌특별세"],
           "가산세": 행["A99"]["가산세"], "당월조정환급세액": 당월조정계, "납부세액_소득세등": 행["A99"]["납부_소득세등"], "납부세액_농어촌특별세": 행["A99"]["납부_농어촌특별세"], "차월이월_환급세액": 차월이월}
-    order = [r[0] for r in ROWS]
+    order = [r[0] for r in rows]
     for sc in SUBTOTAL:           # 서식 순서: 가감계는 그 소득의 마지막 줄 뒤
-        last = max(order.index(c) for c in CODES if CODES[c][3] == sc)
+        last = max(order.index(c) for c in CODES_ if CODES_[c][3] == sc)
         order.insert(last + 1, sc)
     order.append("A99")
-    inputs = [{"이름": f"{c}_{k}", "값": vals[c][k], "설명": f"{c} {CODES[c][2]} {k}"} for c in CODES for k in _NUM]
+    inputs = [{"이름": f"{c}_{k}", "값": vals[c][k], "설명": f"{c} {CODES_[c][2]} {k}"} for c in CODES_ for k in _NUM]
     inputs += [{"이름": n, "값": v, "설명": d} for n, v, d in (("전월_미환급세액", prior_unrefunded, "⑫"), ("기환급_신청세액", prior_refund_claimed, "⑬"), ("신탁재산_환급", trust_refund, "⑯"),
                                                            ("그밖의_환급세액", other_refund, "⑰"), ("환급신청액", refund_claim, "㉑"), ("귀속연도", year, "귀속연도"))]
-    return {"결과": 결과, "계산": {"행": {c: 행[c] for c in order}, "환급세액_조정": 환급}, "판단": 판단, "근거": BASIS, "주의": 주의, "계산식_입력": inputs}
+    근거 = BASIS + (", 별지 제21호서식 <개정 2026. 3. 20.>(재정경제부령 제22호 부칙 제2조)" if new_form else "")
+    return {"결과": 결과, "계산": {"행": {c: 행[c] for c in order}, "환급세액_조정": 환급}, "판단": 판단, "근거": 근거, "주의": 주의, "계산식_입력": inputs}
