@@ -9890,6 +9890,7 @@ def cfc_actual_dividend(year: Annotated[int, Field(description="실제 배당을
                         entity: Annotated[Literal["법인", "개인"], Field(description="받는 내국인 — 법인(익금불산입) 또는 개인(배당소득 아님)")] = "법인",
                         cfc_name: Annotated[str | None, Field(description="특정외국법인 이름(세무조정 과목에 씀)")] = None) -> dict:
     """특정외국법인 실제 배당의 익금불산입 — 배당간주로 이미 과세된 유보소득을 나중에 실제로 배당받을 때, 그 금액을 익금(개인은 배당소득)에서 뺀다. 언제: 배당간주(cfc_deemed_dividend)로 익금산입한 뒤 그 특정외국법인에서 실제 배당을 받았을 때.
+    입력: 받은 과세연도 → year, 실제 배당액 → actual_dividend, 배당간주 원장 → ledger, 중간외국법인 경유 → intermediate, 법인·개인 → entity, 법인 이름 → cfc_name.
     계산: 익금불산입 = min(실제 배당액, 배당간주금액 중 아직 소진하지 않은 금액) — 배당 가능한 유보소득이 발생한 순서대로 소진. 중간외국법인 경유면 한도 = Σ(특정외국법인→중간외국법인 실제 배당 × 당시 보유비율) − 과거 익금불산입액.
     결과: 익금불산입, 일반배당(나머지), 소진 내역, 원장 갱신(다음 호출의 ledger), 세무조정(익금불산입·△유보 — income_adjustment_total·export_workbook에 넣음), 판단·근거·주의.
     근거(받은 과세연도별): 2016~2019 구 국조법 제20조제1항(이월익금)·구 시행령 제36조의6, 2020 구 법 제19조의2제1항·구 시행령 제35조, 2021~ 법 제32조제1항·시행령 제68조. 2023년부터 법인세법 제18조의4제3항(95% 익금불산입 미적용) 안내."""
@@ -9910,6 +9911,7 @@ def cfc_share_disposal(year: Annotated[int, Field(description="특정외국법�
                        sold_ratio: Annotated[float | None, Field(description="deemed_total·actual_paid가 보유 주식 전체 기준일 때 양도한 비율(0~1) — 주면 그 비율로 나눔(이 도구의 가정)")] = None,
                        cfc_name: Annotated[str | None, Field(description="특정외국법인 이름(세무조정 과목에 씀)")] = None) -> dict:
     """특정외국법인 주식 양도 때 배당간주 미배당분의 익금불산입 — 배당간주로 과세됐지만 아직 실제로 배당받지 않은 금액을 양도차익 한도로 익금(개인은 양도소득)에서 뺀다. 언제: 배당간주로 익금산입한 특정외국법인의 주식을 팔 때.
+    입력: 양도 과세연도 → year, 양도 주식분 배당간주금액 합계 → deemed_total, 그 주식의 실제 배당액 → actual_paid, 양도차익 → gain, 법인·개인 → entity, 일부 양도 비율 → sold_ratio.
     계산: (양도한 주식에 대한 배당간주금액 합계 − 그 주식에 실제로 배당한 금액), 0 이하는 0, 양도차익 한도.
     결과: 익금불산입(법인)·양도소득 제외(개인), 계산 전 금액, 양도차익 한도, 세무조정(익금불산입·△유보), 판단·근거·주의.
     근거(양도 과세연도별): 2016~2019 구 국조법 제20조제2항, 2020 구 법 제19조의2제2항, 2021~ 법 제32조제2항."""
