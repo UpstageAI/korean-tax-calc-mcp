@@ -990,7 +990,7 @@ def export_form_inputs(tool: str, args: dict | None, data: dict | None) -> dict 
         kind = a.get("income_kind", "")
         out = [_inp("소득종류", kind), _inp("소득구분코드", _NONRESIDENT_CODE.get(kind, ""), "별지 제23호서식(5) ⑨"),
                _inp("거주지국", a.get("residence_country", "")),
-               _inp("지급액", a.get("amount", 0), "지급총액"),
+               _inp("지급액", res.get("과세표준", a.get("amount", 0)), "지급총액(세금부담 약정이면 역산한 과세표준)"),
                _inp("적용세율", res.get("적용세율"), "min(국내세율, 조약 제한세율)"),
                _inp("조약지방세포함", 1 if str(res.get("조약_대상조세_지방소득세", "")).startswith("포함") else 0,
                     "조약 대상조세에 지방소득세가 들면 1 — 국세분 세율 = 적용세율 × 10/11"),

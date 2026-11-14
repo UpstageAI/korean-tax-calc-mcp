@@ -2,7 +2,8 @@
 
 - 도구 설명 첫 줄의 영문 한 줄(예: `Entertainment expense limit and non-deductible excess for corporate tax (기업업무추진비 한도).`)에 쓰는 용어를 한 국문 용어당 영문 하나로 맞춘다.
 - 출처: 법제처 영문법령(law.go.kr, 한국법제연구원 번역) 명칭 우선. '법제처 영문법령 확인(2026-11-14)'은 그날 받은 영문법령(소득세법·법인세법·각 시행령, 조특법, 국세기본법, 부가가치세법·시행령, 상증법, 국조법, 조세범 처벌절차법)에서 표현을 찾은 행이다.
-- 'KLRI'만 적힌 행은 영문법령 관행에 따른 표기이며 행별 원문 대조는 하지 않았다. 공식 영문을 찾지 못한 행은 '공식 영문 없음'으로 적는다(2026-11-15 법제처 영문법령 대조).
+- 'KLRI'만 적힌 행은 영문법령 관행에 따른 표기이며 행별 원문 대조는 하지 않았다. '확인 필요'는 공식 영문을 찾지 못한 행이다.
+- 아래쪽 '결과 라벨' 행(지방소득세부터)은 엑셀 내보내기 영문 표기(export_workbook lang='en')의 번역표로 쓰는 결과 키·표 머리글이다. 법제처 영문법령에서 표현을 찾은 것과 일반 회계·통계 용어만 넣었고, '확인 필요' 행은 엑셀에서 번역하지 않고 국문 그대로 둔다. 표를 고치면 `python -m korean_tax_calc_mcp.workbook_i18n docs/glossary_ko_en.md`로 패키지 사본(korean_tax_calc_mcp/data/glossary_ko_en.json)을 다시 만든다.
 - 검색어로 더 흔한 영문(penalty tax, loss, capital gains, CFC, entertainment expense)을 고른 행은 비고에 법제처 영문 표현을 함께 적는다.
 
 | 국문 용어 | English | 근거/비고 |
@@ -19,7 +20,7 @@
 | 손금불산입 | non-deductible | KLRI 'not included in deductible expenses'; 줄에서는 'non-deductible'/'disallowance' |
 | 익금산입 | inclusion in gross income | KLRI |
 | 익금불산입 | exclusion from gross income | KLRI 'not included in gross income' |
-| 유보 | temporary difference (yubo) | 실무 영문 관행. 공식 영문은 법인세법 시행령 제106조 영문의 'internal reserves'(사내유보로 처분) — 법제처 영문법령 2026.2.27. 시행본 대조(2026-11-15) |
+| 유보 | temporary difference (yubo) | 실무 영문 관행, 확인 필요 |
 | 원천징수 | withholding tax | KLRI 'withholding' |
 | 가산세 | penalty tax | 검색성 위해 penalty tax 채택. 법제처 영문법령 확인(2026-11-14): 소득세법·법인세법 영문은 'penalty tax', 국세기본법 제47조 영문은 'additional taxes' — 둘 다 공식 영문에 쓰임 |
 | 세액공제 | tax credit | KLRI |
@@ -39,7 +40,7 @@
 | 가지급금 인정이자 | deemed interest on provisional payments | 법제처 영문법령 확인(2026-11-14): 법인세법 제28조제1항제4호나목 영문 'provisional payments' |
 | 정상가격 범위 | arm's length range | KLRI 국조법 'arm's length price' |
 | 비교대상 기업 선정 | comparable company screening | 이전가격 실무 용어 |
-| 국제거래명세서 | statement of international transactions | 국제조세조정에 관한 법률 제16조 영문 'statement of international transactions' — 법제처 영문법령 2026.1.1. 시행본 대조(2026-11-15) |
+| 국제거래명세서 | statement of international transactions | 국조칙 별지 서식명, 확인 필요 |
 | 충당부채 세무조정 | provision tax adjustment | 충당부채 = provision |
 | 부당행위계산 | wrongful calculation | KLRI 법인세법 제52조 'Denial of Wrongful Calculation' |
 | 이월결손금 공제 한도 | loss carryforward deduction limit | KLRI 'deficits carried forward'; 검색성 위해 loss carryforward |
@@ -68,7 +69,7 @@
 | 원천징수세액 | withholding tax amount |  |
 | 비거주자 원천징수 | nonresident withholding tax | 비거주자 = nonresident, 외국법인 = foreign corporation, KLRI |
 | 퇴직소득세 | retirement income tax | KLRI 'retirement income' |
-| 간주임대료 | deemed rent | 공식 영문 없음 — 부가가치세법 시행령 제65조 영문(부동산 임대용역 공급가액 계산)에 대응 표현이 없음(법제처 영문법령 대조 2026-11-14). 실무 영문 관행 |
+| 간주임대료 | deemed rent | 부가가치세법 시행령 제65조 영문(부동산 임대용역 공급가액 계산)에 'deemed rent' 표현 없음 — 확인 필요 |
 | 매입세액 공제 | input tax deduction | KLRI 'input tax' |
 | 부가가치세 과세표준 조정 | VAT tax base adjustments |  |
 | 간주공급 | deemed supply | KLRI 부가법 제10조 |
@@ -130,13 +131,13 @@
 | 주택임대소득 | housing rental income |  |
 | 결손금 공제 | loss offset |  |
 | 재해손실세액공제 | disaster loss tax credit | KLRI 'credit for loss from disaster' |
-| 일시상각충당금·압축기장충당금 | temporary depreciation reserve and compression reserve | 소득세법 시행령 영문 'temporary depreciation reserve'. 법인세법 시행령 제64조 영문은 'lump sum depreciation reserve funds'·'compressed account reserve funds' — 법제처 영문법령 2026.2.27. 시행본 대조(2026-11-15). 공식 영문이 법령마다 다름 |
+| 일시상각충당금·압축기장충당금 | temporary depreciation reserve and compression reserve | 소득세법 시행령 영문 'temporary depreciation reserve' 확인, 압축기장충당금 영문은 미확인 — 확인 필요 |
 | 재고자산 평가 | inventory valuation | KLRI 'inventories' |
 | 임대보증금 간주익금 | deemed gross income from rental deposits | 조특법 제138조 |
 | 추계 사업소득금액 | estimated business income | 추계 = estimation, KLRI 'estimation' |
 | 면세전용 간주공급 | deemed supply on conversion to exempt use |  |
 | 청산소득금액 | liquidation income | KLRI 법인세법 제79조 |
-| 차가감소득금액 | adjusted taxable income | 서식 '과세표준 및 세액조정계산서' 칸명. 공식 영문 없음 — 법제처 영문법령은 별지 서식을 싣지 않음(2026-11-15). 실무 영문 관행 |
+| 차가감소득금액 | adjusted taxable income | 서식 '과세표준 및 세액조정계산서' 칸명, 확인 필요 |
 | 계산 결과 엑셀 | Excel export |  |
 | 국세 우선권 | priority of national taxes | KLRI 국기법 제35조 |
 | 대주주 판정 | major shareholder test | KLRI 'major shareholder' |
@@ -144,11 +145,11 @@
 | 상장주식 시세 | listed stock price |  |
 | 비상장주식 평가 | unlisted stock valuation | 상증법 보충적 평가 |
 | 비상장주식 기준시가 | unlisted stock standard market price | 기준시가 = standard market price, KLRI 소득세법 제99조 |
-| 공시가격 | officially announced price | 개별공시지가의 공식 영문은 부동산 가격공시에 관한 법률 제10조 영문 'officially assessed individual land price' — 법제처 영문법령 2020.12.10. 시행본 대조(2026-11-15) |
+| 공시가격 | officially announced price | 개별공시지가 = individually announced land price, 확인 필요 |
 | 건물 기준시가 | building standard market price | KLRI 'standard market price' |
 | 개인사업자 기부금 필요경비 | donation necessary expenses for sole proprietors | 필요경비 = necessary expenses, KLRI |
 | 외국자회사 수입배당금 | foreign subsidiary dividends received | 법인세법 제18조의4 |
-| 원천징수이행상황신고서 | withholding tax status return | 소득세법 시행령 제185조 영문은 'report on the status of withholding' — 법제처 영문법령 2026.2.27. 시행본 대조(2026-11-15). 서식명 자체의 공식 영문은 없음 |
+| 원천징수이행상황신고서 | withholding tax status return | 확인 필요 |
 | 해외 파견 인건비 | expatriate cost recharge |  |
 | 외부감사·외부세무조정 의무 | external audit and external tax adjustment obligations |  |
 | 해외직접투자 외국환 신고 | overseas direct investment foreign exchange reporting | 외국환거래법 |
@@ -157,8 +158,73 @@
 | 특정외국법인 배당간주 | CFC deemed dividend | 특정외국법인: KLRI 'specified foreign corporation', 국제 용어 CFC 채택 |
 | 특정외국법인 실제 배당 | CFC actual dividend | 위와 같음 |
 | 특정외국법인 주식 양도 | CFC share disposal | 위와 같음 |
-| 해외현지법인 명세서 | overseas subsidiary statement | 국조법 제58조 영문 'data on overseas subsidiaries'. 서식명의 공식 영문 없음 — 법제처 영문법령은 별지 서식을 싣지 않음(2026-11-15) |
+| 해외현지법인 명세서 | overseas subsidiary statement | 국조법 제58조 영문 'data on overseas subsidiaries' 확인, 서식명 영문은 미확인 — 확인 필요 |
 | 통고처분 벌금상당액 | notice of disposition fine equivalent | 법제처 영문법령 확인(2026-11-14): 조세범 처벌절차법 제15조 영문 'Disposition of Notification' |
 | 명의신탁재산 증여의제 | deemed gift of nominee-held property | 법제처 영문법령 확인(2026-11-14): 상증법 제45조의2 영문 'Legal fiction of property registered in name of another person as donation' |
 | 양도소득 부당행위계산 | capital gains wrongful calculation | 소득세법 제101조 |
 | 계산 도구 찾기 | find the right tool |  |
+| 지방소득세 | local income tax | 법제처 영문법령 확인(2026-11-15): 법인세법·소득세법 영문 'local income tax' |
+| 세율 | tax rate | 법제처 영문법령 확인(2026-11-15): 각 세법 영문 'tax rate' |
+| 적용세율 | applicable tax rate | 법제처 영문법령 확인(2026-11-15): 소득세법·법인세법 시행령 영문 'applicable tax rate' |
+| 제한세율 | limited tax rate | 법제처 영문법령 확인(2026-11-15): 법인세법 영문 'limited tax rate pursuant to a tax treaty' |
+| 조세조약 | tax treaty | 법제처 영문법령 확인(2026-11-15): 법인세법·소득세법·국조법 영문 'tax treaty' |
+| 거주지국 | country of residence | 법제처 영문법령 확인(2026-11-15): 법인세법 제96조·국조법 영문 'country of residence' |
+| 국내원천소득 | domestic source income | 법제처 영문법령 확인(2026-11-15): 법인세법 제93조·소득세법 제119조 영문 |
+| 국외원천소득 | foreign source income | 법제처 영문법령 확인(2026-11-15): 법인세법 제57조 영문 |
+| 국내사업장 | domestic place of business | 법제처 영문법령 확인(2026-11-15): 법인세법·소득세법·부가가치세법 영문 |
+| 지급금액 | amount paid | 법제처 영문법령 확인(2026-11-15): 각 세법 영문 'amount paid' |
+| 지급이자 | interest paid | 법제처 영문법령 확인(2026-11-15): 국조법 제22조 영문 'interest paid' |
+| 초과차입금 | excessive borrowings | 법제처 영문법령 확인(2026-11-15): 국조법 제22조 제목 영문 'interest paid on excessive borrowings compared to amount of investment' |
+| 출자금액 | amount of investment | 법제처 영문법령 확인(2026-11-15): 국조법 제22조 제목 영문 'amount of investment' |
+| 외국법인세액 | amount of foreign corporate tax | 법제처 영문법령 확인(2026-11-15): 법인세법 제57조 영문 |
+| 공제한도 | deduction limit amount | 법제처 영문법령 확인(2026-11-15): 법인세법 제57조 영문 'deduction limit amount'(외국납부세액공제 한도). 다른 공제의 한도에도 같은 말로 씀 |
+| 수입배당금액 | amount of dividend income | 법제처 영문법령 확인(2026-11-15): 법인세법·시행령 영문 'amount of dividend income' |
+| 수입금액 | revenue amount | 법제처 영문법령 확인(2026-11-15): 법인세법·시행령 영문 'revenue amount' |
+| 각 사업연도 소득금액 | income for each business year | 법제처 영문법령 확인(2026-11-15): 법인세법 영문 'income for each business year' |
+| 과세대상소득금액 | taxable income | 법제처 영문법령 확인(2026-11-15): 법인세법 제96조제2항 영문 'amount of taxable income'(외국법인 국내사업장 과세특례) |
+| 소득처분 | disposal of income | 법제처 영문법령 확인(2026-11-15): 법인세법 제67조 영문 'Disposal of income' |
+| 정상가격 | arm's length price | 법제처 영문법령 확인(2026-11-15): 국조법 영문 'arm's length price' |
+| 취득가액 | acquisition value | 법제처 영문법령 확인(2026-11-15): 소득세법·법인세법 영문 'acquisition value' |
+| 양도가액 | transfer value | 법제처 영문법령 확인(2026-11-15): 소득세법·법인세법 영문 'transfer value' |
+| 양도차익 | gains on transfer | 법제처 영문법령 확인(2026-11-15): 소득세법·법인세법 영문 'gains on transfer'(일부 조문은 'transfer margin') |
+| 양도비용 | transfer expenses | 법제처 영문법령 확인(2026-11-15): 소득세법·법인세법 영문 'transfer expenses' |
+| 필요경비 | necessary expenses | 법제처 영문법령 확인(2026-11-15): 소득세법 영문 'necessary expenses' |
+| 기본공제 | basic deduction | 법제처 영문법령 확인(2026-11-15): 소득세법 영문 'basic deduction' |
+| 종합소득금액 | amount of global income | 법제처 영문법령 확인(2026-11-15): 소득세법 영문 'amount of global income' |
+| 근로소득금액 | amount of wage and salary income | 법제처 영문법령 확인(2026-11-15): 소득세법 제20조 영문 'amount of wage and salary income' |
+| 근로소득공제 | wage and salary income deduction | 법제처 영문법령 확인(2026-11-15): 소득세법 제47조 관련 부칙 영문 'Wage and Salary Income Deduction' |
+| 근로소득세액공제 | tax credit for wage and salary income | 법제처 영문법령 확인(2026-11-15): 소득세법 제59조 관련 영문 'Tax Credit for Wage and Salary Income' |
+| 총급여 | total salary | 법제처 영문법령 확인(2026-11-15): 위 '근로소득 총급여액' 행과 같은 말(소득세법 시행령·조특법 영문 'total salary') |
+| 감면세액 | amount of tax reduced or exempted | 법제처 영문법령 확인(2026-11-15): 조특법·소득세법 영문 'amount of tax reduced or exempted' |
+| 감면율 | reduction rate | 법제처 영문법령 확인(2026-11-15): 조특법 영문 'reduction rate' |
+| 납세의무 | tax liability | 법제처 영문법령 확인(2026-11-15): 국세기본법 영문 'tax liability' |
+| 외국인근로자 | foreign worker | 법제처 영문법령 확인(2026-11-15): 조특법 제18조의2 영문 'foreign worker' |
+| 월수 | number of months | 법제처 영문법령 확인(2026-11-15): 법인세법·소득세법 영문 'number of months' |
+| 일수 | number of days | 법제처 영문법령 확인(2026-11-15): 법인세법·시행령 영문 'number of days' |
+| 합계 | total | 일반 회계·통계 용어 |
+| 차이 | difference | 일반 회계·통계 용어 |
+| 최솟값 | minimum | 일반 회계·통계 용어 |
+| 최댓값 | maximum | 일반 회계·통계 용어 |
+| 중위값 | median | 일반 회계·통계 용어 |
+| 평균값 | mean | 일반 회계·통계 용어 |
+| 제1사분위 | first quartile | 일반 회계·통계 용어 |
+| 제3사분위 | third quartile | 일반 회계·통계 용어 |
+| 하한 | lower limit | 일반 회계·통계 용어 |
+| 상한 | upper limit | 일반 회계·통계 용어 |
+| 범위 | range | 일반 회계·통계 용어 |
+| 국가 | country | 일반 회계·통계 용어 |
+| 원가 | cost | 일반 회계·통계 용어 |
+| 한도 | limit | 일반 회계·통계 용어 |
+| 한도초과액 | excess over limit | 일반 회계·통계 용어 |
+| 한도초과 | excess over limit | 일반 회계·통계 용어 |
+| 조정액 | adjustment amount | 일반 회계·통계 용어 |
+| 국내세율 | domestic tax rate | 일반 회계·통계 용어 |
+| 조약세율 | treaty tax rate | 일반 회계·통계 용어 |
+| 총차입금 | total borrowings | 일반 회계·통계 용어 |
+| 지점세 | branch profits tax | 법인세법 제96조 영문 제목은 'Special provisions on taxation on domestic place of business of foreign corporation' — 'branch tax' 표현 없음, 확인 필요 |
+| 결정세액 | determined tax amount | 영문법령에서 같은 표현을 찾지 못함 — 확인 필요 |
+| 자본금상당액 | amount equivalent to capital | 법인세법 제96조 영문 대조 못함 — 확인 필요 |
+| 직접외국납부세액 | direct foreign tax paid | 법인세법 제57조 영문은 'amount of foreign corporate tax'만 확인 — 확인 필요 |
+| 간접외국납부세액 | indirect foreign tax paid | 법인세법 제57조제4항 영문 대조 못함 — 확인 필요 |
+| 간주외국납부세액 | deemed foreign tax paid | 법인세법 제57조제3항 영문 대조 못함 — 확인 필요 |
+| 단일세율 | flat tax rate | 조특법 제18조의2 영문은 'multiplying the relevant earned income by 19/100' — 용어로 쓴 표현 없음, 확인 필요 |
