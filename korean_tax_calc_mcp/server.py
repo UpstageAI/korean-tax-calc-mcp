@@ -199,6 +199,7 @@ mcp = MCPServer(
     "korean-tax-calc-mcp", title="Korea Tax Calculator (한국 세금 계산)", version=_SERVER_VERSION,
     instructions="도구가 많으므로 맞는 도구 이름을 모르면 먼저 find_tool(query=평소 말)로 찾고, '도구가 없다'고 판단하기 전에도 find_tool을 부를 것. "
                  "답에 들어가는 금액과 판단마다 직접 계산하기 전에 맞는 도구가 있는지 먼저 확인하고, 도구가 있는 항목은 직접 계산보다 먼저 도구를 부를 것. 질문의 자료를 도구 입력으로 옮겨 계산하고, 도구 없이 답을 끝내지 않는다. "
+                 "이 서버는 주어진 사실과 세율로 금액을 계산한다. 요건·소득 구분·적용 세율·조약 적용 같은 판단의 출발점은 짝 서버 korean-tax-mcp의 요건 안내 도구(이름이 _guide로 끝남 — 예: 외국에 지급하는 사용료는 royalty_withholding_guide)이고, 거기서 따질 요건과 확인할 사실을 받은 뒤 이 서버로 금액을 구한다. 메모·의견서(Word)는 korean-tax-mcp의 tax_memo_guide·build_tax_memo, 계산 근거 엑셀은 이 서버의 export_workbook(영문 표기는 lang=\"en\"). "
                  "귀속·공급시기·성립시기 판단은 korean-tax-mcp의 timing_rules를 먼저 본다. "
                  "세액공제·세액감면처럼 요건과 과세연도에 따라 적용 여부가 갈리는 제도는 계산하기 전에 korean-tax-mcp로 그 과세연도의 요건을 먼저 확인한다"
                  "(연구·인력개발비는 rnd_credit_requirements_guide, 고용증대·통합고용은 employment_credit_requirements_guide, 중소기업 조세지원은 sme_tax_incentives_guide, 그 밖은 law_article에 as_of=과세연도 말). 계산 도구는 요건을 갖춘 금액을 받아 계산만 하고 요건은 판정하지 않는다 — 사용자에게도 이 점을 알린다. "
@@ -2497,15 +2498,20 @@ def nonresident_withholding(income_kind: Annotated[Literal["이자", "배당", "
                             amount: WON,
                             recipient_type: Annotated[Literal["개인", "법인"], Field(description="수취인 구분 — 개인(비거주자) / 법인(외국법인)")],
                             residence_country: Annotated[str, Field(description="거주지국(ISO 2자 코드 또는 국명)")],
-                            treaty_rate: Annotated[float | None, Field(description="조세조약 제한세율(소수, 예: 0.15 = 15%). 생략 시 국내세율 적용")] = None,
+                            treaty_rate: Annotated[float | None, Field(description="조세조약 제한세율(소수, 예: 0.15 = 15%) — korean-tax-mcp treaty_withholding_rates로 확인한 값. 생략 시 국내세율로 계산하고 쟁점에 제한세율 확인 안내")] = None,
                             bond_interest: Annotated[bool, Field(description="채권 이자 여부 — 이자 소득에서만 의미, 특례 적용 필요 시 별도 확인")] = False,
                             related_party: Annotated[bool, Field(description="수취인이 국외지배주주일 가능성 — 이자 소득에서 과소자본 쟁점 표시 시 사용")] = False,
-                            treaty_includes_local_tax: Annotated[bool | None, Field(description="조세조약 대상조세(제2조)에 한국 지방소득세(주민세)가 포함되는지. 생략 시 내장 표(일본·중국·독일·영국·프랑스·싱가포르·네덜란드·캐나다·호주·베트남 포함, 미국 미포함), 표에 없으면 미포함으로 계산하고 확인 표시")] = None,
+                            treaty_includes_local_tax: Annotated[bool | None, Field(description="조세조약의 대상조세 조문에 한국 지방소득세(주민세)가 포함되는지(조문 번호는 조약마다 다름 — 한미 조약은 제1조). 생략 시 내장 표(일본·중국·독일·영국·프랑스·싱가포르·네덜란드·캐나다·호주·베트남 포함, 미국 미포함), 표에 없으면 미포함으로 계산하고 확인 표시")] = None,
                             service_location: Annotated[Literal["국내", "국외"] | None, Field(description="인적용역 제공 장소 — 인적용역 소득에서만 의미, '국내'면 20%, '국외'면 국내원천소득 아님(0%), None이면 현행(20%+쟁점)")] = None,
-                            year: Annotated[int | None, Field(description="지급 연도(2016~2026) — 세율은 같고 근거 조문의 호만 달라짐: 2018년까지 이자·배당·사용료·기타는 제1항제3호, 인적용역은 제2호. 생략하면 현행 호")] = None) -> dict:
-    """Nonresident withholding tax on Korean-source income of nonresidents and foreign corporations (비거주자 원천징수).
-    비거주자·외국법인 국내원천소득 원천징수(소득세법 제156조 / 법인세법 제98조). 언제: 비거주자·외국법인에 이자·배당·사용료·인적용역·기타 소득을 지급할 때 원천징수세액을 구한다.
-입력: 소득 종류(이자·배당·사용료·인적용역·기타) → income_kind, 지급액(원) → amount, 수취인 구분(개인/법인) → recipient_type, 거주지국(ISO 2자 또는 국명) → residence_country, 조세조약 제한세율(소수) → treaty_rate, 채권 이자 여부 → bond_interest, 국외지배주주 가능성 → related_party, 조약 대상조세의 지방소득세 포함 여부 → treaty_includes_local_tax, 인적용역 제공 장소 → service_location, 지급 연도 → year.
+                            year: Annotated[int | None, Field(description="지급 연도(2016~2026) — 세율은 같고 근거 조문의 호만 달라짐: 2018년까지 이자·배당·사용료·기타는 제1항제3호, 인적용역은 제2호. 생략하면 현행 호")] = None,
+                            net_of_tax: Annotated[bool, Field(description="순액(세금부담) 약정 — true면 amount를 '국내 세법에 의한 제세를 공제한 금액'으로 약정한 순액으로 보고 과세표준 = 약정액 ÷ (1 − 원천징수세율)로 역산(법인세법 기본통칙 98-0…2)")] = False,
+                            payer_bears_local_tax: Annotated[bool, Field(description="순액 약정에서 지급자가 지방소득세까지 부담 — true면 세율에 지방소득세분(국세분의 10%)을 더해 역산(유추 — 국이22601-403 요지에서 추론). true면 net_of_tax도 true로 봄")] = False,
+                            treaty_covered_taxes_article: Annotated[str | None, Field(description="근거 문구에 쓸 조약 대상조세 조문 번호(예: '제2조') — 조문 MCP tax_treaty로 확인한 값. 생략하면 확인된 나라(미국 제1조)만 번호를 쓰고 그 밖은 번호 없이 표기")] = None) -> dict:
+    """Nonresident withholding tax on Korean-source income of nonresidents and foreign corporations, with net-of-tax gross-up; amounts only, so check characterization and treaty eligibility first with korean-tax-mcp royalty_withholding_guide, treaty_withholding_rates and tax_treaty (비거주자 원천징수).
+    비거주자·외국법인 국내원천소득 원천징수(소득세법 제156조 / 법인세법 제98조). 요건·소득구분·조약 적용 판단은 korean-tax-mcp royalty_withholding_guide(사용료)·treaty_withholding_rates·tax_treaty로 먼저 확인 — 이 도구는 주어진 세율·사실로 금액만 계산. 언제: 비거주자·외국법인에 이자·배당·사용료·인적용역·기타 소득을 지급할 때 원천징수세액을 구할 때, 세금 공제 후 금액을 지급하는 순액 약정의 과세표준을 역산할 때.
+입력: 소득 종류(이자·배당·사용료·인적용역·기타) → income_kind, 지급액(원) → amount, 수취인 구분(개인/법인) → recipient_type, 거주지국(ISO 2자 또는 국명) → residence_country, 조세조약 제한세율(소수) → treaty_rate, 채권 이자 여부 → bond_interest, 국외지배주주 가능성 → related_party, 조약 대상조세의 지방소득세 포함 여부 → treaty_includes_local_tax, 인적용역 제공 장소 → service_location, 지급 연도 → year, 순액 약정 여부 → net_of_tax, 지방소득세까지 지급자 부담 → payer_bears_local_tax, 조약 대상조세 조문 번호 → treaty_covered_taxes_article.
+순액 약정: net_of_tax=true면 과세표준 = 약정 순액 ÷ (1 − 원천징수세율)(법인세법 기본통칙 98-0…2). 예: 순액 1억 원·15% → 과세표준 117,647,058원. payer_bears_local_tax=true면 세율에 지방소득세분을 더함(15% → 16.5%, 과세표준 119,760,479원 — 유추). 과세표준은 원 미만 버림, 세액은 마지막에만 절사.
+쟁점: 첫 줄은 조문 MCP 안내, 이어서 금액을 바꾸는 사실을 한 줄씩(사용료: 국내 미등록 특허, 소득 구분·세율, 조약 적용 절차, 납부·신고 기한, 정상가격, 다른 세목, 순액 약정). treaty_rate가 없으면 국내세율로 계산하고 제한세율 상한은 korean-tax-mcp treaty_withholding_rates로 확인하라고 안내.
 연도: 국내세율(20%, 채권이자 14%)은 2016~2026 같음. 근거 호는 2018.12.31. 개정(2019.1.1. 시행)으로 바뀜 — 2018년까지 제1항제3호(이자·배당·사용료·기타)·제2호(인적용역), 2019년부터 제1호·제2호·제6호·제4호·제8호.
 결과: 원천징수세액·지방소득세·적용 세율·국내세율, 근거(개인 소득세법 제156조 / 법인 법인세법 제98조). 적용세율 = min(국내세율, 조약 제한세율), 지방소득세는 원천징수세액의 10% 별도.
   인적용역 service_location='국외' → 국내원천소득 아님(소득세법 제119조6호·법인세법 제93조6호), 적용세율 0.
@@ -2514,10 +2520,11 @@ def nonresident_withholding(income_kind: Annotated[Literal["이자", "배당", "
     _e = _range_err(("year", year))
     if _e: return _e
     r = I.nonresident_withholding(income_kind, amount, recipient_type, residence_country, treaty_rate, bond_interest, related_party,
-                                  treaty_includes_local_tax, service_location, year)
-    판단 = r.pop("판단", None)
-    extra = {"판단": 판단} if 판단 else {}
-    return _ok({k: v for k, v in r.items() if k != "쟁점"}, r["근거"], 쟁점=r["쟁점"], **extra)
+                                  treaty_includes_local_tax, service_location, year, net_of_tax, payer_bears_local_tax,
+                                  treaty_covered_taxes_article)
+    top = ("쟁점", "판단", "한계")      # 결과 밖 최상위로 내보내는 키
+    extra = {k: r[k] for k in top[1:] if r.get(k)}
+    return _ok({k: v for k, v in r.items() if k not in top}, r["근거"], 쟁점=r["쟁점"], **extra)
 
 
 @mcp.tool(annotations=CALC)
@@ -10317,7 +10324,8 @@ def export_workbook(
     company: Annotated[str, Field(description="법인명 또는 상호·성명(개인 세목) — 서식 머리에 표시, 기본 빈 문자열")] = "",
     period: Annotated[str, Field(description="사업연도 표기(예 '2025.01.01 ~ 2025.12.31', 기본 빈 문자열)")] = "",
     biz_no: Annotated[str, Field(description="사업자등록번호(서식 머리에 표시, 기본 빈 문자열)")] = "",
-    review_notes: Annotated[list | str | None, Field(description="검토·확인 필요 사항 [{항목, 내용}] 또는 문장 목록(선택) — 자료 불일치, 가정, 확인할 서류, 판단이 갈리는 쟁점을 적으면 맨 앞 '요약' 시트에 실림")] = None,
+    review_notes: Annotated[list | str | None, Field(description="검토·확인 필요 사항 [{항목, 내용}] 또는 문장 목록(선택) — 자료 불일치, 가정, 확인할 서류, 판단이 갈리는 쟁점을 적으면 맨 앞 '요약' 시트에 실림. lang='en'이면 영문으로 적는다")] = None,
+    lang: Annotated[Literal["ko", "en"], Field(description="표기 언어 — 'ko'(기본, 기존과 같음) 또는 'en'(English labels with the Korean original in parentheses, for foreign readers)")] = "ko",
 ) -> dict:
     """Excel export of calculation tool results as an .xlsx workbook (계산 결과 엑셀).
     계산 도구 결과를 엑셀(.xlsx)로 정리한다. 각 call은 서버가 직접 다시 실행하며, 결과·계산·세무조정·판단·산식을 탭으로 펼친다.
@@ -10332,6 +10340,12 @@ def export_workbook(
   period — 사업연도 표기(예 '2025.01.01 ~ 2025.12.31', 기본 '').
   biz_no — 사업자등록번호(서식 머리에 표시, 기본 '').
   review_notes — 검토·확인 필요 사항 [{항목, 내용}](선택). 맨 앞 '요약' 시트에 실림.
+  lang — 'ko'(기본: 기존 출력 그대로) 또는 'en'(English view for foreign readers such as head-office tax teams).
+    lang='en': 시트 이름·요약 시트 라벨·표 머리글·결과 키를 'English (국문)'으로 적는다(예: 'Tax base (과세표준)'). 번역표는 용어집
+    docs/glossary_ko_en.md이고, 용어집에 없는 국문 라벨은 그대로 두어 요약 시트의 'Untranslated labels (번역 없음)' 목록과 결과의
+    warnings에 모은다(번역을 지어내지 않음). 법정서식 틀 시트는 한국어 신고 서식이라 그대로 두고 요약 시트에 시트마다 한 줄 영문 안내를 붙인다.
+    도구가 돌려준 문장(판단 근거·주의·한계)은 번역하지 않고 'Notes (Korean original)' 칸에 한국어로 둔다. 숫자·수식·파일명 기본값은 같다.
+    With lang='en', write review_notes in English.
   '요약' 시트(layout='forms'): 세액 요약(소득금액 집계·산출세액 call이 있을 때), 세무조정 항목별 근거와 계산 시트, call별 주요 값, 검토·확인 필요 사항.
   시트 규칙: '계산 N'은 N번째 call(오류 call 포함, call마다 한 장). 같은 도구를 여러 번 부르면 신고서 한 부에 한 장인
     서식(별지3·15·34, 부가 별지19 등)은 마지막 call이 본 시트, 앞선 call은 '<시트> (호출 N)' 시트. 자산·거래·소득자마다 한 장인
@@ -10343,8 +10357,9 @@ def export_workbook(
   결과.시트 — 시트 이름 목록.
   결과.call_수 — calls 길이.
   결과.오류_call — 오류 발생한 call의 label 목록.
+  lang='en'일 때만: 결과.lang, 결과.번역_라벨_수, 결과.번역_없음(용어집에 없는 국문 라벨 목록), warnings(같은 내용을 한 줄로).
   근거 — '계산 도구 결과 정리(세무 자문 아님)'."""
-    return _export_workbook_impl(title, calls, output_dir, filename, layout, company, period, biz_no, review_notes)
+    return _export_workbook_impl(title, calls, output_dir, filename, layout, company, period, biz_no, review_notes, lang)
 
 
 # ── 국세 우선권에 따른 매각대금 배분(국세기본법 제35조·제36조) ──────────────────────

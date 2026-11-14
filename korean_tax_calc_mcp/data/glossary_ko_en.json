@@ -1,0 +1,1105 @@
+{
+ "source": "docs/glossary_ko_en.md",
+ "terms": [
+  {
+   "ko": "법인세",
+   "en": "corporate tax",
+   "note": "KLRI Corporate Tax Act. 검색용으로 줄에는 'corporate income tax'도 함께 씀"
+  },
+  {
+   "ko": "소득세",
+   "en": "income tax",
+   "note": "KLRI Income Tax Act"
+  },
+  {
+   "ko": "부가가치세",
+   "en": "VAT",
+   "note": "KLRI Value-Added Tax Act"
+  },
+  {
+   "ko": "과세표준",
+   "en": "tax base",
+   "note": "KLRI"
+  },
+  {
+   "ko": "산출세액",
+   "en": "calculated tax amount",
+   "note": "KLRI"
+  },
+  {
+   "ko": "세무조정",
+   "en": "tax adjustment",
+   "note": "실무 영문 관행"
+  },
+  {
+   "ko": "손금",
+   "en": "deductible expenses",
+   "note": "KLRI 법인세법"
+  },
+  {
+   "ko": "익금",
+   "en": "gross income",
+   "note": "KLRI 법인세법"
+  },
+  {
+   "ko": "손금산입",
+   "en": "inclusion in deductible expenses",
+   "note": "KLRI 표현 'included in deductible expenses'"
+  },
+  {
+   "ko": "손금불산입",
+   "en": "non-deductible",
+   "note": "KLRI 'not included in deductible expenses'; 줄에서는 'non-deductible'/'disallowance'"
+  },
+  {
+   "ko": "익금산입",
+   "en": "inclusion in gross income",
+   "note": "KLRI"
+  },
+  {
+   "ko": "익금불산입",
+   "en": "exclusion from gross income",
+   "note": "KLRI 'not included in gross income'"
+  },
+  {
+   "ko": "유보",
+   "en": "temporary difference (yubo)",
+   "note": "실무 영문 관행, 확인 필요"
+  },
+  {
+   "ko": "원천징수",
+   "en": "withholding tax",
+   "note": "KLRI 'withholding'"
+  },
+  {
+   "ko": "가산세",
+   "en": "penalty tax",
+   "note": "검색성 위해 penalty tax 채택. 법제처 영문법령 확인(2026-11-14): 소득세법·법인세법 영문은 'penalty tax', 국세기본법 제47조 영문은 'additional taxes' — 둘 다 공식 영문에 쓰임"
+  },
+  {
+   "ko": "세액공제",
+   "en": "tax credit",
+   "note": "KLRI"
+  },
+  {
+   "ko": "세액감면",
+   "en": "tax reduction",
+   "note": "KLRI 'tax reduction or exemption'"
+  },
+  {
+   "ko": "특수관계인",
+   "en": "related party",
+   "note": "KLRI 'person in a special relationship'/'specially related person'"
+  },
+  {
+   "ko": "사업연도",
+   "en": "business year",
+   "note": "KLRI 법인세법"
+  },
+  {
+   "ko": "과세기간",
+   "en": "taxable period",
+   "note": "KLRI"
+  },
+  {
+   "ko": "결손금",
+   "en": "loss",
+   "note": "KLRI는 'deficit'. 검색성 위해 loss 채택(이월결손금·소급공제와 통일)"
+  },
+  {
+   "ko": "대손금",
+   "en": "bad debts",
+   "note": "KLRI 법인세법 제19조의2"
+  },
+  {
+   "ko": "증여의제",
+   "en": "deemed gift",
+   "note": "검색성 위해 deemed gift 채택. 법제처 영문법령 확인(2026-11-14): 상증법 영문은 'deemed donation'·'legal fiction ... as donation'"
+  },
+  {
+   "ko": "특례기부금",
+   "en": "special donation",
+   "note": "법제처 영문법령 확인(2026-11-14): 법인세법 제24조 영문 'special donations'"
+  },
+  {
+   "ko": "일반기부금",
+   "en": "general donation",
+   "note": "법제처 영문법령 확인(2026-11-14): 법인세법 제24조 영문 'general donations'"
+  },
+  {
+   "ko": "법인세 산출세액",
+   "en": "corporate tax calculated tax amount",
+   "note": "법인세 + 산출세액 조합"
+  },
+  {
+   "ko": "외국납부세액공제",
+   "en": "foreign tax credit",
+   "note": "KLRI"
+  },
+  {
+   "ko": "기업업무추진비 한도",
+   "en": "entertainment expense limit",
+   "note": "검색성 위해 entertainment expense 유지(구 명칭 접대비의 영문). 법제처 영문법령 확인(2026-11-14): 2024 개정 후 법인세법 제25조 영문 'business promotion expenses'"
+  },
+  {
+   "ko": "기업업무추진비 세무조정",
+   "en": "entertainment expense tax adjustment",
+   "note": "위와 같음(법인세법 제25조 영문 'business promotion expenses')"
+  },
+  {
+   "ko": "가지급금 인정이자",
+   "en": "deemed interest on provisional payments",
+   "note": "법제처 영문법령 확인(2026-11-14): 법인세법 제28조제1항제4호나목 영문 'provisional payments'"
+  },
+  {
+   "ko": "정상가격 범위",
+   "en": "arm's length range",
+   "note": "KLRI 국조법 'arm's length price'"
+  },
+  {
+   "ko": "비교대상 기업 선정",
+   "en": "comparable company screening",
+   "note": "이전가격 실무 용어"
+  },
+  {
+   "ko": "국제거래명세서",
+   "en": "statement of international transactions",
+   "note": "국조칙 별지 서식명, 확인 필요"
+  },
+  {
+   "ko": "충당부채 세무조정",
+   "en": "provision tax adjustment",
+   "note": "충당부채 = provision"
+  },
+  {
+   "ko": "부당행위계산",
+   "en": "wrongful calculation",
+   "note": "KLRI 법인세법 제52조 'Denial of Wrongful Calculation'"
+  },
+  {
+   "ko": "이월결손금 공제 한도",
+   "en": "loss carryforward deduction limit",
+   "note": "KLRI 'deficits carried forward'; 검색성 위해 loss carryforward"
+  },
+  {
+   "ko": "이월결손금",
+   "en": "loss carryforward",
+   "note": "KLRI 'deficits carried forward'"
+  },
+  {
+   "ko": "연도별 세무조정",
+   "en": "multi-year tax adjustment",
+   "note": ""
+  },
+  {
+   "ko": "중소기업 해당 여부",
+   "en": "SME status",
+   "note": "중소기업 = small and medium enterprise(SME), KLRI"
+  },
+  {
+   "ko": "구분경리",
+   "en": "separate accounting",
+   "note": "KLRI 조특법 제143조"
+  },
+  {
+   "ko": "농어촌특별세",
+   "en": "special tax for rural development",
+   "note": "KLRI Act on Special Tax for Rural Development"
+  },
+  {
+   "ko": "통합고용세액공제",
+   "en": "integrated employment tax credit",
+   "note": "법제처 영문법령 확인(2026-11-14): 조특법 제29조의8 영문 'Integrated tax credit for employment'"
+  },
+  {
+   "ko": "고용증대 세액공제",
+   "en": "employment increase tax credit",
+   "note": "법제처 영문법령 확인(2026-11-14): 조특법 제29조의7 영문 'Tax credit for enterprises increasing jobs'"
+  },
+  {
+   "ko": "통합투자세액공제",
+   "en": "integrated investment tax credit",
+   "note": "법제처 영문법령 확인(2026-11-14): 조특법 제24조 영문 'Integrated investment tax credit'"
+  },
+  {
+   "ko": "연구·인력개발비 세액공제",
+   "en": "research and human resources development tax credit",
+   "note": "KLRI 조특법 제10조"
+  },
+  {
+   "ko": "창업중소기업 세액감면",
+   "en": "start-up SME tax reduction",
+   "note": "KLRI 'small and medium start-up enterprises'"
+  },
+  {
+   "ko": "중소기업 특별세액감면",
+   "en": "special tax reduction for SMEs",
+   "note": "KLRI 조특법 제7조"
+  },
+  {
+   "ko": "결손금 소급공제",
+   "en": "loss carryback",
+   "note": "KLRI 'carryback of deficits'"
+  },
+  {
+   "ko": "해외 자회사 청산",
+   "en": "foreign subsidiary liquidation",
+   "note": ""
+  },
+  {
+   "ko": "최저한세",
+   "en": "minimum tax",
+   "note": "KLRI 조특법 제132조"
+  },
+  {
+   "ko": "최저한세 조정",
+   "en": "minimum tax adjustment",
+   "note": ""
+  },
+  {
+   "ko": "과소신고가산세",
+   "en": "underreporting penalty tax",
+   "note": "KLRI 'additional tax for underreporting'"
+  },
+  {
+   "ko": "납부지연가산세",
+   "en": "late payment penalty tax",
+   "note": "KLRI 'additional tax for failure to pay'"
+  },
+  {
+   "ko": "원천징수 납부지연가산세",
+   "en": "withholding tax late payment penalty tax",
+   "note": "국기법 제47조의5"
+  },
+  {
+   "ko": "세금계산서 가산세",
+   "en": "tax invoice penalty tax",
+   "note": "세금계산서 = tax invoice, KLRI"
+  },
+  {
+   "ko": "부과제척기간",
+   "en": "assessment limitation period",
+   "note": "법제처 영문법령 확인(2026-11-14): 국세기본법 제26조의2 영문 'limitation period for imposition'"
+  },
+  {
+   "ko": "경정청구",
+   "en": "request for rectification",
+   "note": "KLRI 국기법 제45조의2"
+  },
+  {
+   "ko": "종합소득세",
+   "en": "global income tax",
+   "note": "KLRI 'global income'"
+  },
+  {
+   "ko": "원천징수세액",
+   "en": "withholding tax amount",
+   "note": ""
+  },
+  {
+   "ko": "비거주자 원천징수",
+   "en": "nonresident withholding tax",
+   "note": "비거주자 = nonresident, 외국법인 = foreign corporation, KLRI"
+  },
+  {
+   "ko": "퇴직소득세",
+   "en": "retirement income tax",
+   "note": "KLRI 'retirement income'"
+  },
+  {
+   "ko": "간주임대료",
+   "en": "deemed rent",
+   "note": "부가가치세법 시행령 제65조 영문(부동산 임대용역 공급가액 계산)에 'deemed rent' 표현 없음 — 확인 필요"
+  },
+  {
+   "ko": "매입세액 공제",
+   "en": "input tax deduction",
+   "note": "KLRI 'input tax'"
+  },
+  {
+   "ko": "부가가치세 과세표준 조정",
+   "en": "VAT tax base adjustments",
+   "note": ""
+  },
+  {
+   "ko": "간주공급",
+   "en": "deemed supply",
+   "note": "KLRI 부가법 제10조"
+  },
+  {
+   "ko": "업무무관 지급이자 손금불산입",
+   "en": "non-deductible interest on non-business assets",
+   "note": "법제처 영문법령 확인(2026-11-14): 법인세법 제28조 영문 'Non-inclusion of interest expenses in deductible expenses', 가지급금은 'with no connection to the business'"
+  },
+  {
+   "ko": "업무용승용차 관련비용",
+   "en": "business passenger car expenses",
+   "note": "KLRI 'passenger cars for business use'"
+  },
+  {
+   "ko": "기부금 한도",
+   "en": "donation limit",
+   "note": "KLRI 'donations'"
+  },
+  {
+   "ko": "고유목적사업준비금",
+   "en": "reserve for proper purpose business",
+   "note": "법제처 영문법령 확인(2026-11-14): 법인세법 제29조 영문 'reserve funds for proper purpose business'"
+  },
+  {
+   "ko": "대손충당금 한도",
+   "en": "bad debt allowance limit",
+   "note": "KLRI 'allowance for bad debts'"
+  },
+  {
+   "ko": "과소자본",
+   "en": "thin capitalization",
+   "note": "국조법 제22조"
+  },
+  {
+   "ko": "적격증빙 미수취",
+   "en": "missing qualified receipts",
+   "note": "검색성 위해 qualified receipts 채택. 법제처 영문법령 확인(2026-11-14): 법인세법 제116조 영문 'evidentiary documents of expenditures'"
+  },
+  {
+   "ko": "의제매입세액공제",
+   "en": "deemed input tax credit",
+   "note": "KLRI 부가법 제42조"
+  },
+  {
+   "ko": "공통매입세액 안분",
+   "en": "common input tax allocation",
+   "note": "KLRI 'common input tax'"
+  },
+  {
+   "ko": "간이과세자 납부세액",
+   "en": "simplified taxpayer VAT payable",
+   "note": "간이과세자 = simplified taxpayer, KLRI"
+  },
+  {
+   "ko": "신용카드매출전표 등 발행세액공제",
+   "en": "credit card sales tax credit",
+   "note": "법제처 영문법령 확인(2026-11-14): 부가가치세법 제46조 영문 'Tax Deductions Subsequent to Use of Credit Cards', 'credit card sales slip'"
+  },
+  {
+   "ko": "대손세액공제",
+   "en": "bad debt tax credit",
+   "note": "KLRI 부가법 제45조"
+  },
+  {
+   "ko": "공급시기",
+   "en": "time of supply",
+   "note": "KLRI 부가법 제15조·제16조"
+  },
+  {
+   "ko": "근로소득세",
+   "en": "earned income tax",
+   "note": "근로소득 = earned income, KLRI"
+  },
+  {
+   "ko": "일용근로자 원천징수",
+   "en": "daily worker withholding tax",
+   "note": "KLRI 'daily workers'"
+  },
+  {
+   "ko": "소득처분 상여 재정산",
+   "en": "deemed bonus year-end resettlement",
+   "note": "법제처 영문법령 확인(2026-11-14): 법인세법 제67조 영문 'Disposal of income', 'disposed of as bonus'"
+  },
+  {
+   "ko": "근로소득 총급여액",
+   "en": "earned income total salary",
+   "note": "법제처 영문법령 확인(2026-11-14): 소득세법 제20조 영문 'Wage and Salary Income', 시행령 'total salary'"
+  },
+  {
+   "ko": "특수관계 판정",
+   "en": "related party test",
+   "note": ""
+  },
+  {
+   "ko": "친족관계",
+   "en": "kinship",
+   "note": "KLRI 'relatives by blood or marriage'"
+  },
+  {
+   "ko": "간접 보유비율",
+   "en": "indirect ownership ratio",
+   "note": ""
+  },
+  {
+   "ko": "지배주주 판정",
+   "en": "controlling shareholder test",
+   "note": "상증령 제34조의3"
+  },
+  {
+   "ko": "일감몰아주기 증여의제이익",
+   "en": "deemed gift profit from intra-group business transfer",
+   "note": "법제처 영문법령 확인(2026-11-14): 상증법 제45조의3 영문 'Legal fiction of profit from transaction with specially related corporation as donation'"
+  },
+  {
+   "ko": "특수관계인 범위 조문",
+   "en": "related party provision location",
+   "note": ""
+  },
+  {
+   "ko": "관계표 추출",
+   "en": "relationship table extraction",
+   "note": ""
+  },
+  {
+   "ko": "일감몰아주기 PDF 검토",
+   "en": "intra-group business transfer PDF review",
+   "note": "위 행에서 파생한 이름"
+  },
+  {
+   "ko": "신고서 사전검토",
+   "en": "tax return precheck",
+   "note": ""
+  },
+  {
+   "ko": "사전검토 입력스키마",
+   "en": "precheck input schema",
+   "note": ""
+  },
+  {
+   "ko": "법인세 신고서 PDF 사전검토",
+   "en": "corporate tax return PDF precheck",
+   "note": ""
+  },
+  {
+   "ko": "대손금 세무조정",
+   "en": "bad debt tax adjustment",
+   "note": "KLRI 'bad debts'"
+  },
+  {
+   "ko": "의제배당",
+   "en": "deemed dividend",
+   "note": "KLRI 법인세법 제16조"
+  },
+  {
+   "ko": "금융소득 종합과세",
+   "en": "financial income global taxation",
+   "note": "법제처 영문법령 확인(2026-11-14): 소득세법 영문 'global taxation of financial income'"
+  },
+  {
+   "ko": "배당세액공제",
+   "en": "dividend tax credit",
+   "note": "KLRI 소득세법 제56조"
+  },
+  {
+   "ko": "기타소득",
+   "en": "other income",
+   "note": "KLRI 소득세법 제21조"
+  },
+  {
+   "ko": "종교인소득",
+   "en": "religious worker income",
+   "note": "법제처 영문법령 확인(2026-11-14): 소득세법 제21조제1항제26호 영문 'religious person's income'"
+  },
+  {
+   "ko": "간이과세자 확정신고",
+   "en": "simplified taxpayer final VAT return",
+   "note": "확정신고 = final return"
+  },
+  {
+   "ko": "일반과세자 부가가치세 신고서",
+   "en": "general taxpayer VAT return",
+   "note": "일반과세자 = general taxpayer"
+  },
+  {
+   "ko": "외화 과세표준 환산",
+   "en": "foreign currency tax base conversion",
+   "note": ""
+  },
+  {
+   "ko": "대리납부",
+   "en": "payment by proxy",
+   "note": "KLRI 부가법 제52조; 검색용으로 줄에 'reverse charge' 병기"
+  },
+  {
+   "ko": "공통매입세액 정산",
+   "en": "common input tax settlement",
+   "note": ""
+  },
+  {
+   "ko": "공통매입세액 재계산",
+   "en": "common input tax recalculation",
+   "note": "부가법 제41조"
+  },
+  {
+   "ko": "일괄공급 안분",
+   "en": "bundled supply allocation",
+   "note": "토지·건물 일괄공급"
+  },
+  {
+   "ko": "감가상각 시부인",
+   "en": "depreciation adjustment",
+   "note": "시부인 = 상각범위액 대비 손금 인정·부인"
+  },
+  {
+   "ko": "퇴직급여충당금",
+   "en": "retirement allowance reserve",
+   "note": "KLRI 'reserve for retirement allowances'"
+  },
+  {
+   "ko": "양도소득금액",
+   "en": "capital gains income amount",
+   "note": "법제처 영문법령 확인(2026-11-14): 소득세법 제94조 영문 'capital gains'(국세기본법 일부 영문은 'transfer income')"
+  },
+  {
+   "ko": "양도소득세",
+   "en": "capital gains tax",
+   "note": "법제처 영문법령 확인(2026-11-14): 소득세법·조특법 영문 'capital gains tax'"
+  },
+  {
+   "ko": "상속세",
+   "en": "inheritance tax",
+   "note": "KLRI Inheritance Tax and Gift Tax Act"
+  },
+  {
+   "ko": "증여세",
+   "en": "gift tax",
+   "note": "KLRI"
+  },
+  {
+   "ko": "연금계좌 연금수령한도",
+   "en": "pension account withdrawal limit",
+   "note": "KLRI 'pension account'"
+  },
+  {
+   "ko": "상속·증여재산 평가",
+   "en": "inherited and gifted property valuation",
+   "note": "KLRI 상증법 제60조 'valuation of property'"
+  },
+  {
+   "ko": "수입배당금 익금불산입",
+   "en": "dividends received exclusion from gross income",
+   "note": "수입배당금 = dividends received"
+  },
+  {
+   "ko": "특별세액공제",
+   "en": "special tax credit",
+   "note": "KLRI 소득세법 제59조의4"
+  },
+  {
+   "ko": "인적공제",
+   "en": "personal deduction",
+   "note": "KLRI 'personal deductions'"
+  },
+  {
+   "ko": "자녀세액공제",
+   "en": "child tax credit",
+   "note": "KLRI 소득세법 제59조의2"
+  },
+  {
+   "ko": "연금소득금액",
+   "en": "pension income amount",
+   "note": "KLRI 'pension income'"
+  },
+  {
+   "ko": "주택 간주임대료",
+   "en": "housing deemed rent",
+   "note": ""
+  },
+  {
+   "ko": "주택임대소득",
+   "en": "housing rental income",
+   "note": ""
+  },
+  {
+   "ko": "결손금 공제",
+   "en": "loss offset",
+   "note": ""
+  },
+  {
+   "ko": "재해손실세액공제",
+   "en": "disaster loss tax credit",
+   "note": "KLRI 'credit for loss from disaster'"
+  },
+  {
+   "ko": "일시상각충당금·압축기장충당금",
+   "en": "temporary depreciation reserve and compression reserve",
+   "note": "소득세법 시행령 영문 'temporary depreciation reserve' 확인, 압축기장충당금 영문은 미확인 — 확인 필요"
+  },
+  {
+   "ko": "재고자산 평가",
+   "en": "inventory valuation",
+   "note": "KLRI 'inventories'"
+  },
+  {
+   "ko": "임대보증금 간주익금",
+   "en": "deemed gross income from rental deposits",
+   "note": "조특법 제138조"
+  },
+  {
+   "ko": "추계 사업소득금액",
+   "en": "estimated business income",
+   "note": "추계 = estimation, KLRI 'estimation'"
+  },
+  {
+   "ko": "면세전용 간주공급",
+   "en": "deemed supply on conversion to exempt use",
+   "note": ""
+  },
+  {
+   "ko": "청산소득금액",
+   "en": "liquidation income",
+   "note": "KLRI 법인세법 제79조"
+  },
+  {
+   "ko": "차가감소득금액",
+   "en": "adjusted taxable income",
+   "note": "서식 '과세표준 및 세액조정계산서' 칸명, 확인 필요"
+  },
+  {
+   "ko": "계산 결과 엑셀",
+   "en": "Excel export",
+   "note": ""
+  },
+  {
+   "ko": "국세 우선권",
+   "en": "priority of national taxes",
+   "note": "KLRI 국기법 제35조"
+  },
+  {
+   "ko": "대주주 판정",
+   "en": "major shareholder test",
+   "note": "KLRI 'major shareholder'"
+  },
+  {
+   "ko": "주식 양도소득세",
+   "en": "stock capital gains tax",
+   "note": "양도소득 항목 참고"
+  },
+  {
+   "ko": "상장주식 시세",
+   "en": "listed stock price",
+   "note": ""
+  },
+  {
+   "ko": "비상장주식 평가",
+   "en": "unlisted stock valuation",
+   "note": "상증법 보충적 평가"
+  },
+  {
+   "ko": "비상장주식 기준시가",
+   "en": "unlisted stock standard market price",
+   "note": "기준시가 = standard market price, KLRI 소득세법 제99조"
+  },
+  {
+   "ko": "공시가격",
+   "en": "officially announced price",
+   "note": "개별공시지가 = individually announced land price, 확인 필요"
+  },
+  {
+   "ko": "건물 기준시가",
+   "en": "building standard market price",
+   "note": "KLRI 'standard market price'"
+  },
+  {
+   "ko": "개인사업자 기부금 필요경비",
+   "en": "donation necessary expenses for sole proprietors",
+   "note": "필요경비 = necessary expenses, KLRI"
+  },
+  {
+   "ko": "외국자회사 수입배당금",
+   "en": "foreign subsidiary dividends received",
+   "note": "법인세법 제18조의4"
+  },
+  {
+   "ko": "원천징수이행상황신고서",
+   "en": "withholding tax status return",
+   "note": "확인 필요"
+  },
+  {
+   "ko": "해외 파견 인건비",
+   "en": "expatriate cost recharge",
+   "note": ""
+  },
+  {
+   "ko": "외부감사·외부세무조정 의무",
+   "en": "external audit and external tax adjustment obligations",
+   "note": ""
+  },
+  {
+   "ko": "해외직접투자 외국환 신고",
+   "en": "overseas direct investment foreign exchange reporting",
+   "note": "외국환거래법"
+  },
+  {
+   "ko": "거주자 외국납부세액공제",
+   "en": "individual foreign tax credit",
+   "note": "거주자 = resident, KLRI"
+  },
+  {
+   "ko": "해외금융계좌 신고",
+   "en": "overseas financial account reporting",
+   "note": "국조법 제53조"
+  },
+  {
+   "ko": "특정외국법인 배당간주",
+   "en": "CFC deemed dividend",
+   "note": "특정외국법인: KLRI 'specified foreign corporation', 국제 용어 CFC 채택"
+  },
+  {
+   "ko": "특정외국법인 실제 배당",
+   "en": "CFC actual dividend",
+   "note": "위와 같음"
+  },
+  {
+   "ko": "특정외국법인 주식 양도",
+   "en": "CFC share disposal",
+   "note": "위와 같음"
+  },
+  {
+   "ko": "해외현지법인 명세서",
+   "en": "overseas subsidiary statement",
+   "note": "국조법 제58조 영문 'data on overseas subsidiaries' 확인, 서식명 영문은 미확인 — 확인 필요"
+  },
+  {
+   "ko": "통고처분 벌금상당액",
+   "en": "notice of disposition fine equivalent",
+   "note": "법제처 영문법령 확인(2026-11-14): 조세범 처벌절차법 제15조 영문 'Disposition of Notification'"
+  },
+  {
+   "ko": "명의신탁재산 증여의제",
+   "en": "deemed gift of nominee-held property",
+   "note": "법제처 영문법령 확인(2026-11-14): 상증법 제45조의2 영문 'Legal fiction of property registered in name of another person as donation'"
+  },
+  {
+   "ko": "양도소득 부당행위계산",
+   "en": "capital gains wrongful calculation",
+   "note": "소득세법 제101조"
+  },
+  {
+   "ko": "계산 도구 찾기",
+   "en": "find the right tool",
+   "note": ""
+  },
+  {
+   "ko": "지방소득세",
+   "en": "local income tax",
+   "note": "법제처 영문법령 확인(2026-11-15): 법인세법·소득세법 영문 'local income tax'"
+  },
+  {
+   "ko": "세율",
+   "en": "tax rate",
+   "note": "법제처 영문법령 확인(2026-11-15): 각 세법 영문 'tax rate'"
+  },
+  {
+   "ko": "적용세율",
+   "en": "applicable tax rate",
+   "note": "법제처 영문법령 확인(2026-11-15): 소득세법·법인세법 시행령 영문 'applicable tax rate'"
+  },
+  {
+   "ko": "제한세율",
+   "en": "limited tax rate",
+   "note": "법제처 영문법령 확인(2026-11-15): 법인세법 영문 'limited tax rate pursuant to a tax treaty'"
+  },
+  {
+   "ko": "조세조약",
+   "en": "tax treaty",
+   "note": "법제처 영문법령 확인(2026-11-15): 법인세법·소득세법·국조법 영문 'tax treaty'"
+  },
+  {
+   "ko": "거주지국",
+   "en": "country of residence",
+   "note": "법제처 영문법령 확인(2026-11-15): 법인세법 제96조·국조법 영문 'country of residence'"
+  },
+  {
+   "ko": "국내원천소득",
+   "en": "domestic source income",
+   "note": "법제처 영문법령 확인(2026-11-15): 법인세법 제93조·소득세법 제119조 영문"
+  },
+  {
+   "ko": "국외원천소득",
+   "en": "foreign source income",
+   "note": "법제처 영문법령 확인(2026-11-15): 법인세법 제57조 영문"
+  },
+  {
+   "ko": "국내사업장",
+   "en": "domestic place of business",
+   "note": "법제처 영문법령 확인(2026-11-15): 법인세법·소득세법·부가가치세법 영문"
+  },
+  {
+   "ko": "지급금액",
+   "en": "amount paid",
+   "note": "법제처 영문법령 확인(2026-11-15): 각 세법 영문 'amount paid'"
+  },
+  {
+   "ko": "지급이자",
+   "en": "interest paid",
+   "note": "법제처 영문법령 확인(2026-11-15): 국조법 제22조 영문 'interest paid'"
+  },
+  {
+   "ko": "초과차입금",
+   "en": "excessive borrowings",
+   "note": "법제처 영문법령 확인(2026-11-15): 국조법 제22조 제목 영문 'interest paid on excessive borrowings compared to amount of investment'"
+  },
+  {
+   "ko": "출자금액",
+   "en": "amount of investment",
+   "note": "법제처 영문법령 확인(2026-11-15): 국조법 제22조 제목 영문 'amount of investment'"
+  },
+  {
+   "ko": "외국법인세액",
+   "en": "amount of foreign corporate tax",
+   "note": "법제처 영문법령 확인(2026-11-15): 법인세법 제57조 영문"
+  },
+  {
+   "ko": "공제한도",
+   "en": "deduction limit amount",
+   "note": "법제처 영문법령 확인(2026-11-15): 법인세법 제57조 영문 'deduction limit amount'(외국납부세액공제 한도). 다른 공제의 한도에도 같은 말로 씀"
+  },
+  {
+   "ko": "수입배당금액",
+   "en": "amount of dividend income",
+   "note": "법제처 영문법령 확인(2026-11-15): 법인세법·시행령 영문 'amount of dividend income'"
+  },
+  {
+   "ko": "수입금액",
+   "en": "revenue amount",
+   "note": "법제처 영문법령 확인(2026-11-15): 법인세법·시행령 영문 'revenue amount'"
+  },
+  {
+   "ko": "각 사업연도 소득금액",
+   "en": "income for each business year",
+   "note": "법제처 영문법령 확인(2026-11-15): 법인세법 영문 'income for each business year'"
+  },
+  {
+   "ko": "과세대상소득금액",
+   "en": "taxable income",
+   "note": "법제처 영문법령 확인(2026-11-15): 법인세법 제96조제2항 영문 'amount of taxable income'(외국법인 국내사업장 과세특례)"
+  },
+  {
+   "ko": "소득처분",
+   "en": "disposal of income",
+   "note": "법제처 영문법령 확인(2026-11-15): 법인세법 제67조 영문 'Disposal of income'"
+  },
+  {
+   "ko": "정상가격",
+   "en": "arm's length price",
+   "note": "법제처 영문법령 확인(2026-11-15): 국조법 영문 'arm's length price'"
+  },
+  {
+   "ko": "취득가액",
+   "en": "acquisition value",
+   "note": "법제처 영문법령 확인(2026-11-15): 소득세법·법인세법 영문 'acquisition value'"
+  },
+  {
+   "ko": "양도가액",
+   "en": "transfer value",
+   "note": "법제처 영문법령 확인(2026-11-15): 소득세법·법인세법 영문 'transfer value'"
+  },
+  {
+   "ko": "양도차익",
+   "en": "gains on transfer",
+   "note": "법제처 영문법령 확인(2026-11-15): 소득세법·법인세법 영문 'gains on transfer'(일부 조문은 'transfer margin')"
+  },
+  {
+   "ko": "양도비용",
+   "en": "transfer expenses",
+   "note": "법제처 영문법령 확인(2026-11-15): 소득세법·법인세법 영문 'transfer expenses'"
+  },
+  {
+   "ko": "필요경비",
+   "en": "necessary expenses",
+   "note": "법제처 영문법령 확인(2026-11-15): 소득세법 영문 'necessary expenses'"
+  },
+  {
+   "ko": "기본공제",
+   "en": "basic deduction",
+   "note": "법제처 영문법령 확인(2026-11-15): 소득세법 영문 'basic deduction'"
+  },
+  {
+   "ko": "종합소득금액",
+   "en": "amount of global income",
+   "note": "법제처 영문법령 확인(2026-11-15): 소득세법 영문 'amount of global income'"
+  },
+  {
+   "ko": "근로소득금액",
+   "en": "amount of wage and salary income",
+   "note": "법제처 영문법령 확인(2026-11-15): 소득세법 제20조 영문 'amount of wage and salary income'"
+  },
+  {
+   "ko": "근로소득공제",
+   "en": "wage and salary income deduction",
+   "note": "법제처 영문법령 확인(2026-11-15): 소득세법 제47조 관련 부칙 영문 'Wage and Salary Income Deduction'"
+  },
+  {
+   "ko": "근로소득세액공제",
+   "en": "tax credit for wage and salary income",
+   "note": "법제처 영문법령 확인(2026-11-15): 소득세법 제59조 관련 영문 'Tax Credit for Wage and Salary Income'"
+  },
+  {
+   "ko": "총급여",
+   "en": "total salary",
+   "note": "법제처 영문법령 확인(2026-11-15): 위 '근로소득 총급여액' 행과 같은 말(소득세법 시행령·조특법 영문 'total salary')"
+  },
+  {
+   "ko": "감면세액",
+   "en": "amount of tax reduced or exempted",
+   "note": "법제처 영문법령 확인(2026-11-15): 조특법·소득세법 영문 'amount of tax reduced or exempted'"
+  },
+  {
+   "ko": "감면율",
+   "en": "reduction rate",
+   "note": "법제처 영문법령 확인(2026-11-15): 조특법 영문 'reduction rate'"
+  },
+  {
+   "ko": "납세의무",
+   "en": "tax liability",
+   "note": "법제처 영문법령 확인(2026-11-15): 국세기본법 영문 'tax liability'"
+  },
+  {
+   "ko": "외국인근로자",
+   "en": "foreign worker",
+   "note": "법제처 영문법령 확인(2026-11-15): 조특법 제18조의2 영문 'foreign worker'"
+  },
+  {
+   "ko": "월수",
+   "en": "number of months",
+   "note": "법제처 영문법령 확인(2026-11-15): 법인세법·소득세법 영문 'number of months'"
+  },
+  {
+   "ko": "일수",
+   "en": "number of days",
+   "note": "법제처 영문법령 확인(2026-11-15): 법인세법·시행령 영문 'number of days'"
+  },
+  {
+   "ko": "합계",
+   "en": "total",
+   "note": "일반 회계·통계 용어"
+  },
+  {
+   "ko": "차이",
+   "en": "difference",
+   "note": "일반 회계·통계 용어"
+  },
+  {
+   "ko": "최솟값",
+   "en": "minimum",
+   "note": "일반 회계·통계 용어"
+  },
+  {
+   "ko": "최댓값",
+   "en": "maximum",
+   "note": "일반 회계·통계 용어"
+  },
+  {
+   "ko": "중위값",
+   "en": "median",
+   "note": "일반 회계·통계 용어"
+  },
+  {
+   "ko": "평균값",
+   "en": "mean",
+   "note": "일반 회계·통계 용어"
+  },
+  {
+   "ko": "제1사분위",
+   "en": "first quartile",
+   "note": "일반 회계·통계 용어"
+  },
+  {
+   "ko": "제3사분위",
+   "en": "third quartile",
+   "note": "일반 회계·통계 용어"
+  },
+  {
+   "ko": "하한",
+   "en": "lower limit",
+   "note": "일반 회계·통계 용어"
+  },
+  {
+   "ko": "상한",
+   "en": "upper limit",
+   "note": "일반 회계·통계 용어"
+  },
+  {
+   "ko": "범위",
+   "en": "range",
+   "note": "일반 회계·통계 용어"
+  },
+  {
+   "ko": "국가",
+   "en": "country",
+   "note": "일반 회계·통계 용어"
+  },
+  {
+   "ko": "원가",
+   "en": "cost",
+   "note": "일반 회계·통계 용어"
+  },
+  {
+   "ko": "한도",
+   "en": "limit",
+   "note": "일반 회계·통계 용어"
+  },
+  {
+   "ko": "한도초과액",
+   "en": "excess over limit",
+   "note": "일반 회계·통계 용어"
+  },
+  {
+   "ko": "한도초과",
+   "en": "excess over limit",
+   "note": "일반 회계·통계 용어"
+  },
+  {
+   "ko": "조정액",
+   "en": "adjustment amount",
+   "note": "일반 회계·통계 용어"
+  },
+  {
+   "ko": "국내세율",
+   "en": "domestic tax rate",
+   "note": "일반 회계·통계 용어"
+  },
+  {
+   "ko": "조약세율",
+   "en": "treaty tax rate",
+   "note": "일반 회계·통계 용어"
+  },
+  {
+   "ko": "총차입금",
+   "en": "total borrowings",
+   "note": "일반 회계·통계 용어"
+  },
+  {
+   "ko": "지점세",
+   "en": "branch profits tax",
+   "note": "법인세법 제96조 영문 제목은 'Special provisions on taxation on domestic place of business of foreign corporation' — 'branch tax' 표현 없음, 확인 필요"
+  },
+  {
+   "ko": "결정세액",
+   "en": "determined tax amount",
+   "note": "영문법령에서 같은 표현을 찾지 못함 — 확인 필요"
+  },
+  {
+   "ko": "자본금상당액",
+   "en": "amount equivalent to capital",
+   "note": "법인세법 제96조 영문 대조 못함 — 확인 필요"
+  },
+  {
+   "ko": "직접외국납부세액",
+   "en": "direct foreign tax paid",
+   "note": "법인세법 제57조 영문은 'amount of foreign corporate tax'만 확인 — 확인 필요"
+  },
+  {
+   "ko": "간접외국납부세액",
+   "en": "indirect foreign tax paid",
+   "note": "법인세법 제57조제4항 영문 대조 못함 — 확인 필요"
+  },
+  {
+   "ko": "간주외국납부세액",
+   "en": "deemed foreign tax paid",
+   "note": "법인세법 제57조제3항 영문 대조 못함 — 확인 필요"
+  },
+  {
+   "ko": "단일세율",
+   "en": "flat tax rate",
+   "note": "조특법 제18조의2 영문은 'multiplying the relevant earned income by 19/100' — 용어로 쓴 표현 없음, 확인 필요"
+  }
+ ]
+}
