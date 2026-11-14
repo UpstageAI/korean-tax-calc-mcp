@@ -902,7 +902,7 @@ def tp_comparable_screen(tested_party: Annotated[dict, Field(description="분석
                          wca: Annotated[dict | None, Field(description="운전자본 조정(단순형) {rate: 이자율 소수, rate_basis: 금리 근거(필수)}")] = None,
                          multi_year_reason: Annotated[dict | None, Field(description="다년도 자료 사유 {code: 1 경기 변동|2 사업전략|3 그 밖의 합리적 사유(시행규칙 제9조), text}")] = None,
                          op_source: Annotated[Literal["reported", "recalc"], Field(description="거래순이익 — reported(보고 영업이익, 기본)·recalc(매출−매출원가−판관비)")] = "reported",
-                         fx: Annotated[dict | None, Field(description="통화별 환율 {'EUR': 1.08} — 통화가 섞였을 때 규모 기준용")] = None,
+                         fx: Annotated[dict | None, Field(description="통화별 환율 {'USD': 1, 'EUR': 1.08} — 통화가 섞였을 때 규모 기준용(size_min·size_max와 같은 통화로 환산, 기준 통화도 1로 넣음). 환율이 없는 통화의 회사는 규모 기준을 건너뜀")] = None,
                          sensitivity: Annotated[bool, Field(description="민감도 시나리오(독립성·손실기업·단년·운전자본·사분위 계산법·이상치) 계산")] = True) -> dict:
     """비교대상 기업 선정(스크리닝) — 유료 데이터베이스에서 내보낸 후보 목록에 선정 기준을 적용해 회사별 탈락 사유표, 최종 비교대상, 다년 가중평균 지표, 사분위 범위, 기준을 바꿨을 때의 민감도를 냄. 언제: 이전가격 거래순이익률방법에서 비교대상을 거르고 탐색 과정·탈락 사유를 개별기업보고서(Ⅱ-11·12·13·15)에 남길 때.
     입력: 후보 목록 → file_path 또는 rows, 분석대상 → tested_party, 분석 연도 → analysis_years, 사업연도 → tested_year, 기준 → screens, 사람 판단 → manual_decisions(사유 필수), 검색 기록 → search_log.

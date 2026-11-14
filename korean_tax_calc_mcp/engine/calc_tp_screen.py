@@ -121,8 +121,11 @@ def _wc_ratio(years_data, years):
 
 
 def _ratio_avg(years_data, years, field):
-    v = [years_data[y][field] / years_data[y]["revenue"] for y in years if years_data[y].get(field) is not None and years_data[y].get("revenue")]
-    return sum(v) / len(v) if v else None
+    """Σ항목 / Σ매출(지표의 가중평균과 같은 방식). 그 항목이 비어 있는 해는 분자·분모 모두 뺌."""
+    ys = [y for y in years if years_data[y].get(field) is not None and years_data[y].get("revenue")]
+    if not ys:
+        return None
+    return sum(years_data[y][field] for y in ys) / sum(years_data[y]["revenue"] for y in ys)
 
 
 def _basis(tested_year):
@@ -165,9 +168,14 @@ def _parse(rows, years):
             v = r.get(k)
             if v not in (None, "") and k not in c["meta"]:
                 c["meta"][k] = str(v).strip()
-        for k in ("max_shareholder_pct", "relevant_segment_share"):
-            if rec.get(k) is not None:
-                c["meta"][k] = rec[k]
+        if rec.get("max_shareholder_pct") is not None:          # 연도마다 다르면 가장 큰 값(어느 해든 특수관계 수준이면 걸리게)
+            c["meta"]["max_shareholder_pct"] = max(c["meta"].get("max_shareholder_pct", rec["max_shareholder_pct"]), rec["max_shareholder_pct"])
+        if rec.get("relevant_segment_share") is not None:       # 가장 작은 값
+            c["meta"]["relevant_segment_share"] = min(c["meta"].get("relevant_segment_share", rec["relevant_segment_share"]), rec["relevant_segment_share"])
+        for k in ("manual_decision", "manual_reason"):          # 사람 판단은 어느 행에 적혀 있어도 받되, 회사 안에서 서로 다르면 오류
+            v = str(r.get(k) or "").strip()
+            if v and c["meta"].get(k) and c["meta"][k] != v:
+                문제.append(f"{cid} — {k}가 행마다 다름({c['meta'][k]!r} / {v!r})")
     if not companies:
         문제.append("후보 행이 없음")
     for need in ("company_name", "country", "industry_code"):
@@ -210,7 +218,13 @@ def _screen_company(c, years, sc, tested, pli):
         elif sc.get("_mixed_currency") and not sc.get("fx"):
             out["S4"] = ("건너뜀", "통화가 섞였는데 환율(fx) 없음 — 규모를 비교하지 않음")
         else:
-            rate = Fraction(str((sc.get("fx") or {}).get(m.get("currency", ""), 1)))
+            cur = m.get("currency", "")
+            if sc.get("_mixed_currency") and cur not in (sc.get("fx") or {}):
+                out["S4"] = ("건너뜀", f"통화 {cur or '(없음)'}의 환율이 fx에 없음 — 규모를 비교하지 않음")
+                rate = None
+            else:
+                rate = Fraction(str((sc.get("fx") or {}).get(cur, 1)))
+        if have and out.get("S4") is None:
             ar = sum(yd[y]["revenue"] for y in have) / len(have) * rate
             lo, hi = sc["size_min"], sc["size_max"]
             ok = (lo is None or ar >= Fraction(str(lo))) and (hi is None or ar <= Fraction(str(hi)))
@@ -247,7 +261,7 @@ def _screen_company(c, years, sc, tested, pli):
         else:
             out["S10"] = ("통과", "") if seg >= Fraction(str(sc["segment_min"])) else ("탈락", f"해당 부문 비중 {float(seg) * 100:.0f}% < {sc['segment_min'] * 100:g}%")
     flag = (m.get("special_flag") or "").strip()
-    out["S11"] = ("탈락", f"특수 상황: {flag}") if flag and flag in sc["special_flags"] else ("통과", "")
+    out["S11"] = ("탈락", f"특수 상황: {flag}") if flag and flag.lower() in [f.lower() for f in sc["special_flags"]] else ("통과", "")
     return out
 
 
@@ -334,6 +348,8 @@ def comparable_screen(rows=None, file_path=None, column_map=None, tested_party=N
             sc[k] = v
     if sc["independence_pct"] is not None and (not isinstance(sc["independence_pct"], (int, float)) or sc["independence_pct"] > 50):
         문제.append(f"screens.independence_pct={sc['independence_pct']} — 50 이하(50% 이상 소유는 법정 특수관계, 법 제2조①3호·영 제2조②: 이보다 느슨하게 둘 수 없음)")
+    if sc["loss_years"] is not None and (not isinstance(sc["loss_years"], int) or isinstance(sc["loss_years"], bool) or sc["loss_years"] < 1):
+        문제.append(f"screens.loss_years={sc['loss_years']!r} — 1 이상의 정수(손실 연도 수), 끄려면 None")
     if wca is not None and (not isinstance(wca, dict) or not isinstance(wca.get("rate"), (int, float)) or not str(wca.get("rate_basis", "")).strip()):
         문제.append("wca — {rate: 이자율(소수), rate_basis: 금리 근거(예: 'USD 1년 SOFR + 스프레드')} — 근거 없는 금리로는 조정하지 않음")
     decisions = {}
@@ -351,6 +367,9 @@ def comparable_screen(rows=None, file_path=None, column_map=None, tested_party=N
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"후보 목록을 읽지 못함: {e}"]}
     p2, companies = _parse(raw, analysis_years)
     for cid, c in companies.items():
+        md = c["meta"].get("manual_decision")
+        if md and cid not in decisions and md.lower() not in ("accept", "reject"):
+            p2.append(f"{cid} — manual_decision={md!r}: accept 또는 reject")
         if c["meta"].get("manual_decision") and not c["meta"].get("manual_reason") and cid not in decisions:
             p2.append(f"{cid} — manual_decision은 있는데 manual_reason 없음(사유 없는 사람 판단은 반영하지 않음)")
     tested_years = tested_years or analysis_years
@@ -389,11 +408,6 @@ def comparable_screen(rows=None, file_path=None, column_map=None, tested_party=N
                   "op_source='recalc'면 재계산 값으로 지표 계산(영 제8조①1호, 시행규칙 제6조③ 같은 기준 측정)")
 
     rows_res, final, vals, stats, tv = _run(companies, tested, analysis_years, tested_years, pli, averaging, sc, decisions, quartile_method, wca)
-    if len(final) < 2:
-        return {"error": "비교대상이 둘 미만 — 정상가격 범위를 산정할 수 없음(시행령 제15조⑤: 둘 이상의 거래)",
-                "탈락_매트릭스": _matrix(companies, rows_res), "깔때기": _funnel(companies, rows_res)}
-    if len(final) <= 3:
-        경고.append(f"최종 비교대상 {len(final)}개 — 사분위 범위의 의미가 약함([관행], OECD 3.57)")
     if len(analysis_years) > 1 and not (isinstance(multi_year_reason, dict) and multi_year_reason.get("code") in (1, 2, 3) and str(multi_year_reason.get("text", "")).strip()):
         경고.append("다년도 자료를 쓰는데 multi_year_reason 없음 — 다년도 자료는 요건이 있을 때 쓸 수 있음(시행규칙 제9조 1호 경기 변동·2호 사업전략·3호 그 밖의 합리적 사유, "
                   "구법 구 시행령 제6조⑨). 개별기업보고서 Ⅱ-11을 채울 수 없음")
@@ -407,6 +421,11 @@ def comparable_screen(rows=None, file_path=None, column_map=None, tested_party=N
     if not search_log:
         경고.append("search_log 없음 — 데이터베이스 이름·추출일·검색 단계별 조건과 남은 수를 넣지 않으면 앞단 탐색 과정을 재현할 수 없음(개별기업보고서 Ⅱ-12)")
 
+    if len(final) < 2:
+        return {"error": "비교대상이 둘 미만 — 정상가격 범위를 산정할 수 없음(시행령 제15조⑤: 둘 이상의 거래)",
+                "탈락_매트릭스": _matrix(companies, rows_res), "깔때기": _funnel(companies, rows_res), "경고": 경고, "영업이익_대사": 대사}
+    if len(final) <= 3:
+        경고.append(f"최종 비교대상 {len(final)}개 — 사분위 범위의 의미가 약함([관행], OECD 3.57)")
     inside = stats["q1"] <= tv <= stats["q3"]
     시나리오 = []
     if sensitivity:

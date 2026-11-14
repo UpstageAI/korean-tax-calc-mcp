@@ -142,3 +142,38 @@ def test_wca_requires_basis():
     assert "error" in run(wca={"rate": 0.05})
     r = run(wca={"rate": 0.05, "rate_basis": "예시"})
     assert r["결과"]["범위"]["제1사분위%"] == 3.334
+
+
+def test_codesolar_fixes_1114():
+    import csv
+    # loss_years 0은 오류
+    assert "error" in run(screens={**BASE, "loss_years": 0})
+    rows = list(csv.DictReader(open(CSV, encoding="utf-8")))
+    # 특수 상황 대소문자 무시
+    for x in rows:
+        if x["company_id"] == "C19":
+            x["special_flag"] = "Bankruptcy"
+    m = {x["company_id"]: x for x in run(file_path=None, rows=rows)["탈락_매트릭스"]}
+    assert m["C19"]["최종"] == "탈락(S11)"
+    # 잘못된 manual_decision 값은 오류
+    rows2 = [dict(x) for x in rows]
+    for x in rows2:
+        if x["company_id"] == "C01":
+            x["manual_decision"] = "maybe"; x["manual_reason"] = "x"
+    assert "error" in run(file_path=None, rows=rows2)
+    # 혼합 통화: 환율이 없는 통화의 회사만 규모 기준을 건너뜀
+    rows3 = [dict(x) for x in rows]
+    for x in rows3:
+        if x["company_id"] == "C13":
+            x["currency"] = "EUR"
+    m = {x["company_id"]: x for x in run(file_path=None, rows=rows3, fx={"USD": 1})["탈락_매트릭스"]}
+    assert m["C13"]["S4"].startswith("건너뜀") and m["C01"]["S4"].startswith("통과")
+    # 둘 미만이어도 경고는 돌려줌
+    r = run(screens={**BASE, "rnd_max": 0.0, "adv_max": 0.0}, multi_year_reason=None)
+    assert "error" in r and any("multi_year_reason" in w for w in r["경고"])
+
+
+def test_filing_no_contradiction_1114():
+    from korean_tax_calc_mcp.engine import calc_cit
+    r = calc_cit.corporate_filing_obligations(dict(year=2022, revenue=2000 * 10**8, related_goods=600 * 10**8, party_max_goods=600 * 10**8))
+    assert not any("5억·용역 1억·무형자산 1억 모두 이하" in p["결론"] for p in r["판단"])
