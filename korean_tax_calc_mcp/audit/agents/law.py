@@ -15,9 +15,32 @@ DRF = "https://www.law.go.kr/DRF"
 CTX = ssl.create_default_context()  # 기본 TLS 검증 유지
 
 
-def _mask_oc(msg):
-    """오류 메시지 내 OC 값을 OC=***로 가린다."""
-    return re.sub(r"OC=[^&\s\"]+", "OC=***", msg)
+# 법제처 DRF는 인증키를 주소의 OC 매개변수로 붙이고 응답 JSON의 링크에도 그 주소를 되돌려 준다.
+# OC=, oc=, LAW_OC=, 그리고 '='의 URL 인코딩(%3D)·JSON 이스케이프(\u003d) 뒤에 오는 값을 잡는다. 이미 가린 OC=***는 건드리지 않는다.
+_OC_RE = re.compile(r"(?i)(?<![A-Za-z0-9])(OC(?:=|%3D|\\u003d))(?!\*{3})[^&\s\"'<>\\#;,)\]}|`]+")
+
+
+def _mask_oc(msg, literal=True):
+    """문자열(오류 메시지·응답 본문·주소)에서 OC 값을 OC=***로 가린다.
+    literal=True(오류 메시지용)면 환경변수 LAW_OC 값(4자 이상)이 OC= 없이 홀로 적힌 곳도 가린다.
+    응답 본문에는 literal=False — 짧은 키가 조문 글자와 우연히 겹쳐 본문이 바뀌는 일을 막는다."""
+    msg = _OC_RE.sub(r"\1***", msg)
+    if literal:
+        oc = os.environ.get("LAW_OC", "").strip()
+        if len(oc) >= 4 and oc in msg:
+            msg = msg.replace(oc, "***")
+    return msg
+
+
+def scrub_oc(obj):
+    """중첩 JSON 값(dict·list·문자열) 전체에서 OC=<값>을 OC=***로 가린 사본을 돌려준다. 법제처 응답을 받는 즉시, 그리고 원자료를 저장하기 전에 쓴다."""
+    if isinstance(obj, str):
+        return _mask_oc(obj, literal=False)
+    if isinstance(obj, dict):
+        return {(_mask_oc(k, literal=False) if isinstance(k, str) else k): scrub_oc(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return type(obj)(scrub_oc(v) for v in obj)
+    return obj
 
 
 class NoKey(RuntimeError):
@@ -32,14 +55,23 @@ def _oc():
 
 
 def _get(path, query):
-    """법제처 DRF API 호출. 타임아웃 20초."""
+    """법제처 DRF API 호출. 타임아웃 20초.
+
+    인증키는 여기서 만드는 요청 주소에만 쓴다. 법제처는 응답의 링크에 키가 든 주소를 되돌려 주므로,
+    받은 즉시 본문 전체(원문 문자열과 파싱한 중첩 값)를 OC=***로 가려 돌려준다 — 캐시·결과·출처 링크·오류에 키가 남지 않게."""
     u = f"{DRF}/{path}?OC={_oc()}&type=JSON&{query}"
     try:
         with urllib.request.urlopen(urllib.request.Request(u, headers={"User-Agent": "korean-tax-audit-mcp"}),
                                     context=CTX, timeout=20) as r:
-            return json.loads(r.read())
+            raw = r.read()
     except Exception as e:
-        raise RuntimeError(_mask_oc(str(e))) from e
+        raise RuntimeError(_mask_oc(str(e))) from None      # 원래 예외(주소를 든 HTTPError 등)를 이어 붙이지 않는다
+    if isinstance(raw, (bytes, bytearray)):
+        raw = bytes(raw).decode(json.detect_encoding(raw), "surrogatepass")
+    try:
+        return scrub_oc(json.loads(_mask_oc(raw, literal=False)))
+    except ValueError as e:
+        raise RuntimeError(_mask_oc(str(e))) from None       # JSONDecodeError.doc(응답 원문)을 들고 다니지 않게
 
 
 def _list(x):
