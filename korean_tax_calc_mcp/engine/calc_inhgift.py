@@ -230,11 +230,24 @@ def inheritance_tax(
     other_credits: int = 0,
     filed: bool = True,
     late_filed_on: str | None = None,
+    resident: bool = True,
 ):
     """상속세 과세가액·공제·과세표준·산출세액·납부할세액 계산.
+    resident=False(비거주자 피상속인): 기초공제 2억원만(제18조 '거주자나 비거주자'), 제19조~제23조의2·가업·영농상속공제는 '거주자의 사망'
+    요건이라 없음, 일괄공제(제21조)도 없음, 장례비용은 빼지 않음(제14조제2항은 공과금·담보채무·국내사업장 장부 채무만).
+    입력 금액은 국내 소재 재산 기준이어야 한다(제3조제2호·제13조제2항) — 호출하는 쪽이 국내분만 넣는다.
     filed = 법정신고기한(제67조) 안 신고. late_filed_on = 기한후신고일(국세기본법 제45조의3, filed=False일 때만).
     제21조제1항 단서(신고가 없으면 일괄공제 5억원)의 '신고'는 2019.12.31. 개정으로 기한후신고를 포함 — 법률 제16846호 부칙 제5조:
     2020.1.1. 이후 기한후신고하는 분부터(상속개시일이 아니라 기한후신고일 기준). 신고세액공제(제69조)는 기한내 신고만."""
+    if not resident:
+        _비거주_불가 = [n for n, v in (("spouse", spouse), ("sole_spouse_heir", sole_spouse_heir), ("children", children), ("minors", minors),
+                                      ("seniors", seniors), ("disabled", disabled), ("net_financial_assets", net_financial_assets),
+                                      ("cohabiting_house", cohabiting_house), ("business_farm_deduction", business_farm_deduction),
+                                      ("funeral_cost", funeral_cost), ("enshrinement_cost", enshrinement_cost)) if v]
+        if _비거주_불가:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"비거주자 피상속인에게 없는 공제·차감 입력: {', '.join(_비거주_불가)} — 배우자·그 밖의 인적·일괄·금융재산·동거주택·가업·영농상속공제는 "
+                           "'거주자의 사망' 요건(상증법 제18조의2·제18조의3·제19조~제23조의2, 2022년까지는 제18조제2항), 장례비용은 제14조제2항에 없음"]}
     if spouse is None and sole_spouse_heir:
         return {"error": "입력 확인 필요 — 계산하지 않음",
                 "문제": ["배우자 단독상속인데 spouse 입력 없음"]}
@@ -280,7 +293,7 @@ def inheritance_tax(
     상속재산가액 = estate_value + deemed_estate + 추정_합계
 
     # 3. 장례비용
-    장례 = _장례비용(funeral_cost, enshrinement_cost)
+    장례 = _장례비용(funeral_cost, enshrinement_cost) if resident else 0   # 비거주자: 제14조제2항에 장례비용 없음
 
     # 4. 차감액
     차감 = public_charges + 장례 + debts
@@ -289,7 +302,10 @@ def inheritance_tax(
     과세가액 = max(0, 상속재산가액 - nontaxable - excluded - 차감) + prior_gifts_heirs + prior_gifts_others
 
     # 6. 인적공제
-    인적적용액, 일괄적용 = _인적공제(year, children, minors, seniors, disabled, spouse, sole_spouse_heir, 신고있음)
+    if resident:
+        인적적용액, 일괄적용 = _인적공제(year, children, minors, seniors, disabled, spouse, sole_spouse_heir, 신고있음)
+    else:   # 비거주자: 기초공제만(제18조), 제20조·제21조는 '거주자의 사망'
+        인적적용액, 일괄적용 = vocab.rule("상속세_인적공제", year)["기초공제"], False
 
     # 7. 배우자공제
     배우자공제, 배우자한도 = _배우자공제(year, estate_value, deemed_estate, nontaxable,
@@ -364,7 +380,7 @@ def inheritance_tax(
         "입력값_사용": [],
         "확인필요": [],
     }
-    if not filed and not sole_spouse_heir:
+    if resident and not filed and not sole_spouse_heir:
         if 기한후_선택:
             판단["일괄공제_선택"] = {"결론": f"기한후신고({late_filed_on}) — 기초공제와 그 밖의 인적공제 합계와 일괄공제(5억원) 중 큰 금액. 신고세액공제는 없음",
                                "근거": "상속세 및 증여세법 제21조제1항(2019.12.31. 개정), 법률 제16846호 부칙 제5조(2020.1.1. 이후 국세기본법 제45조의3에 따라 신고하는 분부터)"}
@@ -382,12 +398,26 @@ def inheritance_tax(
         판단["입력값_사용"].append("세대생략 할증: 입력값 사용")
     if gift_tax_credit:
         판단["입력값_사용"].append("증여세액공제: 입력값 사용")
-    if year == 2016:
+    if resident and year == 2016:
         판단["확인필요"].append("2016년 미성년자·장애인 연수: 제20조①2호(버림)와 제20조③(1년 미만 1년) 충돌 — 확인 필요")
     if spouse is not None:
         판단["확인필요"].append("배우자공제 한도식 A(영 제17조①): 추정상속재산 제외 — 예규 확인 필요")
     if 신고율 != 0.03:
         판단["확인필요"].append(f"신고세액공제율 {신고율*100:.0f}%: 2017~2018년 특례 적용 여부 확인")
+
+    if not resident:
+        근거 = [
+            ["상속세 및 증여세법", "제3조", "2호", "비거주자 피상속인 — 국내에 있는 모든 상속재산"],
+            ["상속세 및 증여세법", "제13조", "①②", "과세가액 — 사전증여는 국내에 있는 재산을 증여한 경우만 가산"],
+            ["상속세 및 증여세법", "제14조", "②", "비거주자 — 해당 상속재산 공과금·담보채무·국내사업장 장부 공과금·채무만 차감(장례비용 없음)"],
+            ["상속세 및 증여세법", "제18조", "", "기초공제(거주자나 비거주자, 2억원)"],
+            ["상속세 및 증여세법", "제24조", "", "공제 적용 한도"],
+            ["상속세 및 증여세법", "제25조", "①", "과세표준"],
+            ["상속세 및 증여세법", "제26조", "①", "세율"],
+            ["상속세 및 증여세법", "제69조", "①", "신고세액공제"],
+        ]
+        판단["비거주자"] = {"결론": "비거주자 피상속인 — 기초공제 2억원만. 배우자·그 밖의 인적·일괄·금융재산·재해손실·동거주택·가업·영농상속공제 없음, 장례비용 차감 없음",
+                        "근거": "상속세 및 증여세법 제18조(거주자나 비거주자), 제18조의2·제18조의3·제19조~제23조의2('거주자의 사망'), 제14조제2항"}
 
     계산 = {
         "장례비용": 장례,
@@ -456,6 +486,7 @@ def gift_tax(
     kin_degree: int | None = None,
     prior_gifts_before_2016: int | None = None,
     prior_surcharge_before_2016: int = 0,
+    recipient_resident: bool = True,
 ):
     """증여세 과세가액·증여재산공제·과세표준·산출세액·납부할세액 계산.
     공제 입력 계약(상증법 제47조②·제53조): prior_deduction_used = 10년 안에 '이번에 합산하지 않는' 증여(다른 증여자, 예: 조부모)에서 받은 증여재산공제.
@@ -481,6 +512,9 @@ def gift_tax(
     if marriage_birth and gift_date < "2024-01-01":
         return {"error": "입력 확인 필요 — 계산하지 않음",
                 "문제": ["혼인·출산 증여재산공제는 2024.1.1 이후 증여분부터(법 제53조의2, 부칙 제19932호 제3조)"]}
+    if marriage_birth and not recipient_resident:
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": ["비거주자 수증자는 혼인·출산 증여재산공제 없음 — 제53조의2제1항·제2항은 '거주자가 직계존속으로부터' 받는 증여"]}
     if marriage_birth and relation != "직계존속":
         return {"error": "입력 확인 필요 — 계산하지 않음",
                 "문제": ["혼인·출산 증여재산공제는 직계존속으로부터 받은 증여만"]}
@@ -540,6 +574,8 @@ def gift_tax(
         elif 연도_int >= 20250314:
             촌수_판단 = {"결론": f"촌수 미입력 — 기타친족(1천만원 공제)으로 계산. 2025.3.14. 이후 증여는 {상한['혈족']}촌 이내 혈족·{상한['인척']}촌 이내 인척만 — "
                               "5·6촌 혈족이나 4촌 인척이면 공제 없음(kin_type·kin_degree로 확인)", "근거": f"상속세 및 증여세법 제53조제4호, {기준}", "확인필요": True}
+    if not recipient_resident:   # 제53조 '거주자가 … 증여를 받은 경우'(2016~2026 같음) — 비거주자 수증자는 증여재산공제 없음
+        한도 = 0
     # 합산하는 같은 증여자분의 기공제액은 합산 과세가액에서 공제를 다시 계산하므로 빼지 않음(이중 차감 방지), 합산 안 하면 사용분
     기사용 = prior_deduction_used + (0 if 합산여부 else 같은증여자_기공제)
     증여공제 = min(max(0, 한도 - 기사용), 과세가액)
