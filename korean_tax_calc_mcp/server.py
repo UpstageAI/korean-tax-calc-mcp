@@ -1246,25 +1246,27 @@ def tax_adjustment_schedule(years: Annotated[list, Field(description="사업연�
 
 @mcp.tool(annotations=CALC)
 @_guard
-def sme_status(year: Annotated[int, Field(description="과세연도(2018~2026)")],
-               industry_code: Annotated[str, Field(description="주된 업종의 한국표준산업분류 기호 — 제조업은 중분류(C10~C34, 화장품·화학제품 C20), 도매 및 소매업 G, 정보통신업 J, 수도업 E36, 임대업 N76 등")],
+def sme_status(year: Annotated[int, Field(description="과세연도(2016~2026)")],
+               industry_code: Annotated[str, Field(description="주된 업종의 한국표준산업분류 기호 — 제조업은 중분류(C10~C34, 화장품·화학제품 C20), 도매 및 소매업 G, 정보통신업 J, 수도업 E36, 임대업 N76 등. 2016 과세연도는 제9차 분류 기호(수도사업 D, 임대업 L)")],
                revenue: Annotated[int, Field(description="해당 과세연도 손익계산서 매출액(원)", ge=0)],
                total_assets: Annotated[int, Field(description="과세연도 종료일 재무상태표 자산총액(원)", ge=0)],
                domestic_affiliates: Annotated[list | None, Field(description="관계기업(국내기업만) [{revenue(원), ownership(소유비율 0.3~1)}] — 30% 이상 소유하면서 최다출자자인 지배·종속 관계")] = None,
                in_disclosure_group: Annotated[bool, Field(description="공시대상기업집단 소속(계열 편입 통지 포함) 여부")] = False,
                large_corp_owner: Annotated[bool, Field(description="자산총액 5천억원 이상 법인이 주식의 30% 이상을 소유한 최다출자자인지")] = False,
-               excluded_business: Annotated[bool, Field(description="부동산임대업 또는 소비성서비스업이 주된 사업인지")] = False,
+               excluded_business: Annotated[bool, Field(description="부동산임대업 또는 소비성서비스업이 주된 사업인지(2017 과세연도는 소비성서비스업, 2016 과세연도는 시행령 제2조제1항에 열거된 업종이 아닌 사업)")] = False,
                first_exceeded_year: Annotated[int | None, Field(description="규모 기준을 처음 넘은 과세연도(이전에 이미 넘었으면). 비우면 해당 과세연도")] = None,
-               founded_on: Annotated[str, Field(description="창업일 YYYY-MM-DD(선택) — 창업 후 2년 안에 기준을 넘으면 유예기간이 없음")] = "") -> dict:
+               founded_on: Annotated[str, Field(description="창업일 YYYY-MM-DD(선택) — 창업 후 2년 안에 기준을 넘으면 유예기간이 없음")] = "",
+               small_under_pre2016_rule: Annotated[bool, Field(description="2016.1.1. 전 기준(상시근로자 수)으로 소기업이던 기업이면 true — 2019 과세연도까지 소기업으로 봄(2016~2019 과세연도만)")] = False) -> dict:
     """SME status test: small and medium enterprise, small enterprise, grace period (중소기업 해당 여부).
     중소기업·소기업 해당 여부 — 업종별 매출 기준, 자산총액, 독립성, 유예기간으로 세법상 중소기업인지와 소기업·중기업 구분(조세특례제한법 시행령 제2조). 언제: 매출이 빠르게 커진 회사가 창업감면·특별세액감면·결손금 소급공제·최저한세 7% 같은 중소기업 규정을 그 해에도 적용받는지 볼 때.
     입력: 과세연도 → year, 업종 기호 → industry_code, 매출액 → revenue, 자산총액 → total_assets, 국내 관계기업 → domestic_affiliates, 독립성 → in_disclosure_group·large_corp_owner, 처음 넘은 해 → first_exceeded_year, 창업일 → founded_on.
     계산: 매출액(국내 관계기업 합산 — 50% 이상 소유는 전액, 미만은 소유비율만큼)이 업종별 기준(중소기업기본법 시행령 별표 1) 이내이고 자산총액 5천억원 미만이면 중소기업.
       기준을 넘으면 처음 넘은 과세연도와 그 다음 5개 과세연도(2023년까지 처음 넘었으면 3개)는 유예기간. 독립성을 잃거나 창업 후 2년 안에 넘으면 유예 없음.
       소기업은 매출액이 별표 3 기준 이내. 2025 과세연도부터 2025.9.1. 개정 기준(예: 화학제품 제조업·도소매 1,200억원, 소기업 120억원·60억원).
+      2016 과세연도는 2015.6.30. 개정 별표(제9차 분류 기호)와 업종 열거 방식, 2017 과세연도부터 2017.10.17. 개정 별표. 2016.1.1. 전 기준 소기업은 2019 과세연도까지 소기업.
     결과: 중소기업(참·거짓), 구분(소기업·중기업·유예기간 중·중소기업 아님), 계산(기준 금액·합산 매출액·유예기간), 판단·근거·주의.
-    범위 밖: 2017년 이전, 주된 업종 판정, 해외 자회사(합산 대상 아님), 손자기업 간접 지배, 상장법인 유예 7년, 합병에 따른 유예 배제, 1년 미만 과세연도 환산."""
-    r = INC.sme_status(year, industry_code, revenue, total_assets, domestic_affiliates, in_disclosure_group, large_corp_owner, excluded_business, first_exceeded_year, founded_on)
+    범위 밖: 2015년 이전, 주된 업종 판정, 해외 자회사(합산 대상 아님), 손자기업 간접 지배, 상장법인 유예 7년, 합병에 따른 유예 배제, 1년 미만 과세연도 환산."""
+    r = INC.sme_status(year, industry_code, revenue, total_assets, domestic_affiliates, in_disclosure_group, large_corp_owner, excluded_business, first_exceeded_year, founded_on, small_under_pre2016_rule)
     if "error" in r:
         return r
     return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 주의=r["주의"])
@@ -1298,10 +1300,10 @@ def rural_special_tax(year: YEAR,
     """Special tax for rural development surtax on corporate and income tax reductions and credits (농어촌특별세).
     농어촌특별세 — 조세특례제한법에 따라 법인세·소득세를 감면받은 세액에 붙는 농어촌특별세와 조문별 비과세 여부(농어촌특별세법 제4조·제5조). 언제: 세액공제·세액감면을 받는 회사가 본세와 함께 낼 농어촌특별세를 구하거나, 창업감면과 투자·고용 세액공제 중 어느 쪽이 실제로 유리한지 비교할 때.
     입력: 과세연도 → year, 감면 조문과 감면세액 → items.
-    계산: 비과세 조문이 아니면 감면세액 × 20%. 비과세는 그 과세연도 말 시행본의 농어촌특별세법 제4조와 시행령 제4조 목록으로 판정(2016~2026 연도별).
+    계산: 비과세 조문이 아니면 감면세액 × 20%. 비과세는 그 과세연도 말 시행본의 농어촌특별세법 제4조와 시행령 제4조 목록, 개정 부칙의 적용례로 판정(2016~2026 연도별, 12월 결산·기한 내 신고 기준).
       창업중소기업 감면(제6조)·중소기업 특별세액감면(제7조)·연구인력개발비 세액공제(제10조)는 비과세, 통합투자세액공제(제24조)·통합고용세액공제(제29조의8)는 과세.
     결과: 농어촌특별세 합계, 과세 대상·비과세 감면세액, 계산(항목별 과세 여부·세액·근거·확인할 것), 판단·근거·주의.
-    범위 밖: 저축·이자·배당 감면(세율 10%), 소득공제·비과세의 감면세액 환산, 관세·취득세·등록면허세·지방세특례제한법 감면, 연중 개정 조문의 부칙 적용례 판정."""
+    범위 밖: 저축·이자·배당 감면(세율 10%), 소득공제·비과세의 감면세액 환산, 관세·취득세·등록면허세·지방세특례제한법 감면, 12월 결산이 아닌 과세연도·기한 후 신고의 적용례 판정."""
     r = INC.rural_special_tax(year, items)
     if "error" in r:
         return r
@@ -1310,12 +1312,12 @@ def rural_special_tax(year: YEAR,
 
 @mcp.tool(annotations=CALC)
 @_guard
-def integrated_employment_credit(year: Annotated[int, Field(description="과세연도(2023~2026 — 2026은 2024·2025 증가분의 2차·3차 공제와 추가 납부만, 법률 제21223호 부칙 제34조)")],
+def integrated_employment_credit(year: Annotated[int, Field(description="과세연도(2023~2026 — 2026은 새 증가분을 개정 계산식으로, 2024·2025 증가분의 2차·3차 공제와 추가 납부를 종전 규정으로)")],
                                  size: Annotated[str, Field(description="중소기업 | 중견기업 | 일반")],
                                  headcounts: Annotated[list, Field(description="과세연도별 상시근로자 수 [{year, total(전체), youth(청년등), youth_for_recapture?(추가 납부 계산용 — 최초 공제 과세연도의 청년을 계속 청년등으로 본 인원)}] — 해당 과세연도와 직전 과세연도는 반드시, 앞 해의 2차·3차 공제까지 보려면 2022년부터. 인원은 매월 말 인원 합 ÷ 개월 수")],
                                  outside_capital_area: Annotated[bool, Field(description="인원이 수도권 밖에서 늘었으면 true(중소기업만 금액이 달라짐)")] = False,
                                  converted: Annotated[int, Field(description="정규직으로 전환한 인원(중소·중견기업, 2023·2024 과세연도)", ge=0)] = 0,
-                                 returned_from_leave: Annotated[int, Field(description="육아휴직에서 복귀한 인원(중소·중견기업)", ge=0)] = 0,
+                                 returned_from_leave: Annotated[int, Field(description="육아휴직에서 복귀한 인원(중소·중견기업, 2026.12.31.까지 복직)", ge=0)] = 0,
                                  credits_taken: Annotated[list | None, Field(description="추가 납부 한도용 — 실제로 공제받은 세액 [{first_year(최초 공제 과세연도), year(공제받은 과세연도), amount(원)}]. 비우면 산식 금액을 그대로 표시")] = None,
                                  carryforward_left: Annotated[list | None, Field(description="추가 납부 때 차감할 이월 공제액 [{first_year, amount(아직 공제받지 못하고 이월된 세액, 원)}]")] = None) -> dict:
     """Integrated employment tax credit for headcount increase by tax year (통합고용세액공제).
@@ -1326,8 +1328,10 @@ def integrated_employment_credit(year: Annotated[int, Field(description="과세�
       인원이 준 해에는 이미 공제받은 세액의 추가 납부액을 시행령 산식으로 계산하고, 실제로 공제받은 세액을 한도로 함.
       정규직 전환·육아휴직 복귀는 1명당 1,300만원(중견 900만원), 상시근로자가 줄지 않은 해만.
     결과: 기본공제, 정규직 전환·육아휴직 복귀 공제, 공제 대상 세액, 추가 납부세액, 계산(최초 공제 과세연도별 증가 인원·차수·공제액·추가 납부), 판단·근거·주의.
-    2026 과세연도: 2024·2025 과세연도 증가분의 2차·3차 공제와 추가 납부는 종전 규정으로 계산(2025.12.23. 개정 법률 제21223호 부칙 제34조). 2026 증가분(개정 계산식)과 2026 정규직 전환·육아휴직 복귀는 계산하지 않음.
-    범위 밖: 2022년 이전 증가분(고용증대 세액공제), 2026 과세연도 증가분의 개정 계산식, 최저한세·이월(minimum_tax_adjustment), 농어촌특별세(rural_special_tax), 합병·분할 승계 인원 조정."""
+    2026 과세연도: 2025 과세연도보다 늘어난 인원 × 금액(청년등 중소기업 700만원·수도권 밖 1,000만원, 중견 500만원, 그 밖 300만원. 청년등 외 중소기업 400만원·수도권 밖 700만원, 중견 300만원) — 2025.12.23. 개정 제29조의8제1항.
+      중소기업이 아니면 최소고용증가인원수(중견 5명, 그 밖 10명)를 넘게 늘어야 하고 그 인원에 대한 금액을 뺌. 개정 계산식에는 추가 납부가 없음.
+      2024·2025 과세연도 증가분의 2차·3차 공제와 추가 납부는 종전 규정으로 계산(법률 제21223호 부칙 제34조). 육아휴직 복귀 공제는 2026년에도 적용, 정규직 전환은 2024년 전환분까지.
+    범위 밖: 2022년 이전 증가분(고용증대 세액공제), 2027 과세연도 이후, 최저한세·이월(minimum_tax_adjustment), 농어촌특별세(rural_special_tax), 합병·분할 승계 인원 조정."""
     r = INC.integrated_employment_credit(year, size, headcounts, outside_capital_area, converted, returned_from_leave, credits_taken, carryforward_left)
     if "error" in r:
         return r
@@ -1349,7 +1353,8 @@ def employment_increase_credit(year: Annotated[int, Field(description="과세연
     계산: 늘어난 인원(전체 증가 인원 한도) × 1인당 금액 — 청년등은 중소기업 1,100만원(수도권 밖 1,200만원, 2021·2022년 수도권 밖 1,300만원), 중견 800만원, 그 밖 400만원. 청년등 외는 중소기업 700만원·770만원, 중견 450만원, 그 밖 0.
       최초 공제 과세연도와 그 뒤 1년(중소·중견기업 2년) 동안 공제. 전체 인원이 최초 공제 과세연도보다 줄면 중단, 청년등만 줄면 청년등 외 금액으로 공제. 준 해에는 추가 납부액 계산.
     결과: 공제 대상 세액, 추가 납부세액, 계산(최초 공제 과세연도별 증가 인원·차수·1인당 금액·공제액·추가 납부), 판단·근거·주의.
-    범위 밖: 2020년에 인원이 준 2018·2019년 최초 공제분의 유예 특례, 2019.1.1. 전에 신고한 2018 과세연도분, 2017년 이전 제도, 최저한세·이월(minimum_tax_adjustment), 통합고용세액공제(integrated_employment_credit)."""
+      2020년에 인원이 준 2018·2019년 최초 공제분은 사후관리 유예(제29조의7제5항~제7항): 2020년은 추가 납부 없음, 2021년에 회복하면 공제 재개, 2021·2022년에 줄면 추가 납부 — headcounts에 2018년부터 넣음.
+    범위 밖: 2019.1.1. 전에 신고한 2018 과세연도분, 2020.1.1. 전에 신고한 감소 과세연도의 종전 사후관리 식, 2017년 이전 제도, 최저한세·이월(minimum_tax_adjustment), 통합고용세액공제(integrated_employment_credit)."""
     r = INC.employment_increase_credit(year, size, headcounts, outside_capital_area, credits_taken, carryforward_left, only_first_years)
     if "error" in r:
         return r
@@ -1366,7 +1371,8 @@ def integrated_investment_credit(year: Annotated[int, Field(description="과세�
                                  months: Annotated[int, Field(description="해당 과세연도 개월 수", ge=1, le=12)] = 12,
                                  in_overconcentration_zone: Annotated[bool, Field(description="투자한 사업장이 수도권과밀억제권역 안이면 true(산업단지·공업지역은 false)")] = False,
                                  expansion: Annotated[bool, Field(description="증설투자면 true, 낡은 설비를 바꾸는 대체투자면 false")] = False,
-                                 graduated_year: Annotated[int | None, Field(description="size='졸업 뒤 3년'일 때 최초로 중소기업에 해당하지 않게 된 과세연도 — 2025 이후여야 졸업 뒤 3년 율, 그 전이면 중견기업 율(법률 제20617호 부칙 제5조제2항)")] = None) -> dict:
+                                 graduated_year: Annotated[int | None, Field(description="size='졸업 뒤 3년'일 때 최초로 중소기업에 해당하지 않게 된 과세연도 — 2025 이후여야 졸업 뒤 3년 율, 그 전이면 중견기업 율(법률 제20617호 부칙 제5조제2항)")] = None,
+                                 graduate_status: Annotated[str | None, Field(description="size='졸업 뒤 3년'일 때 그 과세연도의 지위: 중견기업 | 일반 — 임시 투자 세액공제(제24조제1항제3호) 율을 정함. 비우면 본칙만 적용하고 두 경우 금액을 판단에 표시")] = None) -> dict:
     """Integrated investment tax credit for business asset investment, basic and additional (통합투자세액공제).
     통합투자세액공제 — 사업용 자산 투자금액에 대한 기본공제와 추가공제(조세특례제한법 제24조). 언제: 기계장치 등 설비에 투자한 회사가 그 해 공제받을 금액을 구하거나, 창업감면·특별세액감면과 어느 쪽이 유리한지 비교할 때.
     입력: 과세연도 → year, 기업 규모 → size, 자산 구분별 투자금액 → investments, 직전 3년 투자 합계 → prior3_total, 수도권과밀억제권역·증설 여부 → in_overconcentration_zone·expansion.
@@ -1374,9 +1380,10 @@ def integrated_investment_credit(year: Annotated[int, Field(description="과세�
       2024·2025 과세연도는 본칙과 임시 공제 중 큰 쪽, 2023 과세연도는 임시 공제. 수도권과밀억제권역 안 증설투자는 배제.
       2020 과세연도는 2021.1.1. 이후 신고분이라 2021 율표(국가전략 구분 없음) — 종전 투자세액공제와 하나만 선택(법률 제17759호 부칙 제4조제1항·제36조, 종전 공제는 계산 안 함).
       '졸업 뒤 3년' 율은 2025.1.1. 이후 개시 과세연도에 처음 졸업한 경우만(graduated_year, 법률 제20617호 부칙 제5조제2항) — 그 전 졸업이면 중견기업 율, 미입력이면 졸업 뒤 3년 율로 계산하고 판단에 표시.
+      졸업 기업의 임시 공제(2025 과세연도)는 제3호에 중소·중견·그 밖 율만 있어 graduate_status(중견기업·일반)의 율로 본칙과 비교.
     결과: 기본공제, 추가공제, 공제 대상 세액, 적용(본칙·임시·배제), 계산(구분별 공제율·3년 연평균·초과 투자액·본칙과 임시 비교), 판단·근거·주의.
     범위 밖: 공제 대상 자산 판정, 종전 자산별 투자세액공제(2020 과세연도 선택분 포함), 다른 목적 전용 시 납부세액, 최저한세·이월(minimum_tax_adjustment), 농어촌특별세(rural_special_tax)."""
-    r = INC.integrated_investment_credit(year, size, investments, prior3_total, history_months, months, in_overconcentration_zone, expansion, graduated_year)
+    r = INC.integrated_investment_credit(year, size, investments, prior3_total, history_months, months, in_overconcentration_zone, expansion, graduated_year, graduate_status)
     if "error" in r:
         return r
     return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 주의=r["주의"])
@@ -1413,7 +1420,7 @@ def startup_tax_reduction(founded_on: Annotated[str, Field(description="창업�
                           tax: Annotated[int, Field(description="그 과세연도 법인세 산출세액(원)", ge=0)],
                           taxable_base: Annotated[int, Field(description="그 과세연도 과세표준(원)", gt=0)],
                           eligible_income: Annotated[int | None, Field(description="감면 대상 사업에서 발생한 소득(원). 비우면 과세표준 전부", ge=0)] = None,
-                          youth: Annotated[bool, Field(description="청년창업중소기업 여부 — 대표자가 창업 당시 15~34세(병역 기간 6년 한도 차감)이고 법인의 최대주주")] = False,
+                          youth: Annotated[bool, Field(description="청년창업중소기업 여부 — 대표자가 창업 당시 15~34세(2018.5.28. 이전 창업은 15~29세, 병역 기간 6년 한도 차감)이고 법인의 최대주주")] = False,
                           industry: Annotated[str, Field(description="업종: 제조업 | 위탁제조(제조업체에 맡겨 생산) | 통신판매업 | 그 밖의 대상 업종 | 도매업 | 소매업")] = "제조업",
                           oem: Annotated[dict | None, Field(description="위탁제조일 때 {domestic_maker(국내 제조업체 위탁), own_planning(직접 기획), own_name(자기 명의 제조), own_sale(인수해 자기 책임으로 직접 판매)} 각 true/false")] = None,
                           venture_confirmed_on: Annotated[str, Field(description="벤처기업 확인일 YYYY-MM-DD(창업 후 3년 안에 확인받은 경우)")] = "",
@@ -1422,10 +1429,10 @@ def startup_tax_reduction(founded_on: Annotated[str, Field(description="창업�
     창업중소기업 세액감면 — 창업일·지역·청년 여부·업종으로 감면 대상인지와 감면율, 감면기간, 그 과세연도 감면세액(조세특례제한법 제6조). 언제: 창업한 지 몇 해 안 된 중소기업이 이익이 난 해에 법인세를 얼마나 감면받는지, 위탁생산·온라인 판매 회사가 대상인지 볼 때.
     입력: 창업일 → founded_on, 지역 → region, 과세연도 → year, 최초 소득 과세연도 → first_income_year, 산출세액 → tax, 과세표준 → taxable_base, 청년창업 → youth, 업종 → industry, 위탁제조 요건 → oem, 벤처 확인일 → venture_confirmed_on.
     계산: 감면세액 = 산출세액 × 감면 대상 소득 ÷ 과세표준 × 감면율. 감면기간은 최초 소득 과세연도(사업 개시 후 5년이 되는 해까지 소득이 없으면 그 해)부터 5개 과세연도.
-      감면율은 창업일 기준 — 2016년 과밀억제권역 밖 50%, 2017년 청년 75%·50%, 2018.5.29.~2025년 청년 100%·50%와 과밀억제권역 밖 일반 50%, 2026년부터 100·75·50·25%.
-      위탁제조는 국내 제조업체 위탁·직접 기획·자기 명의·자기 책임 직접 판매를 모두 갖추면 제조업(시행규칙 제4조의2). 도매업·소매업은 대상 아님. 100%가 아니면 최저한세 적용.
+      감면율은 창업일 기준 — 2016년 과밀억제권역 밖 50%, 2017.1.1.~2018.5.28. 청년 75%·50%, 2018.5.29.~2025년 청년 100%·50%와 과밀억제권역 밖 일반 50%, 2026년부터 100·75·50·25%.
+      위탁제조는 국내 제조업체 위탁·직접 기획·자기 명의·자기 책임 직접 판매를 모두 갖추면 제조업(시행규칙 제4조의2, 2017.3.17. 전은 제2조제1항 — 2016년 창업 포함). 도매업·소매업은 대상 아님. 100%가 아니면 최저한세 적용.
     결과: 감면세액, 적용(제1항·제2항·대상 아님·감면기간 아님), 감면율, 감면 후 세액, 계산(감면기간·연차·감면 대상 세액·최저한세), 판단·근거·주의.
-    범위 밖: 2018.1.1.~5.28. 창업, 수입금액이 작은 창업기업 감면(제6항), 고용 증가 추가 감면(제7항), 창업보육센터·에너지신기술기업, 1년 미만 과세연도, 개인사업자."""
+    범위 밖: 2018.1.1.~5.28. 창업의 신성장 서비스업 75% 특례, 수입금액이 작은 창업기업 감면(제6항), 고용 증가 추가 감면(제7항), 창업보육센터·에너지신기술기업, 1년 미만 과세연도, 개인사업자."""
     r = INC.startup_tax_reduction(founded_on, region, year, first_income_year, tax, taxable_base, eligible_income, youth, industry, oem, venture_confirmed_on, business_started_on)
     if "error" in r:
         return r

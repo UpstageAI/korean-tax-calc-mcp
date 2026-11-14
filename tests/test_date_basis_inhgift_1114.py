@@ -212,7 +212,8 @@ def test_employment_2026_prior_increases_old_rule():
     # 2024분 3차: 청년 15 × 1,450만 + 그 외 20 × 850만 = 3.875억 / 2025분 2차: 청년 10 × 1,450만 + 그 외 20 × 850만 = 3.15억
     r = call("integrated_employment_credit", year=2026, size="중소기업", headcounts=hc)
     rows = {(x["최초_공제_과세연도"], x["차수"]): x["공제액"] for x in r["계산"]["최초_공제_과세연도별"]}
-    assert rows == {(2024, 3): 387_500_000, (2025, 2): 315 * M} and r["결과"]["기본공제"] == 702_500_000
+    # 2026 증가분(개정 제29조의8제1항, 직전 과세연도 대비): 청년 5 × 700만 + 그 외 5 × 400만 = 5,500만
+    assert rows == {(2026, 1): 55 * M, (2024, 3): 387_500_000, (2025, 2): 315 * M} and r["결과"]["기본공제"] == 757_500_000
     assert any("제21223호 부칙 제34조" in p for p in r["판단"])
     # 감사 사례: 2025년 청년 2명 증가(중소·수도권) → 2026 2차 2,900만
     r = call("integrated_employment_credit", year=2026, size="중소기업", headcounts=H((2024, 10, 3), (2025, 12, 5), (2026, 12, 5)))
@@ -221,9 +222,10 @@ def test_employment_2026_prior_increases_old_rule():
 
 def test_employment_2026_general_and_rejections():
     hc = H((2023, 45, 20), (2024, 80, 35), (2025, 110, 45), (2026, 120, 50))
-    r = call("integrated_employment_credit", year=2026, size="일반", headcounts=hc)      # 2025분 2차만: 청년 10 × 400만
+    r = call("integrated_employment_credit", year=2026, size="일반", headcounts=hc)      # 2025분 2차: 청년 10 × 400만. 2026 증가 10명은 최소고용증가인원수 10명을 넘지 않아 0
     assert r["결과"]["기본공제"] == 40 * M
-    assert "error" in call("integrated_employment_credit", year=2026, size="중소기업", headcounts=hc, returned_from_leave=1)
+    assert "error" in call("integrated_employment_credit", year=2026, size="중소기업", headcounts=hc, converted=1)       # 정규직 전환은 2024년 전환분까지
+    assert call("integrated_employment_credit", year=2026, size="중소기업", headcounts=hc, returned_from_leave=1)["결과"]["육아휴직_복귀_공제"] == 13 * M
     assert "error" in call("integrated_employment_credit", year=2027, size="중소기업", headcounts=H((2026, 20, 8), (2027, 30, 12)))
     # 2025 과세연도 결과는 그대로
     assert call("integrated_employment_credit", year=2025, size="중소기업", headcounts=hc)["결과"]["기본공제"] == 315 * M + 387_500_000   # 2025분 1차 + 2024분 2차

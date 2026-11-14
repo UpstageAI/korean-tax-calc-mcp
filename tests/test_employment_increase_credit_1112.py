@@ -68,9 +68,10 @@ def test_follow_up_and_recapture():
     assert any("조세특례제도과-215" in p for p in r["판단"])
 
 
-def test_2020_grace_rule_is_refused():
+def test_2020_grace_rule_is_computed():
+    # 2019년분(청년등 4·그 외 6 → 8,600만)이 2020년에 줄었다가 2021년에 회복: 제29조의7제6항으로 2021년부터 다시 공제. 2021년 새 증가분 5명 × 700만 = 3,500만
     r = f(year=2021, size="중소기업", headcounts=H((2018, 10, 4), (2019, 20, 8), (2020, 15, 8), (2021, 20, 8)))
-    assert "error" in r and "제29조의7제5항" in r["문제"][0]
+    assert r["결과"] == {"공제_대상_세액": 121 * M} and any("제29조의7제6항" in p for p in r["판단"])
     # 2020년에 줄지 않았으면 그대로 계산: 2019년분 3차(청년등 4 × 1,100만 + 그 외 6 × 700만 = 8,600만)
     r = f(year=2021, size="중소기업", headcounts=H((2018, 10, 4), (2019, 20, 8), (2020, 20, 8), (2021, 20, 8)))
     assert r["결과"]["공제_대상_세액"] == 86 * M
