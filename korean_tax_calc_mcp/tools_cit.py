@@ -55,6 +55,45 @@ def retirement_allowance_adjustment_impl(year, allowance, prior_disallowed, esti
 
     # DC 전환자 설정 전 기계상 퇴직급여충당금 (pension 없으면 0)
     dc_transferred = int(pension.get("dc_transferred_allowance", 0) or 0) if has_pension else 0
+    # 법인세법 시행규칙 제31조②(2026.7.1. 시행본 대조): 설정 전 계상 퇴직급여충당금 = 직전 사업연도 종료일 현재 퇴직급여충당금 누적액
+    #   × (해당 사업연도에 확정기여형이 설정된 자의 직전 사업연도말 추계액 ÷ 직전 사업연도말 재직자 전원의 추계액) — 누적액에서 차감(별지 제32호서식 ⑤, 작성방법 2).
+    # 작성방법 3: ⑦ 기초충당금 부인누계액에서 '설정 전 기계상된 퇴직급여충당금과 관련된 부인액'은 제외. 확정급여형 퇴직연금이 없는 회사도 allowance.dc_conversion으로 입력.
+    dcc = allowance.get("dc_conversion") or {}
+    dc_산식, dc_related, dc_paid, dc_used = None, 0, 0, 0
+    if dcc:
+        _문제 = []
+        _amt, _tot, _dc = dcc.get("amount"), dcc.get("prior_estimate_total"), dcc.get("prior_estimate_dc")
+        if dc_transferred and (_amt is not None or _tot is not None):
+            _문제.append("pension.dc_transferred_allowance와 allowance.dc_conversion을 함께 넣을 수 없음 — 한쪽만")
+        if _amt is not None:
+            if not isinstance(_amt, int) or isinstance(_amt, bool) or not 0 <= _amt <= opening:
+                _문제.append("allowance.dc_conversion.amount — 0 이상, 장부상 기초잔액(opening) 이하의 정수(원)")
+            else:
+                dc_transferred = _amt
+        elif _tot is not None or _dc is not None:
+            if not all(isinstance(v, int) and not isinstance(v, bool) for v in (_tot, _dc)) or not 0 <= _dc <= _tot or _tot <= 0:
+                _문제.append("allowance.dc_conversion — prior_estimate_total(직전 사업연도말 재직자 전원 추계액, 양의 정수)와 "
+                           "prior_estimate_dc(그중 해당 사업연도에 확정기여형이 설정된 자의 추계액, 0 이상 전원 추계액 이하)를 함께 입력")
+            else:
+                dc_transferred = opening * _dc // _tot
+                dc_산식 = f"직전 사업연도말 누적액 {opening:,} × 설정자 추계액 {_dc:,} ÷ 전원 추계액 {_tot:,} = {dc_transferred:,}원(원 미만 버림 — 끝수 규정 없음)"
+        dc_related = dcc.get("related_disallowed", 0) or 0
+        if not isinstance(dc_related, int) or isinstance(dc_related, bool) or not 0 <= dc_related <= min(int(prior_disallowed or 0), dc_transferred):
+            _문제.append("allowance.dc_conversion.related_disallowed — 설정 전 기계상 퇴직급여충당금과 관련된 부인액(0 이상, prior_disallowed와 설정 전 충당금 이하)")
+        dc_paid = dcc.get("paid", 0) or 0
+        if not isinstance(dc_paid, int) or isinstance(dc_paid, bool) or not 0 <= dc_paid <= paid_cash:
+            _문제.append("allowance.dc_conversion.paid — 설정 전 근무기간분 부담금으로 지출하고 장부 충당금과 상계한 금액(0 이상, paid_cash 이하 — paid_cash에 포함해 입력)")
+            dc_paid = 0
+        if _문제:
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": _문제}
+        # 법인세과-1032(2009.9.21.)·법인세과-4271(2008.12.30.): 설정 전 근무기간분 부담금 지출액은 시행규칙 제31조②에 따라 누적액에서 차감된
+        # 퇴직급여충당금(⑤)에서 먼저 지출한 것으로 봄(초과 지출분은 손금) — ⑤에서 쓴 만큼은 ⑧ 기중 지급액(그 밖의 충당금 상계)에서 뺀다.
+        dc_used = min(dc_paid, dc_transferred)
+        paid_cash -= dc_used
+    # ⑦ 기초충당금 부인누계액 = 전체 부인누계 − 설정 전 충당금 관련 부인액(작성방법 3)
+    prior_disallowed_전체 = int(prior_disallowed or 0)
+    prior_disallowed = prior_disallowed_전체 - dc_related
+    dc_잔여 = dc_transferred - dc_used          # 지출 뒤 남은 설정 전 충당금(세무상 기말 잔액에 남는 몫)
 
     # ── 대상 총급여 ──
     총급여_전체 = int(salary.get("total", 0) or 0) if salary else 0
@@ -152,11 +191,11 @@ def retirement_allowance_adjustment_impl(year, allowance, prior_disallowed, esti
         # 기말 세무상 퇴직급여충당금(퇴직연금 반영 전)
         # DC 전환자 설정 전 충당금은 세무상 잔액에 그대로 남으므로 더해줌
         # 설정 후 세무상 잔액 = (dc 제외 설정전잔액) + min(provision, 한도) + dc
-        세무상_퇴직급여충당금_기말 = 세무_설정전잔액_하한 + (provision - 한도초과액) + dc_transferred
+        세무상_퇴직급여충당금_기말 = 세무_설정전잔액_하한 + (provision - 한도초과액) + dc_잔여
 
         # DC 전환자 설정 전 기계상 퇴직급여충당금이 있으면 그만큼 차감(퇴직연금 한도 계산 시)
         # "추계액기준 연금한도 = 추계액 − 세무상 퇴직급여충당금 기말잔액(− dc_transferred_allowance 반영)"
-        dc_조정_기말 = max(0, 세무상_퇴직급여충당금_기말 - dc_transferred)
+        dc_조정_기말 = max(0, 세무상_퇴직급여충당금_기말 - dc_잔여)
         추계액기준_연금한도 = max(0, 추계액 - dc_조정_기말 - 이미_손금산입한_부담금)
 
         # 운용자산기준 연금한도 = max(0, asset_closing − 이미_손금산입한_부담금)
@@ -292,7 +331,7 @@ def retirement_allowance_adjustment_impl(year, allowance, prior_disallowed, esti
         "누적한도": 누적한도_raw,
         "추계액기준_한도": 추계액을_기준으로_한도,
         "퇴직급여충당금_한도": 퇴직급여_한도,
-        "세무상_퇴직급여충당금_기말": max(0, 세무_설정전잔액_하한 + min(provision, 퇴직급여_한도) + dc_transferred),
+        "세무상_퇴직급여충당금_기말": max(0, 세무_설정전잔액_하한 + min(provision, 퇴직급여_한도) + dc_잔여),
         "퇴직급여충당금_유보_기말": prior_disallowed + succeeded_disallowed + max(0, provision - 퇴직급여_한도) - 부인액_추인 - 연금충당금_상계액,
     }
 
@@ -334,10 +373,23 @@ def retirement_allowance_adjustment_impl(year, allowance, prior_disallowed, esti
          "근거": "법인세법 제33조②·기본통칙 33-60…5"},
     ]
 
-    if dc_members > 0 or dc_transferred > 0:
-        판단_목록.append({"항목": "확정기여형 전환 회사",
-            "결론": "확인 필요 — 전환 전 근무분 퇴직급여충당금(시행규칙 제31조②)이 장부에 남은 회사는 이 도구가 일부만 처리합니다. 처리: pension.dc_transferred_allowance로 받은 금액을 지급 상계·누적한도에서 떼어 둠. 처리하지 않음: ① 그 금액 계산(직전 사업연도말 퇴직급여충당금 누적액 × 확정기여형 설정자 추계액 비율) ② 확정기여형만 있고 확정급여형 퇴직연금이 없는 회사의 그 금액 입력 ③ 그 몫을 전환자에게 지급하거나 확정기여형으로 이전한 금액 ④ 그 몫과 관련된 부인누계 구분. 해당하면 결과를 세무 전문가가 확인해야 합니다.",
-            "근거": "법인세법 시행규칙 제31조②·별지 제32호서식 작성방법 2~4"})
+    if dc_transferred > 0:
+        판단_목록.append({"항목": "확정기여형 전환 — 설정 전 기계상 퇴직급여충당금(⑤)",
+            "결론": f"{dc_transferred:,}원을 퇴직급여충당금 누적액에서 차감" + (f" — {dc_산식}" if dc_산식 else " (입력 금액)")
+                    + (f". ⑦ 기초충당금 부인누계액 = 전체 {prior_disallowed_전체:,}원 − 설정 전 충당금 관련 부인액 {dc_related:,}원 = {prior_disallowed:,}원" if dc_related else
+                       ". ⑦ 기초충당금 부인누계액에 설정 전 충당금 관련 부인액이 들어 있으면 allowance.dc_conversion.related_disallowed로 구분"),
+            "근거": "법인세법 시행규칙 제31조②, 별지 제32호서식(2026.7.1. 시행본) 작성방법 2·3·4"})
+        판단_목록.append({"항목": "확정기여형 전환 — 설정 전 근무기간분 부담금 지출",
+            "결론": (f"지출 {dc_paid:,}원 중 {dc_used:,}원은 누적액에서 차감된 설정 전 충당금(⑤)에서 먼저 지출한 것으로 봄"
+                     + (f", 초과 {dc_paid - dc_used:,}원은 그 밖의 충당금 지급(⑧)으로 처리" if dc_paid > dc_used else "")
+                     + f" — ⑤ 잔여 {dc_잔여:,}원" if dc_paid else
+                     "설정 전 근무기간분 부담금을 지출해 충당금과 상계했으면 allowance.dc_conversion.paid에 입력(paid_cash에 포함) — 설정 전 충당금(⑤)에서 먼저 지출한 것으로 봄"),
+            "근거": "법인세과-1032(2009.9.21.), 법인세과-4271(2008.12.30.), 법인세법 시행규칙 제31조②"})
+    elif dc_members > 0:
+        판단_목록.append({"항목": "확정기여형 설정자",
+            "결론": "확정기여형 설정자의 급여는 ⑰ 총급여액에서 제외(작성방법 8). 해당 사업연도에 확정기여형으로 전환한 사람의 설정 전 근무분 충당금이 장부에 남아 있으면 "
+                    "allowance.dc_conversion(prior_estimate_total·prior_estimate_dc 또는 amount)으로 입력 — 입력 확인 필요",
+            "근거": "법인세법 시행규칙 제31조②, 별지 제32호서식 작성방법 2·8"})
 
     if has_pension and 퇴직연금_결과:
         r = 퇴직연금_결과

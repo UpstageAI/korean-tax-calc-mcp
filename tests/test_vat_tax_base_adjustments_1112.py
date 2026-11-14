@@ -77,7 +77,11 @@ def test_mileage_rule_dates():
     ok = f(period="2017-1", mileage_sales=[{"공급일": "2017-04-01", "현금등": 88_000, "자기적립마일리지": 22_000}], vat_included=True)
     assert ok["결과"]["과세표준"] == 80_000 and "제61조①9호·10호" in ok["근거"]      # 2018.2.13. 전에는 제1항
     old = f(period="2017-1", mileage_sales=[{"공급일": "2017-03-31", "현금등": 88_000, "자기적립마일리지": 22_000}], vat_included=True)
-    assert "error" in old and "2017.3.31." in old["문제"][0]
+    # 2017.3.31.까지 공급분: 대법원 2015두58959 전원합의체·2019두58766(에누리액) 기준 80,000원, 구 시행령 제61조④ 문언 기준 (88,000+22,000)×100/110 = 100,000원
+    assert "error" not in old
+    assert old["결과"]["과세표준"] == 80_000 and old["결과"]["과세표준_구시행령_문언기준"] == 100_000
+    assert old["결과"]["매출세액"] == 8_000 and old["결과"]["매출세액_구시행령_문언기준"] == 10_000
+    assert "과세표준_구시행령_문언기준" not in ok["결과"]
     out = f(period="2025-2", mileage_sales=[{"공급일": "2025-06-30", "현금등": 88_000}])
     assert "error" in out and "밖" in out["문제"][0]
 
