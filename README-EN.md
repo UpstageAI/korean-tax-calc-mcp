@@ -8,7 +8,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/korean-tax-calc-mcp)](https://pypi.org/project/korean-tax-calc-mcp/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-korean--tax--calc--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=korean-tax-calc-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Built with Upstage Solar Pro 4](https://img.shields.io/badge/Built%20with-Upstage%20Solar%20Pro%204-7A3FF2)](https://www.upstage.ai/) · [한국어](README.md)
 
-> **Authorship notice:** Versions 0.3.0–0.12.2 (2026-10-10 to 10-26) were written by **Solar Pro 4** (Solar Work CLI), reviewed by CodeSolar and cross-checked with tests by Claude (parts of 0.8.0 and all of 0.9.2 were fixed/written by Claude). **From 0.13.0 (2026-10-28) on, the existing calculator skeleton remains Solar Pro 4's, while new tools, year-by-year statute checks and bug fixes are written by Claude (Anthropic)** and reviewed by CodeSolar. Each [CHANGELOG](CHANGELOG.md) section states who wrote it. 133 tools.
+> **Authorship notice:** Versions 0.3.0–0.12.2 (2026-10-10 to 10-26) were written by **Solar Pro 4** (Solar Work CLI), reviewed by CodeSolar and cross-checked with tests by Claude (parts of 0.8.0 and all of 0.9.2 were fixed/written by Claude). **From 0.13.0 (2026-10-28) on, the existing calculator skeleton remains Solar Pro 4's, while new tools, year-by-year statute checks and bug fixes are written by Claude (Anthropic)** and reviewed by CodeSolar. Each [CHANGELOG](CHANGELOG.md) section states who wrote it. 139 tools.
 
 **Korean tax calculations for AI agents — code, not guesses.** [한국어](README.md)
 
@@ -35,7 +35,7 @@ flowchart LR
 
 Requirements and year-specific judgments (credit eligibility, arm's-length methods) belong to the companion server [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp). This server computes from amounts that meet the requirements and points to the statute check in its output.
 
-130 of the 133 tools run in code without generative AI (the 2 price lookups only fetch public data from KRX and VWORLD). Only the 3 PDF tools use Upstage, and only when `UPSTAGE_API_KEY` is set.
+136 of the 139 tools run in code without generative AI (the 2 price lookups only fetch public data from KRX and VWORLD). Only the 3 PDF tools use Upstage, and only when `UPSTAGE_API_KEY` is set.
 
 ### How the tools chain by tax type
 
@@ -118,6 +118,10 @@ Ask in English, get Korean statute-backed answers. Every tool description starts
 | Seconded employees — recharge with arm's length markup, deduction, overseas work exemption | `expat_cost_recharge` |
 | CFC rules for low-tax subsidiaries | `cfc_deemed_dividend` · `cfc_actual_dividend` · `cfc_share_disposal` |
 | Overseas subsidiary reporting, outbound investment FX reporting, overseas financial accounts | `overseas_subsidiary_statement` · `foreign_exchange_reporting` · `overseas_account_reporting` |
+| Foreign worker: 19% flat tax option vs regular progressive tax; foreign engineer/researcher reduction | `foreign_worker_flat_tax` · `foreign_expert_income_reduction` |
+| Nonresident selling Korean real estate or shares — withholding; inheritance/gift tax for nonresidents | `nonresident_capital_gains_withholding` · `nonresident_inheritance_gift` |
+| Foreign company with a Korean branch — branch profits tax; Korean PE test | `branch_profits_tax` · `permanent_establishment_guide` (korean-tax-mcp) |
+| Resident major shareholder emigrating — departure (exit) tax | `emigration_exit_tax` |
 
 Example questions:
 
@@ -125,7 +129,7 @@ Example questions:
 - "We seconded an engineer to our Vietnam subsidiary for 2026. How much should we recharge with a 5% markup, and how much of the salary is deductible in Korea?"
 - "Our Korean subsidiary received a dividend from its 30%-owned Singapore company in 2026. Exclusion or foreign tax credit?"
 
-Not yet supported: the 19% flat tax option for foreign workers (RSTA Art. 18-2). Wage tax tools compute the regular progressive rates only.
+- "I'm a foreign employee with KRW 80 million salary in 2025. Is the 19% flat tax option cheaper than the regular rates?"
 
 ## Install
 
@@ -161,7 +165,7 @@ When answering Korean tax questions, use korean-tax-mcp and korean-tax-calc-mcp 
 5. If two values come out (before/after apportionment, total vs. taxable part, etc.), answer only the one the question asks for.
 ```
 
-## Tools (133)
+## Tools (139)
 
 Click a group to expand its tools.
 
@@ -198,6 +202,8 @@ Click a group to expand its tools.
 | Tool | What it does |
 |---|---|
 | `foreign_tax_credit` | foreign tax credit |
+| `branch_profits_tax` | branch profits tax on a foreign corporation's Korean PE (CITA Art. 96) |
+| `emigration_exit_tax` | departure tax on a resident major shareholder's Korean shares (ITA Arts. 118-9 to 118-18) |
 | `thin_capitalization` | thin capitalization |
 | `arm_length_range` | Arm's length range and adjustment — interquartile/full range, median, whether the tested value is inside, adjustment amount and direction (ITA Decree art.15(5)(6)). Whether the tested party is domestic or foreign is required |
 | `tp_comparable_screen` | Comparable company screening — applies independence, data, industry, size, loss, R&D, advertising, related-party revenue, segment and special-situation screens plus human decisions (reason required) to a candidate list exported from a paid database (CSV/Excel); returns a per-company rejection matrix, final set, multi-year weighted PLI, interquartile range, sensitivity to screen choices and report annex tables. Statutory (50% related-party) vs. practice thresholds are labelled |
@@ -243,9 +249,13 @@ Click a group to expand its tools.
 | `income_tax` | income tax |
 | `withholding_tax` | withholding |
 | `nonresident_withholding` | non-resident withholding |
+| `nonresident_capital_gains_withholding` | withholding on Korean real estate/securities gains of nonresidents and foreign corporations |
+| `nonresident_inheritance_gift` | inheritance tax for nonresident decedents, gift tax for nonresident donees |
 | `withholding_return` | monthly withholding tax return (Form 21, page 1) — subtotals by income code, grand total, refund offset and tax payable (2025 only) |
 | `retirement_income_tax` | retirement income |
 | `wage_income_tax` | wage income |
+| `foreign_worker_flat_tax` | foreign worker flat-rate tax (17%/19%) vs progressive tax (STTCL Art. 18-2) |
+| `foreign_expert_income_reduction` | foreign engineer/researcher income tax reduction (STTCL Art. 18) |
 | `daily_worker_withholding` | daily workers |
 | `deemed_bonus_resettlement` | deemed bonus resettlement |
 | `special_tax_credit` | special tax credit |

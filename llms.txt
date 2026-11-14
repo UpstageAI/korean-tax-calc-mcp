@@ -1,0 +1,78 @@
+# korean-tax-calc-mcp
+
+> MCP server that computes Korean (South Korea) tax amounts with statutory citations: corporate and income tax, VAT, withholding (incl. payments to non-residents and foreign corporations), VAT reverse charge, expat cost recharges, dividends from foreign subsidiaries, foreign tax credits, CFC rules, transfer pricing ranges, penalties, deadlines, inheritance and gift tax, and tax-audit checks. 139 tools, tax years 2016–2026, deterministic code (no generative AI except 3 optional PDF tools).
+
+Install: `uvx korean-tax-calc-mcp` (Claude Code: `claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp`). No key needed. Optional: `LAW_OC` (law.go.kr, two audit tools), `UPSTAGE_API_KEY` (PDF table extraction), `VWORLD_KEY` (official property price lookup).
+
+Registry name: `io.github.UpstageAI/korean-tax-calc-mcp` · PyPI: `korean-tax-calc-mcp` · License: MIT
+
+Tool names are English; descriptions and result keys are mostly Korean. Inputs use Korean enum values (e.g. income_kind "사용료" = royalties, recipient_type "법인" = corporation) — read each tool's input schema. If you do not know which tool fits, call `find_tool` first.
+
+## Which tool for which question
+
+| Question | Tool |
+|---|---|
+| I don't know which tool to use | `find_tool` |
+| Withholding tax on interest, dividends, royalties, services paid to a non-resident or foreign corporation (with treaty rate) | `nonresident_withholding` (get the treaty cap from korean-tax-mcp `treaty_withholding_rates`) |
+| Domestic withholding; monthly withholding return | `withholding_tax`, `daily_worker_withholding`, `withholding_return` |
+| VAT reverse charge on services bought from a foreign supplier without a Korean place of business | `vat_reverse_charge`; foreign-currency amounts: `vat_foreign_currency_base` |
+| Charging the cost of employees seconded to an overseas subsidiary | `expat_cost_recharge` |
+| Dividends from a foreign subsidiary: 95% exclusion, 100% for 2026 receipts (Restriction of Special Taxation Act Art. 23-2), or foreign tax credit | `foreign_subsidiary_dividend` |
+| Foreign tax credit — corporation / individual | `foreign_tax_credit`, `individual_foreign_tax_credit` |
+| Foreign worker: 19% flat tax option vs regular rates; foreign engineer/researcher income tax reduction | `foreign_worker_flat_tax`, `foreign_expert_income_reduction` |
+| Nonresident or foreign corporation selling Korean real estate or shares — withholding | `nonresident_capital_gains_withholding` |
+| Inheritance tax for a nonresident decedent; gift tax for a nonresident donee | `nonresident_inheritance_gift` |
+| Branch profits tax on a foreign corporation's Korean branch (PE test: korean-tax-mcp `permanent_establishment_guide`) | `branch_profits_tax` |
+| Departure (exit) tax when a resident major shareholder emigrates | `emigration_exit_tax` |
+| Controlled foreign corporation (CFC) deemed dividend and later actual dividend or share sale | `cfc_deemed_dividend`, `cfc_actual_dividend`, `cfc_share_disposal` |
+| Transfer pricing: arm's length range and adjustment, comparable screening, international transaction statement | `arm_length_range`, `tp_comparable_screen`, `international_transaction_statement` |
+| Thin capitalization (interest to foreign controlling shareholders) | `thin_capitalization` |
+| Overseas direct investment reporting, overseas subsidiary statements, overseas financial accounts | `foreign_exchange_reporting`, `overseas_subsidiary_statement`, `overseas_account_reporting` |
+| Filing obligations (external audit, external tax adjustment, international transaction data) | `corporate_filing_obligations` |
+| Liquidating a foreign subsidiary | `foreign_subsidiary_liquidation` |
+| Corporate tax from the tax base; tax adjustments | `corporate_tax`, `income_adjustment_total`, `tax_adjustment_schedule`, `minimum_tax_adjustment` |
+| Deductibility limits (entertainment, donations, bad debts, business cars, depreciation, retirement allowances) | `entertainment_limit`, `entertainment_adjustment`, `donation_limit`, `bad_debt_allowance`, `bad_debt_adjustment`, `business_car_expense`, `depreciation_adjustment`, `retirement_allowance_adjustment` |
+| Related-party loans and unfair transactions | `deemed_interest`, `unfair_transaction`, `nonbusiness_interest_disallowance`, `related_judge` |
+| Tax credits and reductions (R&D, investment, employment, startup, SME) | `rnd_tax_credit`, `integrated_investment_credit`, `integrated_employment_credit`, `employment_increase_credit`, `startup_tax_reduction`, `sme_special_tax_reduction`, `sme_status` |
+| Loss carryforward / carryback | `loss_carryforward_limit`, `loss_carryforward_ledger`, `loss_carryback_refund` |
+| Individual income tax, wage income, year-end settlement | `income_tax`, `wage_income_tax`, `earned_income_gross_pay`, `personal_deduction`, `special_tax_credit`, `child_tax_credit` |
+| Financial income, dividends received, deemed dividends | `financial_income_aggregate`, `dividend_tax_credit`, `dividend_received_deduction`, `deemed_dividend_bonus_shares`, `deemed_dividend_capital_reduction` |
+| VAT return items and the general VAT return | `vat_input_tax_deduction`, `common_input_tax`, `vat_supply_timing`, `vat_return_general`, `simplified_vat_return` |
+| Capital gains on real estate and shares | `capital_gains_income`, `capital_gains_tax`, `stock_capital_gains_tax`, `stock_major_shareholder` |
+| Inheritance and gift tax, valuation | `inheritance_tax`, `gift_tax`, `inheritance_gift_valuation`, `unlisted_stock_valuation` |
+| Penalties, assessment period, refund claim deadline | `underreporting_penalty`, `late_payment_penalty`, `withholding_late_payment_penalty`, `invoice_penalty`, `assessment_limitation`, `refund_claim_deadline` |
+| Tax-audit checks (return precheck, tunnelling gift) | `return_precheck`, `tunnelling_gift`, `tunnelling_gift_nts` |
+| Put results into Excel | `export_workbook` |
+
+The table lists the main tools; `find_tool` searches all 139.
+
+## For foreign companies, expats and Korean subsidiaries
+
+- Paying a foreign parent (royalties, interest, dividends, service fees): `nonresident_withholding`, `thin_capitalization`
+- Foreign employees and expats in Korea: `foreign_worker_flat_tax`, `foreign_expert_income_reduction`, `wage_income_tax`
+- Nonresidents with Korean assets: `nonresident_capital_gains_withholding`, `nonresident_inheritance_gift`; foreign companies with a Korean branch: `branch_profits_tax`
+- Buying services from abroad: `vat_reverse_charge`
+- Seconded staff: `expat_cost_recharge`; residency of the employee: korean-tax-mcp `residency_check`
+- Korean parent of foreign subsidiaries: `foreign_subsidiary_dividend`, `foreign_tax_credit`, `cfc_deemed_dividend`, `overseas_subsidiary_statement`
+- Intercompany pricing: `arm_length_range`, `international_transaction_statement`
+- Worked examples (with korean-tax-mcp): [Use cases](https://github.com/UpstageAI/korean-tax-mcp/tree/main/docs/use-cases)
+
+## Companion servers
+
+- [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp): finds the legal basis — statutes on any date, NTS rulings, court decisions, 96 tax treaties, treaty withholding rates, residency test, transfer pricing guides. `uvx korean-tax-mcp`
+- [korean-report-hwpx](https://github.com/UpstageAI/korean-report-hwpx): Korean government-format reports and press releases (HWPX). `uvx korean-report-hwpx`
+
+## Limits
+
+- Not tax advice. Results are reference calculations; verify against the statute text (korean-tax-mcp `law_article` with `as_of`) and consult a qualified professional.
+- Rates and limits follow per-year tables for 2016–2026 checked against the statutes and their addenda; each result states its statutory basis and the points that need a professional's check.
+- Treaty rates are not built into `nonresident_withholding`; pass the rate you confirmed from the treaty.
+- The server does not fetch exchange rates; you supply them.
+
+## Docs
+
+- [README (English)](https://github.com/UpstageAI/korean-tax-calc-mcp/blob/main/README-EN.md)
+- [README (Korean)](https://github.com/UpstageAI/korean-tax-calc-mcp/blob/main/README.md)
+- [CHANGELOG](https://github.com/UpstageAI/korean-tax-calc-mcp/blob/main/CHANGELOG.md)
+- [PyPI: korean-tax-calc-mcp](https://pypi.org/project/korean-tax-calc-mcp/)
+- [MCP Registry: io.github.UpstageAI/korean-tax-calc-mcp](https://registry.modelcontextprotocol.io/v0/servers?search=io.github.UpstageAI/korean-tax-calc-mcp)

@@ -700,7 +700,7 @@ def emigration_exit_tax(
     unreported_face_value: Annotated[int, Field(description="보유현황 미신고·누락분의 액면금액 또는 출자가액(원) — 2019년 이후 출국분 100분의 2 가산", ge=0)] = 0,
     manager_reported: Annotated[bool, Field(description="납세관리인을 출국일 전날까지 신고했으면 true — 2019년 이후 출국분 신고기한 안내")] = False,
 ) -> dict:
-    """Departure (exit) tax on a Korean resident major shareholder's domestic shares (국외전출세, 소득세법 제118조의9~제118조의18).
+    """Departure tax (exit tax) on a Korean resident major shareholder's domestic shares (국외전출세, 소득세법 제118조의9~제118조의18).
 국외전출세 — 출국일 시가로 양도한 것으로 보아 양도소득금액 − 연 250만원 = 과세표준, 세율은 출국일로 고른다.
 언제: 대주주인 거주자가 해외로 이주하면서 보유한 국내주식에 내는 양도소득세와 신고기한·납부유예·실제 양도 후 공제를 확인할 때.
 입력: departure_date(출국일), residence_years_in_10(10년 중 국내 주소·거소 기간), major_shareholder(직전 연도 말 대주주 여부),
