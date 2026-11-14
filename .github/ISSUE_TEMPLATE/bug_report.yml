@@ -1,0 +1,46 @@
+name: Wrong result or statute
+description: A tool returned a wrong number, a wrong statute, or failed (계산·조문 오류)
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste API keys (`LAW_OC`, `UPSTAGE_API_KEY`) or personal data. Report security problems through the Security tab instead.
+        API 키와 개인정보는 넣지 마세요. 보안 문제는 Security 탭으로 알려 주세요.
+  - type: input
+    id: tool
+    attributes:
+      label: Tool name (도구 이름)
+      description: The MCP tool you called.
+    validations:
+      required: true
+  - type: textarea
+    id: inputs
+    attributes:
+      label: Inputs (입력값)
+      description: The arguments you passed, or the question you asked the assistant.
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result (실제 결과)
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected value and basis (기대값과 근거)
+      description: Expected value with the law name, article, and the effective date you applied (시행일; 부칙 application rule if relevant).
+      placeholder: "e.g. 1,234,000 KRW — 법인세법 제55조 제1항, 2025.1.1. 이후 개시 사업연도분"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version (버전)
+      description: Output of `pip show korean-tax-calc-mcp`, plus the client you used.
+    validations:
+      required: true

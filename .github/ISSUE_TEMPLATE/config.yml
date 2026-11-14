@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Disclaimer (면책)
+    url: https://github.com/UpstageAI/korean-tax-calc-mcp#면책-및-고지
+    about: "Results are not tax advice. Read the disclaimer before relying on a result. (결과는 세무 자문이 아닙니다)"
