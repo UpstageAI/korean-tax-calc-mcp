@@ -193,7 +193,7 @@ The example questions in "Try asking" above (royalty to a US parent, secondee re
 | Tax | Forms |
 |---|---|
 | Corporate tax | Forms 3, 4, 8(a), 15 (with disposition codes), 16-2, 20(1)(2), 21, 23(a)(b), 26(a)(b), 29, 32, 33, 34, 50(b) of the Corporate Tax Act Enforcement Rule |
-| VAT | Form 21 return page 1 lines 1–30 and page 4 penalty schedule, Form 22, Form 15, Form 19(1), Form 25, and calculation sheets for common input tax and bundled supply (no statutory form) |
+| VAT | Form 21 return page 1 lines 1–30 (the form edition of that year for 2016–2024 periods) and page 4 penalty schedule, Form 22, Form 15, Form 19(1), Form 25, and calculation sheets for common input tax and bundled supply (no statutory form) |
 | Withholding | withholding tax return (Income Tax Act Enforcement Rule Form 21) page 1, Form 23(1) interest and dividend statement, Form 23(5) non-resident statement |
 | International tax | Adjustment of International Taxes Act Enforcement Rule Forms 16(a) (international transactions), 20 (transfer-pricing method report), 30(a) (CFC retained earnings), 31(a)(b)(c) (CFC inclusion test), 32(a)(b) (scope test), 47 (overseas subsidiary statement), 48 (financial status) — fiscal years from 2021 |
 | Income, capital gains, gift | Form 40(1) schedules for interest, dividend, wage, pension and other income; Form 84 capital gains tax calculation and Schedule 1; gift tax Form 10 |
