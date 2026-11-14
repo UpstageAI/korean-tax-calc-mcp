@@ -10220,7 +10220,12 @@ def expat_cost_recharge(
                                          "귀속:'본사'|'현지법인'|'공통'(필수), 공통비율(현지법인 몫, 0~1, 공통일 때 필수), "
                                          "마크업(소수 기본 0.05), 청구액(실제 청구, 원≥0 기본 0), "
                                          "국외근로_개월(0~12 기본 0), 국외근로_유형:'일반'|'건설·선박'(기본 '일반'), "
-                                         "거주자(bool 기본 True)}]")],
+                                         "거주자(bool 기본 True), 완전자회사(bool, 100% 직접·간접 출자 현지법인 파견), "
+                                         "현지법인_지급인건비(해외출자법인이 그 임직원에게 지급한 인건비, 원≥0), "
+                                         "내국법인_지급인건비(원≥0, 기본 급여+사회보험+체재비), "
+                                         "근로소득_원천징수(bool, 소득세법 제127조제1항 — 2024 사업연도부터 요건)} — "
+                                         "마지막 네 개는 법인세법 시행령 제19조제3호 파견 인건비 손비 특례 판정용(선택)]")],
+    sme_or_midsize: Annotated[bool | None, Field(description="중소기업·중견기업 여부(선택) — 2020~2023 사업연도의 시행령 제19조제3호 특례는 중소·중견만")] = None,
 ) -> dict:
     """해외 파견 인건비 청구액·손금·비과세 계산. 언제: 해외 현지법인에 파견한 직원의 인건비를 본사가 현지법인에 청구(정상가격 마크업 포함)할 때,
     청구액에 따른 본사 손금·손금불산입·정상가격 조정 익금산입과 근로자 국외근로 비과세(월 100만원, 건설·선박은 2023년까지 300만원·2024년부터 500만원)를 함께 구할 때.
@@ -10228,10 +10233,10 @@ def expat_cost_recharge(
       공통비율(공통일 때), 마크업, 청구액, 국외근로_개월, 국외근로_유형, 거주자].
     결과: 합계·항목별(원가, 현지법인 귀속원가, 정상청구액, 청구액, 미청구, 본사 손금, 본사 손금불산입,
       소득처분, 정상가격 조정 익금산입, 근로자 비과세), 판단·근거."""
-    r = C.expat_cost_recharge({"year": year, "items": items})
+    r = C.expat_cost_recharge({"year": year, "items": items, "sme_or_midsize": sme_or_midsize})
     if "error" in r:
         return r
-    세무조정, 주의 = [], []
+    세무조정, 주의 = [], list(r.get("주의") or [])
     for it in r["결과"].get("항목별") or []:
         if it.get("본사_손금불산입"):
             처분 = str(it.get("소득처분") or "")
@@ -10506,6 +10511,8 @@ def cfc_deemed_dividend(
     passive_income: Annotated[int | None, Field(description="수동소득 합계(원, 선택)")] = None,
     passive_excluded_dividends: Annotated[int | None, Field(description="수동소득에서 빼는 배당금(영 제65조4호 단서, 선택)")] = None,
     total_revenue: Annotated[int | None, Field(description="총 수입금액(원, 선택)")] = None,
+    current_year_income: Annotated[int | None, Field(description="해당 사업연도 실제발생소득(원, 선택) — 2021 사업연도까지 2억원 적용배제 판정용(없으면 pretax_incomes 첫 값). "
+                                                               "2022 사업연도부터는 영 제61조제1항 3년 연평균으로 판정해 쓰지 않음")] = None,
 ) -> dict:
     """특정외국법인 유보소득 배당간주액 — 저세율국 자회사가 배당하지 않고 쌓아 둔 이익을 내국인 주주가 배당받은 것으로 보는 금액(국제조세조정에 관한 법률 제27조~제31조).
 
@@ -10549,6 +10556,7 @@ def cfc_deemed_dividend(
         passive_main_business=passive_main_business,
         passive_income=passive_income, passive_excluded_dividends=passive_excluded_dividends,
         total_revenue=total_revenue,
+        current_year_income=current_year_income,
     )
     if "error" in r:
         return r

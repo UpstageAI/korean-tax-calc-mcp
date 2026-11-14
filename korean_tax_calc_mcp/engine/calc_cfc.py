@@ -5,8 +5,14 @@
 - 2016~2019 사업연도: 구 국제조세조정에 관한 법률 제17조·제18조·제18조의2·제19조, 영 제29조~제36조의3
 - 2020 사업연도: 법 제17조·제17조의2·제17조의3·제18조·제19조, 영 제29조·제30조·제32조~제34조의2 (2019.12.31. 개정)
 - 2021 사업연도~: 법 제27조~제31조, 영 제61조~제67조 (2020.12.22. 전부개정)
-전 기간 같은 값: 10퍼센트 보유, 최근 3개 사업연도 합계 비교, 2억원(월할), 50퍼센트·5퍼센트 기준, 종료일 다음 날부터 60일.
-연도별로 다른 값: 저세율 기준(_기준세율), 근거 조문 번호(_근거), 수동소득 범위·배당금 제외 범위(_연도별_주의).
+전 기간 같은 값: 10퍼센트 보유, 저세율 판정은 최근 3개 사업연도 합계 비교, 2억원(월할), 50퍼센트·5퍼센트 기준, 종료일 다음 날부터 60일.
+연도별로 다른 값: 저세율 기준(_기준세율), 근거 조문 번호(_근거), 수동소득 범위·배당금 제외 범위(_연도별_주의),
+2억원 적용배제의 비교 소득(_2억_판정, 2026-11-14 법제처 시행본 재대조):
+- 2016~2019: 구 영 제34조의2 — 제29조제1항~제3항으로 계산한 금액(해당 사업연도 법인세 차감 전 당기순이익) → 해당 사업연도 값
+- 2020: 구 영 제32조① — 제29조에 따라 계산한 실제발생소득(해당 사업연도 세전이익) → 해당 사업연도 값
+- 2021: 영 제64조① — 제61조(2021년 시행본: 해당 사업연도 세전이익 조정액) → 해당 사업연도 값
+- 2022~: 영 제64조① — 제61조①(2022.2.15. 개정: 최근 3개 사업연도 합계의 연평균액) → 3년 연평균
+  (대통령령 제32423호 부칙 제2조: 2022.1.1. 이후 개시하는 과세연도부터)
 """
 from __future__ import annotations
 
@@ -122,6 +128,7 @@ def cfc_deemed_dividend(
     passive_income: int | None = None,
     passive_excluded_dividends: int | None = None,
     total_revenue: int | None = None,
+    current_year_income: int | None = None,
 ) -> dict:
     """특정외국법인 유보소득 배당간주액. 판정 순서: 특수관계 → 10퍼센트 보유 → 저세율 → 2억원 이하 배제 →
     해외지주회사 배제 → 고정 시설 실질 사업 배제와 그 예외(업종·수동적 사업·수동소득) → 유보소득 × 보유비율."""
@@ -167,6 +174,8 @@ def cfc_deemed_dividend(
                     ("ownership_with_related_ratio", ownership_with_related_ratio)):
         if v is not None and not (num(v) and 0 <= v <= 1):
             문제.append(f"{이름}={v} — 0 이상 1 이하")
+    if current_year_income is not None and not num(current_year_income):
+        문제.append(f"current_year_income={current_year_income} — 숫자(원)")
     for 이름, v in (("passive_income", passive_income), ("passive_excluded_dividends", passive_excluded_dividends), ("total_revenue", total_revenue)):
         if v is not None and not (num(v) and v >= 0):
             문제.append(f"{이름}={v} — 0 이상 숫자")
@@ -185,7 +194,15 @@ def cfc_deemed_dividend(
     연수 = len(pretax_incomes)
     소득합 = sum(Fraction(max(0, int(v))) for v in pretax_incomes)      # 결손 사업연도는 0
     세액합 = sum(Fraction(int(v)) for v in taxes_paid)
-    월할_2억 = _trunc_won(Fraction(200_000_000 * months, 12))
+    월할_2억_정확 = Fraction(200_000_000 * months, 12)               # 비교는 원 미만을 자르지 않은 값으로
+    월할_2억 = _trunc_won(월할_2억_정확)                               # 유보소득 차감·표시용(종전과 같음)
+    if year <= 2021:      # 해당 사업연도 실제발생소득(구 영 제34조의2·구 영 제32조①·2021년 시행 영 제64조①)
+        당해 = current_year_income if current_year_income is not None else pretax_incomes[0]
+        배제_판정소득 = Fraction(int(당해))
+        배제_판정기준 = "해당 사업연도 실제발생소득"
+    else:                 # 영 제64조① → 제61조①(2022.2.15. 개정) 최근 3개 사업연도 연평균액
+        배제_판정소득 = 소득합 / 연수
+        배제_판정기준 = f"최근 {연수}개 사업연도 실제발생소득 연평균"
 
     결과 = {
         "특정외국법인_해당": False, "배당간주_적용": False, "적용방식": "없음", "적용제외_사유": None,
@@ -193,6 +210,7 @@ def cfc_deemed_dividend(
         "기준세율_만분율": 만분율(기준세율), "실제부담세율_만분율": 만분율(세액합 / 소득합) if 소득합 > 0 else None,
         "주식보유비율_만분율": 만분율(보유비율), "배당가능_유보소득": 0, "배당간주금액": 0,
         "익금귀속_기준일": 기준일.isoformat() if 기준일 else None, "익금귀속_과세연도": 기준일.year if 기준일 else None,
+        "적용배제_판정소득": _trunc_won(배제_판정소득) if 배제_판정소득 >= 0 else int(배제_판정소득), "적용배제_판정기준": 배제_판정기준,
     }
     주의 = [
         "금액은 호출자가 원화로 환산해 넣는다. 배당간주금액은 사업연도 종료일의 다음 날부터 60일이 되는 날의 기준환율·재정환율로 환산(영 제67조③)",
@@ -212,6 +230,15 @@ def cfc_deemed_dividend(
                    "특정외국법인 재무제표·유보소득 계산 명세서 등을 신고 때 제출한다(당시 자료 제출 조문 번호는 대조하지 않음)"]
     else:
         주의[1] = 주의[1].rstrip(")") + ") — cfc_actual_dividend·cfc_share_disposal로 계산"
+    if year <= 2021 and current_year_income is None:
+        주의.append("2억원 적용배제는 해당 사업연도 실제발생소득으로 판정(2021 사업연도까지 — 구 영 제34조의2·구 영 제32조①·영 제64조①이 가리키는 실제발생소득이 "
+                   "해당 사업연도 세전이익) — current_year_income을 넣지 않아 pretax_incomes의 첫 값을 해당 사업연도로 봄")
+    elif year >= 2022 and current_year_income is not None:
+        주의.append("2022 개시 사업연도부터 2억원 적용배제는 영 제61조①의 실제발생소득(최근 3개 사업연도 연평균액)으로 판정(영 제64조①) — "
+                   "current_year_income은 이 판정에 쓰지 않음")
+    if year in (2021, 2022):
+        주의.append("2억원 적용배제 비교 소득이 2022.1.1. 이후 개시하는 과세연도부터 해당 사업연도 값에서 3년 연평균으로 바뀜(대통령령 제32423호 부칙 제2조) — "
+                   "'과세연도'를 특정외국법인 사업연도 개시일 기준으로 보아 year로 나눔")
     if holding_company_exemption or fixed_facility_active_business:
         주의.append("해외지주회사·고정 시설 실질 사업 요건 충족 여부는 호출자 판정")
     # 비역년: 사업연도가 이듬해로 걸치고 두 해의 저세율 기준이 다르면, 종료연도 기준도 함께 판정(2026-11-14 원문·해석 재검색 — 시점 규정 없음)
@@ -248,8 +275,12 @@ def cfc_deemed_dividend(
     결과["특정외국법인_해당"] = True
 
     # 4~5. 적용 배제
-    if 결과["실제발생소득_연평균"] <= 월할_2억:
-        return 끝(f"실제발생소득 2억원 이하({조['2억']})" if months == 12 else f"실제발생소득 2억원 × {months}/12 이하({조['2억']})")
+    _한도표시 = f"{int(월할_2억_정확):,}" if 월할_2억_정확.denominator == 1 else f"{float(월할_2억_정확):,.2f}"
+    _소득표시 = f"{배제_판정소득.numerator:,}" if 배제_판정소득.denominator == 1 else f"{float(배제_판정소득):,.2f}"
+    단계.append(f"적용배제 판정: {배제_판정기준} {_소득표시} ≤ 2억원" + ("" if months == 12 else f" × {months}/12")
+                + f"({_한도표시}원)인지 — 원 미만을 자르지 않고 비교 ({조['2억']})")
+    if 배제_판정소득 <= 월할_2억_정확:
+        return 끝(f"{배제_판정기준} 2억원 이하({조['2억']})" if months == 12 else f"{배제_판정기준} 2억원 × {months}/12 이하({조['2억']})")
     if holding_company_exemption:
         return 끝(f"해외지주회사({조['지주']})")
 
