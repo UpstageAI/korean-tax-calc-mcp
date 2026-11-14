@@ -923,6 +923,39 @@ def tp_comparable_screen(tested_party: Annotated[dict, Field(description="분석
 
 @mcp.tool(annotations=CALC)
 @_guard
+def international_transaction_statement(
+        year: Annotated[int, Field(description="사업연도 — 개시일이 속하는 해(2016~2026). 엑셀 서식 틀은 2021 사업연도부터(2020년까지 구 서식 번호 미확인)")],
+        parties: Annotated[list[dict], Field(description="국외특수관계인별 거래 [{name(법인명·상호, 필수), country, local_id(현지기업 고유번호), tax_id(현지 납세자번호), fiscal_year(상대방 사업연도 문구), "
+                                                         "industry_code(주업종코드), established(설립일 'YYYY-MM'), relationship('지배'|'피지배'|'자매'|'실질 지배'|'본점ㆍ지점' — 서식 작성방법 4), "
+                                                         "sales: 매출거래, purchases: 매입거래, transfer_pricing: {transaction(대상 거래), method(정상가격 산출방법), reason(선택 이유)}, "
+                                                         "representative·industry·address(정상가격 산출방법 신고서 칸, 선택)}]. sales·purchases = {inventory(재고자산), other_tangible(기타 유형자산), "
+                                                         "royalty(무형자산 사용료), intangible_sale(무형자산 매매 등·원가분담), guarantee(지급보증 용역), other_services(기타 용역), tangible_rental(유형자산 사용료), "
+                                                         "loans: [{amount(대여·차입 금액), days(해당 사업연도 중 기간 일수)}], interest(수입·지급 이자), virtual_assets(가상자산), other(그 밖의 거래)} — 원 단위")],
+        fy_start: Annotated[str | None, Field(description="사업연도 개시일 YYYY-MM-DD(생략하면 year-01-01)")] = None,
+        fy_end: Annotated[str | None, Field(description="사업연도 종료일 YYYY-MM-DD(생략하면 year-12-31) — 평균 대여금·차입금 분모 일수와 제출기한 계산")] = None,
+        revenue: Annotated[int, Field(description="당기 매출액(원, 선택) — 국제거래정보통합보고서 대상 여부(통합·개별기업보고서 제출자의 국제거래명세서 제출 관계) 판정용", ge=0)] = 0,
+        filer: Annotated[dict | None, Field(description="정상가격 산출방법 신고서 신고인 칸(선택) {representative(대표자), industry(업종), phone(전화번호), address(소재지)}")] = None) -> dict:
+    """국제거래명세서 칸 집계와 제출 의무 — 국외특수관계인별 거래를 국조칙 별지 제16호서식(갑) 칸 번호대로 모아 매출·매입 계, 대여금·차입금 적수(금액×일수 합계), 평균 대여금·차입금(적수 ÷ 사업연도 일수)을 내고,
+    국제거래명세서·요약손익계산서·정상가격 산출방법 신고서 제출 의무(국조법 제16조제2항, 시행령 제36조 — corporate_filing_obligations와 같은 연도표)와 제출기한, 함께 낼 서식(별지 제16호서식(을)·제17호·제18호·제19호·제20호)을 판정.
+    언제: 국외특수관계인(해외 자회사·모회사 등)과 거래가 있는 법인이 국제거래명세서를 작성하거나 제출 대상인지, 어떤 서식을 함께 내야 하는지 확인할 때.
+    엑셀: export_workbook(layout='forms')에 넣으면 별지 제16호서식(갑)과 정상가격 산출방법 신고서(별지 제20호) 시트를 채움.
+    입력: 사업연도 → year(·fy_start·fy_end), 국외특수관계인별 매출·매입 거래 → parties[].sales·purchases(재화는 inventory·other_tangible, 무형자산은 royalty·intangible_sale, 용역은 guarantee·other_services·tangible_rental, 금전대차는 loans 건별 금액·일수와 interest, 가상자산·기타는 virtual_assets·other), 정상가격 산출방법 → parties[].transfer_pricing, 매출액 → revenue.
+    계산(서식 작성방법 5·9·10): 매출 계 = 재고자산~가상자산 외 칸 합계(대여금 적수 칸 제외, 평균 대여금·수입이자 포함), 매입 계도 같은 방식. 적수 = 합계(금액 × 일수) — 서식 예시 100원×60일 + 200원×180일 = 42,000원.
+      평균 = 적수 ÷ 사업연도 일수(365·366), 원 미만 절사 — 서식 예시 42,000 ÷ 365 = 115원.
+    판정: 2023.1.1. 이후 개시 사업연도는 재화 5억·용역 1억·무형자산 1억 모두 이하면 국제거래명세서 면제, 2022년까지는 국외특수관계인과 거래가 있으면 제출. 기한은 사업연도 종료일이 속하는 달의 말일부터 6개월(2020 사업연도분부터).
+      면제 금액은 매출·매입 합계로 재화(재고자산·기타 유형자산), 용역(지급보증·기타 용역·유형자산 사용료), 무형자산(사용료·매매 등)만 셈.
+    결과: 매출·매입 계·적수·평균·이자 합계, 거래 유형별 합계와 국외특수관계인별 최대, 서식별 제출 여부·제출기한, 함께_낼_서식, 계산(국외특수관계인별 칸 값), 서식_표·계산식_입력(엑셀 서식 틀용), 판단·근거·주의·한계.
+    범위 밖: 정상가격 자체의 산출(arm_length_range·tp_comparable_screen), 주식 등 취득·양도와 가상자산 거래 명세(서식 제2쪽), 지급보증 정상가격(별지 제16호서식(을) 칸 계산)."""
+    from .engine import calc_intl_statement as ITS
+    r = ITS.statement({"year": year, "parties": parties, "fy_start": fy_start, "fy_end": fy_end, "revenue": revenue, "filer": filer})
+    if "error" in r:
+        return r
+    extra = {k: v for k, v in r.items() if k not in ("결과", "근거")}
+    return _ok(r["결과"], r["근거"], **extra)
+
+
+@mcp.tool(annotations=CALC)
+@_guard
 def provision_reserve_ledger(grants: Annotated[list, Field(description="연도별 적립액 [{year(2016~2026), amount(원)}] — 포인트는 그해 고객에게 적립해 준 금액(액면), 판매보증은 그해 판매분에서 생길 보증 대상 금액. 가장 이른 적립 연도부터 넣는다")],
                              valid_years: Annotated[int, Field(description="유효기간(년) — 적립한 해 뒤 몇 년까지 쓸 수 있는지. 2면 적립한 해와 그 뒤 2개 연도까지 사용, 2년 되는 해 말에 미사용분 소멸", ge=0, le=10)],
                              usage_pattern: Annotated[list, Field(description="경과연수별 실제 사용률 목록(적립한 해부터) — 예: [0.3, 0.4, 0.1]이면 적립한 해 30%, 1년 뒤 40%, 2년 뒤 10% 사용, 나머지 20%는 소멸. 합계 1 이하, 길이는 valid_years+1 이하")],

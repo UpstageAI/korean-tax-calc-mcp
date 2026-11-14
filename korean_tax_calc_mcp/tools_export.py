@@ -1699,9 +1699,12 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
                 return _dt.date(y, 12, 31)
             return None
 
-        def _deadline(form: str, end: "_dt.date | None") -> "_dt.date | None":
+        def _deadline(form: str, end: "_dt.date | None", months: "int | None" = None) -> "_dt.date | None":
             if end is None:
                 return None
+            if months:   # 틀 deadline_months — 종료일이 속하는 달의 말일부터 N개월(국조법 제16조② 국제거래명세서 등 6개월)
+                y, mth = end.year + (end.month + months - 1) // 12, (end.month + months - 1) % 12 + 1
+                return _dt.date(y + (mth == 12), 1 if mth == 12 else mth + 1, 1) - _dt.timedelta(days=1)
             if form.startswith("부가가치세법"):
                 return end + _dt.timedelta(days=25)
             if form.startswith("법인세법"):
@@ -1790,7 +1793,7 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
                                           source_data=call_sources, all_slots=all_slots,
                                           label=cd.get("label", ""), 과세기간=과세기간,
                                           other_calls=_other_calls if tinfo.get("main", True) else {},
-                                          form_deadline=_deadline(tinfo.get("form", ""), _period_end(tinfo["call_idx"])),
+                                          form_deadline=_deadline(tinfo.get("form", ""), _period_end(tinfo["call_idx"]), tpl.get("deadline_months")),
                                           귀속연도=_귀속연도)
             except ValueError as e:
                 if "max_rows" not in str(e):
