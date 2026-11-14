@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.52.0 (2026-11-14)
+
+영어로 물어도 도구를 찾게 — 도구 설명 첫 줄에 영문 한 줄을 넣고 `find_tool`이 영어 질의를 받게 함. 국세청 「2026 해외진출기업을 위한 세무 가이드북」 불일치를 조문으로 대조해 고침. 새 도구 없음(도구 133개). Claude 작성(영문 설명·가이드북 대조 에이전트 + 통합).
+
+- **도구 설명 영문 한 줄** — 133개 도구 설명 첫 줄에 `Entertainment expense limit and non-deductible excess for corporate tax (기업업무추진비 한도).` 형식(영문 핵심어 + 국문 용어 괄호). 국문 설명·`언제:`·`입력:` 줄은 그대로. 영문 용어는 `docs/glossary_ko_en.md`(155행) — 법제처 영문법령(소득세법·법인세법·각 시행령, 조특법, 국세기본법, 부가가치세법·시행령, 상증법, 국조법, 조세범 처벌절차법)으로 확인한 행을 표시하고, 공식 영문을 찾지 못한 8행은 '확인 필요'로 남김. 검색어로 더 흔한 표현(penalty tax·loss·capital gains·CFC·entertainment expense)은 비고에 법제처 영문 표현을 함께 적음. 고유목적사업준비금은 법인세법 제29조 영문(`proper purpose business`)으로.
+- **`find_tool` 영어 질의** — 도구 이름·영문 첫 줄 낱말 일치를 무겁게, 나머지 설명 낱말은 가볍게 셈(흔한 낱말 제외, 복수형 정규화). 영어 별칭(corporate income tax, transfer pricing, arm's length, thin cap, expat, secondment, participation exemption, reverse charge, royalty withholding, business promotion). `tax residency`는 계산 도구가 없어 korean-tax-mcp `residency_check`·`residency_report`와 소득세법 제1조의2, 시행령 제2조·제3조로 안내. 후보에 `국문 설명`을 함께 표시. 설명·서버 안내의 "도구가 70개가 넘으니"를 "도구가 많으니"로.
+- **serverInfo.version** — initialize 응답의 `serverInfo.version`이 빈 문자열이던 것을 고침(`MCPServer`에 패키지 버전을 넘김). `korean_tax_calc_mcp.__version__`도 패키지 메타데이터에서 읽음(0.25.0으로 멈춰 있었음).
+- **README-EN** — "For foreign companies, expats and Korean subsidiaries" 절: 관련 도구 표(거주자 판정·조약 제한세율은 korean-tax-mcp), 영어 질문 예 3개, 외국인 근로자 단일세율 19%(조특법 제18조의2) 미지원 명시.
+- **등록 정보** — server.json 설명을 영문 검색어 중심으로(레지스트리 한도 100자), pyproject 키워드 expat·withholding-tax·nonresident·transfer-pricing·korean-subsidiary·foreign-tax-credit 추가.
+- 테스트 `test_en_desc_0520.py` 152건(첫 줄 영문·국문 용어 괄호 133건, 영어 질의 12개 상위 3위, tax residency 안내, serverInfo.version, `financial_income_aggregate` 출자공동사업자배당 + 고배당기업배당 분리 선택 회귀). 전체 2886 passed.
+- **국세청 해외진출기업 가이드북 대조 반영**
+  - `cfc_deemed_dividend`: 2억원 적용배제의 비교 소득을 사업연도별 조문대로 나눔 — 2021 사업연도까지는 해당 사업연도 실제발생소득
+    (구 영 제34조의2, 구 영 제32조제1항, 2021년 시행 영 제64조제1항이 가리키는 단년 세전이익), 2022 사업연도부터는 영 제61조제1항
+    (2022.2.15. 개정, 대통령령 제32423호 부칙 제2조: 2022.1.1. 이후 개시 과세연도)의 최근 3개 사업연도 연평균. 종전에는 전 기간 3년 평균으로 비교했음.
+    선택 입력 `current_year_income` 추가(없으면 pretax_incomes 첫 값을 해당 사업연도로 보고 주의 표시). 저세율 판정(3년 합계)은 그대로.
+    3년 평균·월할 2억원을 원 미만에서 자르지 않고 비교(평균 200,000,000.67원이 2억원 이하로 잘못 배제되던 문제). 결과에 `적용배제_판정소득`·`적용배제_판정기준` 추가.
+  - `expat_cost_recharge`: 법인세법 시행령 제19조제3호 해외현지법인 파견 임직원 인건비 손비 특례 추가 — 100% 직접·간접 출자 현지법인 파견,
+    내국법인 지급 인건비가 내국법인·해외출자법인 지급 합계의 50% 미만이면 미청구분도 손금불산입하지 않음.
+    2020~2023 사업연도는 중소·중견기업만(대통령령 제30396호, 부칙 제2조), 2024 사업연도부터 모든 내국법인·소득세법 제127조제1항 근로소득세 원천징수 요건
+    (대통령령 제34266호, 부칙 제5조 시행일이 속하는 사업연도부터). 항목 입력 `완전자회사`·`현지법인_지급인건비`·`내국법인_지급인건비`·`근로소득_원천징수`,
+    도구 입력 `sme_or_midsize` 추가(모두 선택 — 없으면 종전대로 계산하고 주의 표시).
+  - `foreign_subsidiary_dividend`: 조세특례제한법 제23조의2제3항 차입금 이자 차감금액을 원 미만에서 자르지 않고 빼고, 최종 익금불산입액만 절사
+    ("원 미만 처리 규정 없음 — 최종 금액에서 절사" 주의 추가).
+- **확인(변경 없음)**
+  - `overseas_subsidiary_statement` 거주자 손실거래명세서 5년 누적 기준은 국조령 제98조제1항제3호가목(2026.2.27. 시행본) 20억원 — 도구 값이 맞음.
+    가이드 인쇄 37쪽 "거주자는 200억원 이상"은 조문과 다름.
+
 ## 0.51.1 (2026-11-14)
 
 법제처 Open API 점검 종료 후 미확인 항목을 원문(시행본·부칙·서식)으로 대조해 결과가 바뀌는 4건을 고치고 문구를 정리. 새 도구 없음(도구 133개). Claude 작성(대조 에이전트 2개 + 수정 에이전트 1개).
