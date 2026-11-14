@@ -384,16 +384,23 @@ def withholding_late_penalty_full(unpaid, due, until, notice_due=None, paid_on=N
         out["고지후_규정"] = "종전" if old_post else "개정"
         고지세액 = notice_amount if notice_amount is not None else unpaid + _floor(pre)
         out["납부고지서_세액"] = 고지세액
-        # ⑤ 소액 기준: 2020.1.1.~2021.12.31. 100만원 미만, 2022.1.1.부터 150만원 미만(법률 제18586호) — 지정납부기한 기준으로 나눔
-        소액기준 = 1_000_000 if notice_due < date(2022, 1, 1) else 1_500_000
+        # ⑤ 소액 기준: 2020.1.1.~2021.12.31. 100만원 미만, 2022.1.1.부터 150만원 미만(법률 제18586호).
+        # 부칙 제7조: 시행 전 100만원 이상 150만원 미만 체납분의 '그 미납기간에 대하여 납세의무가 성립한' 가산세는 종전 — 가산세는 1일마다
+        # 성립(제21조②11호나목)하므로 2021.12.31.까지의 날만 종전(100만원 기준)으로 부과하고 2022.1.1.부터의 날은 150만원 기준으로 없음.
+        cut = date(2022, 1, 1)
+        split = notice_due < cut and 1_000_000 <= 고지세액 < 1_500_000
+        소액기준 = 1_000_000 if notice_due < cut else 1_500_000
         out["소액기준"] = 소액기준
         if 고지세액 < 소액기준:
             out["150만원미만_제외"] = True
         else:
             try: five = notice_due.replace(year=notice_due.year + 5)
             except ValueError: five = notice_due.replace(year=notice_due.year + 5, day=28)
+            if split:
+                out["소액기준_분할"] = "2021.12.31.까지 100만원 기준(종전, 법률 제18586호 부칙 제7조), 2022.1.1.부터 150만원 기준 — 2022.1.1. 이후 날은 가산세 없음"
+                five = min(five, cut - timedelta(days=1))
             if old_post:
-                pd = (min(paid_on, five) - notice_due).days
+                pd = max(0, (min(paid_on, five) - notice_due).days)
                 post = sum(u * _x(r) * n for n, r in late_payment_rate_segments((notice_due + timedelta(days=1)).isoformat(), pd))
                 out["고지후_일수"] = pd
             else:

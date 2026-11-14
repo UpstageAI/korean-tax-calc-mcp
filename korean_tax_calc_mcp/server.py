@@ -1135,7 +1135,7 @@ def rural_special_tax(year: YEAR,
 
 @mcp.tool(annotations=CALC)
 @_guard
-def integrated_employment_credit(year: Annotated[int, Field(description="과세연도(2023~2025)")],
+def integrated_employment_credit(year: Annotated[int, Field(description="과세연도(2023~2026 — 2026은 2024·2025 증가분의 2차·3차 공제와 추가 납부만, 법률 제21223호 부칙 제34조)")],
                                  size: Annotated[str, Field(description="중소기업 | 중견기업 | 일반")],
                                  headcounts: Annotated[list, Field(description="과세연도별 상시근로자 수 [{year, total(전체), youth(청년등), youth_for_recapture?(추가 납부 계산용 — 최초 공제 과세연도의 청년을 계속 청년등으로 본 인원)}] — 해당 과세연도와 직전 과세연도는 반드시, 앞 해의 2차·3차 공제까지 보려면 2022년부터. 인원은 매월 말 인원 합 ÷ 개월 수")],
                                  outside_capital_area: Annotated[bool, Field(description="인원이 수도권 밖에서 늘었으면 true(중소기업만 금액이 달라짐)")] = False,
@@ -1150,7 +1150,8 @@ def integrated_employment_credit(year: Annotated[int, Field(description="과세�
       인원이 준 해에는 이미 공제받은 세액의 추가 납부액을 시행령 산식으로 계산하고, 실제로 공제받은 세액을 한도로 함.
       정규직 전환·육아휴직 복귀는 1명당 1,300만원(중견 900만원), 상시근로자가 줄지 않은 해만.
     결과: 기본공제, 정규직 전환·육아휴직 복귀 공제, 공제 대상 세액, 추가 납부세액, 계산(최초 공제 과세연도별 증가 인원·차수·공제액·추가 납부), 판단·근거·주의.
-    범위 밖: 2022년 이전 증가분(고용증대 세액공제), 2026 과세연도 이후 계산식, 최저한세·이월(minimum_tax_adjustment), 농어촌특별세(rural_special_tax), 합병·분할 승계 인원 조정."""
+    2026 과세연도: 2024·2025 과세연도 증가분의 2차·3차 공제와 추가 납부는 종전 규정으로 계산(2025.12.23. 개정 법률 제21223호 부칙 제34조). 2026 증가분(개정 계산식)과 2026 정규직 전환·육아휴직 복귀는 계산하지 않음.
+    범위 밖: 2022년 이전 증가분(고용증대 세액공제), 2026 과세연도 증가분의 개정 계산식, 최저한세·이월(minimum_tax_adjustment), 농어촌특별세(rural_special_tax), 합병·분할 승계 인원 조정."""
     r = INC.integrated_employment_credit(year, size, headcounts, outside_capital_area, converted, returned_from_leave, credits_taken, carryforward_left)
     if "error" in r:
         return r
@@ -1180,21 +1181,24 @@ def employment_increase_credit(year: Annotated[int, Field(description="과세연
 
 @mcp.tool(annotations=CALC)
 @_guard
-def integrated_investment_credit(year: Annotated[int, Field(description="과세연도(2021~2026)")],
-                                 size: Annotated[str, Field(description="중소기업 | 중견기업 | 일반 | 졸업 뒤 3년(2025년부터 — 최초로 중소기업에 해당하지 않게 된 과세연도 개시일부터 3년 안에 끝나는 과세연도)")],
+def integrated_investment_credit(year: Annotated[int, Field(description="과세연도(2020~2026 — 2020은 2021.1.1. 이후 신고분, 법률 제17759호 부칙 제4조제1항)")],
+                                 size: Annotated[str, Field(description="중소기업 | 중견기업 | 일반 | 졸업 뒤 3년(2025년부터 — 최초로 중소기업에 해당하지 않게 된 과세연도 개시일부터 3년 안에 끝나는 과세연도, graduated_year와 함께)")],
                                  investments: Annotated[list, Field(description="그 과세연도 투자금액 [{kind(일반 | 신성장 | 국가전략 | 반도체), amount(원)}] — 신성장·국가전략·반도체는 시설 인정을 받은 금액")],
                                  prior3_total: Annotated[int, Field(description="해당 과세연도 개시일부터 소급해 3년간 투자한 금액의 합계(원). 추가공제 계산용", ge=0)] = 0,
                                  history_months: Annotated[int | None, Field(description="투자금액이 처음 생긴 과세연도 개시일부터 해당 과세연도 개시일까지의 개월 수(36개월 미만일 때만)")] = None,
                                  months: Annotated[int, Field(description="해당 과세연도 개월 수", ge=1, le=12)] = 12,
                                  in_overconcentration_zone: Annotated[bool, Field(description="투자한 사업장이 수도권과밀억제권역 안이면 true(산업단지·공업지역은 false)")] = False,
-                                 expansion: Annotated[bool, Field(description="증설투자면 true, 낡은 설비를 바꾸는 대체투자면 false")] = False) -> dict:
+                                 expansion: Annotated[bool, Field(description="증설투자면 true, 낡은 설비를 바꾸는 대체투자면 false")] = False,
+                                 graduated_year: Annotated[int | None, Field(description="size='졸업 뒤 3년'일 때 최초로 중소기업에 해당하지 않게 된 과세연도 — 2025 이후여야 졸업 뒤 3년 율, 그 전이면 중견기업 율(법률 제20617호 부칙 제5조제2항)")] = None) -> dict:
     """통합투자세액공제 — 사업용 자산 투자금액에 대한 기본공제와 추가공제(조세특례제한법 제24조). 언제: 기계장치 등 설비에 투자한 회사가 그 해 공제받을 금액을 구하거나, 창업감면·특별세액감면과 어느 쪽이 유리한지 비교할 때.
     입력: 과세연도 → year, 기업 규모 → size, 자산 구분별 투자금액 → investments, 직전 3년 투자 합계 → prior3_total, 수도권과밀억제권역·증설 여부 → in_overconcentration_zone·expansion.
     계산: 기본공제 = 투자금액 × 공제율(연도·규모·자산 구분별 — 중소기업 일반 자산은 본칙 10%, 2023~2025 임시 공제 12%). 추가공제 = 직전 3년 연평균 투자금액을 넘는 금액 × 3%(국가전략 4%, 임시·2025년부터 10%), 기본공제의 2배 한도.
       2024·2025 과세연도는 본칙과 임시 공제 중 큰 쪽, 2023 과세연도는 임시 공제. 수도권과밀억제권역 안 증설투자는 배제.
+      2020 과세연도는 2021.1.1. 이후 신고분이라 2021 율표(국가전략 구분 없음) — 종전 투자세액공제와 하나만 선택(법률 제17759호 부칙 제4조제1항·제36조, 종전 공제는 계산 안 함).
+      '졸업 뒤 3년' 율은 2025.1.1. 이후 개시 과세연도에 처음 졸업한 경우만(graduated_year, 법률 제20617호 부칙 제5조제2항) — 그 전 졸업이면 중견기업 율, 미입력이면 졸업 뒤 3년 율로 계산하고 판단에 표시.
     결과: 기본공제, 추가공제, 공제 대상 세액, 적용(본칙·임시·배제), 계산(구분별 공제율·3년 연평균·초과 투자액·본칙과 임시 비교), 판단·근거·주의.
-    범위 밖: 공제 대상 자산 판정, 2020년 이전 투자세액공제, 다른 목적 전용 시 납부세액, 최저한세·이월(minimum_tax_adjustment), 농어촌특별세(rural_special_tax)."""
-    r = INC.integrated_investment_credit(year, size, investments, prior3_total, history_months, months, in_overconcentration_zone, expansion)
+    범위 밖: 공제 대상 자산 판정, 종전 자산별 투자세액공제(2020 과세연도 선택분 포함), 다른 목적 전용 시 납부세액, 최저한세·이월(minimum_tax_adjustment), 농어촌특별세(rural_special_tax)."""
+    r = INC.integrated_investment_credit(year, size, investments, prior3_total, history_months, months, in_overconcentration_zone, expansion, graduated_year)
     if "error" in r:
         return r
     return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 주의=r["주의"])
@@ -1476,9 +1480,12 @@ def underreporting_penalty(additional_tax: WON, fraud: Annotated[bool, Field(des
                            reduction: Annotated[Literal["수정신고", "예정신고_확정수정"] | None, Field(description="수정신고 감면 종류 — '수정신고'|'예정신고_확정수정'(없으면 감면 없음)")] = None,
                            due: Annotated[str | None, Field(description="법정신고기한 YYYY-MM-DD")] = None,
                            amended_on: Annotated[str | None, Field(description="수정신고일 YYYY-MM-DD")] = None,
-                           foreknown: Annotated[bool, Field(description="경정할 것을 미리 알았는지 여부(기본 False)")] = False) -> dict:
+                           foreknown: Annotated[bool, Field(description="경정할 것을 미리 알았는지 여부(기본 False)")] = False,
+                           prior_amended_on: Annotated[str | None, Field(description="같은 세목·과세기간을 전에 수정신고(또는 기한 후 신고)한 날 YYYY-MM-DD — 이번이 다시 하는 수정신고일 때. 2020.1.1. 전이면 이번 감면도 종전 비율(법률 제16841호 부칙 제22조 후단)")] = None) -> dict:
     """과소신고가산세(일반 과소신고 10%, 부정행위 40%)와 국세기본법 제48조제2항 수정신고 감면. 언제: 신고한 세액보다 실제 세액이 더 클 때 가산세 금액을 구하고, 수정신고를 했으면 감면을 적용한다.
-입력: 과소신고한 세액(원) → additional_tax, 부정행위 여부 → fraud(기본 False), 감면 종류 → reduction, 법정신고기한 → due, 수정신고일 → amended_on, 미리 알았는지 → foreknown(기본 False).
+입력: 과소신고한 세액(원) → additional_tax, 부정행위 여부 → fraud(기본 False), 감면 종류 → reduction, 법정신고기한 → due, 수정신고일 → amended_on, 미리 알았는지 → foreknown(기본 False), 전에 한 수정신고일 → prior_amended_on.
+감면율: 수정신고일이 2020.1.1. 이후면 90·75·50·30·20·10%(1개월·3개월·6개월·1년·1년 6개월·2년 이내), 그 전이면 50·20·10%(6개월·1년·2년 이내).
+  2020.1.1. 전에 수정신고한 분을 2020.1.1. 이후 다시 수정신고하면 종전 비율(법률 제16841호 부칙 제22조 후단) — prior_amended_on.
 결과: 가산세·감면전_가산세·감면율·감면액, 근거(국세기본법 제47조의3, 감면은 제48조제2항). Under-reporting penalty with amended-return reduction under Article 48(2)."""
     감면전 = K.penalty_underreport(additional_tax, fraud)
     가산세 = 감면전
@@ -1487,6 +1494,19 @@ def underreporting_penalty(additional_tax: WON, fraud: Annotated[bool, Field(des
 
     if reduction and not (due and amended_on):
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["reduction을 주면 due(법정신고기한)와 amended_on(수정신고일)이 둘 다 필요"]}
+    종전_재수정 = False
+    if prior_amended_on:
+        from datetime import date as _date
+        try:
+            _pa = _date.fromisoformat(prior_amended_on)
+            _am = _date.fromisoformat(amended_on) if amended_on else None
+        except ValueError as e:
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [str(e)]}
+        if not reduction or _am is None:
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["prior_amended_on은 수정신고 감면(reduction·due·amended_on)과 함께"]}
+        if _pa >= _am:
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"prior_amended_on={prior_amended_on} — 이번 수정신고일 amended_on={amended_on}보다 앞이어야 함"]}
+        종전_재수정 = _pa < _date(2020, 1, 1) <= _am
     # 감면 적용
     if reduction and due and amended_on:
         from datetime import date
@@ -1498,7 +1518,7 @@ def underreporting_penalty(additional_tax: WON, fraud: Annotated[bool, Field(des
         # foreknown=True면 감면 없음
         if not foreknown:
             # 수정신고일 기준: 2020-01-01 이후(2019.12.31 개정 부칙)
-            if amended_d >= date(2020, 1, 1):
+            if amended_d >= date(2020, 1, 1) and not 종전_재수정:
                 if amended_d <= add_months(due_d, 1):
                     감면율 = 0.9
                 elif amended_d <= add_months(due_d, 3):
@@ -1514,7 +1534,7 @@ def underreporting_penalty(additional_tax: WON, fraud: Annotated[bool, Field(des
                 else:
                     감면율 = 0.0
             else:
-                # 수정신고일 2019-12-31 이전
+                # 수정신고일 2019-12-31 이전, 또는 2020 전 수정신고분의 재수정신고(법률 제16841호 부칙 제22조 후단)
                 if amended_d <= add_months(due_d, 6):
                     감면율 = 0.5
                 elif amended_d <= add_months(due_d, 12):
@@ -1537,6 +1557,8 @@ def underreporting_penalty(additional_tax: WON, fraud: Annotated[bool, Field(des
         근거.append("국세기본법 제48조②")
         if foreknown:
             근거.append("— foreknown=True로 감면 제외")
+        elif 종전_재수정:
+            근거.append("법률 제16841호 부칙 제22조 후단(2020.1.1. 전 수정신고분을 그 뒤 다시 수정신고 — 종전 감면율)")
 
     결과 = {"가산세": 가산세, "세율": 0.4 if fraud else 0.1}
     if reduction and due and amended_on:
@@ -1544,29 +1566,64 @@ def underreporting_penalty(additional_tax: WON, fraud: Annotated[bool, Field(des
         결과["감면율"] = 감면율
         결과["감면액"] = 감면액
 
-    return _ok(결과, ", ".join(근거))
+    out = _ok(결과, ", ".join(근거))
+    if 종전_재수정 and not foreknown:
+        out["판단"] = [{"항목": "감면율", "결론": f"{prior_amended_on}(2020.1.1. 전)에 수정신고한 분을 {amended_on}에 다시 수정신고 — 종전 제48조제2항제1호 비율(6개월 50%·1년 20%·2년 10%)",
+                       "근거": "법률 제16841호 부칙 제22조 후단, 구 국세기본법 제48조제2항제1호"}]
+    return out
 
 
 @mcp.tool(annotations=CALC)
 @_guard
 def late_payment_penalty(unpaid_tax: WON, due: Annotated[str, Field(description="법정납부기한(YYYY-MM-DD)")],
-                         until: Annotated[str, Field(description="납부일·고지일(YYYY-MM-DD)")]) -> dict:
+                         until: Annotated[str, Field(description="납부일·고지일(YYYY-MM-DD)")],
+                         notice: Annotated[bool | None, Field(description="until이 납부고지일이면 true, 고지 전 자진납부일이면 false. 2020.1.1. 이후 성립분은 고지일을 일수에서 뺌")] = None,
+                         accrued_on: Annotated[str | None, Field(description="납세의무 성립일(YYYY-MM-DD, 선택 — 소득세·법인세·부가가치세는 과세기간 끝나는 날). 2020.1.1. 전이면 종전 규정(고지일까지 포함). 생략하면 due가 2020.1.1. 전인지로 봄")] = None) -> dict:
     """납부지연가산세(미납 세액 × 일수 × 이율, 이율 변경일 기준 기간 안분). 언제: 세금을 법정납부기한보다 늦게 납부했을 때 일수분 가산세를 계산한다.
-입력: 미납 세액(원) → unpaid_tax, 법정납부기한(YYYY-MM-DD) → due, 납부일·고지일(YYYY-MM-DD) → until.
-결과: 가산세 총액, 근거(국세기본법 제47조의4, 시행령 제27조의4). 일수는 until이 2026.6.30.까지면 납부일(고지일)까지, 2026.7.1.부터는 그 전날까지(법률 제21212호). 법정납부기한 2016.1.1. 이후만 지원. until이 due와 같은 날이면 가산세 0, due가 토·일·공휴일이면 주의(기한 연장은 자동 반영 안 함). Late payment penalty with daily rate split at rate-change dates."""
+입력: 미납 세액(원) → unpaid_tax, 법정납부기한(YYYY-MM-DD) → due, 납부일·고지일(YYYY-MM-DD) → until, 납부고지 여부 → notice, 납세의무 성립일 → accrued_on.
+일수(납세의무 성립일 기준): 2020.1.1. 전 성립분은 납부일·납세고지일까지(구 제47조의4제1항제1호, 법률 제16097호 부칙 제11조).
+  2020.1.1. 이후 성립분은 납부일까지, 납부고지가 있으면 납세고지일부터 고지서 납부기한까지 빼므로 고지일 전날까지(notice=true).
+  until이 2026.7.1. 이후면 납부고지일(고지 전 납부는 납부일)의 전날까지(법률 제21212호).
+결과: 가산세 총액·일수, 판단(일수 끝점과 근거), 근거(국세기본법 제47조의4, 시행령 제27조의4). 법정납부기한 2016.1.1. 이후만 지원. 납부고지서에 따른 납부기한 뒤의 가산세(3%·일수분·월 이율)는 계산하지 않음.
+until이 due와 같은 날이면 가산세 0, due가 토·일·공휴일이면 주의(기한 연장은 자동 반영 안 함). Late payment penalty with daily rate split at rate-change dates."""
     try:
         _d0 = _chk.to_date("due", due)
         _d1 = _chk.to_date("until", until)
+        _da = _chk.to_date("accrued_on", accrued_on) if accrued_on else None
     except ValueError as e:
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [str(e)]}
     if _d0 < date(2016, 1, 1):
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"due={due} — 2016.1.1. 이후 법정납부기한만 지원(그 전 이율·규정은 대조하지 않음)"]}
-    out = _ok(C.late_payment_penalty(unpaid_tax, due, until), "국세기본법 제47조의4, 시행령 제27조의4")
-    if _d1 >= date(2026, 7, 1):
-        out["판단"] = [{"항목": "일수", "결론": "법정납부기한 다음 날부터 납부고지일(고지 전 납부는 납부일)의 전날까지 — 2026.7.1. 시행 개정", "근거": "국세기본법 제47조의4①1호(법률 제21212호)"}]
+    if _da is not None and _da > _d0:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"accrued_on={accrued_on} — 납세의무 성립일이 법정납부기한 due={due}보다 뒤일 수 없음"]}
+    pre2020 = (_da < date(2020, 1, 1)) if _da is not None else _d0 < date(2020, 1, 1)
+    성립일_추정 = _da is None and date(2020, 1, 1) <= _d0 < date(2021, 1, 1)
+    out = _ok(C.late_payment_penalty(unpaid_tax, due, until, notice=bool(notice), pre2020=pre2020), "국세기본법 제47조의4, 시행령 제27조의4")
+    주의목록 = []
+    if pre2020:
+        판단 = {"항목": "일수", "결론": "2020.1.1. 전 성립분 — 법정납부기한 다음 날부터 " + ("납세고지일" if notice else "납부일(납세고지일)") + "까지(끝날 포함)",
+              "근거": "구 국세기본법 제47조의4제1항제1호(법률 제16097호 개정 전), 같은 법률 부칙 제11조"}
+        if notice:
+            주의목록.append("2020.1.1. 전 성립분의 납세고지 후 체납은 구 국세징수법 가산금(3%)·중가산금 대상 — 이 도구는 계산하지 않음")
+        if _d1 >= date(2026, 7, 1):
+            주의목록.append("2020.1.1. 전 성립분을 2026.7.1. 이후 납부·고지한 경우 — 법률 제16097호 부칙 제11조(종전 규정)로 끝날을 포함해 계산. 법률 제21212호(전날까지)와의 관계는 확인 필요")
+    elif _d1 >= date(2026, 7, 1):
+        판단 = {"항목": "일수", "결론": "법정납부기한 다음 날부터 납부고지일(고지 전 납부는 납부일)의 전날까지 — 2026.7.1. 시행 개정", "근거": "국세기본법 제47조의4①1호(법률 제21212호)"}
+    elif notice:
+        판단 = {"항목": "일수", "결론": "2020.1.1. 이후 성립분 — 법정납부기한 다음 날부터 납세고지일 전날까지(납세고지일부터 고지서 납부기한까지 제외)",
+              "근거": "국세기본법 제47조의4제1항제1호(법률 제16097호, 2020.1.1. 시행)"}
+    else:
+        판단 = {"항목": "일수", "결론": "2020.1.1. 이후 성립분 — 법정납부기한 다음 날부터 납부일까지"
+                                    + ("" if notice is False else "(notice 미입력 — 자진납부로 봄. until이 납부고지일이면 notice=true: 납세고지일부터 고지서 납부기한까지를 빼므로 고지일이 빠져 하루 적어짐)"),
+              "근거": "국세기본법 제47조의4제1항제1호(법률 제16097호, 2020.1.1. 시행)"}
+    out["판단"] = [판단]
+    if 성립일_추정 and (notice or _d1 >= date(2026, 7, 1)):
+        주의목록.append("법정납부기한이 2020년이라 2020.1.1. 이후 성립분으로 보고 계산 — 2019년에 성립한 세금(예: 2019 과세기간 소득세·법인세)이면 accrued_on에 성립일을 넣는다(종전 규정은 끝날 포함)")
     주의 = _due_holiday_note(due)
     if 주의:
-        out["주의"] = 주의
+        주의목록.insert(0, 주의)
+    if 주의목록:
+        out["주의"] = 주의목록 if len(주의목록) > 1 else 주의목록[0]
     return out
 
 
@@ -1591,7 +1648,7 @@ def withholding_late_payment_penalty(unpaid_tax: WON,
                                      notice_due: Annotated[str, Field(description="지정납부기한 = 납부고지서에 따른 납부기한(YYYY-MM-DD) — 납부고지가 있었을 때만")] = "",
                                      paid_on: Annotated[str, Field(description="납부고지 후 실제 납부일(YYYY-MM-DD) — notice_due와 함께")] = "",
                                      dunning_fee: Annotated[int, Field(ge=0, description="독촉에 드는 비용(원, 제47조의5제1항제4호·영 제27조의4제3항 등기우편 요금) — 개정 규정의 고지 후분에만")] = 0,
-                                     notice_amount: Annotated[int | None, Field(ge=0, description="납부고지서별·세목별 세액(원, 제5항 소액 기준: 지정납부기한 2021년까지 100만원, 2022년부터 150만원) — 생략하면 미납세액 + 고지 전 가산세")] = None,
+                                     notice_amount: Annotated[int | None, Field(ge=0, description="납부고지서별·세목별 세액(원, 제5항 소액 기준: 2021.12.31.까지의 날 100만원, 2022.1.1.부터의 날 150만원 — 법률 제18586호 부칙 제7조) — 생략하면 미납세액 + 고지 전 가산세")] = None,
                                      accrued_on: Annotated[str | None, Field(description="납세의무 성립일 = 소득을 지급한 날(YYYY-MM-DD, 선택). 2020.1.1. 전이면 종전 규정(3% + 고지일까지 일수분, 10% 한도). 생략하면 법정납부기한이 2020.1.10. 이전인 경우 2019년 성립분으로 봄")] = None) -> dict:
     """원천징수 등 납부지연가산세(국세기본법 제47조의5제1항) — 미납세액 3% + 일수분(고지 전 10% 한도) + 납부고지 후분, 전체 50% 한도. 언제: 원천징수의무자(납세조합·부가가치세 대리납부자 포함)가 원천징수세액을 법정납부기한까지 내지 않았거나 적게 냈을 때.
 입력: 미납·과소납부 세액(원) → unpaid_tax, 법정납부기한(YYYY-MM-DD) → due, 고지 전 납부일 또는 납부고지일(YYYY-MM-DD) → until,
@@ -1602,7 +1659,7 @@ def withholding_late_payment_penalty(unpaid_tax: WON,
   아니면 개정 3호 — 미납세액 × 지정납부기한 다음 날부터 납부일 전날까지 경과 개월 수(제4항 5년 = 60개월 한도) × 월 1만분의 67(영 제27조의4제2항) + 4호 독촉비용.
   제5항: 납부고지서별·세목별 세액 150만원 미만이면 고지 후분(개정 3호·4호, 종전 지정납부기한 후 2호 일수분) 없음. 전체는 미납세액의 50% 한도.
   연도: 2020.1.1. 전 납세의무 성립분(지급일 기준, 법률 제16841호 부칙 제21조)은 종전 규정 — 3% + 납부기한 다음 날부터 자진납부일 또는 납세고지일까지 일수분, 10% 한도. 고지 후분은 구 국세징수법 가산금 대상이라 계산하지 않음.
-  제5항 소액 기준은 지정납부기한 2021.12.31.까지 100만원 미만, 2022.1.1.부터 150만원 미만.
+  제5항 소액 기준: 2021.12.31.까지의 날은 100만원 미만, 2022.1.1.부터의 날은 150만원 미만 — 지정납부기한이 2021년 이전이고 고지세액이 100만원 이상 150만원 미만이면 2021.12.31.까지의 날만 고지 후분을 계산(법률 제18586호 부칙 제7조).
   일반 납부지연가산세(제47조의4, 3% 없음·한도 없음)는 late_payment_penalty.
 지원 안 함: 제3항 적용 제외(주한미군·국가·지방자치단체 등) 판단, 고지 후 일부 납부(분할 납부) — 미납세액 전부를 paid_on에 낸 것으로 계산.
 until이 due와 같은 날(기한 당일 납부)이면 가산세 0. due가 토·일·공휴일이면 주의(국세기본법 제5조제1항 기한 연장은 자동 반영 안 함 — 다음 영업일을 due로).
@@ -1681,6 +1738,11 @@ until이 due와 같은 날(기한 당일 납부)이면 가산세 0. due가 토·
         판단.append({"항목": "고지 후", "결론": (f"{r['소액기준'] // 10_000}만원 미만 — 고지 후 일수분 없음" if r["150만원미만_제외"] else
                                              f"종전 2호 일수분 {r['고지후분']:,}원 — 지정납부기한 다음 날부터 납부일까지 {r['고지후_일수']}일(5년 한도)"),
                    "근거": "국세기본법 제47조의5①2호·④·⑤(종전)" + (", 법률 제21212호 부칙 제4조" if pd >= date(2026, 7, 1) else "")})
+        if r.get("소액기준_분할"):
+            근거.append("법률 제18586호 부칙 제7조(시행 전 100만원 이상 150만원 미만 체납분의 미납기간 성립 가산세는 종전)")
+            판단.append({"항목": "제5항 소액 기준 경과조치", "결론": f"납부고지서별·세목별 세액 {r['납부고지서_세액']:,}원(100만원 이상 150만원 미만) — "
+                         "가산세는 1일마다 성립하므로 2021.12.31.까지의 날은 종전 100만원 기준으로 부과, 2022.1.1.부터의 날은 150만원 미만이라 없음",
+                         "근거": "법률 제18586호 부칙 제7조, 국세기본법 제21조제2항제11호나목·제47조의5제5항"})
     elif r["고지후_규정"] == "개정":
         근거.append("국세기본법 제47조의5①3호·4호·④·⑤(법률 제21212호, 2026.7.1. 시행), 시행령 제27조의4②③")
         판단.append({"항목": "고지 후", "결론": ("150만원 미만 — 3호·4호 적용 안 함" if r["150만원미만_제외"] else
@@ -7527,11 +7589,13 @@ def inheritance_tax(
     gift_tax_credit: WON = 0,
     other_credits: WON = 0,
     filed: Annotated[bool, Field(description="법정신고기한 내 신고")] = True,
+    late_filed_on: Annotated[str | None, Field(description="기한후신고일(YYYY-MM-DD, filed=false일 때만). 2020.1.1. 이후 기한후신고면 인적공제 합계와 일괄공제 5억원 중 큰 금액(법률 제16846호 부칙 제5조), 비우면 무신고로 보고 5억원")] = None,
 ) -> dict:
     """거주자 피상속인 상속세 과세가액·상속공제·과세표준·산출세액·납부할세액. 언제: 상속세 신고·계산 시.
 입력: 본래 상속재산가액 → estate_value, 상속개시연도 → year, 간주상속재산 → deemed_estate, 추정상속재산 목록 → presumed_items,
 비과세·불산입·공과금·장례비용·봉안비용·채무·사전증여·특별공제 등.
 spouse.legal_share는 '3/5' 같은 분수 문자열 또는 0.6 같은 0 초과 1 이하 소수.
+신고: 법정신고기한 안 신고 → filed=true(신고세액공제). 기한 뒤 신고 → filed=false, late_filed_on=기한후신고일 — 2020.1.1. 이후 기한후신고면 인적공제 합계와 일괄공제 5억원 중 큰 금액(제21조제1항, 법률 제16846호 부칙 제5조 — 상속개시일이 아니라 신고일 기준), 신고세액공제 없음. 무신고(late_filed_on 비움)면 일괄공제 5억원.
 결과: 과세가액·상속공제합계·과세표준·산출세액·신고세액공제·납부할세액, 공제 내역, 근거. 상속세 과세가액·공제·세액 계산."""
     return IG.inheritance_tax(
         year=year, estate_value=estate_value, deemed_estate=deemed_estate,
@@ -7545,7 +7609,7 @@ spouse.legal_share는 '3/5' 같은 분수 문자열 또는 0.6 같은 0 초과 1
         business_farm_deduction=business_farm_deduction, appraisal_fee=appraisal_fee,
         share_appraisal_fee=share_appraisal_fee, share_appraisal_count=share_appraisal_count,
         generation_skip_surcharge=generation_skip_surcharge, gift_tax_credit=gift_tax_credit,
-        other_credits=other_credits, filed=filed,
+        other_credits=other_credits, filed=filed, late_filed_on=late_filed_on,
     )
 
 
@@ -7573,6 +7637,10 @@ def gift_tax(
     filed: Annotated[bool, Field(description="법정신고기한 내 신고")] = True,
     prior_deduction_same_donor: Annotated[int | None, Field(ge=0, description="합산하는 같은 증여자 사전증여(prior_gifts_same_donor)에서 받은 증여재산공제(원) — 합산 과세가액에서 공제를 다시 계산하므로 빼지 않음. 합산하지 않으면 사용분으로 뺌. 납부세액공제 한도의 가산분 과세표준 계산에 씀")] = None,
     prior_tax_base_same_donor: Annotated[int | None, Field(ge=0, description="가산한 사전증여의 과세표준(원, 상증법 제58조제2항) — 생략하면 prior_gifts_same_donor − prior_deduction_same_donor")] = None,
+    kin_type: Annotated[Literal["혈족", "인척"] | None, Field(description="기타친족일 때 혈족 | 인척 — kin_degree와 함께. 형제·삼촌·조카·사촌·사위·며느리·장인·시부모 등 평소 말로 relation을 주면 자동")] = None,
+    kin_degree: Annotated[int | None, Field(ge=1, description="기타친족 촌수 — 2025.3.14. 이후 증여는 4촌 이내 혈족·3촌 이내 인척, 그 전은 6촌 이내 혈족·4촌 이내 인척만 공제(법률 제20777호 부칙 제4조)")] = None,
+    prior_gifts_before_2016: Annotated[int | None, Field(ge=0, description="prior_gifts_same_donor 가운데 2016.1.1. 전에 받은 증여재산가액(원) — 세대생략 40% 할증 때 상증령 부칙(2016.2.5.) 제9조 계산식, 2025년 증여까지")] = None,
+    prior_surcharge_before_2016: Annotated[int, Field(ge=0, description="그 2016.1.1. 전 증여에 대해 종전에 납부한 할증과세액(원)")] = 0,
 ) -> dict:
     """거주자 수증자 증여세 과세가액·증여재산공제·과세표준·산출세액·납부할세액. 언제: 증여세 신고·계산 시.
 입력: 증여일 → gift_date, 증여재산가액 → gift_value, 증여자 관계 → relation, 10년 내 동일 증여자 증여(합산, 직계존속은 그 배우자 포함) → prior_gifts_same_donor,
@@ -7583,13 +7651,27 @@ def gift_tax(
 납부세액공제(제58조): 합산한 사전증여에 대해 낸 증여세(prior_gift_tax_paid)를 공제하되, 한도(제2항) = 산출세액(제56조) × 가산한 증여재산의 과세표준
   ÷ 합친 금액의 과세표준. 가산분 과세표준은 prior_tax_base_same_donor, 생략하면 prior_gifts_same_donor − prior_deduction_same_donor. 합산할 사전증여 없이 넣으면 '입력 확인 필요'.
   제1항 단서(가산분 증여세가 부과제척기간 만료로 부과되지 않은 경우 공제 없음)는 판단하지 않음 — 그때는 prior_gift_tax_paid=0.
+기타친족(제53조제4호): 2025.3.14. 이후 증여는 4촌 이내 혈족·3촌 이내 인척, 그 전 증여는 6촌 이내 혈족·4촌 이내 인척(법률 제20777호 부칙 제4조). 범위 밖이면 공제 0 — kin_type·kin_degree, 평소 말 관계는 촌수 자동.
+세대생략 할증(제57조): 미성년자가 20억원 초과로 40%일 때 합산한 사전증여 중 2016.1.1. 전 증여분 → prior_gifts_before_2016·prior_surcharge_before_2016(상증령 부칙 제9조: 그 재산분은 산출세액 × 비율 × 30% − 종전 납부 할증세액).
 결과: 과세가액·증여재산공제·과세표준·산출세액·할증세액·기납부세액공제(한도 적용 후)·신고세액공제·납부할세액, 계산의 납부세액공제_한도, 근거."""
     rel_in = relation
     relation = _GIFT_RELATION_ALIAS.get(relation.replace(" ", ""), relation)
     if relation not in ("배우자", "직계존속", "직계비속", "기타친족", "기타"):
+        try:
+            _new_kin = date.fromisoformat(gift_date) >= date(2025, 3, 14)
+        except (TypeError, ValueError):
+            _new_kin = None
+        _kin = {True: "4촌 이내 혈족·3촌 이내 인척(2025.3.14. 이후 증여 — 법률 제20777호)",
+                False: "6촌 이내 혈족·4촌 이내 인척(2025.3.14. 전 증여 — 법률 제20777호 부칙 제4조로 종전)",
+                None: "2025.3.14. 이후 증여는 4촌 이내 혈족·3촌 이내 인척, 그 전 증여는 6촌 이내 혈족·4촌 이내 인척"}[_new_kin]
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"relation='{rel_in}'은(는) 알 수 없는 관계"],
-                "허용값": {"배우자": "남편·아내", "직계존속": "부모·조부모(계부모 포함)", "직계비속": "자녀·손자녀", "기타친족": "6촌 이내 혈족·4촌 이내 인척(형제자매·장인장모·시부모·사위·며느리 등)", "기타": "친족 아닌 사람"},
+                "허용값": {"배우자": "남편·아내", "직계존속": "부모·조부모(계부모 포함)", "직계비속": "자녀·손자녀", "기타친족": f"{_kin} — 형제자매·삼촌·조카·사촌·장인장모·시부모·사위·며느리 등", "기타": "친족 아닌 사람"},
                 "근거": "상속세 및 증여세법 제53조"}
+    촌수_자동 = None
+    if relation == "기타친족" and kin_type is None and kin_degree is None:
+        촌수_자동 = _GIFT_KIN_DEGREE.get(rel_in.replace(" ", ""))
+        if 촌수_자동:
+            kin_type, kin_degree = 촌수_자동
     r = IG.gift_tax(
         gift_date=gift_date, gift_value=gift_value, relation=relation,
         recipient_minor=recipient_minor, prior_gifts_same_donor=prior_gifts_same_donor,
@@ -7599,10 +7681,11 @@ def gift_tax(
         share_appraisal_fee=share_appraisal_fee, share_appraisal_count=share_appraisal_count,
         generation_skip=generation_skip, prior_gift_tax_paid=prior_gift_tax_paid,
         other_credits=other_credits, filed=filed, prior_deduction_same_donor=prior_deduction_same_donor,
-        prior_tax_base_same_donor=prior_tax_base_same_donor,
+        prior_tax_base_same_donor=prior_tax_base_same_donor, kin_type=kin_type, kin_degree=kin_degree,
+        prior_gifts_before_2016=prior_gifts_before_2016, prior_surcharge_before_2016=prior_surcharge_before_2016,
     )
     if isinstance(r, dict) and relation != rel_in:
-        r["입력 해석"] = f"relation '{rel_in}' → '{relation}'(상증법 제53조 증여재산공제 구분)"
+        r["입력 해석"] = f"relation '{rel_in}' → '{relation}'(상증법 제53조 증여재산공제 구분)" + (f", {촌수_자동[0]} {촌수_자동[1]}촌" if 촌수_자동 else "")
     return r
 
 
@@ -7614,6 +7697,13 @@ _GIFT_RELATION_ALIAS = {
     **{k: "기타친족" for k in ("형제", "자매", "형제자매", "형", "누나", "오빠", "언니", "동생", "삼촌", "고모", "이모", "외삼촌", "큰아버지", "작은아버지", "조카",
                               "사위", "며느리", "장인", "장모", "장인어른", "장모님", "시부모", "시아버지", "시어머니", "친족", "기타친족", "사촌", "친척")},
     **{k: "기타" for k in ("기타", "타인", "남", "지인", "친구", "제3자", "법인")},
+}
+# 기타친족 평소 말 → (혈족|인척, 촌수) — 제53조제4호 범위 판정(2025.3.14. 이후 4촌 혈족·3촌 인척). '친족·친척·기타친족'은 촌수를 몰라 넣지 않음
+_GIFT_KIN_DEGREE = {
+    **{k: ("혈족", 2) for k in ("형제", "자매", "형제자매", "형", "누나", "오빠", "언니", "동생")},
+    **{k: ("혈족", 3) for k in ("삼촌", "고모", "이모", "외삼촌", "큰아버지", "작은아버지", "조카")},
+    "사촌": ("혈족", 4),
+    **{k: ("인척", 1) for k in ("사위", "며느리", "장인", "장모", "장인어른", "장모님", "시부모", "시아버지", "시어머니")},
 }
 
 
