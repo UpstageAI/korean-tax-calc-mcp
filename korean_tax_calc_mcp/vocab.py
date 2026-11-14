@@ -187,6 +187,27 @@ def rule_on(name: str, yyyymmdd: int) -> dict:
     return {}
 
 
+def rule_paid(name: str, year: int, paid) -> tuple[dict, bool]:
+    """부칙이 '지급받는 분·받는 분부터'로 정한 값을 지급일로 고른다(Claude 2026-11-14).
+
+    paid: 지급일(date 또는 'YYYY-MM-DD', 없으면 None). 지급일이 귀속연도와 같은 해이거나 없으면 귀속연도 규칙(rule)을 쓴다.
+    다른 해이면 그 사이 경계의 뒤쪽 적용 블록에 판단 '지급일기준'이 있을 때만 지급일 규칙(rule_on)을 쓴다 —
+    과세기간·발생분 기준 개정(예: 2018~2020 연장근로 기준)은 지급일이 달라도 귀속연도 규칙 그대로.
+    반환: (규칙, 지급일 규칙을 썼는지)."""
+    base = rule(name, year)
+    if not paid:
+        return base, False
+    s = str(paid)[:10].replace("-", "")
+    ymd = int(s)
+    if ymd // 10000 == year:
+        return base, False
+    on = rule_on(name, ymd)
+    later = on if ymd // 10000 > year else base
+    if later.get("지급일기준"):
+        return on, on != base
+    return base, False
+
+
 def basis(name: str, year: int) -> list:
     """해당 연도에 맞는 근거 목록. 적용 블록의 근거를 우선하고 없으면 기본 근거."""
     data = load()

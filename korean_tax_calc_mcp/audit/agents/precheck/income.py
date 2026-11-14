@@ -52,6 +52,8 @@ SCHEMA = {
     "근로자[].비과세.출산지원금": "비과세 출산지원금 Q03(원)",
     "근로자[].출산지원금지급일": "출산지원금 지급일(YYYY-MM-DD)",
     "근로자[].비과세.야간근로": "생산직 야간근로수당 비과세 O01(원)",
+    "근로자[].다음해지급월수": "귀속연도 근무월 중 다음 해 1월 이후에 실제 지급한 달 수(int, 선택 — 예: 12월분을 다음 해 1월 지급하면 1). 식대·보육수당 한도는 부칙이 지급(받는) 분 기준이라 그 달은 다음 해 한도로 본다",
+    "근로자[].야간근로_다음해지급": "비과세 야간근로수당을 다음 해에 지급했는지(bool, 선택) — 2026년 기준(영 제36129호 부칙 제3조: 2026 과세기간에 지급받는 급여부터)",
     "근로자[].직전연도총급여": "직전 과세기간 총급여(전년 지급명세서, 원)",
     "근로자[].대표자친족": "대표자·지배주주와 친족 여부(bool, 가족관계 전산)",
     "근로자[].인정상여": "원천징수영수증 ⑮ 인정상여(원)",
@@ -137,8 +139,28 @@ def _daily_due(yy, mm):
     return month_end(ny, nm)
 
 
-def _out(bad, note):
-    return hit(None, None, f"{note}: " + "; ".join(bad)) if bad else ok()
+def _out(bad, note, 안내=""):
+    if bad:
+        return hit(None, None, f"{note}: " + "; ".join(bad) + (f" ({안내})" if 안내 else ""))
+    return ok(안내)
+
+
+def _cap_paid(name, y, w, i, key):
+    """지급(받는) 분 기준 월 한도 합계 — 귀속연도 근무월 중 다음 해에 지급한 달(근로자[].다음해지급월수)은 다음 해 1.1. 지급분 규칙(vocab.rule_paid)으로.
+    반환: (한도 합계, 다음 해 한도로 본 달 수)."""
+    months = _g(w, "근무월수", i)
+    n = min(int(w.get("다음해지급월수") or 0), months)
+    cur = key(vocab.rule(name, y))
+    nxt = key(vocab.rule_paid(name, y, date(y + 1, 1, 1))[0]) if n else cur
+    return cur * (months - n) + nxt * n, n
+
+
+def _경계안내(name, y, ws, item):
+    """다음 해 지급 정보가 없고 귀속연도가 지급분 기준 경계 연도면 안내 문구."""
+    if any(w.get(item) for w in ws) and not any(w.get("다음해지급월수") is not None for w in ws) \
+            and vocab.rule_paid(name, y, date(y + 1, 1, 1))[1]:
+        return f"{y + 1}.1.1. 이후 지급분부터 한도가 바뀜(부칙: 지급분 기준) — {y}년분을 {y + 1}년에 지급한 달이 있으면 근로자[].다음해지급월수로 다시 판정"
+    return ""
 
 
 # ── 근로자별 재계산 (WH-01·02·03·07) ─────────────────────────────
@@ -228,15 +250,16 @@ def _(d):
 # ── PR-05~09 비과세 ─────────────────────────────────────────────
 @rule("I-PR05", S, F, "식대 비과세 월 한도 초과·현물식사 중복", "소득세법 제12조3호러목(2022년 귀속까지 시행령 제17조의2)", needs=["귀속연도", "근로자"], source="14 PR-05")
 def _(d):
-    """월 한도: 2022년 귀속까지 10만원, 2023년부터 20만원."""
-    월한도, bad = vocab.rule("식사대", _Y(d))["월한도"], []
+    """월 한도: 2022.12.31.까지 받는 식사대 10만원, 2023.1.1. 이후 받는 식사대 20만원(법률 제18975호 부칙 — 받는 날 기준).
+    귀속연도 근무월 중 다음 해에 지급한 달은 근로자[].다음해지급월수로 받아 다음 해 한도로 본다."""
+    y, bad = _Y(d), []
     for i, w in enumerate(_W(d)):
         v = w.get("비과세.식대") or 0
         if not v: continue
-        cap = 월한도 * _g(w, "근무월수", i)
+        cap, n = _cap_paid("식사대", y, w, i, lambda r: r["월한도"])
         if w.get("현물식사"): bad.append(f"{_name(w, i)} 현물식사+비과세식대 {v:,}")
-        elif v > cap: bad.append(f"{_name(w, i)} 비과세식대 {v:,} > 한도 {cap:,} (과세전환 {v - cap:,})")
-    return _out(bad, "식대 비과세 초과")
+        elif v > cap: bad.append(f"{_name(w, i)} 비과세식대 {v:,} > 한도 {cap:,}" + (f"(다음 해 지급 {n}개월 포함)" if n else "") + f" (과세전환 {v - cap:,})")
+    return _out(bad, "식대 비과세 초과", _경계안내("식사대", y, _W(d), "비과세.식대"))
 
 
 @rule("I-PR06", S, F, "연구보조비 비과세 대상 초과", "소득세법 시행령 제12조", needs=["근로자", "연구소.인정여부"], source="14 PR-06", kind="외부자료")
@@ -256,16 +279,17 @@ def _(d):
 def _(d):
     """과세기간 개시일 현재 6세 이하 자녀 기준(부양가족 명세 한정 — 명세 외 자녀는 가족관계 확인).
     월 한도: 2023년 귀속까지 10만원, 2024~2025년 20만원(근로자 1인당), 2026년부터 6세 이하 자녀 1명당 20만원."""
-    y = _Y(d); r = vocab.rule("출산·보육수당", y)
+    y = _Y(d)
     start, bad = date(y, 1, 1), []
     for i, w in enumerate(_W(d)):
         v = w.get("비과세.보육수당") or 0
         if not v: continue
         kids = [p for p in w.get("부양가족") or [] if p.get("관계") == "직계비속" and p.get("생년월일") and _age(p["생년월일"], start) <= 6]
         if not kids: bad.append(f"{_name(w, i)} 6세 이하 자녀 없음")
-        cap = r["월한도"] * (max(1, len(kids)) if r.get("보육_자녀1명당") else 1) * _g(w, "근무월수", i)
-        if v > cap: bad.append(f"{_name(w, i)} 보육 {v:,} > 한도 {cap:,}")
-    return _out(bad, "보육수당 비과세 의심")
+        # 한도는 지급분 기준(법률 제19933호 부칙 제2조③·제21221호 부칙) — 다음 해 지급한 달은 다음 해 규칙
+        cap, n = _cap_paid("출산·보육수당", y, w, i, lambda r: r["월한도"] * (max(1, len(kids)) if r.get("보육_자녀1명당") else 1))
+        if v > cap: bad.append(f"{_name(w, i)} 보육 {v:,} > 한도 {cap:,}" + (f"(다음 해 지급 {n}개월 포함)" if n else ""))
+    return _out(bad, "보육수당 비과세 의심", _경계안내("출산·보육수당", y, _W(d), "비과세.보육수당"))
 
 
 @rule("I-PR08", S, F, "출산지원금 비과세 요건 의심", "소득세법 제12조3호머목1), 시행령 제17조의2", needs=["귀속연도", "근로자"], source="14 PR-08")
@@ -289,12 +313,20 @@ def _(d):
 @rule("I-PR09", S, F, "야간근로수당 비과세 직전연도 총급여 기준 초과", "소득세법 시행령 제17조①", needs=["귀속연도", "근로자"], source="14 PR-09", kind="외부자료")
 def _(d):
     """전년도 지급명세서 필요. 직종·월정액 요건은 별도 확인.
-    직전 과세기간 총급여 기준: 2019년 귀속까지 2,500만원, 2020~2025년 3,000만원, 2026년 3,700만원."""
-    lim, bad = vocab.rule("연장근로수당", _Y(d))["직전연도총급여한도"], []
+    직전 과세기간 총급여 기준: 2019년 귀속까지 2,500만원, 2020~2025년 3,000만원, 2026 과세기간 지급분 3,700만원(지급분 기준 — 근로자[].야간근로_다음해지급)."""
+    y, bad = _Y(d), []
+    lim = vocab.rule("연장근로수당", y)["직전연도총급여한도"]
+    # 2026 기준은 '2026 과세기간에 지급받는 급여부터'(영 제36129호 부칙 제3조) — 다음 해 지급분은 근로자[].야간근로_다음해지급
+    lim_next = vocab.rule_paid("연장근로수당", y, date(y + 1, 1, 1))[0]["직전연도총급여한도"]
     for i, w in enumerate(_W(d)):
-        if (w.get("비과세.야간근로") or 0) and _g(w, "직전연도총급여", i) > lim:
-            bad.append(f"{_name(w, i)} 직전 총급여 {w['직전연도총급여']:,} > 기준 {lim:,}")
-    return _out(bad, "야간근로 비과세 부적격")
+        nx = bool(w.get("야간근로_다음해지급"))
+        l = lim_next if nx else lim
+        if (w.get("비과세.야간근로") or 0) and _g(w, "직전연도총급여", i) > l:
+            bad.append(f"{_name(w, i)} 직전 총급여 {w['직전연도총급여']:,} > 기준 {l:,}" + ("(다음 해 지급 — 다음 해 기준)" if nx and lim_next != lim else ""))
+    안내 = ""
+    if lim_next != lim and any(w.get("비과세.야간근로") for w in _W(d)) and not any(w.get("야간근로_다음해지급") is not None for w in _W(d)):
+        안내 = f"{y + 1} 과세기간에 지급받는 급여부터 기준 {lim_next:,}원(영 제36129호 부칙 제3조) — {y}년분을 {y + 1}년에 지급했으면 근로자[].야간근로_다음해지급=true로 다시 판정"
+    return _out(bad, "야간근로 비과세 부적격", 안내)
 
 
 # ── PR-10~14 중기감면 ───────────────────────────────────────────

@@ -89,7 +89,7 @@ def individual_donation(year: int, base_income: int, carried_loss: int = 0, poli
     total_general = ge + re
     ge_carry_used = min(carried_general, ge_limit); ge_cur_used = min(total_general, ge_limit - ge_carry_used)
     ge_used = ge_carry_used + ge_cur_used; ge_over = total_general - ge_cur_used
-    판단.append({"항목": "일반기부금", "결론": f"한도 {formula} → 이월분 {ge_carry_used:,} + 당기 {ge_cur_used:,} = {ge_used:,}원 산입, 당기 한도초과 {ge_over:,}원({'10년 이월' if int(year) >= 2018 else '이월 5년 — 2019.1.1. 이후 신고분부터 10년(2013.1.1. 이후 지출분 포함, 2018.12.31. 개정 부칙 제3조)'})", "근거": basis + ", 제34조⑤"})
+    판단.append({"항목": "일반기부금", "결론": f"한도 {formula} → 이월분 {ge_carry_used:,} + 당기 {ge_cur_used:,} = {ge_used:,}원 산입, 당기 한도초과 {ge_over:,}원({'10년 이월' if int(year) >= 2018 else '이월 기간은 신고일 기준 — 2019.1.1. 이후 과세표준 신고·연말정산(기한 후·수정 신고 포함)이면 10년(2013.1.1. 이후 지출분 포함), 그 전 신고분은 5년(법률 제16104호 부칙 제3조)'})", "근거": basis + ", 제34조⑤"})
     total = first + sp_used + ge_used
     판단.append({"항목": "세액공제로 넘어가는 몫", "결론": f"필요경비에 산입하지 않은 특례 {sp_over:,}·일반 {ge_over:,}원은 사업자가 세액공제(제59조의4④)를 택하지 않으면 이월. 정치·고향 10만원 이하분 {pol_credit + home_credit:,}원은 세액공제", "근거": "소득세법 제34조⑤, 제59조의4④, 조세특례제한법 제58조·제76조"})
     return {"결과": {"필요경비_산입_합계": total, "정치·고향_초과분_산입": first, "특례기부금_산입": sp_used, "일반기부금_산입": ge_used, "특례_한도초과_이월": sp_over, "일반_한도초과_이월": ge_over,

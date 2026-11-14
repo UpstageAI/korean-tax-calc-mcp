@@ -1,4 +1,5 @@
 """근로소득 총급여(earned_income_gross_pay) 본문 — server.py에서 분리. 도구 등록(스키마·docstring·_guard)은 server.py의 얇은 래퍼가 맡는다."""
+from datetime import date
 from .engine import calc_income as I
 from . import vocab
 
@@ -25,6 +26,11 @@ _EGP_KIND_필요사실 = {
 }
 
 _EGP_월한도_종류 = {"식사대", "자가운전보조금", "출산·보육수당"}
+
+# 부칙이 '지급받는(받는) 분부터'인 종류 → 지급일 규칙에서 가져올 키. 경계 연도는 지급일을 안 넣었을 때 안내할 귀속연도.
+_EGP_지급일_종류 = {"식사대": ("월한도",), "출산·보육수당": ("월한도", "보육_자녀1명당"),
+                 "연장근로수당": ("월정액급여한도", "직전연도총급여한도", "연한도")}
+_EGP_지급일_경계 = {"식사대": (2022,), "출산·보육수당": (2023, 2025), "연장근로수당": (2025,)}
 
 
 _EGP_근무월수_종류 = ("식사대", "자가운전보조금", "출산·보육수당")
@@ -178,6 +184,12 @@ def earned_income_gross_pay_impl(year, items) -> dict:
         if k in _EGP_월한도_종류:
             월한도_건수[k] = 월한도_건수.get(k, 0) + 1
     for k, cnt in 월한도_건수.items():
+        if cnt > 1:
+            # 지급일이 다른 해에 걸쳐 한도가 달라지면(부칙 '지급받는 분부터') 지급일별로 나눠 넣을 수 있음 — 모든 항목에 facts.paid_date, (지급일, 자녀) 서로 다름
+            _같은 = [it for it in items if it.get("kind") == k]
+            _키 = [((it.get("facts") or {}).get("paid_date"), (it.get("facts") or {}).get("child")) for it in _같은]
+            if all(pd not in (None, "") for pd, _c in _키) and len(set(_키)) == len(_키):
+                continue
         if cnt > 1 and k == "출산·보육수당" and vocab.rule(k, year).get("보육_자녀1명당"):
             # 2026~ 보육수당은 자녀 1명당 월 20만원(제12조3호머목2) — 자녀별 항목(facts.child 서로 다름)이면 허용
             _보육 = [it for it in items if it.get("kind") == k]
@@ -232,6 +244,7 @@ def earned_income_gross_pay_impl(year, items) -> dict:
     산식_목록: list[str] = []
     근거_목록: list[list[str]] = []
     판단_목록: list[dict] = []
+    지급일_주의: list[str] = []
     # 연장근로수당은 월정액급여를 다른 항목 판정 결과로 산정할 수 있게 맨 뒤에 판정(출력 순서는 입력 순서 유지)
     처리순서 = [i for i, it in enumerate(items) if it.get("kind") != "연장근로수당"] + \
               [i for i, it in enumerate(items) if it.get("kind") == "연장근로수당"]
@@ -245,6 +258,27 @@ def earned_income_gross_pay_impl(year, items) -> dict:
         facts = it.get("facts", {}) or {}
         r = vocab.rule(k, year)
         b = vocab.basis(k, year)
+        # 지급일 기준 부칙(식사대: 법률 제18975호, 출산·보육: 법률 제19933호·제21221호, 연장근로: 영 제36129호 부칙 제3조) — facts.paid_date
+        if k in _EGP_지급일_종류:
+            _pd = facts.get("paid_date")
+            if _pd not in (None, ""):
+                try:
+                    _pdd = date.fromisoformat(str(_pd)[:10])
+                except ValueError:
+                    return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"{k}: facts.paid_date={_pd!r} — 지급일 YYYY-MM-DD"],
+                            "필요 입력": {k: ["paid_date"]}}
+                rp, used = vocab.rule_paid(k, year, _pdd)
+                if used and not (k == "출산·보육수당" and facts.get("purpose") != "보육"):
+                    r = {**r, **{kk: rp.get(kk) for kk in _EGP_지급일_종류[k]}}
+                    b = vocab.basis(k, _pdd.year)
+                    지급일_주의.append(f"{k} {amount:,}원: 귀속연도 {year}년이지만 지급일 {_pdd} — 부칙이 지급받는 분 기준이라 {_pdd.year}년 한도 적용"
+                                    "(원천징수시기 특례 소득세법 제135조 아래 실제 지급일로 볼지는 국세청 해석 확인 필요)")
+                elif _pdd.year != year and k == "출산·보육수당" and facts.get("purpose") != "보육" and vocab.rule_paid(k, year, _pdd)[1]:
+                    지급일_주의.append(f"{k}(출산) {amount:,}원: 지급일 {_pdd} — 출산 급여 비과세는 지급일·신고 시기별 부칙이 달라 귀속연도 {year}년 규정으로만 계산함, 확인 필요")
+            elif year in _EGP_지급일_경계.get(k, ()) and not (k == "출산·보육수당" and facts.get("purpose") != "보육") \
+                    and not (k == "연장근로수당" and not facts.get("eligible_occupation")):
+                지급일_주의.append(f"{k}: {year}년분 중 {year + 1}년에 지급한 금액(예: 12월분을 다음 해 1월 지급)이 있으면 facts.paid_date(지급일)로 항목을 나눠 넣으세요 — "
+                                f"부칙이 지급받는 분 기준이라 그 금액은 {year + 1}년 한도 적용. 원천징수시기 특례(소득세법 제135조) 아래 실제 지급일로 볼지는 국세청 해석 확인 필요")
         구분 = r.get("구분", "과세")
         과세액 = amount
         비과세액 = 0
@@ -366,6 +400,9 @@ def earned_income_gross_pay_impl(year, items) -> dict:
                     사유 = (f"{_기간} {int(payment_count)}번째 출산 급여 — 전액 비과세"
                             "(특수관계자 제외, 법 제12조3호머목1)·영 제17조의2)")
                     비과세_성격 = "출산전액비과세"
+                    if year == 2024:
+                        지급일_주의.append("출산·보육수당(출산): 출산 급여 전액 비과세(제12조제3호머목1))는 법률 제20615호 부칙상 2025.1.1. 이후 확정신고·연말정산하는 분부터 — "
+                                        "2024년 중 중도퇴사 연말정산에서 반영하지 못했으면 종합소득세 확정신고로 반영")
                 elif year >= 2025:
                     # 2025.1.1. 이후 지급분: 머목은 1) 출산 급여 전액, 2) 6세 이하 자녀 보육 급여 월 한도뿐 — 요건을 못 갖춘 출산 급여에는 월 한도 없음
                     비과세액 = 0; 과세액 = amount
@@ -505,9 +542,22 @@ def earned_income_gross_pay_impl(year, items) -> dict:
                 사유 = "중소기업 종업원 아님 또는 해당 연도 중소기업 예외 없음 — 주택자금 대여이익 전액 과세(영 제38조①7호)"
                 비과세_성격 = "과세(비대상)"
             elif year >= 2024 and 특수관계제외 and related_party:
-                과세액 = amount; 비과세액 = 0
-                사유 = "2024년부터 중소기업 종업원이라도 특수관계자(지배주주등·친족)는 비과세 제외 — 전액 과세(영 제17조의4 2호 단서, 부칙 2024.2.29)"
-                비과세_성격 = "과세(특수관계)"
+                # 영 제34265호 부칙 제4조①: 제17조의4제2호 단서는 이 영 시행(2024.2.29.) 이후 발생하는 소득부터 — 그 전 발생분은 종전대로 비과세
+                기준일 = str(r.get("특수관계제외_발생기준일") or "")
+                전_발생 = facts.get("accrued_before_20240229")
+                if 기준일[:4] == str(year) and 전_발생 not in (None, ""):
+                    전_발생 = min(int(전_발생), amount)
+                    비과세액 = 전_발생; 과세액 = amount - 전_발생
+                    사유 = (f"특수관계자(지배주주등·친족) — 2024.2.28.까지 발생분 {전_발생:,}원은 종전대로 비과세, 2024.2.29. 이후 발생분 {과세액:,}원은 과세"
+                            "(영 제17조의4 2호 단서, 영 제34265호 부칙 제4조①: 시행 이후 발생 소득부터)")
+                    비과세_성격 = "일부 비과세(특수관계 — 발생일 경계)"
+                else:
+                    과세액 = amount; 비과세액 = 0
+                    사유 = "2024년부터 중소기업 종업원이라도 특수관계자(지배주주등·친족)는 비과세 제외 — 전액 과세(영 제17조의4 2호 단서, 부칙 2024.2.29)"
+                    비과세_성격 = "과세(특수관계)"
+                    if 기준일[:4] == str(year):
+                        지급일_주의.append("주택자금대여이익: 특수관계자 비과세 제외는 2024.2.29. 이후 발생 소득부터(영 제34265호 부칙 제4조①) — "
+                                        "2024.2.28.까지 발생한 대여이익이 있으면 facts.accrued_before_20240229(그 금액)를 넣어 비과세로 나눠 계산")
             else:
                 if 비과세성격_v == "근로소득 아님":
                     # 2020년: 중소기업 종업원 주택자금 대여이익은 근로소득에서 제외(비과세 금액 아님)
@@ -701,4 +751,5 @@ def earned_income_gross_pay_impl(year, items) -> dict:
        산식=산식_목록,
        계산식_입력=계산식_입력,
        계산식=계산식,
-       **({"판단": 판단_목록} if 판단_목록 else {}))
+       **({"판단": 판단_목록} if 판단_목록 else {}),
+       **({"주의": 지급일_주의} if 지급일_주의 else {}))
