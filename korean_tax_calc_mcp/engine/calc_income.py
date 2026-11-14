@@ -517,7 +517,7 @@ def retirement_tax(income, years, retire_year=2025):
     """퇴직소득 산출세액. income=퇴직소득금액(비과세 제외), years=근속연수(1년 미만 절상).
     ① 근속연수공제(퇴직소득금액 한도, 제48조②) → ② 환산급여 = (금액−①)/근속연수×12
     → ③ 과세표준 = 환산급여 − 환산급여공제 → ④ 산출세액 = 기본세율(제55조①)(과세표준)/12×근속연수(제55조②).
-    원 미만 절사만 적용(원천징수 10원 미만 절사는 국고금관리법 — 호출자 처리)."""
+    원 미만 절사만 적용 — 납부할 금액(10원 미만 버림, 국고금 관리법 제47조제1항)은 도구가 결과에 따로 붙임(engine/rounding.py)."""
     if income <= 0 or years <= 0: return 0
     return retirement_tax_steps(income, years, retire_year)["산출세액"]
 
@@ -554,7 +554,8 @@ def withholding_rate(kind, year=2025):
 
 def withholding_tax(kind, amount, year=2025):
     """분리 세율 원천징수세액(소득세분, 지방소득세 별도). 소득처분 배당 → '배당'(14%), 기타소득 처분 → '기타'(20%,
-    필요경비 없음). 상여 처분은 기본세율 재정산(deemed_bonus_resettlement). 10원 미만 절사."""
+    필요경비 없음). 상여 처분은 기본세율 재정산(deemed_bonus_resettlement).
+    한 소득자·한 번 지급분의 원천징수세액이 곧 국고에 내는 금액이라 10원 미만 버림(국고금 관리법 제47조제1항, 원천세과-240·법인22601-2481 — engine/rounding.py)."""
     return _floor(amount, withholding_rate(kind, year)) // 10 * 10
 
 
@@ -714,7 +715,7 @@ def nonresident_withholding(income_kind, amount, recipient_type, residence_count
             "근거": "법인세법 기본통칙 98-0…2" + (" · 국이22601-403(1991.7.19. 요지 — 제세에는 주민세도 포함)" if payer_bears_local_tax else ""),
             "확신도": ("유추 — 지방소득세분을 세율에 더해 역산하는 산식은 국이22601-403 요지에서 추론(회신 본문 산식 미확인)" if payer_bears_local_tax
                     else "확인함 — 통칙 98-0…2 산식") + ("" if side else " / 비거주자(개인)에 이 통칙 산식을 쓰는 것은 유추"),
-            "끝수": "과세표준은 원 미만 버림(통칙에 끝수 규정 없음 — 마지막 금액에서만 절사), 세액은 역산 전 분수에서 계산해 이 도구의 종전 방식대로 10원 미만 절사. 원 단위 값은 '원_단위_세액'",
+            "끝수": "과세표준은 원 미만 버림(통칙에 끝수 규정 없음 — 마지막 금액에서만 절사), 세액은 역산 전 분수에서 계산해 10원 미만 버림(국고금 관리법 제47조제1항 — 납부하는 금액). 원 단위 값은 '원_단위_세액'",
         }
     wh_amount = math.floor(base_exact * national) // 10 * 10
     local_income_tax = _floor(wh_amount, 0.10) // 10 * 10
@@ -752,7 +753,7 @@ def nonresident_withholding(income_kind, amount, recipient_type, residence_count
                      + ". 서식(export_workbook)에 넣을 때는 amount에 과세표준을 넣어 net_of_tax 없이 계산한 결과를 쓴다")
     ret["지방소득세_근거"] = NI.local_tax_basis(side, 포함)
     ret["한계"] = [NI.POINTER, NI.POINTER_EN,
-                 "세액은 10원 미만 절사(이 도구의 종전 방식 — 원천징수세액의 원 단위 끝수 규정은 확인하지 못함)",
+                 "끝수: 원천징수세액·지방소득세는 한 번 지급분을 납부하는 금액이라 10원 미만 버림(국고금 관리법 제47조제1항, 지방세기본법 제59조 준용, 원천세과-240·법인22601-2481). 여러 건을 한꺼번에 지급하면 소득자별로 더한 뒤 버림",
                  "조약 제한세율·요건은 내장하지 않음 — treaty_rate가 없으면 국내세율로 계산하며, 제한세율 상한은 korean-tax-mcp treaty_withholding_rates·tax_treaty로 확인해 넣는다"]
     if 판단_목록:
         ret["판단"] = 판단_목록

@@ -51,6 +51,8 @@ flowchart LR
   F -.->|no calculator for the question| K
 ```
 
+**Rounding** — tax bases drop fractions of a won; computed tax figures (calculated tax, credits, reductions, penalties) are kept in whole won, truncated only at the final amount where no rule says otherwise. Amounts actually paid to or refunded by the Treasury or a local government drop anything under 10 won and are shown separately as `납부할 금액(10원 미만 버림)` (or `환급받을 금액(10원 미만 버림)` for refund-only results) — Management of the National Funds Act (국고금 관리법) Article 47; local taxes follow it through 지방세기본법 Article 59. Withholding tax is truncated on the total for one payee and one payment (`withholding_tax` and `nonresident_withholding` return that 10-won figure directly).
+
 ## Try asking
 
 | Question | Tools |

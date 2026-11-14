@@ -560,6 +560,8 @@ def _front(r):
 
 import json as _json
 
+from .engine.rounding import WITHHOLDING_ROUNDING_BASIS as _WH_ROUNDING_BASIS, attach_pay_amount as _attach_pay_amount  # 끝수 규칙(국고금 관리법 제47조) 한 곳
+
 _CALL_MEMO: dict[str, int] = {}   # key → 호출 횟수 (최근 500개만 보관, 초과 시 오래된 것부터 삭제)
 
 
@@ -587,7 +589,7 @@ def _guard(fn):
                 _CALL_MEMO.pop(next(iter(_CALL_MEMO)))
         repeat = count >= 2
         try:
-            inner = fn(*a, **k)
+            inner = _attach_pay_amount(fn.__name__, fn(*a, **k))
             r = _front(inner)
         except _NoYearTable as e:
             r = {"error": str(e), "주의": "연도표 없는 해는 추정 계산하지 않음"}
@@ -2456,6 +2458,7 @@ def _wh_small(out: dict, kind: str, year: int, paid_date, cps: bool) -> dict:
     """소득세법 제86조제1호 소액부징수 — 원천징수세액 1천원 미만이면 징수하지 않음(이자소득·2024.7.1. 이후 지급 인적용역 사업소득 제외)."""
     if "error" in out:
         return out
+    out.setdefault("끝수", "원천징수세액은 한 소득자·한 번 지급분을 납부하는 금액이라 10원 미만 버림 — " + _WH_ROUNDING_BASIS + ". 여러 건을 한꺼번에 지급하면 소득자별로 더한 뒤 버림")
     tax = out["결과"]["원천징수세액"]
     if not 0 < tax < 1_000:
         return out

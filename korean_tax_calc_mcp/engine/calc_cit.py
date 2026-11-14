@@ -75,7 +75,7 @@ def months_in(start, end):
 
 def corp_tax(base, year, months=12, small_rental=False):
     """법인세 산출세액(제55조). 1년 미만: {(과세표준×12/월수)×세율}×월수/12. small_rental=제60조의2①1호 법인.
-    원 미만은 절사(국고금 관리법 제47조 끝수 계산 — 종전 반올림을 0.25.5에서 고침). 분수로 계산해 부동소수 오차 없이 내림."""
+    원 미만은 절사(세액의 원 미만 처리 규정은 없어 최종 금액에서만 버림 — 종전 반올림을 0.25.5에서 고침. 국고금 관리법 제47조는 과세표준 1원 미만·납부할 때 10원 미만). 분수로 계산해 부동소수 오차 없이 내림."""
     tiers = YEAR[year]["세율_소규모" if small_rental and "세율_소규모" in YEAR[year] else "세율"]
     return math.floor(tier(_x(base) * 12 / months, tiers) * months / 12)
 
@@ -704,7 +704,7 @@ def min_tax(base_before_incentives, sme=True, grace_year=0, year=None):
     year 지정 시 연도표(YEAR[year]['최저한세']) 사용 — 2016~2025 원문 동일. year=None은 같은 값(종전 호출 유지)."""
     if year is not None: require_year(year)
     t = _MIN_TAX if year is None else YEAR[year]["최저한세"]
-    # 원 미만 절사(국고금 관리법 제47조 끝수 계산 — 종전 반올림을 0.25.5에서 고침)
+    # 원 미만 절사(세액의 원 미만 처리 규정은 없어 최종 금액에서만 버림 — 종전 반올림을 0.25.5에서 고침)
     if sme: return _floor(base_before_incentives, t["중소"])
     if grace_year: return _floor(base_before_incentives, t["유예1_3"] if grace_year <= 3 else t["유예4_5"])
     return math.floor(tier(base_before_incentives, t["일반"]))

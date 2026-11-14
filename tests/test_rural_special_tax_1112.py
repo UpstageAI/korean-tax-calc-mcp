@@ -18,7 +18,8 @@ def test_startup_reduction_and_rnd_credit_are_exempt_investment_and_employment_t
     r = f(year=2024, items=[{"article": "제6조", "amount": 275 * M}, {"article": "제10조", "amount": 50 * M},
                             {"article": "제24조", "amount": 30 * M}, {"article": "조세특례제한법 제29조의8", "amount": 14_500_000}])
     y = rows(r)
-    assert r["결과"] == {"농어촌특별세": 8_900_000, "과세_대상_감면세액": 44_500_000, "비과세_감면세액": 325 * M}
+    assert r["결과"] == {"농어촌특별세": 8_900_000, "과세_대상_감면세액": 44_500_000, "비과세_감면세액": 325 * M,
+                       "납부할 금액(10원 미만 버림)": 8_900_000}
     assert y["제6조"]["과세"] is False and "제4조제3호" in y["제6조"]["근거"]
     assert y["제10조"]["과세"] is False and "제7항" in y["제10조"]["근거"]
     assert y["제24조"]["농어촌특별세"] == 6 * M and y["제29조의8"]["농어촌특별세"] == 2_900_000
