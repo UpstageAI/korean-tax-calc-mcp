@@ -1032,8 +1032,9 @@ def add_sheets(wb, cfg: dict, *, lang: str, title: str, company: str, period: st
         keep_inputs = detail == "forms" and bool(forms)
         if detail == "compact":
             drop += forms
+        if not keep_inputs and ws_in is not None:
             # 계산 시트의 수식이 '입력·가정'의 이름을 가리키면(드묾) 그 칸도 옮겨 붙인다
-            gone = {nm for nm, dn in wb.defined_names.items() if ws_in is not None and _sheet_of_name(dn) == ws_in.title}
+            gone = {nm for nm, dn in wb.defined_names.items() if _sheet_of_name(dn) == ws_in.title}
             if gone:
                 pat = _re.compile(r"(?<![\w가-힣.])(" + "|".join(_re.escape(n) for n in sorted(gone, key=len, reverse=True)) + r")(?![\w가-힣.])")
                 keep_inputs = any(c.data_type == "f" and isinstance(c.value, str) and pat.search(c.value) for row in ws_d.iter_rows() for c in row)
