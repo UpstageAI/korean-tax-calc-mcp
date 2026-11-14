@@ -21,6 +21,7 @@ from .engine import calc_nonprofit as NP
 from .engine import calc_foreign as F
 from .engine import calc_provision as PV
 from .engine import calc_tp as ALR
+from .engine import calc_tp_screen as TPS
 from .engine import calc_multiyear as MY
 from .engine import calc_incentive as INC
 from .engine.calc_cit import min_tax_adjust
@@ -869,7 +870,7 @@ def arm_length_range(comparables: Annotated[list, Field(description="비교대�
     계산: 범위 안이면 조정 없음. 벗어나면 기준점(중위값·평균값·직접입력)과의 차이 × base_amount = 조정액(원 미만 절사). 분석대상이 거주자가 아니면 방향을 뒤집어 거주자 소득이 과소인지 과다인지 표시하고, '방향'에 한 문장으로 적음. tested_is_resident를 비우면 계산하지 않고 되물음.
     결과: 비교대상 수·최솟값·제1사분위·중위값·제3사분위·최댓값·평균값, 범위, 범위 안 여부, 조정 필요 여부, 기준점, 차이, 거주자 소득(과소·과다), 방향, 조정액, 판단·근거·주의.
     결과의 '비교대상_확인'은 비교가능 거래의 뜻(시행령 제14조제1항제1호), 분석요소(시행규칙 제6조제1항), 내부 비교가능 거래를 먼저 볼 것(시행규칙 제7조제1항제4호), 이익률 자료만으로는 타당성을 확인할 수 없다는 점을 알려 줌.
-    범위 밖: 비교대상이 적절한지(비교가능성·차이 조정·손실 기업 처리)는 판단하지 않음. 범위를 사분위로 좁히는 방법과 기준점 선택은 국조법령이 특정하지 않음(사분위는 OECD 이전가격지침 3.57의 통계적 도구) — 선택 이유는 보고서에 밝혀야 함."""
+    범위 밖: 비교대상이 적절한지(비교가능성·차이 조정·손실 기업 처리)는 판단하지 않음. 사분위 계산법과 기준점 선택은 국조법령이 특정하지 않음(조문에는 없고, 2022.3.18. 시행규칙부터 거래가격 조정신고서 작성방법이 정상사분위범위 기재를 전제 — OECD 이전가격지침 3.57의 통계적 도구) — 선택 이유는 보고서에 밝혀야 함. 데이터베이스 후보 목록을 거르는 일은 tp_comparable_screen."""
     r = ALR.arm_length_range(comparables, tested_value, base_amount, range_type, point, point_value, tested_is_resident, higher_is_more_income, quartile_method, year)
     if "error" in r:
         return r
@@ -881,6 +882,41 @@ def arm_length_range(comparables: Annotated[list, Field(description="비교대�
     elif res.get("조정_필요") and res.get("거주자_소득") == "과다":
         주의.append("거주자 소득이 정상가격보다 많은 경우(감액)는 세무조정 항목을 내지 않음 — 감액은 요건·절차(경정청구, 상호합의 등)를 따로 확인")
     return _ok(res, r["근거"], 계산=r["계산"], 판단=r["판단"], 비교대상_확인=r["비교대상_확인"], 세무조정=세무조정, 주의=주의)
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def tp_comparable_screen(tested_party: Annotated[dict, Field(description="분석대상 당사자 {name, is_resident(국내 법인 true / 국외특수관계인 false — 소재지 자료로 정함), years: {연도: {revenue, cogs, opex, operating_profit, inventory, receivables, payables, total_assets}}}")],
+                         analysis_years: Annotated[list[int], Field(description="비교대상 분석 연도 목록 [2022, 2023, 2024]")],
+                         tested_year: Annotated[int, Field(description="검토 대상 사업연도(2016~2026) — 2020년까지는 구 국조법령 조문 번호로 근거를 냄")],
+                         file_path: Annotated[str | None, Field(description="데이터베이스에서 내보낸 후보 목록 CSV·XLSX 경로(회사×연도 한 행). 열: company_id, company_name, country, industry_code, year, currency, revenue, cogs, opex, operating_profit, total_assets, inventory, receivables, payables, rnd_expense, advertising_expense, related_party_revenue, bvd_independence, max_shareholder_pct, relevant_segment_share, special_flag, manual_decision, manual_reason")] = None,
+                         rows: Annotated[list[dict] | None, Field(description="file_path 대신 행 목록(같은 열)")] = None,
+                         column_map: Annotated[dict | None, Field(description="데이터베이스 열 이름 → 표준 열 이름, 예 {'Operating revenue (Turnover)': 'revenue'}")] = None,
+                         pli: Annotated[Literal["OM", "ROA", "NCP", "BERRY"], Field(description="지표 — OM 매출액 대비 거래순이익(기본, 시행령 제8조제1항1호)·ROA 자산 대비(2호)·NCP 원가·영업비용 대비(3호)·BERRY 영업비용 대비 매출총이익(4호)")] = "OM",
+                         averaging: Annotated[Literal["weighted", "simple"], Field(description="다년 평균 — weighted(Σ분자/Σ분모, 기본)·simple(연도별 지표의 산술평균)")] = "weighted",
+                         tested_years: Annotated[list[int] | None, Field(description="분석대상 기간(생략하면 analysis_years와 같음) — 다르면 경고")] = None,
+                         screens: Annotated[dict | None, Field(description="기준 바꾸기(None이면 끔): independence_pct(기본 25, 50 이하), independence_bvd_reject, industry_codes, size_min·size_max(평균 매출), loss_years(기본 2), crisis_exception(시행령 제15조제7항), rnd_max(0.03), adv_max(0.05), wc_band, related_max(0.25), segment_min(0.75), special_flags, outlier_k(1.5), op_tolerance(0.005)")] = None,
+                         manual_decisions: Annotated[list[dict] | None, Field(description="사람의 판단 [{company_id, decision: accept|reject, reason(필수), evidence, reviewer}] — accept는 관행 기준 탈락을 뒤집을 수 있고 법정 50%는 못 뒤집음")] = None,
+                         search_log: Annotated[dict | None, Field(description="데이터베이스 이름·추출일·검색 단계별 조건과 남은 수 — 보고서 부록에 그대로 실음")] = None,
+                         quartile_method: Annotated[Literal["inclusive", "exclusive"], Field(description="사분위 계산법(arm_length_range와 같음)")] = "inclusive",
+                         wca: Annotated[dict | None, Field(description="운전자본 조정(단순형) {rate: 이자율 소수, rate_basis: 금리 근거(필수)}")] = None,
+                         multi_year_reason: Annotated[dict | None, Field(description="다년도 자료 사유 {code: 1 경기 변동|2 사업전략|3 그 밖의 합리적 사유(시행규칙 제9조), text}")] = None,
+                         op_source: Annotated[Literal["reported", "recalc"], Field(description="거래순이익 — reported(보고 영업이익, 기본)·recalc(매출−매출원가−판관비)")] = "reported",
+                         fx: Annotated[dict | None, Field(description="통화별 환율 {'EUR': 1.08} — 통화가 섞였을 때 규모 기준용")] = None,
+                         sensitivity: Annotated[bool, Field(description="민감도 시나리오(독립성·손실기업·단년·운전자본·사분위 계산법·이상치) 계산")] = True) -> dict:
+    """비교대상 기업 선정(스크리닝) — 유료 데이터베이스에서 내보낸 후보 목록에 선정 기준을 적용해 회사별 탈락 사유표, 최종 비교대상, 다년 가중평균 지표, 사분위 범위, 기준을 바꿨을 때의 민감도를 냄. 언제: 이전가격 거래순이익률방법에서 비교대상을 거르고 탐색 과정·탈락 사유를 개별기업보고서(Ⅱ-11·12·13·15)에 남길 때.
+    입력: 후보 목록 → file_path 또는 rows, 분석대상 → tested_party, 분석 연도 → analysis_years, 사업연도 → tested_year, 기준 → screens, 사람 판단 → manual_decisions(사유 필수), 검색 기록 → search_log.
+    기준: S1a 독립성 법정 하한(최대주주 50% 이상, 끌 수 없음) / S1b 독립성 관행 25% / S2 자료 충분성 / S3 업종 코드 / S4 규모 / S5 지속 손실(경제위기 예외 시행령 제15조제7항) / S6 연구개발 / S7 광고 / S8 운전자본(표시) / S9 특수관계 매출 / S10 부문 / S11 특수 상황 / S12 사람 판단 / S13 이상치(표시만). 법정이 아닌 기준값은 [관행]으로 표시.
+    결과: 결과(후보·최종 수, 범위, 분석대상 값, 범위 안 여부), 탈락_매트릭스(모든 회사×모든 기준), 최종_비교대상(연도별 재무·지표), 민감도, arm_length_range_입력(그대로 넘기면 같은 사분위), 보고서_부록, 경고, 판단·근거·주의.
+    범위 밖: 데이터베이스 검색 자체, 회사별 기능·거래단계 비교, 비교대상이 적절하다는 결론. 최종 비교대상이 둘 미만이면 범위를 내지 않음(시행령 제15조제5항)."""
+    r = TPS.comparable_screen(rows=rows, file_path=file_path, column_map=column_map, tested_party=tested_party, analysis_years=analysis_years,
+                              tested_year=tested_year, pli=pli, averaging=averaging, tested_years=tested_years, screens=screens,
+                              manual_decisions=manual_decisions, search_log=search_log, quartile_method=quartile_method, wca=wca,
+                              multi_year_reason=multi_year_reason, op_source=op_source, fx=fx, sensitivity=sensitivity)
+    if "error" in r:
+        return r
+    extra = {k: v for k, v in r.items() if k not in ("결과", "근거")}
+    return _ok(r["결과"], r["근거"], **extra)
 
 
 @mcp.tool(annotations=CALC)
@@ -9946,7 +9982,7 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "소급공제": ["loss_carryback_refund"], "결손금 환급": ["loss_carryback_refund"], "결손금 소급": ["loss_carryback_refund"],
     "이월결손금 추적": ["loss_carryforward_ledger"], "결손금 잔액": ["loss_carryforward_ledger"], "결손금 소멸": ["loss_carryforward_ledger"], "이월결손금": ["loss_carryforward_ledger", "loss_carryforward_limit"],
     "해외법인 청산": ["foreign_subsidiary_liquidation", "foreign_exchange_reporting"], "자회사 청산 손실": ["foreign_subsidiary_liquidation"], "투자주식 손실": ["foreign_subsidiary_liquidation"],
-    "정상가격 범위": ["arm_length_range"], "사분위": ["arm_length_range"], "이전가격 조정액": ["arm_length_range"], "비교대상 이익률": ["arm_length_range"],
+    "정상가격 범위": ["arm_length_range"], "사분위": ["arm_length_range"], "이전가격 조정액": ["arm_length_range"], "비교대상 이익률": ["arm_length_range", "tp_comparable_screen"], "비교대상 선정": ["tp_comparable_screen"], "비교기업": ["tp_comparable_screen"], "스크리닝": ["tp_comparable_screen"], "탈락 사유": ["tp_comparable_screen"], "벤치마크": ["tp_comparable_screen"],
     "마일리지충당부채": ["provision_reserve_ledger"], "포인트충당부채": ["provision_reserve_ledger"], "판매보증충당부채": ["provision_reserve_ledger"],
     "충당부채": ["provision_reserve_ledger"], "유효기간 소멸": ["provision_reserve_ledger"], "마일리지 유보": ["provision_reserve_ledger"],
     "마일리지": ["vat_tax_base_adjustments", "provision_reserve_ledger"], "포인트 결제": ["vat_tax_base_adjustments"], "반품": ["vat_tax_base_adjustments"], "환입": ["vat_tax_base_adjustments"],
