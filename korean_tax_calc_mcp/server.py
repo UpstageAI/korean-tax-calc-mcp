@@ -2445,6 +2445,98 @@ def nonresident_withholding(income_kind: Annotated[Literal["이자", "배당", "
 
 @mcp.tool(annotations=CALC)
 @_guard
+def nonresident_capital_gains_withholding(
+        seller_type: Annotated[Literal["개인", "법인"], Field(description="양도자 — 개인(비거주자) / 법인(외국법인)")],
+        asset_kind: Annotated[Literal["부동산등", "주식", "기타유가증권"], Field(description="양도 자산 — 부동산등(국내 토지·건물·부동산 권리·비상장 부동산주식등: 소득세법 제119조제9호·법인세법 제93조제7호), 주식(상장 부동산주식등 포함: 제119조제11호·제93조제9호), 기타유가증권(채권 등)")],
+        year: Annotated[int, Field(description="지급 연도(2016~2026) — 2018년까지는 원천징수 근거가 제1항제4호·제5호, 2019년부터 제5호·제7호", ge=2016, le=2026)],
+        gross_price: Annotated[int, Field(ge=0, description="지급금액(양도가액, 원)")],
+        acquisition_cost: Annotated[int | None, Field(ge=0, description="확인되는 취득가액(원) — 확인되면 지급금액 10%와 양도차익 20% 중 적은 금액. 확인되지 않으면 비움")] = None,
+        transfer_expenses: Annotated[int, Field(ge=0, description="확인되는 양도비용(원) — acquisition_cost와 함께")] = 0,
+        normal_price: Annotated[int | None, Field(ge=0, description="국내사업장 없는 양도자의 특수관계인 간 저가 유가증권 거래일 때 정상가격(원) — 지급금액 대신 씀(소득세법 제126조제6항·법인세법 제92조제2항제2호)")] = None,
+        payer_is_individual: Annotated[bool, Field(description="부동산등 양수자(지급자)가 개인(거주자·비거주자)이면 true — 원천징수의무 없음")] = False,
+        attributable_to_pe: Annotated[bool, Field(description="양도소득이 양도자의 국내사업장에 실질적으로 관련·귀속되면 true — 원천징수 대상 아님")] = False,
+        has_domestic_pe: Annotated[bool, Field(description="양도자에게 국내사업장이 있음 — 외국법인 상장주식 25% 미만 제외 판단과 정상가격 요건에 씀")] = False,
+        listed_via_exchange: Annotated[bool, Field(description="상장주식을 증권시장을 통해 양도(자본시장법 제78조 중개 포함)")] = False,
+        max_ownership_ratio: Annotated[float | None, Field(ge=0, le=1, description="양도자와 특수관계인이 양도일이 속하는 연도와 직전 5년 중 소유한 최대 지분율(소수, 0.25 = 25%) — 계속 25% 미만이면 국내원천소득 아님")] = None,
+        treaty_exempt: Annotated[bool, Field(description="조세조약상 양도소득 비과세·면제를 받고 비과세·면제신청서를 낸 경우 true(입력값 — 조약 요건은 조문 MCP tax_treaty·treaty_withholding_rates로 확인)")] = False,
+        residence_country: Annotated[str | None, Field(description="거주지국(ISO 2자 코드 또는 국명) — treaty_exempt와 함께 기록용")] = None) -> dict:
+    """Nonresident/foreign corporation capital gains withholding on Korean real estate and securities (비거주자·외국법인 양도소득 원천징수).
+비거주자·외국법인이 국내 부동산등·주식·기타 유가증권을 양도하고 대가를 받을 때 지급자가 원천징수할 소득세·법인세와 지방소득세(10%).
+언제: 비거주자·외국법인에게 국내 부동산·주식 양도대금을 지급하면서 원천징수세액을 구할 때, 상장주식 25% 미만·조약 면제·개인 지급자 같은 제외 사유를 함께 볼 때.
+입력: 양도자 구분 → seller_type, 자산 구분 → asset_kind, 지급 연도 → year, 지급금액 → gross_price, 확인된 취득가액·양도비용 → acquisition_cost·transfer_expenses, 정상가격 → normal_price, 지급자가 개인 → payer_is_individual, 국내사업장 귀속 → attributable_to_pe, 국내사업장 유무 → has_domestic_pe, 증권시장 양도·최대 지분율 → listed_via_exchange·max_ownership_ratio, 조약 면제 → treaty_exempt·residence_country.
+산식: 원천징수세액 = 지급금액 × 10%, 취득가액·양도비용이 확인되면 min(지급금액 × 10%, 양도차익 × 20%) — 소득세법 제156조제1항제5호(부동산등)·제7호(유가증권), 법인세법 제98조제1항제5호·제7호(2018년까지 각 제4호·제5호). 2016~2026 세율 같음.
+제외: 국내사업장 귀속소득, 부동산등을 개인이 지급(제156조제1항·제98조제1항 괄호), 증권시장 상장주식 양도로 양도자+특수관계인 지분이 계속 25% 미만(소득세법 시행령 제179조제11항제1호 단서 — 외국법인은 국내사업장이 없을 때만, 법인세법 시행령 제132조제8항제2호 단서), 조약 면제(소득세법 제156조의2·법인세법 제98조의4 신청서 제출 전제).
+결과: 원천징수세액·지방소득세·합계·적용 산식, 계산(지급금액 10%·양도차익 20%), 판단, 신고안내(개인 부동산등은 제121조제2항 분류과세로 별도 신고 필요 여부 확인, 외국법인 부동산등은 법인세법 제97조제1항 신고), 근거, 한계. 원 미만은 최종 세액만 버림."""
+    from .engine import calc_nonresident_transfer as NRT
+    r = NRT.capital_gains_withholding(seller_type, asset_kind, year, gross_price, acquisition_cost, transfer_expenses, normal_price,
+                                      payer_is_individual, attributable_to_pe, has_domestic_pe, listed_via_exchange, max_ownership_ratio,
+                                      treaty_exempt, residence_country)
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 신고안내=r["신고안내"], 한계=r["한계"])
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def nonresident_inheritance_gift(
+        kind: Annotated[Literal["상속", "증여"], Field(description="상속(비거주자 피상속인) / 증여(비거주자 수증자)")],
+        event_date: Annotated[str, Field(description="상속개시일 또는 증여일(YYYY-MM-DD, 2016~2026)")],
+        value: Annotated[int, Field(ge=0, description="상속: 국내에 있는 상속재산가액(원) / 증여: 과세대상 증여재산가액(원, 2017년부터 국내 재산만)")],
+        deemed_estate: Annotated[int, Field(ge=0, description="상속: 국내 간주상속재산(원)")] = 0,
+        nontaxable: WON = 0,
+        excluded: WON = 0,
+        public_charges: Annotated[int, Field(ge=0, description="상속: 해당 상속재산에 관한 공과금(원, 상증법 제14조제2항제1호)")] = 0,
+        debts: Annotated[int, Field(ge=0, description="상속: 해당 상속재산을 목적으로 하는 유치권·질권·전세권·임차권·양도담보권·저당권 등으로 담보된 채무와 국내사업장 장부로 확인되는 사업상 공과금·채무(원, 제14조제2항제2호·제3호)")] = 0,
+        prior_gifts_heirs: Annotated[int, Field(ge=0, description="상속: 10년 내 상속인에게 증여한 국내 재산(원, 제13조제2항)")] = 0,
+        prior_gifts_others: Annotated[int, Field(ge=0, description="상속: 5년 내 상속인 아닌 자에게 증여한 국내 재산(원)")] = 0,
+        prior_gift_deductions: WON = 0,
+        bequest_to_non_heirs: WON = 0,
+        renounced_to_next: WON = 0,
+        foreign_address: Annotated[bool, Field(description="상속: 피상속인이나 상속인이 외국에 주소를 둠 → 신고기한 9개월(제67조제4항), false면 6개월")] = True,
+        relation: Annotated[Literal["배우자", "직계존속", "직계비속", "기타친족", "기타"], Field(description="증여: 수증자 기준 증여자 관계(비거주자는 증여재산공제가 없어 기록·할증 판단용)")] = "기타",
+        recipient_minor: Annotated[bool, Field(description="증여: 수증자가 미성년자(세대생략 40% 판단)")] = False,
+        prior_gifts_same_donor: Annotated[int, Field(ge=0, description="증여: 10년 내 같은 증여자 증여재산(합산, 원)")] = 0,
+        assumed_debt: Annotated[int, Field(ge=0, description="증여: 부담부증여 인수채무(원)")] = 0,
+        generation_skip: Annotated[bool, Field(description="증여: 자녀 아닌 직계비속 수증(세대생략 할증)")] = False,
+        generation_skip_surcharge: Annotated[int, Field(ge=0, description="상속: 세대생략 할증세액(원, 입력값)")] = 0,
+        prior_gift_tax_paid: Annotated[int, Field(ge=0, description="증여: 합산한 사전증여의 증여세 산출세액(원, 제58조) / 상속: 증여세액공제(원)")] = 0,
+        prior_tax_base_same_donor: Annotated[int | None, Field(ge=0, description="증여: 가산한 사전증여의 과세표준(원)")] = None,
+        appraisal_fee: WON = 0,
+        other_credits: WON = 0,
+        filed: Annotated[bool, Field(description="법정신고기한 안 신고(신고세액공제)")] = True) -> dict:
+    """Nonresident inheritance and gift tax (비거주자 상속세·증여세).
+비거주자 피상속인의 상속세(국내 재산만 과세, 기초공제 2억원만)와 비거주자 수증자의 증여세(증여재산공제 없음, 증여자 연대납부)를 계산하고 신고기한을 구한다.
+언제: 피상속인이 비거주자인 상속, 수증자가 비거주자인 증여의 세액과 신고기한(상속 9개월·증여 3개월)을 구할 때. 거주자는 inheritance_tax·gift_tax.
+입력: 상속·증여 구분 → kind, 상속개시일·증여일 → event_date, 국내 상속재산·증여재산가액 → value, 상속은 공과금·담보채무 → public_charges·debts, 국내 사전증여 → prior_gifts_heirs·prior_gifts_others, 외국 주소 → foreign_address, 증여는 관계 → relation, 합산 사전증여 → prior_gifts_same_donor, 인수채무 → assumed_debt, 세대생략 → generation_skip, 기납부 증여세 → prior_gift_tax_paid.
+상속(비거주자 피상속인): 과세대상은 국내에 있는 모든 상속재산(상증법 제3조제2호), 사전증여는 국내 재산만 가산(제13조제2항), 차감은 해당 재산 공과금·담보채무·국내사업장 장부 채무만이고 장례비용 없음(제14조제2항), 공제는 기초공제 2억원(제18조)만 — 배우자·그 밖의 인적·일괄·금융재산·재해손실·동거주택·가업·영농상속공제는 '거주자의 사망' 요건(제18조의2·제18조의3·제19조~제23조의2, 2022년까지 제18조제2항). 신고기한은 상속개시일이 속하는 달의 말일부터 6개월, 피상속인이나 상속인이 외국에 주소를 두면 9개월(제67조제1항·제4항).
+증여(비거주자 수증자): 과세대상은 국내에 있는 모든 증여재산(제4조의2제1항제2호, 2016년 증여는 거주자로부터 받은 국외 예금·적금 등도 포함), 증여재산공제·혼인출산공제 없음(제53조·제53조의2 '거주자가'), 증여자 연대납부(제4조의2제6항제3호, 2018년까지 제5항제3호), 신고기한 증여일이 속하는 달의 말일부터 3개월(제68조).
+결과: 과세가액·공제·과세표준·산출세액·신고세액공제·납부할세액·신고기한, 판단(비거주자 제한·연대납부·과세대상), 근거, 한계."""
+    from .engine import calc_nonresident_transfer as NRT
+    _e = _range_err(("event_date", event_date))
+    if _e: return _e
+    if kind == "상속":
+        증여전용 = [n for n, v in (("relation", relation != "기타"), ("recipient_minor", recipient_minor), ("prior_gifts_same_donor", prior_gifts_same_donor),
+                                  ("assumed_debt", assumed_debt), ("generation_skip", generation_skip), ("prior_tax_base_same_donor", prior_tax_base_same_donor is not None)) if v]
+        if 증여전용:
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"상속에서 쓰지 않는 증여 입력: {', '.join(증여전용)}"]}
+        return NRT.inheritance_gift("상속", event_date, value, deemed_estate=deemed_estate, nontaxable=nontaxable, excluded=excluded,
+                                    public_charges=public_charges, debts=debts, prior_gifts_heirs=prior_gifts_heirs, prior_gifts_others=prior_gifts_others,
+                                    prior_gift_deductions=prior_gift_deductions, bequest_to_non_heirs=bequest_to_non_heirs, renounced_to_next=renounced_to_next,
+                                    appraisal_fee=appraisal_fee, generation_skip_surcharge=generation_skip_surcharge, gift_tax_credit=prior_gift_tax_paid,
+                                    other_credits=other_credits, filed=filed, foreign_address=foreign_address)
+    상속전용 = [n for n, v in (("deemed_estate", deemed_estate), ("public_charges", public_charges), ("debts", debts), ("prior_gifts_heirs", prior_gifts_heirs),
+                              ("prior_gifts_others", prior_gifts_others), ("prior_gift_deductions", prior_gift_deductions), ("bequest_to_non_heirs", bequest_to_non_heirs),
+                              ("renounced_to_next", renounced_to_next), ("generation_skip_surcharge", generation_skip_surcharge), ("foreign_address", not foreign_address)) if v]
+    if 상속전용:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"증여에서 쓰지 않는 상속 입력: {', '.join(상속전용)}"]}
+    return NRT.inheritance_gift("증여", event_date, value, relation=relation, recipient_minor=recipient_minor, prior_gifts_same_donor=prior_gifts_same_donor,
+                                nontaxable=nontaxable, excluded=excluded, assumed_debt=assumed_debt, appraisal_fee=appraisal_fee, generation_skip=generation_skip,
+                                prior_gift_tax_paid=prior_gift_tax_paid, prior_tax_base_same_donor=prior_tax_base_same_donor, other_credits=other_credits,
+                                filed=filed, prior_deduction_same_donor=0 if prior_gifts_same_donor else None)
+
+
+@mcp.tool(annotations=CALC)
+@_guard
 def retirement_income_tax(income: Annotated[int, Field(description="퇴직소득금액(퇴직급여, 비과세 제외, 원)")],
                           years_of_service: Annotated[int, Field(description="근속연수(1~60년)")],
                           retire_year: Annotated[int, Field(description="계산: 2020~2026년 퇴직. 2016~2019년 퇴직은 경과 부칙(법률 제12852호) 대상이라 계산하지 않고 안내. 근속연수공제표(2023 개정)·기본세율표가 이 해 기준", ge=2016, le=2026)] = 2025) -> dict:
