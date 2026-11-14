@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from .engine import calc as K, calc_cit as C, calc_income as I, calc_vat as V, calc_capgains as CG
 from .engine import calc_nonprofit as NP
 from .engine import calc_foreign as F
+from .engine import calc_branch_exit as BX
 from .engine import calc_provision as PV
 from .engine import calc_tp as ALR
 from .engine import calc_tp_screen as TPS
@@ -648,6 +649,67 @@ def foreign_tax_credit(
     if "error" in r:
         return r
     return _ok(r["결과"], r["근거"], 연도별_근거=r.get("연도별_근거", {}))
+
+
+# ── 외국법인 지점세·국외전출세(0.52 후보, 2026-11-14) ─────────────────────────────
+@mcp.tool(annotations=CALC)
+@_guard
+def branch_profits_tax(
+    year: YEAR,
+    pe_income: Annotated[int, Field(description="국내사업장의 각 사업연도 소득금액(원). 결손이면 음수")],
+    corporate_tax: Annotated[int, Field(description="법인세법 제95조에 따른 법인세(산출세액, 원)", ge=0)],
+    treaty_allows_branch_tax: Annotated[bool, Field(description="거주지국과의 조세조약이 지점세(이윤 추가 과세)를 허용하면 true. 허용하지 않으면 지점세 없음")],
+    credits_reductions: Annotated[int, Field(description="제96조제2항제1호가목 — 외국납부세액공제·재해손실세액공제와 다른 법률에 따른 감면세액·세액공제액(원)", ge=0)] = 0,
+    penalties_additional: Annotated[int, Field(description="제96조제2항제1호나목 — 가산세와 법인세법·조세특례제한법에 따른 추가 납부세액(원)", ge=0)] = 0,
+    local_income_tax: Annotated[int, Field(description="법인지방소득세(원)", ge=0)] = 0,
+    thin_cap_disallowed: Annotated[int, Field(description="국제조세조정에 관한 법률(2020년까지 제14조, 2021년부터 제22조)에 따라 손금에 산입되지 않은 금액(원)", ge=0)] = 0,
+    capital_begin: Annotated[int, Field(description="사업연도 개시일 현재 자본금상당액(원) — 재무상태표 자산 합계 − 부채(충당금 포함, 미지급법인세 제외)")] = 0,
+    capital_end: Annotated[int, Field(description="사업연도 종료일 현재 자본금상당액(원)")] = 0,
+    untaxed_retained_prior: Annotated[int, Field(description="직전 사업연도 종료일 현재 미과세누적유보소득(원, 음수 가능) — 시행령 제134조제3항")] = 0,
+    treaty_branch_rate: Annotated[float | None, Field(description="조세조약에서 정한 지점세 세율(소수, 예 0.05). 생략하면 법인세법 제98조 인용 세율 100분의 20")] = None,
+    residence_country_taxes_korean_branches: Annotated[bool, Field(description="거주지국이 그 나라에 있는 우리나라 법인의 국외사업장에 추가 과세하면 true(기본). false면 제96조제1항 단서로 지점세 없음")] = True,
+    treaty_basis: Annotated[Literal["소득금액", "송금액"], Field(description="조약의 과세 기준 — 소득금액(기본) 또는 이윤 송금액")] = "소득금액",
+    remitted_profit: Annotated[int | None, Field(description="송금액 기준일 때 각 사업연도에 실제로 송금된 이윤(원)")] = None,
+    prior_year_taxable: Annotated[int | None, Field(description="송금액 기준일 때 직전 사업연도 과세대상소득금액(원)")] = None,
+    pe_closed: Annotated[bool, Field(description="국내사업장을 가지지 않게 된 의제사업연도면 true — 종료일 자본금상당액을 0으로 봄")] = False,
+) -> dict:
+    """Branch profits tax on a foreign corporation's Korean permanent establishment (지점세, 법인세법 제96조).
+외국법인 국내사업장의 지점세 — 과세대상소득금액(각 사업연도 소득금액 − 법인세 등 − 법인지방소득세 − 재투자 인정액 − 과소자본 손금불산입액 + 자본금상당액감소액)에 조약 세율을 곱한다.
+언제: 외국법인 지점이 법인세를 낸 뒤 본점 송금 이윤에 추가로 내는 세금을 구할 때. 조약이 지점세를 허용하지 않으면 0.
+입력: year(사업연도 2016~2026), pe_income(각 사업연도 소득금액), corporate_tax(제95조 법인세), treaty_allows_branch_tax(조약 허용 여부),
+  credits_reductions·penalties_additional(제96조제2항제1호 가목·나목), local_income_tax, thin_cap_disallowed, capital_begin·capital_end(자본금상당액),
+  untaxed_retained_prior(직전 사업연도 말 미과세누적유보소득), treaty_branch_rate(조약 세율, 생략 시 100분의 20), residence_country_taxes_korean_branches(제96조제1항 단서),
+  treaty_basis·remitted_profit·prior_year_taxable(송금액 기준 조약), pe_closed(의제사업연도).
+결과: 지점세, 과세대상 금액, 세율·근거, 계산 내역(재투자 공제·자본금상당액 증감), 연도별 인용 조문, 한계.
+  재투자 인정액은 시행령 제134조제1항(자본금상당액증가액 + 음수 미과세누적유보소득, 한도 있음), 결손 사업연도는 같은 조 제4항, 송금액 기준은 제5항.
+  조약의 지점세 허용·세율은 조문 MCP tax_treaty로 확인한다. 원 미만 처리 규정이 없어 최종 세액만 버린다."""
+    r = BX.branch_profits_tax(year, pe_income, corporate_tax, credits_reductions, penalties_additional, local_income_tax, thin_cap_disallowed,
+                                 capital_begin, capital_end, untaxed_retained_prior, treaty_allows_branch_tax, treaty_branch_rate,
+                              residence_country_taxes_korean_branches, treaty_basis, remitted_profit, prior_year_taxable, pe_closed)
+    return _ok(r.pop("결과"), r.pop("근거"), **r)
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def emigration_exit_tax(
+    departure_date: Annotated[str, Field(description="출국일 YYYY-MM-DD(2018-01-01~2026-12-31). 2018년 전 출국은 과세 없음, 2027년 이후는 개정규정 미대조로 계산 안 함")],
+    residence_years_in_10: Annotated[float, Field(description="출국일 10년 전부터 출국일까지 국내에 주소·거소를 둔 기간 합계(년) — 5년 이상이어야 과세", ge=0, le=10)],
+    major_shareholder: Annotated[bool, Field(description="출국일이 속하는 연도의 직전 연도 종료일 현재 대주주(소득세법 시행령 제167조의8제1항)이면 true")],
+    holdings: Annotated[list, Field(description="출국 당시 소유한 국내주식등 [{name?, market_value(출국일 시가, 원), acquisition_cost(필요경비 제97조, 원), sme?(중소기업 주식등이면 true — 2019년 출국분 세율 구분)}]")],
+    holdings_reported: Annotated[bool, Field(description="출국일 전날까지 국내주식등 보유현황을 빠짐없이 신고했으면 true(기본)")] = True,
+    unreported_face_value: Annotated[int, Field(description="보유현황 미신고·누락분의 액면금액 또는 출자가액(원) — 2019년 이후 출국분 100분의 2 가산", ge=0)] = 0,
+    manager_reported: Annotated[bool, Field(description="납세관리인을 출국일 전날까지 신고했으면 true — 2019년 이후 출국분 신고기한 안내")] = False,
+) -> dict:
+    """Departure tax (exit tax) on a Korean resident major shareholder's domestic shares (국외전출세, 소득세법 제118조의9~제118조의18).
+국외전출세 — 출국일 시가로 양도한 것으로 보아 양도소득금액 − 연 250만원 = 과세표준, 세율은 출국일로 고른다.
+언제: 대주주인 거주자가 해외로 이주하면서 보유한 국내주식에 내는 양도소득세와 신고기한·납부유예·실제 양도 후 공제를 확인할 때.
+입력: departure_date(출국일), residence_years_in_10(10년 중 국내 주소·거소 기간), major_shareholder(직전 연도 말 대주주 여부),
+  holdings(종목별 출국일 시가·필요경비·중소기업 여부), holdings_reported·unreported_face_value(보유현황 미신고 가산), manager_reported(납세관리인 신고).
+결과: 납세의무 여부, 양도소득금액·과세표준·산출세액·미신고 가산, 세율 구간, 신고·납부기한, 조정공제·외국납부세액공제·비거주자 세액공제 안내, 납부유예 요건·이자상당액, 재전입 환급, 한계.
+  세율: 2018년 출국분 20%, 2019년 이후 출국분 3억원 이하 20%·초과 25%(2019년 출국분 중소기업 주식등은 20%, 2018.12.31. 법률 제16104호 부칙 제1조 단서).
+  대주주 기준·출국일 시가는 입력값이다. 원 미만 처리 규정이 없어 최종 금액만 버린다."""
+    r = BX.emigration_exit_tax(departure_date, residence_years_in_10, major_shareholder, holdings, holdings_reported, unreported_face_value, manager_reported)
+    return _ok(r.pop("결과"), r.pop("근거"), **r)
 
 
 # ── 기업업무추진비 기준일(지출분·신고분) ─────────────────────────────────────────────
@@ -2445,6 +2507,98 @@ def nonresident_withholding(income_kind: Annotated[Literal["이자", "배당", "
 
 @mcp.tool(annotations=CALC)
 @_guard
+def nonresident_capital_gains_withholding(
+        seller_type: Annotated[Literal["개인", "법인"], Field(description="양도자 — 개인(비거주자) / 법인(외국법인)")],
+        asset_kind: Annotated[Literal["부동산등", "주식", "기타유가증권"], Field(description="양도 자산 — 부동산등(국내 토지·건물·부동산 권리·비상장 부동산주식등: 소득세법 제119조제9호·법인세법 제93조제7호), 주식(상장 부동산주식등 포함: 제119조제11호·제93조제9호), 기타유가증권(채권 등)")],
+        year: Annotated[int, Field(description="지급 연도(2016~2026) — 2018년까지는 원천징수 근거가 제1항제4호·제5호, 2019년부터 제5호·제7호", ge=2016, le=2026)],
+        gross_price: Annotated[int, Field(ge=0, description="지급금액(양도가액, 원)")],
+        acquisition_cost: Annotated[int | None, Field(ge=0, description="확인되는 취득가액(원) — 확인되면 지급금액 10%와 양도차익 20% 중 적은 금액. 확인되지 않으면 비움")] = None,
+        transfer_expenses: Annotated[int, Field(ge=0, description="확인되는 양도비용(원) — acquisition_cost와 함께")] = 0,
+        normal_price: Annotated[int | None, Field(ge=0, description="국내사업장 없는 양도자의 특수관계인 간 저가 유가증권 거래일 때 정상가격(원) — 지급금액 대신 씀(소득세법 제126조제6항·법인세법 제92조제2항제2호)")] = None,
+        payer_is_individual: Annotated[bool, Field(description="부동산등 양수자(지급자)가 개인(거주자·비거주자)이면 true — 원천징수의무 없음")] = False,
+        attributable_to_pe: Annotated[bool, Field(description="양도소득이 양도자의 국내사업장에 실질적으로 관련·귀속되면 true — 원천징수 대상 아님")] = False,
+        has_domestic_pe: Annotated[bool, Field(description="양도자에게 국내사업장이 있음 — 외국법인 상장주식 25% 미만 제외 판단과 정상가격 요건에 씀")] = False,
+        listed_via_exchange: Annotated[bool, Field(description="상장주식을 증권시장을 통해 양도(자본시장법 제78조 중개 포함)")] = False,
+        max_ownership_ratio: Annotated[float | None, Field(ge=0, le=1, description="양도자와 특수관계인이 양도일이 속하는 연도와 직전 5년 중 소유한 최대 지분율(소수, 0.25 = 25%) — 계속 25% 미만이면 국내원천소득 아님")] = None,
+        treaty_exempt: Annotated[bool, Field(description="조세조약상 양도소득 비과세·면제를 받고 비과세·면제신청서를 낸 경우 true(입력값 — 조약 요건은 조문 MCP tax_treaty·treaty_withholding_rates로 확인)")] = False,
+        residence_country: Annotated[str | None, Field(description="거주지국(ISO 2자 코드 또는 국명) — treaty_exempt와 함께 기록용")] = None) -> dict:
+    """Nonresident/foreign corporation capital gains withholding on Korean real estate and securities (비거주자·외국법인 양도소득 원천징수).
+비거주자·외국법인이 국내 부동산등·주식·기타 유가증권을 양도하고 대가를 받을 때 지급자가 원천징수할 소득세·법인세와 지방소득세(10%).
+언제: 비거주자·외국법인에게 국내 부동산·주식 양도대금을 지급하면서 원천징수세액을 구할 때, 상장주식 25% 미만·조약 면제·개인 지급자 같은 제외 사유를 함께 볼 때.
+입력: 양도자 구분 → seller_type, 자산 구분 → asset_kind, 지급 연도 → year, 지급금액 → gross_price, 확인된 취득가액·양도비용 → acquisition_cost·transfer_expenses, 정상가격 → normal_price, 지급자가 개인 → payer_is_individual, 국내사업장 귀속 → attributable_to_pe, 국내사업장 유무 → has_domestic_pe, 증권시장 양도·최대 지분율 → listed_via_exchange·max_ownership_ratio, 조약 면제 → treaty_exempt·residence_country.
+산식: 원천징수세액 = 지급금액 × 10%, 취득가액·양도비용이 확인되면 min(지급금액 × 10%, 양도차익 × 20%) — 소득세법 제156조제1항제5호(부동산등)·제7호(유가증권), 법인세법 제98조제1항제5호·제7호(2018년까지 각 제4호·제5호). 2016~2026 세율 같음.
+제외: 국내사업장 귀속소득, 부동산등을 개인이 지급(제156조제1항·제98조제1항 괄호), 증권시장 상장주식 양도로 양도자+특수관계인 지분이 계속 25% 미만(소득세법 시행령 제179조제11항제1호 단서 — 외국법인은 국내사업장이 없을 때만, 법인세법 시행령 제132조제8항제2호 단서), 조약 면제(소득세법 제156조의2·법인세법 제98조의4 신청서 제출 전제).
+결과: 원천징수세액·지방소득세·합계·적용 산식, 계산(지급금액 10%·양도차익 20%), 판단, 신고안내(개인 부동산등은 제121조제2항 분류과세로 별도 신고 필요 여부 확인, 외국법인 부동산등은 법인세법 제97조제1항 신고), 근거, 한계. 원 미만은 최종 세액만 버림."""
+    from .engine import calc_nonresident_transfer as NRT
+    r = NRT.capital_gains_withholding(seller_type, asset_kind, year, gross_price, acquisition_cost, transfer_expenses, normal_price,
+                                      payer_is_individual, attributable_to_pe, has_domestic_pe, listed_via_exchange, max_ownership_ratio,
+                                      treaty_exempt, residence_country)
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 신고안내=r["신고안내"], 한계=r["한계"])
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def nonresident_inheritance_gift(
+        kind: Annotated[Literal["상속", "증여"], Field(description="상속(비거주자 피상속인) / 증여(비거주자 수증자)")],
+        event_date: Annotated[str, Field(description="상속개시일 또는 증여일(YYYY-MM-DD, 2016~2026)")],
+        value: Annotated[int, Field(ge=0, description="상속: 국내에 있는 상속재산가액(원) / 증여: 과세대상 증여재산가액(원, 2017년부터 국내 재산만)")],
+        deemed_estate: Annotated[int, Field(ge=0, description="상속: 국내 간주상속재산(원)")] = 0,
+        nontaxable: WON = 0,
+        excluded: WON = 0,
+        public_charges: Annotated[int, Field(ge=0, description="상속: 해당 상속재산에 관한 공과금(원, 상증법 제14조제2항제1호)")] = 0,
+        debts: Annotated[int, Field(ge=0, description="상속: 해당 상속재산을 목적으로 하는 유치권·질권·전세권·임차권·양도담보권·저당권 등으로 담보된 채무와 국내사업장 장부로 확인되는 사업상 공과금·채무(원, 제14조제2항제2호·제3호)")] = 0,
+        prior_gifts_heirs: Annotated[int, Field(ge=0, description="상속: 10년 내 상속인에게 증여한 국내 재산(원, 제13조제2항)")] = 0,
+        prior_gifts_others: Annotated[int, Field(ge=0, description="상속: 5년 내 상속인 아닌 자에게 증여한 국내 재산(원)")] = 0,
+        prior_gift_deductions: WON = 0,
+        bequest_to_non_heirs: WON = 0,
+        renounced_to_next: WON = 0,
+        foreign_address: Annotated[bool, Field(description="상속: 피상속인이나 상속인이 외국에 주소를 둠 → 신고기한 9개월(제67조제4항), false면 6개월")] = True,
+        relation: Annotated[Literal["배우자", "직계존속", "직계비속", "기타친족", "기타"], Field(description="증여: 수증자 기준 증여자 관계(비거주자는 증여재산공제가 없어 기록·할증 판단용)")] = "기타",
+        recipient_minor: Annotated[bool, Field(description="증여: 수증자가 미성년자(세대생략 40% 판단)")] = False,
+        prior_gifts_same_donor: Annotated[int, Field(ge=0, description="증여: 10년 내 같은 증여자 증여재산(합산, 원)")] = 0,
+        assumed_debt: Annotated[int, Field(ge=0, description="증여: 부담부증여 인수채무(원)")] = 0,
+        generation_skip: Annotated[bool, Field(description="증여: 자녀 아닌 직계비속 수증(세대생략 할증)")] = False,
+        generation_skip_surcharge: Annotated[int, Field(ge=0, description="상속: 세대생략 할증세액(원, 입력값)")] = 0,
+        prior_gift_tax_paid: Annotated[int, Field(ge=0, description="증여: 합산한 사전증여의 증여세 산출세액(원, 제58조) / 상속: 증여세액공제(원)")] = 0,
+        prior_tax_base_same_donor: Annotated[int | None, Field(ge=0, description="증여: 가산한 사전증여의 과세표준(원)")] = None,
+        appraisal_fee: WON = 0,
+        other_credits: WON = 0,
+        filed: Annotated[bool, Field(description="법정신고기한 안 신고(신고세액공제)")] = True) -> dict:
+    """Nonresident inheritance and gift tax (비거주자 상속세·증여세).
+비거주자 피상속인의 상속세(국내 재산만 과세, 기초공제 2억원만)와 비거주자 수증자의 증여세(증여재산공제 없음, 증여자 연대납부)를 계산하고 신고기한을 구한다.
+언제: 피상속인이 비거주자인 상속, 수증자가 비거주자인 증여의 세액과 신고기한(상속 9개월·증여 3개월)을 구할 때. 거주자는 inheritance_tax·gift_tax.
+입력: 상속·증여 구분 → kind, 상속개시일·증여일 → event_date, 국내 상속재산·증여재산가액 → value, 상속은 공과금·담보채무 → public_charges·debts, 국내 사전증여 → prior_gifts_heirs·prior_gifts_others, 외국 주소 → foreign_address, 증여는 관계 → relation, 합산 사전증여 → prior_gifts_same_donor, 인수채무 → assumed_debt, 세대생략 → generation_skip, 기납부 증여세 → prior_gift_tax_paid.
+상속(비거주자 피상속인): 과세대상은 국내에 있는 모든 상속재산(상증법 제3조제2호), 사전증여는 국내 재산만 가산(제13조제2항), 차감은 해당 재산 공과금·담보채무·국내사업장 장부 채무만이고 장례비용 없음(제14조제2항), 공제는 기초공제 2억원(제18조)만 — 배우자·그 밖의 인적·일괄·금융재산·재해손실·동거주택·가업·영농상속공제는 '거주자의 사망' 요건(제18조의2·제18조의3·제19조~제23조의2, 2022년까지 제18조제2항). 신고기한은 상속개시일이 속하는 달의 말일부터 6개월, 피상속인이나 상속인이 외국에 주소를 두면 9개월(제67조제1항·제4항).
+증여(비거주자 수증자): 과세대상은 국내에 있는 모든 증여재산(제4조의2제1항제2호, 2016년 증여는 거주자로부터 받은 국외 예금·적금 등도 포함), 증여재산공제·혼인출산공제 없음(제53조·제53조의2 '거주자가'), 증여자 연대납부(제4조의2제6항제3호, 2018년까지 제5항제3호), 신고기한 증여일이 속하는 달의 말일부터 3개월(제68조).
+결과: 과세가액·공제·과세표준·산출세액·신고세액공제·납부할세액·신고기한, 판단(비거주자 제한·연대납부·과세대상), 근거, 한계."""
+    from .engine import calc_nonresident_transfer as NRT
+    _e = _range_err(("event_date", event_date))
+    if _e: return _e
+    if kind == "상속":
+        증여전용 = [n for n, v in (("relation", relation != "기타"), ("recipient_minor", recipient_minor), ("prior_gifts_same_donor", prior_gifts_same_donor),
+                                  ("assumed_debt", assumed_debt), ("generation_skip", generation_skip), ("prior_tax_base_same_donor", prior_tax_base_same_donor is not None)) if v]
+        if 증여전용:
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"상속에서 쓰지 않는 증여 입력: {', '.join(증여전용)}"]}
+        return NRT.inheritance_gift("상속", event_date, value, deemed_estate=deemed_estate, nontaxable=nontaxable, excluded=excluded,
+                                    public_charges=public_charges, debts=debts, prior_gifts_heirs=prior_gifts_heirs, prior_gifts_others=prior_gifts_others,
+                                    prior_gift_deductions=prior_gift_deductions, bequest_to_non_heirs=bequest_to_non_heirs, renounced_to_next=renounced_to_next,
+                                    appraisal_fee=appraisal_fee, generation_skip_surcharge=generation_skip_surcharge, gift_tax_credit=prior_gift_tax_paid,
+                                    other_credits=other_credits, filed=filed, foreign_address=foreign_address)
+    상속전용 = [n for n, v in (("deemed_estate", deemed_estate), ("public_charges", public_charges), ("debts", debts), ("prior_gifts_heirs", prior_gifts_heirs),
+                              ("prior_gifts_others", prior_gifts_others), ("prior_gift_deductions", prior_gift_deductions), ("bequest_to_non_heirs", bequest_to_non_heirs),
+                              ("renounced_to_next", renounced_to_next), ("generation_skip_surcharge", generation_skip_surcharge), ("foreign_address", not foreign_address)) if v]
+    if 상속전용:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"증여에서 쓰지 않는 상속 입력: {', '.join(상속전용)}"]}
+    return NRT.inheritance_gift("증여", event_date, value, relation=relation, recipient_minor=recipient_minor, prior_gifts_same_donor=prior_gifts_same_donor,
+                                nontaxable=nontaxable, excluded=excluded, assumed_debt=assumed_debt, appraisal_fee=appraisal_fee, generation_skip=generation_skip,
+                                prior_gift_tax_paid=prior_gift_tax_paid, prior_tax_base_same_donor=prior_tax_base_same_donor, other_credits=other_credits,
+                                filed=filed, prior_deduction_same_donor=0 if prior_gifts_same_donor else None)
+
+
+@mcp.tool(annotations=CALC)
+@_guard
 def retirement_income_tax(income: Annotated[int, Field(description="퇴직소득금액(퇴직급여, 비과세 제외, 원)")],
                           years_of_service: Annotated[int, Field(description="근속연수(1~60년)")],
                           retire_year: Annotated[int, Field(description="계산: 2020~2026년 퇴직. 2016~2019년 퇴직은 경과 부칙(법률 제12852호) 대상이라 계산하지 않고 안내. 근속연수공제표(2023 개정)·기본세율표가 이 해 기준", ge=2016, le=2026)] = 2025) -> dict:
@@ -3669,6 +3823,182 @@ def wage_income_tax(gross_pay: Annotated[int, Field(description="총급여(원, 
     return _ok({"근로소득공제": ded, "근로소득금액": income_amt, "과세표준": tax_base, "산출세액": t, "근로소득세액공제": credit,
                 "표준세액공제": std, "결정세액(참고)": decided, "지방소득세(참고)": decided // 10},
                "소득세법 제47조①·제55조·제59조·제59조의4⑨", 판단=판단, 주의="그 밖의 소득공제·세액공제는 별도")
+
+
+def _ymd(name: str, v: str | None) -> date | None:
+    if v is None or str(v).strip() == "":
+        return None
+    try:
+        return date.fromisoformat(str(v)[:10])
+    except ValueError:
+        raise ValueError(f"{name}={v!r} — YYYY-MM-DD")
+
+
+_FW_LIMITS = [
+    "특수관계기업 여부(시행령 제16조의2제2항)·외국인투자기업 예외(같은 조 제1항)·지역본부(같은 조 제3항) 해당 여부는 입력값을 그대로 씀 — 도구가 판정하지 않음",
+    "2014.1.1. 전 근무 시작자의 2016 귀속: 5년 기간을 세는지 확인 필요(이 도구는 세지 않음)",
+    "지방세특례제한법 제106조의2(지방소득세 = 제18조의2제2항 세율의 100분의 10)는 현행본(2026.6.2. 시행)만 대조 — 2016~2025 연도별 문언은 확인 필요",
+    "사택 제공 이익 비과세 유지(제18조의2제3항 괄호, 시행령 제16조의2제5항 → 소득세법 시행령 제17조의4제1호)는 2024.1.1. 이후 지급분부터(법률 제19936호 부칙 제6조) — "
+    "이 도구는 귀속연도 2024부터로 처리, 2023년 귀속분을 2024년에 지급한 경우는 확인 필요. 소득세법 시행령 제17조의4는 현행본만 대조",
+    "원천징수(제18조의2제4항) 월 세액은 입력한 월 지급액 × 세율 — 월 원천징수 대상에 비과세 급여를 넣는지는 확인 필요",
+    "원 미만: 법 문언에 끝수 처리가 없어 최종 세액만 원 미만 절사",
+]
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def foreign_worker_flat_tax(
+    year: YEAR,
+    first_work_date: Annotated[str, Field(description="국내에서 최초로 근로를 제공한 날(YYYY-MM-DD). 2014.1.1. 전이면 2023 귀속부터 기산일을 2014.1.1.(또는 reentry_date)로 바꿔 셈")],
+    taxable_pay: Annotated[int, Field(description="총급여(원, 비과세 제외) — 누진세율 비교와 단일세율 과세대상에 모두 쓰임", ge=0)],
+    nontaxable_pay: Annotated[int, Field(description="비과세 근로소득 합계(원) — 단일세율에서는 비과세를 적용하지 않으므로 과세대상에 더함(제18조의2제3항)", ge=0)] = 0,
+    housing_benefit_nontaxable: Annotated[int, Field(description="nontaxable_pay 중 사택 제공 이익 비과세분(원, 소득세법 시행령 제17조의4제1호) — 2024 귀속부터 단일세율 과세대상에서 뺌", ge=0)] = 0,
+    tax_base: Annotated[int | None, Field(description="누진세율 비교용 종합소득 과세표준(원). 모르면 생략 — wage_income_tax와 같이 근로소득금액 − 본인 기본공제 150만 원")] = None,
+    other_credits: Annotated[int | None, Field(description="누진세율 비교용 근로소득세액공제 외 세액공제 합계(원). 생략하면 과세표준을 생략한 경우에만 표준세액공제 13만 원", ge=0)] = None,
+    regional_hq: Annotated[bool, Field(description="외국인투자 촉진법 시행령에 따른 지역본부 근무(시행령 제16조의2제3항)이면 true — 최초 근로 시작 기한이 없음")] = False,
+    related_party_employer: Annotated[bool, Field(description="근로를 제공하는 기업이 특수관계기업(시행령 제16조의2제2항: 친족관계·경영지배관계)이면 true")] = False,
+    fie_excepted: Annotated[bool, Field(description="그 특수관계기업이 시행령 제16조의2제1항의 외국인투자기업(제121조의2 감면기업 등)이면 true — 제외 대상에서 빠짐")] = False,
+    daily_worker: Annotated[bool, Field(description="일용근로자이면 true(적용 제외)")] = False,
+    korean_national: Annotated[bool, Field(description="과세연도 종료일 현재 대한민국 국적이면 true(적용 제외)")] = False,
+    reentry_date: Annotated[str | None, Field(description="2014.1.1. 전 근무 시작자가 출국 후 2014.1.1. 이후 재입국해 근로를 시작한 날(YYYY-MM-DD, 선택)")] = None,
+    monthly_pay: Annotated[int | None, Field(description="원천징수 비교용 월 지급 근로소득(원, 선택)", ge=0)] = None,
+) -> dict:
+    """Foreign worker flat-rate income tax option vs progressive tax (외국인근로자 단일세율 과세특례).
+외국인 임원·사용인의 근로소득을 단일세율(2016 귀속 17%, 2017 귀속부터 19%)로 과세하는 경우와 일반 누진세율(근로소득공제·세액공제 적용)로 과세하는 경우를 같은 귀속연도로 계산해 어느 쪽이 적은지 보여 준다(조세특례제한법 제18조의2).
+언제: 외국인 근로자의 연말정산이나 종합소득 신고에서 단일세율 특례를 신청할지 정할 때, 또는 원천징수를 단일세율로 할지 정할 때.
+입력: 귀속연도(2016~2026) → year, 국내 최초 근로일 → first_work_date, 총급여(비과세 제외) → taxable_pay, 비과세 근로소득 → nontaxable_pay, 그중 사택 제공 이익 → housing_benefit_nontaxable, 누진세율 비교용 과세표준·세액공제(선택) → tax_base·other_credits, 지역본부·특수관계기업·외국인투자기업 예외·일용·국적 → regional_hq·related_party_employer·fie_excepted·daily_worker·korean_national, 재입국일(선택) → reentry_date, 월 지급액(선택) → monthly_pay.
+규칙(연말 시행본 문언과 부칙): 단일세율은 비과세·공제·감면·세액공제를 모두 적용하지 않고 종합소득과세표준에 합산하지 않음(제18조의2제3항) — 비과세 급여도 과세대상에 들어감, 2024.1.1. 이후 지급분부터 사택 제공 이익 비과세는 유지(법률 제19936호 부칙 제6조).
+  적용기간: 최초 근로일부터 5년 이내에 끝나는 과세기간(2022 귀속까지), 20년(2023 귀속부터, 법률 제19199호 부칙 제10조로 시행 당시 20년이 지나지 않은 사람에게도 적용).
+  최초 근로 시작 기한: 2017~2018 시행본 2018.12.31., 2019~2021 2021.12.31., 2022~2023 2023.12.31., 2024~2026 2026.12.31.(지역본부는 기한 없음). 2016 시행본은 2016년 과세기간까지만.
+  2014.1.1. 전 근무 시작자: 2018.12.31.까지만 19%(법률 제14390호 부칙 제10조제1항), 2023 귀속부터는 기산일 2014.1.1.(기획재정부 소득세제과-135).
+  특수관계기업에 근로를 제공하면 제외(외국인투자기업 예외). 단일세율을 고르면 외국인기술자 감면(제18조) 등 감면을 함께 받을 수 없음(같은 조 제3항).
+결과: 적용 가능 여부와 사유, 단일세율(과세대상·소득세·지방소득세), 누진세율(wage_income_tax와 같은 계산), 차이와 더 적은 쪽, 월 원천징수 비교, 근거·한계."""
+    D = _ymd("first_work_date", first_work_date)
+    if D is None:
+        raise ValueError("first_work_date 필요")
+    R = _ymd("reentry_date", reentry_date)
+    from .engine import calc_foreign_worker as FW
+    el = FW.flat_eligibility(year, D, regional_hq=regional_hq, related_party_employer=related_party_employer,
+                             fie_excepted=fie_excepted, daily_worker=daily_worker, korean_national=korean_national, reentry_date=R)
+    flat = FW.flat_tax(year, taxable_pay, nontaxable_pay, housing_benefit_nontaxable)
+    prog = FW.progressive_tax(year, taxable_pay, tax_base, other_credits)
+    결과 = {"단일세율_적용가능": el["가능"], "적용불가_사유": el["사유"], "기산일": el["기산일"], "적용_마지막_귀속연도": el["마지막연도"],
+          "단일세율": flat, "누진세율": prog}
+    if el["가능"]:
+        diff = prog["합계"] - flat["합계"]
+        결과["차이(누진−단일, 지방소득세 포함)"] = diff
+        결과["더_적은_쪽"] = "단일세율" if diff > 0 else ("누진세율" if diff < 0 else "같음")
+    else:
+        결과["더_적은_쪽"] = "누진세율(단일세율 적용 불가)"
+    if monthly_pay is not None:
+        결과["월_원천징수_단일세율"] = monthly_pay * flat["세율"] // 100
+    근거 = el["근거"] + ["조세특례제한법 제18조의2제3항(비과세·공제·감면·세액공제 배제, 종합소득과세표준 불합산)",
+                        "조세특례제한법 제18조의2제4항(매월분 원천징수 단일세율)·시행령 제16조의2제4항~제7항(신청·포기)",
+                        "지방세특례제한법 제106조의2(개인지방소득세 세율 = 제18조의2제2항 세율의 100분의 10, 지방세 감면·세액공제 배제)",
+                        "누진세율: 소득세법 제47조①·제55조·제59조·제59조의4⑨(wage_income_tax와 같은 엔진), 지방소득세 결정세액의 10%"]
+    if flat["사택이익제외액"]:
+        근거.append("조세특례제한법 제18조의2제3항 괄호·시행령 제16조의2제5항·소득세법 시행령 제17조의4제1호, 법률 제19936호 부칙 제6조")
+    주의 = el["주의"] + ["외국인기술자 감면(제18조) 대상이면 누진세율 쪽에 그 감면을 반영해 foreign_expert_income_reduction으로 따로 비교"]
+    if prog["과세표준추정"]:
+        주의.append("누진세율 과세표준은 본인 기본공제만 뺀 추정 — 부양가족 등 공제가 있으면 tax_base를 주세요")
+    return _ok(결과, " · ".join(근거), 주의=주의, 한계=_FW_LIMITS, 시행본=el["시행본"])
+
+
+_FE_LIMITS = [
+    "외국인기술자 범위(시행령 제16조제1항 각 호 — 엔지니어링기술도입계약, 연구원 요건, 2025 시행본부터 우수 해외인재)와 소재·부품·장비 특화선도기업등 근무(같은 조 제2항)는 입력값을 그대로 씀",
+    "시행령 제16조제1항제2호 연구원 요건 개정(2021.2.17.)과 제3호 우수 해외인재 신설(2025.2.28.)의 부칙 적용 시점은 확인 필요 — 이 도구는 연말 시행본 기준(연구원 특수관계 요건 2021 귀속부터, 우수 해외인재 2025 귀속부터)",
+    "'N년이 되는 날'은 첫 근로일 산입으로 계산 — 최초 근로일이 1일이면 마지막 감면 달이 한 달 달라질 수 있어 확인 필요",
+    "2018년 최초 근로자의 2023년 이후 재감면(법률 제19199호 부칙 제9조 문언)은 해석례를 찾지 못함 — 확인 필요",
+    "감면대상 근로소득금액은 근로소득금액을 총급여 비율로 나눔(소득세법 제59조의5 준용, 현행본만 대조) — 다른 종합소득이 있으면 확인 필요",
+    "농어촌특별세·최저한세·중복지원 배제(조특법 제127조) 관계는 대조하지 않음 — 확인 필요",
+    "지방소득세: 지방세특례제한법 제106조(현행본) 감면은 최초 근로 2018.12.31. 이전·2년만 규정 — 이 도구는 개인지방소득세 감면을 계산하지 않고 감면 후 소득세의 10%를 참고로만 붙임, 확인 필요",
+    "원 미만: 최종 감면세액만 원 미만 절사",
+]
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def foreign_expert_income_reduction(
+    year: YEAR,
+    first_work_date: Annotated[str, Field(description="국내에서 최초로 근로를 제공한 날(YYYY-MM-DD, 2015-01-01 이후)")],
+    gross_pay: Annotated[int, Field(description="해당 귀속연도 총급여(원, 비과세 제외)", ge=0)],
+    category: Annotated[Literal["엔지니어링기술도입계약", "연구원", "우수해외인재"], Field(description="시행령 제16조제1항 해당 호: 엔지니어링기술도입계약(제1호), 연구원(제2호), 우수해외인재(제3호, 2025 시행본부터)")],
+    category_requirements_met: Annotated[bool, Field(description="그 해 시행령 제16조제1항 해당 호의 요건(예: 연구원은 학위·경력·연구기관 근무)을 모두 갖추면 true")],
+    sobujang: Annotated[bool, Field(description="소재·부품·장비 특화선도기업등 근무(시행령 제16조제2항)이고 최초 근로일이 2020.1.1.~2022.12.31.이면 true — 70%(3년)+50%(2년)")] = False,
+    korean_national: Annotated[bool, Field(description="대한민국 국적이면 true(대상 아님)")] = False,
+    related_party_employer: Annotated[bool, Field(description="연구원(제2호): 근로를 제공하는 기업과 친족관계·경영지배관계이면 true — 2021 귀속부터 대상 아님(제2호다목)")] = False,
+    flat_rate_elected: Annotated[bool, Field(description="같은 해 단일세율 과세특례(제18조의2)를 신청했으면 true — 감면을 함께 받을 수 없음")] = False,
+    computed_tax: Annotated[int | None, Field(description="종합소득 산출세액(원). 생략하면 wage_income_tax와 같은 엔진으로 계산", ge=0)] = None,
+    tax_base: Annotated[int | None, Field(description="computed_tax를 생략할 때 쓸 과세표준(원, 선택)", ge=0)] = None,
+    other_income_amount: Annotated[int, Field(description="근로소득금액 외 종합소득금액(원) — 감면 비율의 분모에 더함", ge=0)] = 0,
+    eligible_wage_70: Annotated[int | None, Field(description="70% 감면 기간에 발생한 총급여(원, 선택). 생략하면 근무 달 수로 고르게 나눔", ge=0)] = None,
+    eligible_wage_50: Annotated[int | None, Field(description="50% 감면 기간에 발생한 총급여(원, 선택). 생략하면 근무 달 수로 고르게 나눔", ge=0)] = None,
+    other_credits: Annotated[int | None, Field(description="근로소득세액공제 외 세액공제 합계(원, 선택). 생략하면 과세표준·산출세액을 모두 생략한 경우에만 표준세액공제 13만 원", ge=0)] = None,
+) -> dict:
+    """Foreign engineer/researcher income tax reduction by first-work-start date (외국인기술자 소득세 감면).
+외국인기술자가 국내에서 받는 근로소득에 대해 최초 근로일부터 정해진 기간 동안 소득세를 50%(소재·부품·장비 단서는 3년 70% 뒤 2년 50%) 감면하는 금액을 귀속연도별로 계산한다(조세특례제한법 제18조).
+언제: 외국인 기술자·연구원의 연말정산이나 종합소득 신고에서 감면 기간과 감면세액을 정할 때, 단일세율 특례와 어느 쪽이 나은지 비교할 때.
+입력: 귀속연도(2016~2026) → year, 국내 최초 근로일 → first_work_date, 총급여(비과세 제외) → gross_pay, 시행령 제16조제1항 해당 호와 요건 충족 → category·category_requirements_met, 소재·부품·장비 → sobujang, 국적·특수관계·단일세율 신청 → korean_national·related_party_employer·flat_rate_elected, 산출세액(선택) → computed_tax 또는 과세표준 → tax_base, 다른 종합소득금액 → other_income_amount, 감면율별 총급여(선택) → eligible_wage_70·eligible_wage_50, 그 밖의 세액공제 → other_credits.
+규칙(연말 시행본 문언과 부칙): 최초 근로일 2018.12.31. 이전 — 2년이 되는 날이 속하는 달까지 50%(법률 제16009호 부칙 제40조), 2019.1.1. 이후 — 5년(부칙 제7조), 2023 귀속부터 10년(법률 제19199호, 부칙 제9조: 시행 당시 5년이 지나지 않은 사람에게도 적용).
+  최초 근로 기한: 2018.12.31.(2016~2018 시행본), 2021.12.31.(2019~2021), 2023.12.31.(2022~2023), 2026.12.31.(2024~2026). 소재·부품·장비 단서는 최초 근로일 2020.1.1.~2022.12.31.(법률 제16835호 부칙 제11조).
+  감면세액 = 산출세액 × 감면대상 근로소득금액 / 종합소득금액 × 감면율(소득세법 제59조의5 준용). 근로소득세액공제는 감면 비율만큼 줄임. 단일세율(제18조의2)을 고르면 감면을 적용하지 않음(같은 조 제3항).
+  원천징수: 2016~2019 시행본은 징수할 소득세의 50%, 2020 시행본부터는 징수할 소득세에서 감면세액을 뺀 금액(제18조제3항).
+결과: 감면 구간(시작·끝 달·율), 그해 감면율별 달 수와 총급여, 산출세액·감면세액·근로소득세액공제·결정세액, 근거·한계."""
+    D = _ymd("first_work_date", first_work_date)
+    if D is None:
+        raise ValueError("first_work_date 필요")
+    if D > date(year, 12, 31):
+        raise ValueError(f"first_work_date {D} — 귀속연도 {year}년보다 뒤")
+    from .engine import calc_foreign_worker as FW
+    사유 = []
+    if korean_national:
+        사유.append("대한민국 국적자는 외국인기술자 아님(시행령 제16조제1항)")
+    if not category_requirements_met:
+        사유.append(f"시행령 제16조제1항 {category} 요건 미충족(입력)")
+    if category == "우수해외인재" and year < 2025:
+        사유.append("우수 해외인재(시행령 제16조제1항제3호)는 2025 시행본부터 — 그 전 귀속연도에는 없음")
+    if category == "연구원" and related_party_employer and year >= 2021:
+        사유.append("연구원은 근로를 제공하는 기업과 친족관계·경영지배관계가 아니어야 함(시행령 제16조제1항제2호다목, 2021.2.17. 개정)")
+    if flat_rate_elected:
+        사유.append("단일세율 과세특례(제18조의2)를 적용하면 감면 규정을 적용하지 않음(제18조의2제3항)")
+    win = FW.expert_windows(D, sobujang)
+    mon = FW.expert_months(year, win["구간"], D)
+    def ym(i):
+        return f"{i // 12}-{i % 12 + 1:02d}"
+    구간 = [{"시작": ym(a), "끝": ym(b), "감면율": r, "근거": g} for a, b, r, g in win["구간"]]
+    worked = mon["근무달수"]
+    if eligible_wage_70 is None and eligible_wage_50 is None:
+        w70 = gross_pay * mon["70%달수"] // worked if worked else 0
+        w50 = gross_pay * mon["50%달수"] // worked if worked else 0
+        배분 = f"총급여를 그해 근무 {worked}개월에 고르게 나눔(70% {mon['70%달수']}개월, 50% {mon['50%달수']}개월) — 실제 월별 급여가 다르면 eligible_wage_70·eligible_wage_50을 주세요"
+    else:
+        w70, w50 = eligible_wage_70 or 0, eligible_wage_50 or 0
+        배분 = "감면율별 총급여는 입력값"
+    if 사유:
+        w70 = w50 = 0
+    prog = FW.progressive_tax(year, gross_pay, tax_base, None)
+    t = computed_tax if computed_tax is not None else prog["산출세액"]
+    red = FW.expert_reduction(year, gross_pay, w70, w50, t, other_income_amount)
+    reduce_amt = min(red["감면세액"], t)
+    credit = I.earned_tax_credit(t, gross_pay, reduced_tax=reduce_amt, year=year)
+    assumed = computed_tax is None and tax_base is None
+    if other_credits is None:
+        others = min(130_000, max(0, t - reduce_amt - credit)) if assumed else 0
+    else:
+        others = min(other_credits, max(0, t - reduce_amt - credit))
+    decided = max(0, t - reduce_amt - credit - others)
+    결과 = {"감면_적용가능": not 사유, "적용불가_사유": 사유, "감면구간": 구간, "그해_달수": mon,
+          "감면대상_총급여_70%": w70, "감면대상_총급여_50%": w50,
+          "산출세액": t, "근로소득금액": red["근로소득금액"], "종합소득금액": red["종합소득금액"], "감면세액": reduce_amt,
+          "근로소득세액공제(감면 반영)": credit, "그밖의세액공제": others, "결정세액": decided,
+          "지방소득세(참고: 결정세액의 10%)": decided // 10}
+    근거 = ["조세특례제한법 제18조제1항(연말 시행본 문언)", "조세특례제한법 시행령 제16조(외국인기술자 범위·감면신청)"] + win["근거"] + [
+        "소득세법 제59조의5②·①(감면세액 = 산출세액 × 감면대상 소득금액 / 종합소득금액)", "소득세법 제59조(근로소득세액공제, 감면 비율만큼 축소)",
+        "조세특례제한법 제18조제3항(원천징수: 2016~2019 시행본 50%, 2020 시행본부터 감면세액 제외)", "조세특례제한법 제18조의2제3항(단일세율과 함께 적용 불가)"]
+    주의 = win["주의"] + [배분, "단일세율과 비교하려면 foreign_worker_flat_tax로 같은 해를 계산해 결정세액을 견줌"]
+    if assumed:
+        주의.append("산출세액은 본인 기본공제만 뺀 과세표준으로 추정 — 실제 과세표준이나 산출세액을 주세요")
+    return _ok(결과, " · ".join(근거), 주의=주의, 한계=_FE_LIMITS)
 
 
 @mcp.tool(annotations=CALC)

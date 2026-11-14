@@ -8,7 +8,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/korean-tax-calc-mcp)](https://pypi.org/project/korean-tax-calc-mcp/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-korean--tax--calc--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=korean-tax-calc-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Built with Upstage Solar Pro 4](https://img.shields.io/badge/Built%20with-Upstage%20Solar%20Pro%204-7A3FF2)](https://www.upstage.ai/) · [English](README-EN.md)
 
-> **작성 주체(정확한 고지):** 0.3.0부터 0.12.2까지(2026-10-10부터 10-26까지)는 **Solar Pro 4**(Solar Work CLI)가 코드를 쓰고 CodeSolar가 리뷰, Claude가 테스트로 교차 검증했습니다(0.8.0 일부 문법 오류와 0.9.2는 Claude가 수정·작성). **0.13.0(2026-10-28)부터는 기존 계산기 뼈대는 Solar Pro 4 그대로이고, 새 도구·연도별 조문 대조·버그 수정은 Claude(Anthropic)가 작성**하며 CodeSolar가 리뷰합니다. **0.26.0(2026-11-10)부터 새 도구는 Claude가 명세·정답 테스트를 먼저 쓰고 Solar Pro 4가 뼈대를 구현한 뒤 Claude가 검수·보완합니다**(커밋별 작성자 표기). 버전별 작성 주체는 [CHANGELOG](CHANGELOG.md) 각 절 머리에 적혀 있습니다. 도구 133개.
+> **작성 주체(정확한 고지):** 0.3.0부터 0.12.2까지(2026-10-10부터 10-26까지)는 **Solar Pro 4**(Solar Work CLI)가 코드를 쓰고 CodeSolar가 리뷰, Claude가 테스트로 교차 검증했습니다(0.8.0 일부 문법 오류와 0.9.2는 Claude가 수정·작성). **0.13.0(2026-10-28)부터는 기존 계산기 뼈대는 Solar Pro 4 그대로이고, 새 도구·연도별 조문 대조·버그 수정은 Claude(Anthropic)가 작성**하며 CodeSolar가 리뷰합니다. **0.26.0(2026-11-10)부터 새 도구는 Claude가 명세·정답 테스트를 먼저 쓰고 Solar Pro 4가 뼈대를 구현한 뒤 Claude가 검수·보완합니다**(커밋별 작성자 표기). 버전별 작성 주체는 [CHANGELOG](CHANGELOG.md) 각 절 머리에 적혀 있습니다. 도구 139개.
 
 **Korean tax calculations for AI agents — code, not guesses.** [English](README-EN.md)
 
@@ -39,7 +39,7 @@ flowchart LR
 
 요건과 과세연도별 판단(세액공제 대상 여부, 정상가격 산출방법 등)은 짝 서버 [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp)가 맡습니다. 이 서버는 요건을 갖춘 금액을 받아 계산만 하고, 결과에서 조문 확인을 안내합니다.
 
-도구 133개 중 123개는 생성형 AI 없이 코드로 동작합니다(시세·공시가격 조회 2개는 KRX·브이월드 공개 데이터만 가져옵니다). PDF 도구 3개만 `UPSTAGE_API_KEY`가 있을 때 Upstage를 씁니다.
+도구 139개 중 129개는 생성형 AI 없이 코드로 동작합니다(시세·공시가격 조회 2개는 KRX·브이월드 공개 데이터만 가져옵니다). PDF 도구 3개만 `UPSTAGE_API_KEY`가 있을 때 Upstage를 씁니다.
 
 ### 세목별로 이어지는 모양
 
@@ -149,7 +149,7 @@ AI가 도구를 언제 부르고, 도구의 답을 언제 믿을지 정해 주�
 5. 답이 두 개 나오면(안분 전후, 전체와 과세분 등) 질문이 묻는 하나만 답한다.
 ```
 
-## 도구 (133개)
+## 도구 (139개)
 
 묶음 이름을 누르면 도구 목록이 펼쳐집니다.
 
@@ -186,6 +186,8 @@ AI가 도구를 언제 부르고, 도구의 답을 언제 믿을지 정해 주�
 | 도구 | 하는 일 |
 |---|---|
 | `foreign_tax_credit` | 외국납부세액공제 |
+| `branch_profits_tax` | 외국법인 지점세(법인세법 제96조) — 재투자 인정액·자본금상당액 증감·송금액 기준, 조약 세율 |
+| `emigration_exit_tax` | 국외전출세(소득세법 제118조의9~18) — 출국일 시가 의제 양도, 연도별 세율, 신고·납부유예 안내 |
 | `thin_capitalization` | 과소자본 |
 | `arm_length_range` | 정상가격 범위와 조정액 — 비교대상 이익률로 사분위·전체 범위, 중위값, 분석대상 값의 범위 안 여부, 조정액과 조정 방향(국조령 제15조⑤⑥). 분석대상이 국내 법인인지 국외 법인인지는 필수 입력 |
 | `tp_comparable_screen` | 비교대상 기업 선정 — 유료 데이터베이스에서 내보낸 후보 목록(CSV·엑셀)에 독립성·자료·업종·규모·손실·연구개발·광고·특수관계 매출·부문·특수 상황 기준과 사람의 판단(사유 필수)을 적용해 회사별 탈락 사유표, 최종 비교대상, 다년 가중평균 지표, 사분위 범위, 기준을 바꿨을 때의 민감도, 개별기업보고서 부록 표를 냄. 법정 기준(특수관계 50%)과 관행 기준을 나눠 표시 |
@@ -231,9 +233,13 @@ AI가 도구를 언제 부르고, 도구의 답을 언제 믿을지 정해 주�
 | `income_tax` | 종합소득세 |
 | `withholding_tax` | 원천징수 |
 | `nonresident_withholding` | 비거주자 원천징수 |
+| `nonresident_capital_gains_withholding` | 비거주자·외국법인 국내 부동산·주식 양도소득 원천징수(10%·양도차익 20% 중 적은 금액, 상장주식 25% 미만·조약 면제 제외) |
+| `nonresident_inheritance_gift` | 비거주자 상속세(기초공제 2억원만, 신고기한 9개월)·비거주자 수증자 증여세(증여재산공제 없음, 연대납부) |
 | `withholding_return` | 원천징수이행상황신고서(별지 제21호서식 제1쪽) 집계 — 코드별 가감계·총합계·조정환급·납부세액(2025년 귀속분) |
 | `retirement_income_tax` | 퇴직소득세 |
 | `wage_income_tax` | 근로소득세 |
+| `foreign_worker_flat_tax` | 외국인근로자 단일세율(17%·19%) vs 누진세율 비교 — 적용기간·시작 기한·특수관계기업·사택 이익, 지방소득세 포함 (조특법 제18조의2) |
+| `foreign_expert_income_reduction` | 외국인기술자 소득세 감면 — 최초 근로일별 감면 구간과 감면세액 (조특법 제18조) |
 | `daily_worker_withholding` | 일용근로자 |
 | `deemed_bonus_resettlement` | 소득처분 상여 재정산 |
 | `special_tax_credit` | 특별세액공제 |
