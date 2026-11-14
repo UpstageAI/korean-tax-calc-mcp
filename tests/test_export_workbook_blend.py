@@ -5,6 +5,9 @@
   (nonresident_withholding 총액·순액 역산·지방소득세 부담·조약 대상조세 포함, withholding_late_payment_penalty 종전·개정·이율 변경 구간).
 - 대조한 원문: 국세기본법 제47조의5제1항(2026.10.2. 시행본 — 법률 제21212호로 제2호 '납부고지일(납부고지일 전에 납부한 경우에는 그 납부일)의
   전날까지', 2026.7.1. 시행; 2026.6.2. 시행본 제2호 '법정납부기한의 다음 날부터 납부일까지'), 법제처 국가법령정보 공동활용 조회.
+- 뒤 시트는 detail로 고른다: compact(기본 — 앞 시트 + '계산 상세' 한 장), forms(+ 신고 서식), full(전부).
+- 납부고지 후 가산세 틀: 국세기본법 제47조의5제1항제3호·제4호·제4항·제5항(법률 제21212호, 2026.7.1. 시행), 시행령 제27조의4제2항·제3항,
+  종전 제2호(지정납부기한 후 일수분)와 부칙 제4조 — 숫자·근거는 도구(withholding_late_payment_penalty)가 쓰는 것 그대로이고 수식 재계산 값을 도구 결과와 대조.
 - 사례 값은 모두 지어낸 값(특정 사례와 무관).
 """
 import shutil
@@ -89,7 +92,7 @@ def test_without_new_inputs_output_is_unchanged(tmp_path, layout, lang):
 
 # ── 시트 구성·서식 ────────────────────────────────────────────────────────
 def test_sheets_order_and_result_keys(tmp_path):
-    r = _export(tmp_path)
+    r = _export(tmp_path, detail="full")
     front = ["요약", "입력·출처", "배당", "용역·이자", "가산세", "기업업무추진비", "간주임대료", "쟁점 목록"]
     assert r["결과"]["통합_시트"] == front and r["결과"]["시트"][:len(front)] == front
     wb = openpyxl.load_workbook(r["결과"]["파일"])
@@ -174,7 +177,7 @@ def test_issues_log_shows_rows_as_given(tmp_path):
 
 
 def test_english_view(tmp_path):
-    r = _export(tmp_path, name="Workings", lang="en")
+    r = _export(tmp_path, name="Workings", lang="en", detail="full")
     assert r["결과"]["통합_시트"] == ["Summary", "Inputs", "배당", "용역·이자", "가산세", "기업업무추진비", "간주임대료", "Issues Log"]
     wb = openpyxl.load_workbook(r["결과"]["파일"])
     assert {"Call summary (호출 요약)", "Call inputs (입력·가정)", "Judgements (판단·근거)", "Calc 1 (계산 1)"} <= set(wb.sheetnames)
@@ -190,6 +193,13 @@ def test_english_view(tmp_path):
     assert "Excess over limit (한도초과)" in [wb["기업업무추진비"].cell(k, 1).value for k in range(1, 60)]
     # 이름이 바뀐 '입력·가정' 시트를 가리키는 정의된 이름이 끊기지 않음
     assert all("Call inputs (입력·가정)" in dn.attr_text or "Calc " in dn.attr_text for dn in wb.defined_names.values())
+    # 'Call summary'의 영문 시트 안내 표가 앞에 더한 시트까지 순서대로 나열
+    ws = wb["Call summary (호출 요약)"]
+    k = _find(ws, "Sheets in this workbook") + 2
+    listed = [ws.cell(j, 2).value for j in range(k, k + len(wb.sheetnames))]
+    assert listed == wb.sheetnames
+    assert "key figures linked from the scenario sheets" in ws.cell(k, 3).value and "source column" in ws.cell(k + 1, 3).value
+    assert "calls side by side" in ws.cell(k + 2, 3).value and "issues log" in ws.cell(k + 7, 3).value
 
 
 def test_input_linked_to_another_calls_result(tmp_path):
@@ -203,7 +213,7 @@ def test_input_linked_to_another_calls_result(tmp_path):
     ws = openpyxl.load_workbook(r["결과"]["파일"])["입력·출처"]
     row = next(k for k in range(1, ws.max_row + 1) if ws.cell(k, 3).value == "정당 세액 − 기납부")
     assert ws.cell(row - 1, 1).value == "기납부 세액" and ws.cell(row - 1, 2).value == paid and ws.cell(row - 1, 3).value == "납부서"
-    assert ws.cell(row, 2).value.startswith("='이자 조약없음'!$B$") and ws.cell(row, 2).value.endswith(f"-$B${row - 1}")
+    assert ws.cell(row, 2).value.startswith("='계산'!$B$") and ws.cell(row, 2).value.endswith(f"-$B${row - 1}")
     assert "warnings" not in r
     # 도구에 넣은 값과 다르면 잇지 않고 알림
     src[0]["less"] = paid + 1
@@ -213,7 +223,7 @@ def test_input_linked_to_another_calls_result(tmp_path):
 
 
 def test_form_inputs_follow_the_new_cells(tmp_path):
-    wb = openpyxl.load_workbook(_export(tmp_path)["결과"]["파일"])
+    wb = openpyxl.load_workbook(_export(tmp_path, detail="full")["결과"]["파일"])
     ws = wb["입력·가정"]
     linked = [cell.value for row in ws.iter_rows() for cell in row if isinstance(cell.value, str) and cell.value.startswith("='배당'!")]
     assert len(linked) == 4                                              # 두 call의 지급액·적용세율 → 서식 칸이 새 칸을 따라감
@@ -254,7 +264,8 @@ def test_json_string_inputs(tmp_path):
 
 # ── 수식 재계산 = 도구 결과(원 단위) ──────────────────────────────────────────
 def _recalc(path, out):
-    subprocess.run(["soffice", "--headless", "--calc", "--convert-to", "xlsx", "--outdir", str(out), str(path)],
+    prof = out.parent / f"lo_{out.name}"          # 실행마다 빈 프로필 — 동시에 도는 LibreOffice와 부딪히지 않게
+    subprocess.run(["soffice", f"-env:UserInstallation=file://{prof}", "--headless", "--calc", "--convert-to", "xlsx", "--outdir", str(out), str(path)],
                    check=True, capture_output=True, timeout=180)
     return openpyxl.load_workbook(next(out.glob("*.xlsx")), data_only=True)
 
@@ -266,7 +277,7 @@ def _col_values(ws, col):
 @pytest.mark.skipif(not shutil.which("soffice"), reason="LibreOffice 없음")
 @pytest.mark.parametrize("lang", ["ko", "en"])
 def test_scenario_formulas_recalculate_to_tool_values(tmp_path, lang):
-    r = _export(tmp_path, name=f"recalc_{lang}", lang=lang)
+    r = _export(tmp_path, name=f"recalc_{lang}", lang=lang, detail="full")
     wb = _recalc(r["결과"]["파일"], tmp_path / f"out_{lang}")
     ok, ng = ("Match (일치)", "Check (확인 필요)") if lang == "en" else ("일치", "확인 필요")
     front = r["결과"]["통합_시트"]
@@ -394,3 +405,178 @@ def test_withholding_penalty_day_count_boundary(due, until, days):
     r = S.withholding_late_payment_penalty(unpaid_tax=1_000_000, due=due, until=until)["결과"]
     assert r["일수"] == days and r["일수분"] == 1_000_000 * days * 22 // 100_000
     assert r["3%분"] == (0 if due == until else 30_000) and r["가산세"] == r["3%분"] + r["일수분"]
+
+
+# ── detail: 뒤 시트 줄이기 ────────────────────────────────────────────────────
+def _dangling(wb):
+    """없는 시트를 가리키는 수식·정의된 이름."""
+    import re
+    names = set(wb.sheetnames)
+    bad = [(n, dn.attr_text) for n, dn in wb.defined_names.items() if not any(dn.attr_text.startswith(f"'{x}'!") or dn.attr_text.startswith(f"{x}!") for x in names)]
+    for ws in wb.worksheets:
+        for row in ws.iter_rows():
+            for cell in row:
+                if cell.data_type == "f" and isinstance(cell.value, str):
+                    bad += [(ws.title, cell.coordinate, m) for m in re.findall(r"'((?:[^']|'')+)'!", cell.value) if m.replace("''", "'") not in names]
+                    bad += [(ws.title, cell.coordinate, m) for m in re.findall(r"호출\d+_[가-힣A-Za-z0-9_.]+", cell.value) if m not in wb.defined_names]
+    return bad
+
+
+def test_default_is_compact_one_detail_sheet(tmp_path):
+    r = _export(tmp_path)
+    front = ["요약", "입력·출처", "배당", "용역·이자", "가산세", "그 밖의 계산", "쟁점 목록"]
+    assert r["결과"]["통합_시트"] == front and r["결과"]["시트"] == front + ["계산 상세"] and len(r["결과"]["시트"]) <= 8
+    assert r["결과"]["detail"] == "compact" and "detail='forms'" in r["결과"]["서식_안내"]
+    wb = openpyxl.load_workbook(r["결과"]["파일"])
+    assert wb.sheetnames == r["결과"]["시트"] and not _dangling(wb)
+    ws = wb["계산 상세"]
+    col_a = [ws.cell(k, 1).value for k in range(1, ws.max_row + 1)]
+    for n, call in enumerate(CALLS, 1):                                  # call마다 띠 한 줄, 순서대로
+        assert f"{n}. {call['label']} — {call['tool']}" in col_a
+    assert col_a.index("1. 배당 총액 — nonresident_withholding") < col_a.index("11. 간주임대료 — vat_deemed_rent")
+    text = " ".join(str(cell.value) for row in ws.iter_rows() for cell in row if cell.value is not None)
+    assert "결론" in text and "korean-tax-mcp" in text                    # 판단·근거가 call 아래에 실림
+    assert any(isinstance(cell.value, str) and cell.value.startswith("=") for row in ws.iter_rows() for cell in row)   # 계산식 단계의 수식·대조 칸이 살아 있음
+    # 요약 끝: 뒤 시트 안내와 서식 안내 한 줄
+    summ = [wb["요약"].cell(k, 1).value for k in range(1, wb["요약"].max_row + 1)]
+    assert any("'계산 상세' 한 장" in str(x) for x in summ) and "detail='forms'" in str(summ[-1]) and "신고 서식" in str(summ[-1])
+    # scenarios에 넣지 않은 call 둘은 한 시트에 차례로
+    rest = [wb["그 밖의 계산"].cell(k, 1).value for k in range(1, wb["그 밖의 계산"].max_row + 1)]
+    assert "기업업무추진비" in rest and "간주임대료" in rest
+
+
+def test_detail_forms_adds_form_sheets_only(tmp_path):
+    r = _export(tmp_path, detail="forms")
+    wb = openpyxl.load_workbook(r["결과"]["파일"])
+    back = r["결과"]["시트"][len(r["결과"]["통합_시트"]):]
+    assert back[0] == "계산 상세" and len(back) > 1 and r["결과"]["detail"] == "forms" and "서식_안내" not in r["결과"]
+    assert not any(n.startswith("계산 ") and n != "계산 상세" or n in ("호출 요약", "목록", "입력·가정", "판단·근거") for n in wb.sheetnames)
+    assert any(n.startswith("원천 별지23") for n in back) and not _dangling(wb)
+    assert wb.defined_names["호출1_지급액"].attr_text.startswith("'계산 상세'!")       # 서식 칸이 가리키는 호출 입력은 '계산 상세' 아래로
+    assert "서식 연결 칸 — 서식 시트의 수식이 가리키는 호출 입력" in [wb["계산 상세"].cell(k, 1).value for k in range(1, wb["계산 상세"].max_row + 1)]
+    full = _export(tmp_path, name="전부", detail="full")
+    forms_full = [n for n in full["결과"]["시트"] if n in back]
+    assert forms_full == back[1:]                                         # 서식 시트는 full과 같은 것, 같은 순서
+
+
+def test_detail_english_and_steps_layout(tmp_path):
+    r = _export(tmp_path, name="en", lang="en", layout="steps")
+    assert r["결과"]["시트"] == r["결과"]["통합_시트"] + ["Calc detail"] and "서식_안내" not in r["결과"]      # steps에는 서식 시트가 없음
+    wb = openpyxl.load_workbook(r["결과"]["파일"])
+    assert wb["Calc detail"]["A1"].value.startswith("Calculation detail") and not _dangling(wb)
+    assert "Other workings" in wb.sheetnames
+
+
+def test_detail_only_applies_to_blend_and_is_checked(tmp_path):
+    base = {"title": "x", "calls": CALLS[:2], "output_dir": str(tmp_path)}
+    a, b = c("export_workbook", {**base, "filename": "a"}), c("export_workbook", {**base, "filename": "b", "detail": "compact"})
+    assert a["결과"]["시트"] == b["결과"]["시트"] and "detail" not in b["결과"] and _dump(a["결과"]["파일"]) == _dump(b["결과"]["파일"])
+    with pytest.raises(Exception):                                       # 입력 스키마(Literal)가 막음
+        c("export_workbook", {**base, "detail": "tiny"})
+    from korean_tax_calc_mcp.tools_export import export_workbook_impl
+    assert "detail" in export_workbook_impl("x", CALLS[:1], str(tmp_path), detail="tiny")["error"]
+
+
+@pytest.mark.skipif(not shutil.which("soffice"), reason="LibreOffice 없음")
+@pytest.mark.parametrize("detail,lang", [("compact", "ko"), ("compact", "en"), ("forms", "ko")])
+def test_compact_and_forms_recalculate_to_tool_values(tmp_path, detail, lang):
+    r = _export(tmp_path, name=f"{detail}_{lang}", lang=lang, detail=detail)
+    src = openpyxl.load_workbook(r["결과"]["파일"])
+    wb = _recalc(r["결과"]["파일"], tmp_path / "out")
+    assert wb.sheetnames == r["결과"]["시트"]
+    errs = [(n, cell.coordinate, cell.value) for n in wb.sheetnames for row in wb[n].iter_rows() for cell in row
+            if isinstance(cell.value, str) and (cell.value.startswith("#") and len(cell.value) > 1 or cell.value.startswith("Err:"))]
+    assert not errs, errs
+    checks = [(n, cell.coordinate, cell.value) for n in wb.sheetnames for row in wb[n].iter_rows() for cell in row
+              if src[n][cell.coordinate].data_type == "f" and isinstance(cell.value, str) and ("일치" in cell.value or "확인 필요" in cell.value)]
+    assert len(checks) >= 10 and not [x for x in checks if "확인 필요" in x[2]], checks
+    if detail == "forms":
+        assert [x for x in checks if x[0].startswith("원천 별지23")]            # 서식 시트의 대조 칸도 일치
+    res = [c(x["tool"], x["args"])["결과"] for x in CALLS]
+    summ = [cell.value for row in wb[r["결과"]["통합_시트"][0]].iter_rows() for cell in row]
+    for i in (0, 1, 2, 3, 4):
+        assert res[i]["합계"] in summ and res[i]["원천징수세액"] in summ
+    for i in (5, 6, 7, 8):
+        assert res[i]["가산세"] in summ
+
+
+# ── 납부고지 후 가산세 수식 틀 ────────────────────────────────────────────────
+NOTICE = [
+    # 손 계산(개정 3호·4호): 고지 전 2026.8.11.~9.9. 30일 → 3% 90,000 + 3,000,000 × 30 × 22/100,000 = 19,800 → 109,800(10% 한도 300,000 안),
+    # 고지 후 2026.10.1.~12.4. 경과 2개월 × 0.67% = 40,200, 독촉비용 3,000 → 153,000(50% 한도 1,500,000 안)
+    ("개정 3호·4호", dict(unpaid_tax=3_000_000, due="2026-08-10", until="2026-09-10", notice_due="2026-09-30", paid_on="2026-12-05", dunning_fee=3_000), 153_000),
+    # 손 계산(종전): 고지 전 2024.2.14.~6.2. 110일 → 90,000 + 3,000,000 × 110 × 22/100,000 = 72,600 → 162,600, 고지 후 2024.7.1.~8.1. 32일 × 22/100,000 = 21,120 → 183,720
+    ("종전 일수분", dict(unpaid_tax=3_000_000, due="2024-02-13", until="2024-06-03", notice_due="2024-06-30", paid_on="2024-08-01"), 183_720),
+    ("소액 제외", dict(unpaid_tax=1_200_000, due="2026-08-10", until="2026-09-10", notice_due="2026-09-30", paid_on="2026-12-05"), None),
+    ("기한 안 납부", dict(unpaid_tax=3_000_000, due="2026-08-10", until="2026-09-10", notice_due="2026-09-30", paid_on="2026-09-28"), None),
+    ("고지세액 입력", dict(unpaid_tax=1_200_000, due="2026-08-10", until="2026-09-10", notice_due="2026-09-30", paid_on="2027-03-15", notice_amount=2_000_000), None),
+    ("기산일 말일", dict(unpaid_tax=5_000_000, due="2026-08-10", until="2026-09-10", notice_due="2026-10-30", paid_on="2027-03-01"), None),
+    ("이율 변경", dict(unpaid_tax=4_000_000, due="2021-11-10", until="2022-03-02", notice_due="2022-03-31", paid_on="2022-06-30"), None),
+    ("종전 장기", dict(unpaid_tax=2_000_000, due="2020-03-10", until="2020-05-11", notice_due="2020-05-31", paid_on="2025-05-20"), None),
+    ("50% 한도", dict(unpaid_tax=2_000_000, due="2025-08-11", until="2026-08-10", notice_due="2026-08-31", paid_on="2031-10-15"), None),
+]
+
+
+def test_notice_penalty_hand_values():
+    for label, args, want in NOTICE:
+        if want is not None:
+            assert c("withholding_late_payment_penalty", args)["결과"]["가산세"] == want, label
+
+
+def test_notice_penalty_layout_has_formulas_and_statutory_sources(tmp_path):
+    calls = [{"label": lab, "tool": "withholding_late_payment_penalty", "args": a} for lab, a, _ in NOTICE]
+    r = c("export_workbook", {"title": "고지 후", "calls": calls, "output_dir": str(tmp_path),
+                              "scenarios": [{"sheet": "고지 후", "columns": [x["label"] for x in calls]}]})
+    wb = openpyxl.load_workbook(r["결과"]["파일"])
+    ws, wi = wb["고지 후"], wb["입력·출처"]
+    k = max(j for j in range(1, ws.max_row + 1) if ws.cell(j, 1).value == "가산세")
+    assert all(str(ws.cell(k, j).value).startswith("=ROUNDDOWN(ROUND(MIN(MIN(") for j in range(2, 2 + len(calls)))      # 모든 열이 수식
+    src = {wi.cell(j, 1).value: (wi.cell(j, 2).value, wi.cell(j, 3).value) for j in range(1, wi.max_row + 1) if wi.cell(j, 1).value}
+    assert src["납부고지 후 — 경과 개월마다의 이율(월 1만분의 67)"] == (0.0067, "국세기본법 제47조의5제1항제3호 · 시행령 제27조의4제2항")
+    assert src["전체 한도(미납세액의 50%)"] == (0.5, "국세기본법 제47조의5제1항(전체 50% 한도)")
+    small = [wi.cell(j, 2).value for j in range(1, wi.max_row + 1) if str(wi.cell(j, 1).value).startswith("소액 기준")]
+    assert small == [1_500_000, 1_000_000]                                # 지정납부기한 2022.1.1. 이후 150만원, 2021.12.31.까지 100만원(도구와 같은 기준)
+    assert src["독촉비용(4호)"][0] == 3_000
+    months = _find(ws, "경과 개월 수(지정납부기한 다음 날부터 납부일 전날까지)")
+    assert ws.cell(months, 2).value.startswith("=MIN(60,DATEDIF(")
+
+
+@pytest.mark.skipif(not shutil.which("soffice"), reason="LibreOffice 없음")
+def test_notice_penalty_formulas_recalculate_to_tool_values(tmp_path):
+    calls = [{"label": lab, "tool": "withholding_late_payment_penalty", "args": a} for lab, a, _ in NOTICE]
+    r = c("export_workbook", {"title": "고지 후 재계산", "calls": calls, "output_dir": str(tmp_path),
+                              "scenarios": [{"sheet": "고지 후", "columns": [x["label"] for x in calls]}]})
+    res = [c("withholding_late_payment_penalty", a)["결과"] for _, a, _ in NOTICE]
+    assert res[2]["고지후분"] == 0 and res[3]["고지후분"] == 0 and res[4]["고지후분"] > 0 and res[8]["50%한도_적용"] is True and res[8]["경과_개월"] == 60
+    wb = _recalc(r["결과"]["파일"], tmp_path / "out")
+    ws = wb["고지 후"]
+    k = max(j for j in range(1, ws.max_row + 1) if ws.cell(j, 1).value == "가산세")
+    assert [ws.cell(k, j).value for j in range(2, 2 + len(calls))] == [x["가산세"] for x in res]
+    chk = _find(ws, "도구 값 대조(수식 = 계산 도구 결과)")
+    assert [ws.cell(chk, j).value for j in range(2, 2 + len(calls))] == ["일치"] * len(calls)
+    # 입력을 바꾸면(독촉비용·납부일) 도구를 다시 부른 값과 같다
+    src = openpyxl.load_workbook(r["결과"]["파일"])
+    wi = src["입력·출처"]
+    for row in wi.iter_rows(min_col=2, max_col=2):
+        cell = row[0]
+        if cell.value == 3_000:
+            cell.value = 4_500
+        elif cell.number_format == "yyyy-mm-dd" and cell.value.date().isoformat() == "2026-12-05" and "개정 3호·4호" in str(wi.cell(cell.row, 1).value):
+            cell.value = cell.value.replace(year=2027, month=2, day=20)
+    edited = tmp_path / "edited.xlsx"
+    src.save(edited)
+    out = _recalc(edited, tmp_path / "out2")["고지 후"]
+    again = c("withholding_late_payment_penalty", {**NOTICE[0][1], "paid_on": "2027-02-20", "dunning_fee": 4_500})["결과"]
+    assert out.cell(k, 2).value == again["가산세"] and again["경과_개월"] == 4
+
+
+# ── find_tool: 메모·Word 요청은 조문 MCP로 ────────────────────────────────────
+@pytest.mark.parametrize("query", ["세무 메모 써줘", "tax memo for head office", "Word 문서로 정리", "docx 의견서", "원천징수 계산하고 의견서로"])
+def test_find_tool_points_memo_requests_to_law_mcp(query):
+    r = c("find_tool", {"query": query})["결과"]
+    assert "tax_memo_guide" in r["메모 문서"] and "build_tax_memo" in r["메모 문서"] and "korean-tax-mcp" in r["메모 문서"]
+
+
+@pytest.mark.parametrize("query", ["접대비 한도", "keyword search for password", "양도소득세"])
+def test_find_tool_has_no_memo_line_otherwise(query):
+    assert "메모 문서" not in c("find_tool", {"query": query})["결과"]

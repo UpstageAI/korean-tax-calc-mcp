@@ -627,7 +627,7 @@ def _summary_sheet(wb, title, company, period, calls, 결과들, review_notes, b
 
 def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str | None = None, layout: str = "forms",
                         company: str = "", period: str = "", biz_no: str = "", review_notes=None, lang: str = "ko",
-                        scenarios=None, sources=None, issues=None) -> dict:
+                        scenarios=None, sources=None, issues=None, detail: str | None = None) -> dict:
     """server.export_workbook의 본문(서명·설명은 그쪽 참조). mcp는 순환 import를 피해 호출 시점에 가져온다."""
     from .server import mcp
     # ── calls가 문자열이면 JSON으로 풀기 ──
@@ -655,6 +655,10 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
     _blend, _blend_err = _blend_normalize(scenarios, sources, issues, calls if all(isinstance(c, dict) for c in calls) else [])
     if _blend_err:
         return _blend_err
+    if detail not in (None, "", "compact", "forms", "full"):
+        return {"error": "입력 확인 필요 — detail은 'compact'·'forms'·'full' 가운데 하나",
+                "안내": "compact = 앞 시트 + '계산 상세' 한 장(scenarios·sources·issues를 줄 때 기본), forms = compact + 신고 서식 시트, full = 서식·계산 N·입력·가정·판단·근거 전부"}
+    _detail = detail or "compact"     # 통합 문서일 때만 쓰임 — 선택 입력이 없으면 기존 출력 그대로
 
     오류_call: list[str] = []
     결과들: list[dict] = []  # 각 call의 (label, tool, result_or_error, basis)
@@ -2226,10 +2230,12 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
     for cc, h in enumerate(["call", "항목", "결론", "금액", "근거", "이유"], 1):
         c = ws_jud.cell(행, cc, h); c.font = bold; c.fill = header_fill
     행 += 1
+    _판단_줄수: dict[int, int] = {}
     for _ci, cd in enumerate(결과들):
         if cd["error"]:
             continue
         label = cd["label"]
+        _판단_줄수[_ci] = len(_judgement_rows(cd.get("data") or {}, f"계산 {_ci + 1}"))
         # 판단이 없는 도구(원천징수·가산세·제척기간 등)도 call마다 한 줄 이상 — 판정·쟁점, 없으면 '판단 항목 없음'
         for j in _judgement_rows(cd.get("data") or {}, f"계산 {_ci + 1}"):
             ws_jud.cell(행, 1, label)
@@ -2271,9 +2277,16 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
         시트이름들.insert(0, "요약")
     # ── lang='en': 표기만 영문으로(용어집에 없는 라벨은 한국어 그대로 + '번역 없음' 목록). 숫자·수식·서식 틀 시트는 그대로 ──
     _경고: list[str] = []
+    _구실 = None
+    if _blend is not None:      # 통합 문서: 기존 시트의 구실을 적어 둠(영문 표기로 이름이 바뀌기 전) — detail로 뒤 시트를 줄일 때 씀
+        _계산시트 = {i: wb[f"계산 {i + 1}"] for i in range(len(결과들)) if f"계산 {i + 1}" in wb.sheetnames}
+        _고정 = {n: wb[n] if n in wb.sheetnames else None for n in ("요약", "목록", "입력·가정", "판단·근거")}
+        _구실 = {"calc": _계산시트, "summary": _고정["요약"], "list": _고정["목록"], "inputs": _고정["입력·가정"], "jud": _고정["판단·근거"],
+               "forms": [w for w in wb.worksheets if w.title not in _고정 and all(w is not x for x in _계산시트.values())]}
+    _ren: dict[str, str] = {}
     if _T is not None:
         from .workbook_i18n import apply_english, UNTRANSLATED_TITLE
-        _ren = apply_english(wb, _T, layout=layout, title=title, form_info=_서식_표기, results=결과들)
+        _ren = apply_english(wb, _T, layout=layout, title=title, form_info=_서식_표기, results=결과들, guide=_blend is None)
         시트이름들 = [_ren.get(n, n) for n in 시트이름들]
         if _T.missing:
             _경고.append(f"{UNTRANSLATED_TITLE}: {len(_T.missing)} label(s) have no glossary entry and are kept in Korean — "
@@ -2283,8 +2296,15 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
     if _blend is not None:
         from .workbook_blend import add_sheets as _blend_add
         _통합 = _blend_add(wb, _blend, lang=lang, title=title, company=company, period=period, calls=calls, results=결과들,
-                         label=_T.label if _T else None)
-        시트이름들 = _통합["시트"] + [_통합["이름_바꿈"].get(n, n) for n in 시트이름들]
+                         label=_T.label if _T else None, detail=_detail, roles=_구실, judgement_counts=_판단_줄수)
+        if _detail == "full":
+            시트이름들 = _통합["시트"] + [_통합["이름_바꿈"].get(n, n) for n in 시트이름들]
+            if _T is not None and _구실["summary"] is not None:      # 영문 시트 안내 표 — 앞에 더한 시트까지 나열
+                from .workbook_i18n import append_guide
+                append_guide(_구실["summary"], wb, _T, form_info=_서식_표기, ren={o: _통합["이름_바꿈"].get(n, n) for o, n in _ren.items()},
+                             results=결과들, front=_통합["안내"])
+        else:
+            시트이름들 = list(wb.sheetnames)
         _경고 += _통합["warnings"]
     # ── 저장 ──
     base = filename if filename else title
@@ -2306,6 +2326,9 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
         out["warnings"] = _경고
     if _통합 is not None:   # 선택 입력이 없으면 결과 키도 그대로
         out["결과"]["통합_시트"] = _통합["시트"]
+        out["결과"]["detail"] = _detail
+        if _detail == "compact" and _통합["서식_수"]:
+            out["결과"]["서식_안내"] = f"신고 서식 {_통합['서식_수']}장은 detail='forms'로 받을 수 있음(call별 개별 시트까지는 detail='full')"
         if _T is not None:
             out["결과"]["번역_라벨_수"] = len(_T.translated)
             out["결과"]["번역_없음"] = list(_T.missing)

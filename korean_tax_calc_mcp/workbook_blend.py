@@ -8,7 +8,9 @@
 - 쟁점 목록은 호출자가 준 글을 그대로 표로 싣는다(도구가 판단을 만들지 않음).
 - 색 규칙: 파랑 = 입력, 초록 = 다른 시트 링크, 검정 = 수식, 노랑 = 핵심 결과·가정.
 
-도구별 수식 틀: nonresident_withholding·withholding_late_payment_penalty는 전용 틀, 결과에 `계산식`이 있는 도구는 그 단계를
+뒤 시트는 detail로 고른다 — compact(기본: '계산 상세' 한 장), forms(+ 신고 서식), full(서식·계산 N·판단·근거 전부).
+
+도구별 수식 틀: nonresident_withholding·withholding_late_payment_penalty(납부고지 전·후)는 전용 틀, 결과에 `계산식`이 있는 도구는 그 단계를
 수식으로, 그 밖의 도구는 결과 값을 그대로 옮긴다(값 줄은 회색 — 수식 아님).
 """
 from __future__ import annotations
@@ -46,6 +48,22 @@ _TXT = {
             "Colour key: blue = input; green = link to another tab; black = formula; yellow = key result or assumption."),
     "support": ("뒤 시트: 법정서식 틀, call별 도구 결과('계산 N'), 도구가 돌려준 판단·근거.",
                 "Supporting tabs after these: statutory form sheets, tool results per call ('Calc N'), and the judgements returned by the tools."),
+    "support_compact": ("뒤 시트: '{d}' 한 장 — call별 도구 결과와 판단·근거.", "Supporting tab: '{d}' — tool results and basis per call."),
+    "support_forms": ("뒤 시트: '{d}'(call별 도구 결과와 판단·근거), 신고 서식 {n}장.", "Supporting tabs: '{d}' (tool results and basis per call) and {n} statutory form sheet(s)."),
+    "forms_hint": ("신고 서식 {n}장은 detail='forms'로 받을 수 있음(call별 개별 시트까지는 detail='full').",
+                   "{n} statutory form sheet(s) are available with detail='forms' (per-call sheets as well with detail='full')."),
+    "detail": ("계산 상세", "Calc detail"),
+    "rest": ("그 밖의 계산", "Other workings"), "rest_only": ("계산", "Workings"),
+    "detail_title": ("계산 상세 — call별 도구 결과와 판단·근거", "Calculation detail — tool results and basis per call"),
+    "detail_sub": ("계산 도구가 돌려준 값 그대로(앞 시트 수식의 대조 기준). call 순서대로 위에서 아래로.",
+                   "Values as returned by the calculation tools (the reference for the formulas on the front tabs), one call after another. Free-text notes from the tools stay in Korean."),
+    "detail_band": ("{n}. {label} — {tool}", "{n}. {label} — {tool}"),
+    "detail_at": ("수식: '{s}' 시트", "Formulas: '{s}' tab"),
+    "detail_links": ("서식 연결 칸 — 서식 시트의 수식이 가리키는 호출 입력", "Cells the form sheets refer to — call inputs"),
+    "g_summary": (None, "Sheet '{s}' — key figures linked from the scenario sheets, one note per block, issue count and colour key"),
+    "g_inputs": (None, "Sheet '{s}' — inputs and statutory rates in one place with a source column; the scenario sheets are formulas on these cells"),
+    "g_scenario": (None, "Sheet '{s}' — scenario workings: calls side by side as live formulas, a basis / note column and a check line against the tool values"),
+    "g_issues": (None, "Sheet '{s}' — issues log, shown as entered by the preparer"),
     "disclaimer": ("계산 도구 결과를 정리한 참고 자료이며 세무 자문이 아닙니다. 신고 전에 세무 전문가와 확인하세요.",
                    "Reference workings from calculation tool results, not tax advice — confirm with a tax professional before filing."),
     "issues_title": ("쟁점 목록", "Issues log"),
@@ -255,7 +273,7 @@ def _spec_nonresident(args: dict, data: dict) -> dict:
 
 
 def _spec_wh_penalty(args: dict, data: dict) -> dict | None:
-    """원천징수 납부지연가산세 — 납부고지 전(자진납부) 경로만 수식으로. 납부고지가 있으면 None(일반 틀로)."""
+    """원천징수 납부지연가산세 — 납부고지 전(자진납부) 경로. 납부고지가 있으면 None(_spec_wh_penalty_notice로)."""
     from .engine.calc_vat import late_payment_rate_segments
     res = data.get("결과") or {}
     if args.get("notice_due") or args.get("paid_on") or res.get("고지후분") or "일수" not in res:
@@ -313,6 +331,143 @@ def _spec_wh_penalty(args: dict, data: dict) -> dict | None:
     return {"inputs": inputs, "rows": rows, "links": {}}
 
 
+def _spec_wh_penalty_notice(args: dict, data: dict) -> dict | None:
+    """원천징수 납부지연가산세 — 납부고지가 있는 경로: 고지 전(1호·2호, 10% 한도) + 고지 후(종전 2호 일수분 또는 개정 3호·4호) + 전체 50% 한도.
+
+    숫자·근거는 도구(engine.calc_income.withholding_late_penalty_full, server.withholding_late_payment_penalty)가 쓰는 것 그대로.
+    이 틀에 맞지 않는 경우(2019년 이전 성립분, 제5항 소액 기준 경과조치로 기간을 나눈 경우, 제4항 5년 한도에 걸린 경우)는 None(일반 틀)."""
+    from .engine.calc_vat import late_payment_rate_segments
+    res = data.get("결과") or {}
+    rule = res.get("적용_규정") if isinstance(res.get("적용_규정"), dict) else {}
+    judges = {str(j.get("항목")): j for j in data.get("판단") or [] if isinstance(j, dict)}
+    if "일수" not in res or not args.get("notice_due") or not args.get("paid_on") or rule.get("고지 전") not in ("종전", "개정"):
+        return None
+    if "제5항 소액 기준 경과조치" in judges:
+        return None
+    try:
+        d0, d1 = _date.fromisoformat(str(args.get("due"))), _date.fromisoformat(str(args.get("until")))
+        nd, pd = _date.fromisoformat(str(args.get("notice_due"))), _date.fromisoformat(str(args.get("paid_on")))
+    except ValueError:
+        return None
+    days = int(res.get("일수") or 0)
+    if days != max(0, (d1 - d0).days - 1):
+        return None
+    post_rule = rule.get("고지 후")
+    excluded = "⑤ 소액 체납" in judges
+    jt = lambda k: " — ".join(str(x) for x in ((judges.get(k) or {}).get("결론"), (judges.get(k) or {}).get("근거")) if x)
+    start = (d0 + _timedelta(days=1)).isoformat()
+    segs = late_payment_rate_segments(start, days) or late_payment_rate_segments(start, 1)
+    decree = "국세기본법 시행령 제27조의4"
+    decree_en = "Enforcement Decree of the Framework Act on National Taxes (국세기본법 시행령) Art. 27-4"
+    inputs = [
+        _inp("unpaid", "미납·과소납부 세액", "Tax not paid or underpaid", args.get("unpaid_tax", 0), arg="unpaid_tax", summary=True),
+        _inp("due", "법정납부기한", "Statutory due date", d0, fmt=DATE, kind="date", arg="due"),
+        _inp("notice_date", "납부고지일", "Date of the payment notice", d1, fmt=DATE, kind="date", arg="until"),
+        _inp("notice_due", "지정납부기한(납부고지서에 따른 납부기한)", "Due date stated in the payment notice", nd, fmt=DATE, kind="date", arg="notice_due"),
+        _inp("paid_on", "납부고지 후 실제 납부일", "Date actually paid after the notice", pd, fmt=DATE, kind="date", arg="paid_on"),
+        _inp("rate3", "원천징수 납부지연가산세 — 미납세액의 3%", "Withholding late-payment penalty — fixed portion", 0.03, fmt=PCT, kind="rate",
+             src_ko="국세기본법 제47조의5제1항제1호", src_en="Framework Act on National Taxes (국세기본법) Art. 47-5(1)(i)"),
+    ]
+    rows: list[dict] = []
+    if len(segs) == 1:
+        inputs.append(_inp("daily", "원천징수 납부지연가산세 — 1일 이율", "Withholding late-payment penalty — daily rate", segs[0][1], fmt=PCT, kind="rate",
+                           src_ko=decree, src_en=decree_en))
+        rows.append(_row("days_notice", "일수(법정납부기한 다음 날부터 납부고지일의 전날까지)", "Days (day after the statutory due date to the day before the notice)",
+                         "=MAX(0,{notice_date}-{due}-1)", fmt="0", check=days, summary=True, note_ko=jt("고지 전 일수"),
+                         note_en=_with_ko("Period counted under Art. 47-5(1)(ii)", jt("고지 전 일수")), alias=("일수",)))
+        daily_expr = "{unpaid}*{days_notice}*{daily}"
+    else:
+        terms = []
+        for i, (n, r) in enumerate(segs, 1):
+            inputs.append(_inp(f"daily{i}", f"원천징수 납부지연가산세 — 1일 이율(기간 {i})", f"Withholding late-payment penalty — daily rate (period {i})", r,
+                               fmt=PCT, kind="rate", src_ko=decree + "(이율 변경일 기준 기간 안분)", src_en=decree_en + " (period split at the rate change date)"))
+            rows.append(_row(f"days{i}", f"일수 — 기간 {i}(이율 변경일 기준, 도구 값)", f"Days — period {i} (split at the rate change date, tool value)",
+                             value=n, fmt="0", note_ko=jt("고지 전 일수"), note_en=_with_ko("Period counted under Art. 47-5(1)(ii)", jt("고지 전 일수"))))
+            terms.append(f"{{days{i}}}*{{daily{i}}}")
+        daily_expr = "{unpaid}*(" + "+".join(terms) + ")"
+    inputs.append(_inp("cap10", "납부고지 전 한도(1호 + 2호)", "Cap before a payment notice (fixed + daily portions)", 0.10, fmt=PCT, kind="rate",
+                       src_ko="국세기본법 제47조의5제1항 각 호 외의 부분 괄호", src_en="Framework Act on National Taxes Art. 47-5(1), parenthetical"))
+    pre_expr = "MIN({unpaid}*{rate3}+" + daily_expr + ",{unpaid}*{cap10})"
+    rows += [
+        _row("fixed", "1호 — 미납세액의 3%", "Fixed 3% portion", "=ROUNDDOWN(ROUND({unpaid}*{rate3},4),0)", check=res.get("3%분"),
+             note_ko="국세기본법 제47조의5제1항제1호", note_en="Art. 47-5(1)(i)", alias=("3%분",)),
+        _row("daily_amt", "2호 — 일수분", "Daily portion", f"=ROUNDDOWN(ROUND({daily_expr},4),0)", check=res.get("일수분"),
+             note_ko="미납세액 × 일수 × 1일 이율 — 국세기본법 제47조의5제1항제2호", note_en="Unpaid tax × days × daily rate — Art. 47-5(1)(ii)", alias=("일수분",)),
+        _row("cap", "한도(미납세액의 10%)", "Cap (10% of the unpaid tax)", "=ROUNDDOWN(ROUND({unpaid}*{cap10},4),0)", check=res.get("한도_10%"), alias=("한도_10%",)),
+        _row("pre_amt", "납부고지 전 가산세 — min(1호 + 2호, 10% 한도)", "Penalty before the notice — lower of (fixed + daily) and the 10% cap",
+             f"=ROUNDDOWN(ROUND({pre_expr},4),0)"),
+    ]
+    post_inner = ""
+    if post_rule in ("종전", "개정"):
+        old_small = nd < _date(2022, 1, 1)            # 도구와 같은 기준 — 제5항 소액 기준(2021.12.31.까지 100만원, 2022.1.1.부터 150만원: 법률 제18586호)
+        inputs.append(_inp("small", "소액 기준 — 납부고지서별·세목별 세액이 이 금액 미만이면 고지 후분 없음",
+                           "Small-amount threshold per notice and tax item — no post-notice portion below it", 1_000_000 if old_small else 1_500_000,
+                           kind="rate", src_ko="국세기본법 제47조의5제5항" + ("(2021.12.31.까지 100만원 — 법률 제18586호 부칙 제7조)" if old_small else ""),
+                           src_en="Framework Act on National Taxes Art. 47-5(5)" + (" (KRW 1,000,000 until 2021-12-31 — Act No. 18586, Addenda Art. 7)" if old_small else "")))
+        if args.get("notice_amount") is not None:
+            inputs.append(_inp("notice_amt", "납부고지서별·세목별 세액", "Tax per notice and tax item", args["notice_amount"], arg="notice_amount"))
+        else:
+            rows.append(_row("notice_amt", "납부고지서별·세목별 세액(미납세액 + 납부고지 전 가산세로 봄)", "Tax per notice and tax item (taken as unpaid tax + penalty before the notice)",
+                             "={unpaid}+{pre_amt}", note_ko=jt("⑤ 소액 체납") or "다르면 도구의 notice_amount에 넣는다 — 국세기본법 제47조의5제5항",
+                             note_en=_with_ko("Art. 47-5(5); enter notice_amount in the tool if different", jt("⑤ 소액 체납"))))
+        plus = ""
+        if post_rule == "종전":
+            span = (pd - nd).days
+            if not excluded and int(res.get("고지후_일수") or 0) != span:      # 제4항 5년 한도에 걸림
+                return None
+            segs2 = late_payment_rate_segments((nd + _timedelta(days=1)).isoformat(), span)
+            if len(segs2) == 1:
+                inputs.append(_inp("daily_post", "원천징수 납부지연가산세 — 1일 이율(납부고지 후)", "Withholding late-payment penalty — daily rate after the notice",
+                                   segs2[0][1], fmt=PCT, kind="rate", src_ko=decree, src_en=decree_en))
+                rows.append(_row("post_days", "납부고지 후 일수(지정납부기한 다음 날부터 납부일까지)", "Days after the notice (day after the notice due date to the payment date)",
+                                 "=MAX(0,{paid_on}-{notice_due})", fmt="0", check=None if excluded else res.get("고지후_일수"), summary=True,
+                                 note_ko=jt("고지 후"), note_en=_with_ko("Daily portion after the notice (rule before 2026-07-01); five-year limit under Art. 47-5(4)", jt("고지 후")),
+                                 alias=("고지후_일수",)))
+                post_expr = "{unpaid}*{post_days}*{daily_post}"
+            else:
+                terms = []
+                for i, (n, r) in enumerate(segs2, 1):
+                    inputs.append(_inp(f"daily_post{i}", f"원천징수 납부지연가산세 — 1일 이율(납부고지 후, 기간 {i})",
+                                       f"Withholding late-payment penalty — daily rate after the notice (period {i})", r, fmt=PCT, kind="rate",
+                                       src_ko=decree + "(이율 변경일 기준 기간 안분)", src_en=decree_en + " (period split at the rate change date)"))
+                    rows.append(_row(f"post_days{i}", f"납부고지 후 일수 — 기간 {i}(이율 변경일 기준, 도구 값)", f"Days after the notice — period {i} (split at the rate change date, tool value)",
+                                     value=n, fmt="0", note_ko=jt("고지 후"), note_en=_with_ko("Daily portion after the notice", jt("고지 후"))))
+                    terms.append(f"{{post_days{i}}}*{{daily_post{i}}}")
+                post_expr = "{unpaid}*(" + "+".join(terms) + ")"
+        else:
+            inputs.append(_inp("monthly", "납부고지 후 — 경과 개월마다의 이율(월 1만분의 67)", "After the notice — rate per month elapsed", 0.0067, fmt=PCT, kind="rate",
+                               src_ko="국세기본법 제47조의5제1항제3호 · 시행령 제27조의4제2항", src_en="Framework Act on National Taxes Art. 47-5(1)(iii); Enforcement Decree Art. 27-4(2)"))
+            m_note = "지정납부기한 다음 날부터 납부일 전날까지 경과 개월 수, 60개월 한도(제47조의5제4항)"
+            if (nd + _timedelta(days=1)).day <= 28:
+                rows.append(_row("months", "경과 개월 수(지정납부기한 다음 날부터 납부일 전날까지)", "Months elapsed (day after the notice due date to the day before payment)",
+                                 '=MIN(60,DATEDIF({notice_due}+1,{paid_on},"m"))', fmt="0", check=None if excluded else res.get("경과_개월"), summary=True,
+                                 note_ko=" — ".join(x for x in (jt("고지 후"), m_note) if x),
+                                 note_en=_with_ko("Whole months elapsed, capped at 60 months under Art. 47-5(4)", jt("고지 후")), alias=("경과_개월",)))
+            else:           # 기산일이 29~31일이면 말일 만료 규칙(도구의 개월 계산)이 엑셀 DATEDIF와 달라질 수 있어 도구 값을 둠
+                rows.append(_row("months", "경과 개월 수(지정납부기한 다음 날부터 납부일 전날까지, 도구 값)", "Months elapsed (day after the notice due date to the day before payment, tool value)",
+                                 value=int(res.get("경과_개월") or 0), fmt="0", summary=True, note_ko=" — ".join(x for x in (jt("고지 후"), m_note) if x),
+                                 note_en=_with_ko("Whole months elapsed, capped at 60 months under Art. 47-5(4)", jt("고지 후")), alias=("경과_개월",)))
+            post_expr = "{unpaid}*{months}*{monthly}"
+            if args.get("dunning_fee"):
+                inputs.append(_inp("dunning", "독촉비용(4호)", "Cost of the demand notice", args["dunning_fee"], arg="dunning_fee",
+                                   src_ko="국세기본법 제47조의5제1항제4호 · 시행령 제27조의4제3항", src_en="Framework Act on National Taxes Art. 47-5(1)(iv); Enforcement Decree Art. 27-4(3)"))
+                plus = "+{dunning}"
+        rows.append(_row("post_amt", "납부고지 후분" + ("(종전 2호 일수분)" if post_rule == "종전" else "(3호)"),
+                         "Portion after the notice" + (" (daily portion, rule before 2026-07-01)" if post_rule == "종전" else " (monthly portion)"),
+                         f"=IF({{notice_amt}}<{{small}},0,ROUNDDOWN(ROUND({post_expr},4),0))", check=res.get("고지후분"), summary=True,
+                         note_ko="소액 기준 미만이면 0 — 국세기본법 제47조의5제5항", note_en="Nil below the small-amount threshold — Art. 47-5(5)", alias=("고지후분",)))
+        post_inner = f"+IF({{notice_amt}}<{{small}},0,{post_expr}{plus})"
+    inputs.append(_inp("cap50", "전체 한도(미납세액의 50%)", "Overall cap (50% of the unpaid tax)", 0.50, fmt=PCT, kind="rate",
+                       src_ko="국세기본법 제47조의5제1항(전체 50% 한도)", src_en="Framework Act on National Taxes Art. 47-5(1), overall 50% cap"))
+    rows += [
+        _row("cap50_amt", "전체 한도(미납세액의 50%)", "Overall cap (50% of the unpaid tax)", "=ROUNDDOWN(ROUND({unpaid}*{cap50},4),0)", check=res.get("한도_50%"), alias=("한도_50%",)),
+        _row("penalty", "가산세", "Penalty", f"=ROUNDDOWN(ROUND(MIN({pre_expr}{post_inner},{{unpaid}}*{{cap50}}),4),0)", check=res.get("가산세"), key=True, summary=True,
+             note_ko="min(납부고지 전 가산세 + 납부고지 후분, 50% 한도), 원 미만 절사", note_en="Lower of (penalty before the notice + portion after it) and the 50% cap, truncated to KRW 1",
+             alias=("가산세",)),
+    ]
+    return {"inputs": inputs, "rows": rows, "links": {}}
+
+
 def _spec_generic(args: dict, data: dict, label) -> dict:
     """`계산식`이 있으면 그 단계를 수식으로, 없으면 결과의 숫자 값을 그대로(수식 아님)."""
     from .tools_export import _이름_치환
@@ -354,7 +509,7 @@ def _spec(tool: str, args: dict, data: dict, label) -> dict:
     if tool == "nonresident_withholding":
         sp = _spec_nonresident(args, data)
     elif tool == "withholding_late_payment_penalty":
-        sp = _spec_wh_penalty(args, data)
+        sp = _spec_wh_penalty(args, data) or _spec_wh_penalty_notice(args, data)
     return sp or _spec_generic(args, data, label)
 
 
@@ -402,9 +557,74 @@ def rename_sheets(wb, ren: dict[str, str]) -> None:
                     c.value = nv
 
 
+# ── 뒤 시트 줄이기(detail) — 계산 N·판단·근거를 '계산 상세' 한 장으로 ─────────────────
+_CELL = r"\$?[A-Z]{1,3}\$?\d+"
+_A1 = _re.compile(rf"{_CELL}(?::{_CELL})?")
+_A1_PART = _re.compile(r"(\$?[A-Z]{1,3}\$?)(\d+)")
+
+
+def _shift_rows(ref: str, off: int) -> str:
+    return _A1_PART.sub(lambda m: f"{m.group(1)}{int(m.group(2)) + off}", ref)
+
+
+def _retarget(formula: str, moved: dict[str, tuple[str, int]], own_off: int = 0) -> str:
+    """수식 속 칸 주소를 옮긴다 — 시트 이름이 붙은 주소는 moved({옛 시트: (새 시트, 행 이동)})에 있으면 새 시트로,
+    시트 이름이 없는 주소는 own_off만큼 아래로(시트를 통째로 옮겨 붙일 때). 이름(정의된 이름)·함수·문자열은 그대로."""
+    from openpyxl.formula import Tokenizer
+    try:
+        items = Tokenizer(formula).items
+    except Exception:
+        return formula
+    out = []
+    for t in items:
+        v = t.value
+        if t.type == "OPERAND" and t.subtype == "RANGE":
+            if "!" in v:
+                sh, _, ref = v.rpartition("!")
+                name = sh[1:-1].replace("''", "'") if sh.startswith("'") and sh.endswith("'") else sh
+                if name in moved and _A1.fullmatch(ref):
+                    v = f"{_q(moved[name][0])}!{_shift_rows(ref, moved[name][1])}"
+            elif own_off and _A1.fullmatch(v):
+                v = _shift_rows(v, own_off)
+        out.append(v)
+    return "=" + "".join(out)
+
+
+def _stack(dst, src, at: int) -> int:
+    """src 시트의 칸(값·수식·서식·병합·행 높이)을 dst의 at행부터 옮겨 붙인다. 돌려주는 값: 다음 빈 행."""
+    from copy import copy
+    off = at - 1
+    for row in src.iter_rows():
+        for c in row:
+            if c.value is None and not c.has_style:
+                continue
+            d = dst.cell(c.row + off, c.column)
+            d.value = _retarget(c.value, {}, off) if c.data_type == "f" and isinstance(c.value, str) else c.value
+            if c.has_style:
+                d._style = copy(c._style)
+            if c.data_type != "f" and isinstance(c.value, str) and c.value.startswith("="):
+                d.data_type, d.quotePrefix = "s", True
+    for rng in src.merged_cells.ranges:
+        dst.merge_cells(start_row=rng.min_row + off, start_column=rng.min_col, end_row=rng.max_row + off, end_column=rng.max_col)
+    for r, dim in src.row_dimensions.items():
+        if dim.height:
+            dst.row_dimensions[r + off].height = dim.height
+    return src.max_row + off + 1
+
+
+def _sheet_of_name(dn) -> str | None:
+    m = _re.match(r"'((?:[^']|'')+)'!|([^'!]+)!", dn.attr_text or "")
+    return (m.group(1).replace("''", "'") if m.group(1) else m.group(2)) if m else None
+
+
 def add_sheets(wb, cfg: dict, *, lang: str, title: str, company: str, period: str, calls: list, results: list[dict],
-               label=None) -> dict:
-    """통합 문서 시트를 워크북 맨 앞에 넣는다. 돌려주는 값: {"시트": 새 시트 이름(순서대로), "이름_바꿈": {옛: 새}, "warnings": [...]}."""
+               label=None, detail: str = "full", roles: dict | None = None, judgement_counts: dict[int, int] | None = None) -> dict:
+    """통합 문서 시트를 워크북 맨 앞에 넣는다. 돌려주는 값: {"시트": 새 시트 이름(순서대로), "이름_바꿈": {옛: 새}, "warnings": [...],
+    "서식_수": 신고 서식 시트 수, "안내": {앞 시트 이름: 영문 한 줄}}.
+
+    detail — 뒤 시트: 'full'(기존 시트 전부), 'forms'('계산 상세' + 신고 서식), 'compact'('계산 상세' 한 장).
+    roles — 기존 시트의 구실({"calc": {call 순번: 시트}, "jud": 시트, "inputs": 시트, "list": 시트, "summary": 시트, "forms": [시트]}), compact·forms에서 필요.
+    judgement_counts — {call 순번: 판단·근거 시트의 줄 수}(오류 call 제외, 시트에 적힌 순서)."""
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter as L
     en = lang == "en"
@@ -426,13 +646,17 @@ def add_sheets(wb, cfg: dict, *, lang: str, title: str, company: str, period: st
     ren = {o: n for o, n in ren.items() if o in wb.sheetnames}
     rename_sheets(wb, ren)
 
-    # 블록: 시나리오에 없는 성공 call은 call마다 한 블록(한 열)
+    # 블록: 시나리오에 없는 성공 call은 call마다 한 블록(한 열) — full은 call마다 한 시트, compact·forms는 한 시트에 차례로
+    if roles is None:
+        detail = "full"
     blocks = [dict(b) for b in cfg["blocks"]]
+    rest = _t("rest" if blocks else "rest_only", en)
     for i, cd in enumerate(results):
         if i in cfg["used"] or cd.get("error") or not cd.get("result"):
             continue
         lab = str(cd.get("label") or f"call {i + 1}")
-        blocks.append({"sheet": lab, "title": lab, "subtitle": "", "heading": lab, "columns": [{"idx": i, "heading": lab}], "notes": {}, "summary_note": ""})
+        blocks.append({"sheet": lab if detail == "full" else rest, "title": lab if detail == "full" else rest, "subtitle": "", "heading": lab,
+                       "columns": [{"idx": i, "heading": lab}], "notes": {}, "summary_note": ""})
     for b in blocks:
         for c in b["columns"]:
             cd = results[c["idx"]]
@@ -446,6 +670,8 @@ def add_sheets(wb, cfg: dict, *, lang: str, title: str, company: str, period: st
         if b["sheet"] not in sheet_of:
             sheet_of[b["sheet"]] = _sheet_name(wb, b["sheet"], taken)
     n_iss = _sheet_name(wb, _t("issues", en), taken) if cfg["issues"] else None
+    n_forms = len((roles or {}).get("forms") or [])
+    n_det = _sheet_name(wb, _t("detail", en), taken) if detail != "full" else None
 
     def page(ws, widths: list[float], freeze: str = "A4") -> None:
         for j, w in enumerate(widths, 1):
@@ -719,8 +945,13 @@ def add_sheets(wb, cfg: dict, *, lang: str, title: str, company: str, period: st
             ws_s.cell(r, 1, " · ".join(f"{k} {v}" for k, v in counts.items())).font = F()
             r += 1
         r += 1
-    for key in ("key", "support", "disclaimer"):
-        ws_s.cell(r, 1, _t(key, en)).font = f_sub
+    support = (_t("support", en) if detail == "full" else _t("support_forms", en, d=n_det, n=n_forms) if detail == "forms" and n_forms
+               else _t("support_compact", en, d=n_det))
+    tail = [_t("key", en), support, _t("disclaimer", en)]
+    if detail == "compact" and n_forms:
+        tail.append(_t("forms_hint", en, n=n_forms))
+    for text in tail:
+        ws_s.cell(r, 1, text).font = f_sub
         r += 1
     page(ws_s, [64] + [22] * max_cols + [50])
 
@@ -744,7 +975,93 @@ def add_sheets(wb, cfg: dict, *, lang: str, title: str, company: str, period: st
         page(ws_x, [5, 34, 66, 12, 60], "A5")
 
     # ── 순서: 요약 → 입력·출처 → 시나리오 시트 → 쟁점 목록 → 기존 시트 ──
-    front = [n_sum, n_inp] + list(dict.fromkeys(sheet_of[b["sheet"]] for b in blocks)) + ([n_iss] if n_iss else [])
-    wb._sheets = [wb[n] for n in front] + [s for s in wb._sheets if s.title not in front]
+    scen = list(dict.fromkeys(sheet_of[b["sheet"]] for b in blocks))
+    front = [n_sum, n_inp] + scen + ([n_iss] if n_iss else [])
+    guide = {n_sum: _t("g_summary", True, s=n_sum), n_inp: _t("g_inputs", True, s=n_inp), **{n: _t("g_scenario", True, s=n) for n in scen}}
+    if n_iss:
+        guide[n_iss] = _t("g_issues", True, s=n_iss)
+
+    # ── 뒤 시트 줄이기: 계산 N·판단·근거 → '계산 상세' 한 장, 서식은 detail='forms'일 때만 ──
+    if n_det:
+        ws_d = wb.create_sheet(n_det)
+        ws_d.cell(1, 1, _t("detail_title", en)).font = f_title
+        ws_d.cell(2, 1, _t("detail_sub", en)).font = f_sub
+        scen_of = {c["idx"]: sheet_of[b["sheet"]] for b in blocks for c in b["columns"]}
+        ws_j = roles.get("jud")
+        counts = judgement_counts or {}
+        j_ok = ws_j is not None and sum(counts.values()) == ws_j.max_row - 1
+        j_at, j_rows = 2, {}
+        for i in sorted(counts):
+            j_rows[i] = (j_at, j_at + counts[i])
+            j_at += counts[i]
+        j_map = ((2, 1), (4, 2), (3, 3), (5, 5), (6, 6))          # 판단·근거 시트의 (항목, 금액, 결론, 근거, 이유) 열 → 계산 상세의 열
+        moved: dict[str, tuple[str, int]] = {}
+        r = 4
+        for i in sorted(roles.get("calc") or {}):
+            ws_c = roles["calc"][i]
+            cd = results[i] if i < len(results) else {}
+            band(ws_d, r, _t("detail_band", en, n=i + 1, label=cd.get("label") or f"call {i + 1}", tool=cd.get("tool", "")), 6)
+            if i in scen_of:
+                ws_d.cell(r, 3, _t("detail_at", en, s=scen_of[i])).font = f_sub
+            moved[ws_c.title] = (n_det, r)
+            r = _stack(ws_d, ws_c, r + 1)
+            if j_ok and i in j_rows and j_rows[i][1] > j_rows[i][0]:
+                r += 1
+                for src_col, dst_col in j_map:
+                    h = ws_d.cell(r, dst_col, ws_j.cell(1, src_col).value)
+                    h.font, h.fill = F(bold=True), fill(BAND)
+                r += 1
+                for k in range(*j_rows[i]):
+                    for src_col, dst_col in j_map:
+                        v = ws_j.cell(k, src_col)
+                        d = ws_d.cell(r, dst_col, v.value)
+                        d.font, d.number_format = F(), v.number_format
+                        d.alignment = wrap if dst_col != 2 else Alignment(vertical="top")
+                        if isinstance(v.value, str) and v.value.startswith("="):
+                            d.data_type, d.quotePrefix = "s", True
+                    ws_d.row_dimensions[r].height = min(160, 14 * max(lines(ws_d.cell(r, 1).value, 34), lines(ws_d.cell(r, 3).value, 60),
+                                                                      lines(ws_d.cell(r, 5).value, 44), lines(ws_d.cell(r, 6).value, 40)))
+                    r += 1
+            r += 1
+        if ws_j is not None and not j_ok and ws_j.max_row > 1:      # 줄 수가 맞지 않으면 판단·근거를 통째로 아래에
+            band(ws_d, r, ws_j.title, 6)
+            r = _stack(ws_d, ws_j, r + 1) + 1
+        drop = [ws for ws in list((roles.get("calc") or {}).values()) + [roles.get("jud"), roles.get("list"), roles.get("summary")] if ws is not None]
+        ws_in = roles.get("inputs")
+        forms = [ws for ws in roles.get("forms") or []]
+        keep_inputs = detail == "forms" and bool(forms)
+        if detail == "compact":
+            drop += forms
+            # 계산 시트의 수식이 '입력·가정'의 이름을 가리키면(드묾) 그 칸도 옮겨 붙인다
+            gone = {nm for nm, dn in wb.defined_names.items() if ws_in is not None and _sheet_of_name(dn) == ws_in.title}
+            if gone:
+                pat = _re.compile(r"(?<![\w가-힣.])(" + "|".join(_re.escape(n) for n in sorted(gone, key=len, reverse=True)) + r")(?![\w가-힣.])")
+                keep_inputs = any(c.data_type == "f" and isinstance(c.value, str) and pat.search(c.value) for row in ws_d.iter_rows() for c in row)
+        if ws_in is not None:
+            if keep_inputs:
+                band(ws_d, r, _t("detail_links", en), 6)
+                moved[ws_in.title] = (n_det, r)
+                r = _stack(ws_d, ws_in, r + 1) + 1
+            drop.append(ws_in)
+        drop_names = {ws.title for ws in drop}
+        for nm in list(wb.defined_names):
+            sh = _sheet_of_name(wb.defined_names[nm])
+            if sh in moved:
+                wb.defined_names[nm].attr_text = _retarget("=" + wb.defined_names[nm].attr_text, moved)[1:]
+            elif sh in drop_names:
+                del wb.defined_names[nm]
+        for ws in drop:
+            wb.remove(ws)
+        for ws in wb.worksheets:
+            for row in ws.iter_rows():
+                for c in row:
+                    if c.data_type == "f" and isinstance(c.value, str) and "!" in c.value:
+                        nv = _retarget(c.value, moved)
+                        if nv != c.value:
+                            c.value = nv
+        page(ws_d, [34, 20, 60, 16, 44, 40])
+        wb._sheets = [wb[n] for n in front] + [ws_d] + [s for s in wb._sheets if s.title not in front and s is not ws_d]
+    else:
+        wb._sheets = [wb[n] for n in front] + [s for s in wb._sheets if s.title not in front]
     wb.active = 0
-    return {"시트": front, "이름_바꿈": ren, "warnings": warnings}
+    return {"시트": front, "이름_바꿈": ren, "warnings": warnings, "서식_수": n_forms, "안내": guide, "상세": n_det}
