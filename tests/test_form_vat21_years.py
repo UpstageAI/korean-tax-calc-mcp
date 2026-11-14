@@ -4,7 +4,9 @@
   <개정 2019. 3. 20.>(제718호) — (25) 신용카드업자의 대리납부 기납부세액 신설, (26) 가산세액계, (27)
   <개정 2020. 4. 21.>(제793호) — (20-1) 소규모 개인사업자 부가가치세 감면세액 신설
   <개정 2021. 3. 16.>(제846호)·<개정 2022. 3. 18.>(제906호)·<개정 2023. 3. 20.>(제973호) — (23)~(25) 문구만 바뀜
-  서식 개정규정은 시행 이후 신고하는 분부터(각 규칙 부칙 '서식에 관한 적용례')."""
+  서식 개정규정은 시행 이후 신고하는 분부터(각 규칙 부칙 '서식에 관한 적용례').
+  <개정 2025. 3. 21.>(제1116호) — 제1쪽은 <개정 2023. 3. 20.>과 같음((1)~(27)). (1)~(30) 칸은 <개정 2025. 7. 4.>(제1136호)부터이고
+  그 부칙은 "이 규칙은 공포한 날부터 시행한다"뿐(서식 적용례 없음) → 2025년 제1기 예정신고(기한 4.25.)는 <개정 2025. 3. 21.> 판."""
 import pathlib, shutil, subprocess
 import openpyxl, pytest
 from korean_tax_calc_mcp import server as S
@@ -117,13 +119,52 @@ def test_no_unverified_note_left():
     from korean_tax_calc_mcp.forms_workbook import load_templates
     t = load_templates()
     assert "목록_생략" not in t["부가21"]
-    assert sorted(k for k in t if k.startswith("부가21_")) == [f"부가21_{y}" for y in range(2016, 2024)]
+    assert sorted(k for k in t if k.startswith("부가21_")) == [f"부가21_{y}" for y in range(2016, 2024)] + ["부가21_2025a"]
 
 
 def test_mixed_years_in_one_workbook_get_separate_sheets(tmp_path):
-    a = dict(period="1", kind="예정", sales_invoice=100 * M, purchase_invoice=50 * M)
+    a = dict(period="1", kind="확정", sales_invoice=100 * M, purchase_invoice=50 * M)
     r = _fn(S.export_workbook)(title="m", output_dir=str(tmp_path), calls=[{"label": "2022", "tool": "vat_return_general", "args": {**a, "year": 2022}},
                                                                             {"label": "2025", "tool": "vat_return_general", "args": {**a, "year": 2025}}])
     assert r["결과"]["오류_call"] == [] and {SHEET, _sheet(2022)} <= set(r["결과"]["시트"])
     wb = openpyxl.load_workbook(r["결과"]["파일"])
     assert wb[_sheet(2022)]["F36"].value == "(27)" and wb[SHEET]["F37"].value == "(30)"
+
+
+# ── 2025년 과세기간: 제1기 예정신고만 <개정 2025. 3. 21.> 판((1)~(27)), 그 밖은 <개정 2025. 7. 4.> 이후 판((1)~(30)) ──
+SHEET_2025A = SHEET + " 2025판"
+
+
+@pytest.mark.parametrize("year, period, kind, sheet", [
+    (2025, "1", "예정", SHEET_2025A),     # 신고기한 2025.4.25. — 2025.7.4. 전
+    (2025, "1", "확정", SHEET),           # 신고기한 2025.7.25.
+    (2025, "2", "예정", SHEET),
+    (2024, "1", "예정", SHEET + " 2023판"),
+    (2026, "1", "예정", SHEET),
+])
+def test_2025_first_preliminary_return_uses_march_2025_form(tmp_path, year, period, kind, sheet):
+    args = dict(year=year, period=period, kind=kind, sales_invoice=100 * M, purchase_invoice=50 * M)
+    r = _export(tmp_path, args)
+    assert [n for n in r["결과"]["시트"] if n.startswith(SHEET)] == [sheet]
+    ws = openpyxl.load_workbook(r["결과"]["파일"])[sheet]
+    if sheet == SHEET_2025A:
+        assert ws["A1"].value == "■ 부가가치세법 시행규칙 [별지 제21호서식] <개정 2025. 3. 21.>"
+        assert ws["F36"].value == "(27)" and ws["G36"].value == "=G25-G28-G29-G30-G31-G32-G33-G34+G35"      # 2023판과 같은 칸 배치
+    elif sheet == SHEET:
+        assert ws["F37"].value == "(30)"
+
+
+def test_2025_first_preliminary_never_carries_occasional_assessment():
+    # <개정 2025. 3. 21.> 서식에는 수시부과세액 칸이 없음 — 예정신고에는 도구가 그 금액을 받지 않으므로 서식에 없는 칸에 금액이 들어올 일이 없음
+    r = _fn(S.vat_return_general)(year=2025, period="1", kind="예정", sales_invoice=100 * M, occasional_assessed=10_000)
+    assert "수시부과세액을 넣지 않음" in r["error"]
+
+
+def test_form_edition_input_flag_and_old_results_without_it(tmp_path):
+    f = _fn(S.vat_return_general)
+    flag = lambda **k: {i["이름"]: i["값"] for i in f(year=2025, sales_invoice=M, **k)["계산식_입력"]}["예정신고_1기"]
+    assert flag(period="1", kind="예정") == 1 and flag(period="1", kind="확정") == 0 and flag(period="2", kind="예정") == 0
+    # 이 입력이 없는 예전 결과를 그대로 넘겨도 현행 서식 시트로 나옴(조건이 없는 값은 0으로 봄)
+    from korean_tax_calc_mcp.forms_workbook import load_templates
+    t = load_templates()
+    assert ".get('예정신고_1기', 0)" in t["부가21"]["when"] and ".get('예정신고_1기', 0)" in t["부가21_2025a"]["when"]
