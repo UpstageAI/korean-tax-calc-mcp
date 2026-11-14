@@ -73,6 +73,7 @@ If you do not know which tool to use, ask `find_tool` in plain words.
 | Corporate tax | Forms 3, 4, 8(a), 15 (with disposition codes), 16-2, 20(1)(2), 21, 23(a)(b), 26(a)(b), 29, 32, 33, 34, 50(b) of the Corporate Tax Act Enforcement Rule |
 | VAT | Form 21 return page 1 lines 1–30 and page 4 penalty schedule, Form 22, Form 15, Form 19(1), Form 25, and calculation sheets for common input tax and bundled supply (no statutory form) |
 | Withholding | withholding tax return (Income Tax Act Enforcement Rule Form 21) page 1, Form 23(1) interest and dividend statement, Form 23(5) non-resident statement |
+| International tax | CFC retained earnings statement (Adjustment of International Taxes Act Enforcement Rule Form 30(a), fiscal years from 2021) |
 | Income, capital gains, gift | Form 40(1) schedules for interest, dividend, wage, pension and other income; Form 84 capital gains tax calculation and Schedule 1; gift tax Form 10 |
 
 Form templates were built by checking cell layout against the official form PDFs on law.go.kr. Some pages and cells are not carried over (personal details, sub-schedules); the List sheet says which. The workbook is a reference for review, not a filed return.

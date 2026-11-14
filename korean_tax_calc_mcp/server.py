@@ -9873,6 +9873,22 @@ def cfc_deemed_dividend(
     if "error" in r:
         return r
     res = r["결과"]
+    # 서식 틀(국조30갑)용 값 — 배당간주를 적용한 경우에만
+    if res.get("배당간주_적용"):
+        import math as _math
+        from fractions import Fraction as _Fr
+        _own = sum(_math.prod(_Fr(str(v)) for v in ch) for ch in ownership_chains)
+        _d = {k: int((distributable or {}).get(k) or 0) for k in CF._DIST_KEYS}
+        _passive = res.get("적용방식") == "수동소득"
+        res["주식보유비율"] = float(_own)
+        res["배당간주금액_전부"] = 0 if _passive else res["배당간주금액"]
+        res["배당간주금액_수동"] = res["배당간주금액"] if _passive else 0
+        _ratio = ((int(passive_income or 0) - int(passive_excluded_dividends or 0)) / int(total_revenue)) if (_passive and total_revenue) else 0
+        r["계산식_입력"] = [{"이름": n, "값": v} for n, v in (
+            ("사업연도", year), ("처분전이익잉여금", _d["unappropriated_retained_earnings"]), ("적용제외유보소득", _d["pre_cfc_earnings_undistributed"]),
+            ("배당금", _d["dividends"]), ("상여금등", _d["bonuses_and_outflows"]), ("의무적립금", _d["mandatory_reserves"]),
+            ("기과세간주배당잔여액", _d["previously_taxed_undistributed"]), ("미실현평가이익", _d["unrealized_stock_gains"]),
+            ("월할2억원", 200_000_000 * months // 12), ("수동소득방식", 1 if _passive else 0), ("수동소득비율", _ratio), ("주식보유비율", float(_own)))]
     세무조정, 주의 = [], list(r.get("주의", []))
     if res.get("배당간주_적용") and res.get("배당간주금액"):
         _cfc_b = ("구 국제조세조정에 관한 법률 제17조①·제19조①" if year <= 2019 else "구 국제조세조정에 관한 법률 제18조①·제19조" if year == 2020
@@ -9880,7 +9896,8 @@ def cfc_deemed_dividend(
         세무조정.append(_adj("특정외국법인 배당간주금액", "익금산입", res["배당간주금액"], "유보", _cfc_b + ", 법인세법 시행령 제106조①2호"))
         주의.append("세무조정의 유보: 배당간주금액은 사외로 나간 금액이 아니어서 법인세법 시행령 제106조①2호(사외에 유출되지 않은 금액)에 따라 유보로 둠 — 이 처분을 직접 다룬 해석례는 찾지 못함. "
                   "실제 배당을 받는 해에 그 금액을 익금불산입(국조법 제32조① — cfc_actual_dividend). 익금에 넣는 사업연도는 특정외국법인 사업연도 종료일의 다음 날부터 60일이 되는 날이 속하는 사업연도(제31조)")
-    return _ok(res, r["근거"], 세무조정=세무조정, 주의=주의, 단계별_계산=r.get("단계별_계산", []))
+    extra = {"계산식_입력": r["계산식_입력"]} if r.get("계산식_입력") else {}
+    return _ok(res, r["근거"], 세무조정=세무조정, 주의=주의, 단계별_계산=r.get("단계별_계산", []), **extra)
 
 @mcp.tool(annotations=CALC)
 @_guard
