@@ -10094,6 +10094,8 @@ def nominee_gift_tax(asset_value: Annotated[int, Field(ge=0, description="명의
     if isinstance(lim, dict) and "결과" in lim:
         r["결과"]["부과제척기간"] = {k: lim["결과"][k] for k in lim["결과"] if k in ("제척기간(년)", "법정신고기한(적용)", "기산일", "만료일", "만료일(역법)")}
         r["근거"].append(["국세기본법", "제26조의2", "④", "상속세·증여세 부과제척기간(10년, 무신고 등 15년)"])
+    else:
+        r["주의"].append("부과제척기간을 계산하지 못함 — assessment_limitation으로 따로 확인: " + str((lim or {}).get("error") or (lim or {}).get("문제") or lim)[:200])
     return _ok(r["결과"], r["근거"], 판단=r["판단"], 주의=r["주의"])
 
 

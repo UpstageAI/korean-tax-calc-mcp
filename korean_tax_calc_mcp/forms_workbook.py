@@ -723,7 +723,7 @@ def render_form_sheet(ws, tpl: dict, res: dict | None, input_map: dict[str, Any]
                 tv_cell.value = "상한 없음"
             else:
                 tv_cell.value = tool_val
-                tv_cell.number_format = "0.0000%" if s.get("check_digits") else MONEY_FMT
+                tv_cell.number_format = ("0." + "0" * max(0, int(s.get("check_digits")) - 2) + "%") if s.get("check_digits") else MONEY_FMT   # 대조 자릿수와 같은 표시(소수 n자리 = 백분율 n−2자리)
             amt_col_letter = _col_letter(_parse_cell(cell_addr)[1])
             _dg = int(s.get("check_digits", 0))   # 비율 칸은 소수 자리까지 대조(기본 원 단위)
             ws.cell(r, cci + 1,
