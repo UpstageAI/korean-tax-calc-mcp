@@ -241,12 +241,15 @@ def test_underreporting_re_amendment_keeps_old_rate():
     assert "error" in call("underreporting_penalty", additional_tax=10 * M, prior_amended_on="2019-10-01")
 
 
-# ── unlisted_stock_valuation: 2018.2.13. 순자산가치 사유(부칙 제8조) — 결과는 바꾸지 않고 주의 ──────
+# ── unlisted_stock_valuation: 2018.2.13. 순자산가치 사유(부칙 제8조) — 평가기준일 기준(기획재정부 재산세제과-955) ──────
 
 def test_unlisted_2018_rule_note():
     inc = [{"사업연도": 2016, "순손익액": -10 * M}, {"사업연도": 2015, "순손익액": -10 * M}, {"사업연도": 2014, "순손익액": -10 * M}]
     old = call("unlisted_stock_valuation", valuation_date="2017-11-30", shares=10_000, net_asset=1_000 * M, incomes=inc)
     assert "부칙 제8조" in str(old["판단"]) and "3년연속결손" in old["결과"]["평가방법"]
+    # 기획재정부 재산세제과-955(평가기준일 도래 기준)로 해석이 정리돼 '확인 필요' 항목은 없앰(2026-11-14 대조 B)
+    assert "재산세제과-955" in str(old["판단"])
+    assert not any(x["항목"] == "확인 필요" and "부칙 제8조" in x["결론"] for x in old["판단"])
     new = call("unlisted_stock_valuation", valuation_date="2018-03-01", shares=10_000, net_asset=1_000 * M,
                incomes=[{**x, "사업연도": x["사업연도"] + 1} for x in inc])
     assert "제28638호 부칙 제8조" not in str(new["판단"])

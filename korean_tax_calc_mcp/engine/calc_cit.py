@@ -1481,9 +1481,39 @@ def depreciation_adjustment(year, method, acquisition_cost, booked_depreciation,
                 "문제": [f"사업연도 월수가 {총월수}개월 — 12개월만 지원"],
                 "필요 입력": ["사업연도 12개월 확인"]}
 
+    # ── 기타 무형자산(영 제24조제1항제2호차목, 대통령령 제35350호 2025.2.28.) ──────────
+    # 부칙 제6조: 제24조①2호·제26조①④·제28조①2호 개정규정은 "이 영 시행일이 속하는 사업연도에 감가상각하는 경우부터".
+    # 신고: 제26조①9호 — 연 단위 신고 내용연수(기업회계기준 내용연수)에 따라 매 사업연도별 경과월수에 비례.
+    # 무신고: 제26조④6호 — 5년 동안 매년 균등액. 내용연수범위(제28조①2호)·별표4 상각률은 적용하지 않음.
+    기타무형 = asset_class == "기타무형자산"
+    if 기타무형:
+        문제 = []
+        if fy_e < "2025-02-28":
+            문제.append(f"사업연도 {fy_s}~{fy_e} — 영 제24조①2호차목(기타 무형자산)은 2025.2.28.이 속하는 사업연도부터(대통령령 제35350호 부칙 제6조). "
+                      "그 전 사업연도에는 차목이 없어 감가상각자산 목록 밖 — 이 도구 범위 밖(확인 필요)")
+        if method == "정률법":
+            문제.append("기타 무형자산은 영 제26조①9호(신고 내용연수 경과월수 비례) 또는 ④6호(무신고 5년 균등)만 — method='정액법'(내용연수 신고) 또는 '무신고'")
+        if rate is not None:
+            문제.append("기타 무형자산은 별표4 상각률을 쓰지 않음 — rate 대신 useful_life(신고) 또는 method='무신고'")
+        if method == "정액법" and (useful_life is None or useful_life < 1):
+            문제.append("기타 무형자산 신고분은 useful_life에 연 단위로 신고한 내용연수(기업회계기준 내용연수, 1년 이상) 필요(영 제26조①9호)")
+        if method == "무신고" and in_service_date is not None and in_service_date > fy_s:
+            문제.append("무신고 기타 무형자산(영 제26조④6호 '5년 동안 매년 균등액')의 사업연도 중 사용개시분 월할 방법은 원문으로 확정하지 못함 — 확인 필요(범위 밖)")
+        if 문제:
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제, "필요 입력": ["기타 무형자산 적용 조건 확인"]}
+
     # ── 상각 방법 결정 (무신고) ──────────────────────────────────────
     실제방법 = method
-    if method == "무신고":
+    if 기타무형:
+        실제방법 = "정액법"
+        n = useful_life if method == "정액법" else 5
+        판단_목록.append({"항목": "상각방법(기타 무형자산)",
+                          "결론": (f"신고 내용연수 {n}년(기업회계기준) — 매 사업연도별 경과월수에 비례: 취득가액 × 경과월수 ÷ ({n} × 12)"
+                                   if method == "정액법" else "무신고 — 5년 동안 매년 균등액: 취득가액 ÷ 5"),
+                          "근거": ("법인세법 시행령 제26조①9호" if method == "정액법" else "법인세법 시행령 제26조④6호")
+                                  + "(대통령령 제35350호, 부칙 제6조: 2025.2.28.이 속하는 사업연도부터)",
+                          "이유": "영 제24조①2호차목 무형자산 — 내용연수범위·별표4 상각률 미적용(영 제28조①2호)"})
+    elif method == "무신고":
         if asset_class is None:
             return {"error": "입력 확인 필요 — 계산하지 않음",
                     "문제": ["무신고 시 asset_class 필요 (영 제26조④)"],
@@ -1497,6 +1527,10 @@ def depreciation_adjustment(year, method, acquisition_cost, booked_depreciation,
 
     # ── 상각률 결정 ─────────────────────────────────────────────────
     표상각률 = None
+    if 기타무형:
+        최종상각률 = 1 / n          # 표시·엑셀용. 계산은 분수 1/n
+        useful_life = None          # 별표4 조회 건너뜀
+        rate = None
     useful_life_key = str(useful_life) if useful_life is not None else None
     if useful_life is not None:
         if useful_life_key not in 상각률표:
@@ -1518,6 +1552,8 @@ def depreciation_adjustment(year, method, acquisition_cost, booked_depreciation,
         최종상각률 = rate
     elif 표상각률 is not None:
         최종상각률 = 표상각률
+    elif 기타무형:
+        pass
     else:
         return {"error": "입력 확인 필요 — 계산하지 않음",
                 "문제": ["useful_life 또는 rate 필요 — 상각률 미확정"],
@@ -1601,7 +1637,14 @@ def depreciation_adjustment(year, method, acquisition_cost, booked_depreciation,
     # ── 상각범위액 ─────────────────────────────────────────────────
     월할계수 = _x(사용월수) / 12   # 분수로 계산(상각률 0.451 같은 곱의 부동소수 절사 오차 방지), 원 미만은 아래에서 버림
 
-    if 실제방법 == "정액법":
+    if 기타무형:
+        from fractions import Fraction as _F
+        범위액 = max(0, _x(세무상취득가액) * _F(1, n) * 월할계수)
+        if 범위액 > max(0, 기초세무상미상각):   # 5년(신고 내용연수) 균등 — 누계가 취득가액을 넘지 않게 미상각잔액에서 멈춤
+            범위액 = max(0, 기초세무상미상각)
+            판단_목록.append({"항목": "상각범위액 상한", "결론": f"세무상 미상각잔액 {기초세무상미상각:,}원에서 멈춤",
+                              "근거": "법인세법 시행령 제26조①9호·④6호", "이유": "균등 상각 누계는 취득가액 이내"})
+    elif 실제방법 == "정액법":
         범위액 = max(0, _x(세무상취득가액) * _x(최종상각률) * 월할계수)
     else:  # 정률법 — 영 제26조⑥⑦: 잔존가액 5%를 미리 빼지 않음
         비망가액 = min(_x(acquisition_cost) * _x(정률법_잔존가액_비율), 1000)
@@ -1670,7 +1713,8 @@ def depreciation_adjustment(year, method, acquisition_cost, booked_depreciation,
     계산_근거 = []
     계산_근거.append({"항목": "상각범위액(정액법)" if 실제방법 == "정액법" else "상각범위액(정률법)",
                       "금액": 범위액,
-                      "산식": (f"({세무상취득가액:,}) × {최종상각률} × {사용월수}/{12}"
+                      "산식": (f"({세무상취득가액:,}) × 1/{n} × {사용월수}/{12} (기타 무형자산)" if 기타무형 else
+                               f"({세무상취득가액:,}) × {최종상각률} × {사용월수}/{12}"
                                if 실제방법 == "정액법" else
                                f"기초 미상각잔액 {기초세무상미상각:,} × 상각률 {최종상각률} × {사용월수}/{12} (잔존가액 5% 사전차감 없음, 상각 종료 시 비망가액 적용, 영 제26조⑥⑦)")})
 
@@ -2121,7 +2165,9 @@ def foreign_tax_credit(year, base, base_includes_grossup, method, countries, mon
             "세무조정": 세무조정목록,
             "이월공제기간_참고": "발생 당시 5년 — 법률 제17652호 부칙으로 10년" if year <= 2020 else "10년 (법 제57조②, 법률 제17652호)",
             "손금산입_대상(직접)": 0,
-            "확인 필요": "",
+            "확인 필요": (f"2023.1.1. 이후 발생한 국외원천소득분이면 이월배제액 {총이월배제액:,}원은 공제받지 못한 사업연도의 다음 사업연도 소득금액 계산 때 손금 산입 가능"
+                         "(법인세법 시행령 제94조제15항 후단, 대통령령 제33265호 부칙 제10조). 2023.1.1. 전 발생분은 종전 규정에 따름(같은 부칙 제10조제2항)"
+                         if 총이월배제액 > 0 and year >= 2022 else ""),
         }
 
     근거목록 = list(fta_basis) + list(indirect_basis)
@@ -3391,7 +3437,9 @@ def foreign_subsidiary_dividend(args: dict):
     입력(dict): received_on(YYYY-MM-DD 필수), ownership_ratio(0<r≤1 필수), held_months(int≥0 필수),
       dividend(원 int>0 필수), foreign_withholding(원 int≥0, 기본 0), subsidiary_tax(원, 선택),
       subsidiary_income(원, 선택), hybrid(bool 기본 False), cfc_low_tax(bool 기본 False),
-      resource_development(bool 기본 False).
+      resource_development(bool 기본 False), cfc_no_retained_earnings(bool 기본 False — 배당간주금액이 없는 특정외국법인, 조특법 제23조의2제2항),
+      borrowing_interest·subsidiary_book_value_daily_sum·total_assets_daily_sum(원, 선택 — 조특법 제23조의2제3항 차입금 이자 차감).
+    2026.1.1.~2026.12.31. 수령분은 조세특례제한법 제23조의2(법률 제21549호)로 익금불산입률 100%(차입금 이자 차감 후).
     반환: {"결과": {제도, 수입배당금액, 익금불산입액, 익금산입액, 직접외국납부세액, 간접외국납부세액,
                      공제대상_외국법인세액, Gross_up_익금산입, 외국세_손금불산입},
            "판단": [...], "근거": "...", "서식": "..."} 또는 {"error": ...}.
@@ -3407,8 +3455,24 @@ def foreign_subsidiary_dividend(args: dict):
     hybrid = bool(args.get("hybrid", False))
     cfc_low_tax = bool(args.get("cfc_low_tax", False))
     resource_dev = bool(args.get("resource_development", False))
+    cfc_no_retained = args.get("cfc_no_retained_earnings", False)
+    borrowing_interest = args.get("borrowing_interest", None)
+    sub_book_days = args.get("subsidiary_book_value_daily_sum", None)
+    assets_days = args.get("total_assets_daily_sum", None)
 
     # ── 입력 검증 ──────────────────────────────────────────────────────
+    if not isinstance(cfc_no_retained, bool):
+        return {"error": "입력 오류: cfc_no_retained_earnings는 bool"}
+    for _k, _v in (("borrowing_interest", borrowing_interest), ("subsidiary_book_value_daily_sum", sub_book_days),
+                   ("total_assets_daily_sum", assets_days)):
+        if _v is not None and (not isinstance(_v, int) or isinstance(_v, bool) or _v < 0):
+            return {"error": f"입력 오류: {_k}은 원 int≥0"}
+    if borrowing_interest and (sub_book_days is None or not assets_days):
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": ["borrowing_interest(차입금 이자)를 넣으면 subsidiary_book_value_daily_sum(외국자회사 주식 장부가액 일별 잔액 합계)과 "
+                         "total_assets_daily_sum(자산총액 일별 잔액 합계, 0 초과)도 필요 — 조세특례제한법 시행령 제20조제2항 차감금액 = 이자 × 장부가액 합계 ÷ 자산총액 합계"]}
+    if sub_book_days is not None and assets_days and sub_book_days > assets_days:
+        return {"error": "입력 오류: subsidiary_book_value_daily_sum이 total_assets_daily_sum보다 큼"}
     if not isinstance(received_on, str) or received_on == "":
         return {"error": "입력 오류: received_on(YYYY-MM-DD) 필요"}
     try:
@@ -3449,8 +3513,17 @@ def foreign_subsidiary_dividend(args: dict):
     지분충족 = ownership >= 기준지분
     보유충족 = held_months >= 6
 
+    # ── 조세특례제한법 제23조의2(법률 제21549호, 2026.4.21. 신설) — 2026.1.1.~2026.12.31. 받은 수입배당금액 100% 익금불산입 ──
+    # 부칙 제2조: 2026.1.1. 이후 외국자회사로부터 수입배당금액을 받는 경우부터 적용. 기간은 조문 자체가 2026.12.31.까지로 정함.
+    특례기간 = 20260101 <= ymd <= 20261231
+    # 제2항: 배당 가능한 유보소득이 없어 배당간주금액이 없는 특정외국법인(국조법 제27조제1항)에서 받은 배당은
+    # 법인세법 제18조의4제4항제1호에도 불구하고 100% 익금불산입
+    cfc_특례 = 특례기간 and cfc_low_tax and cfc_no_retained
+    if not 특례기간 and cfc_no_retained:
+        cfc_no_retained = False   # 특례기간 밖이면 의미 없음 — 판단에만 남김
+
     # ── 익금불산입 요건 판정 ─────────────────────────────────────────────
-    요건충족 = (ymd >= 20230101) and 지분충족 and 보유충족 and (not hybrid) and (not cfc_low_tax)
+    요건충족 = (ymd >= 20230101) and 지분충족 and 보유충족 and (not hybrid) and ((not cfc_low_tax) or cfc_특례)
 
     판단 = []
     if ymd < 20230101:
@@ -3463,10 +3536,41 @@ def foreign_subsidiary_dividend(args: dict):
         판단.append({"항목": "지분율", "결론": f"지분율 {ownership:.0%} < {기준지분:.0%}{'(자원개발 5%)' if resource_dev else ''} → 익금불산입 대상 아님", "근거": "법인세법 제18조의4제1항"})
     if hybrid:
         판단.append({"항목": "혼성금융상품", "결론": "혼성금융상품 해당 → 익금불산입 제외(제18조의4제4항제2호)", "근거": "법인세법 제18조의4제4항제2호"})
-    if cfc_low_tax:
+    if cfc_low_tax and not cfc_특례:
         판단.append({"항목": "특정외국법인", "결론": "특정외국법인 저세율(국조법 제27조) → 익금불산입 제외(제18조의4제4항제1호)", "근거": "법인세법 제18조의4제4항제1호"})
 
-    if 요건충족:
+    주의 = []
+    if cfc_특례:
+        판단.append({"항목": "특정외국법인 배당 특례", "결론": "배당 가능한 유보소득이 없어 배당간주금액이 없는 특정외국법인에서 2026년에 받은 배당 → "
+                     "법인세법 제18조의4제4항제1호에도 불구하고 100% 익금불산입(조세특례제한법 제23조의2제2항)", "근거": "조세특례제한법 제23조의2제2항"})
+    if 요건충족 and 특례기간:
+        제도 = "익금불산입"
+        # 조세특례제한법 제23조의2제1항·제2항: 수입배당금액의 100분의 100. 제3항: 차입금 이자가 있으면 시행령 제20조제2항 차감금액을 뺌(0 미만이면 0)
+        차감금액 = 0
+        if borrowing_interest:
+            차감금액 = borrowing_interest * sub_book_days // assets_days     # 원 미만 절사(조문에 끝수 규정 없음)
+        익금불산입액 = max(dividend - 차감금액, 0)
+        익금산입액 = dividend - 익금불산입액
+        판단.append({"항목": "적용 시기(조특법 특례)", "결론": f"수령일 {received_on} → 2026.1.1.~2026.12.31. 수령분, 익금불산입률 100%(법인세법 제18조의4제1항의 95% 대신)",
+                     "근거": "조세특례제한법 제23조의2제1항, 법률 제21549호(2026.4.21.) 부칙 제2조"})
+        if borrowing_interest:
+            판단.append({"항목": "차입금 이자 차감", "결론": f"{borrowing_interest:,} × {sub_book_days:,} ÷ {assets_days:,} = {차감금액:,}원 → 익금불산입액 {dividend:,} − {차감금액:,} = {익금불산입액:,}",
+                         "근거": "조세특례제한법 제23조의2제3항, 시행령 제20조제2항"})
+        else:
+            주의.append("2026년 수령분 100% 특례는 그 사업연도에 지급한 차입금 이자가 있으면 '이자 × 외국자회사 주식 장부가액 일별 잔액 합계 ÷ 자산총액 일별 잔액 합계'를 빼고 익금불산입함"
+                        "(조세특례제한법 제23조의2제3항, 시행령 제20조제2항) — 이자가 있으면 borrowing_interest·subsidiary_book_value_daily_sum·total_assets_daily_sum을 넣을 것. 지금은 이자 없음으로 계산")
+        주의.append("차감금액은 외국자회사별 금액의 합계를 그 사업연도 수입배당금액 합계에서 뺌(제23조의2제3항) — 외국자회사가 여럿이면 자회사별로 따로 넣은 결과를 합산해 확인")
+        직접외국납부세액 = 0
+        간접외국납부세액 = 0
+        공제대상_외국법인세액 = 0
+        grossup = 0
+        외국세_손금불산입 = foreign_withholding
+        판단.append({"항목": "제도 적용", "결론": "조세특례제한법 제23조의2에 따라 법인세법 제18조의4제1항을 적용(익금불산입률 100%) — 제57조제7항에 따라 외국납부세액공제 불가",
+                     "근거": "조세특례제한법 제23조의2·법인세법 제18조의4제1항·제57조제7항"})
+        근거 = ("조세특례제한법 제23조의2(외국자회사 수입배당금의 익금불산입 특례, 2026.1.1.~12.31. 수령분 100%)·시행령 제20조, 법률 제21549호 부칙 제2조, "
+                "법인세법 제18조의4(수입배당금 익금불산입)·제57조제7항(익금불산입 배당은 외국납부세액공제 배제)·제21조제1호(외국납부 세액은 손금불산입)")
+        서식 = "외국자회사 수입배당금액 명세서(제18조의4제5항)"
+    elif 요건충족:
         제도 = "익금불산입"
         익금불산입액 = int(dividend * 95 // 100)          # trunc(dividend × 95/100), 원 미만 절사
         익금산입액 = dividend - 익금불산입액
@@ -3526,6 +3630,7 @@ def foreign_subsidiary_dividend(args: dict):
         "판단": 판단,
         "근거": 근거,
         "서식": 서식,
+        "주의": 주의,
     }
 
 
@@ -3784,7 +3889,8 @@ def corporate_filing_obligations(args: dict):
     # 판정 값은 모두 '직전 사업연도' 기준(자산·부채·종업원은 직전 사업연도 말, 매출액은 직전 사업연도) — assets·liabilities·employees·revenue_prev.
     # 2019.10.31. 이전 개시 사업연도(12월 결산 2019년까지): 구 「주식회사의 외부감사에 관한 법률 시행령」 제2조① —
     #   자산 120억 이상 / 주권상장법인 / 부채 70억 + 자산 70억 이상 / 종업원 300명 + 자산 70억 이상. 주식회사만.
-    #   (대통령령 제29269호 부칙 제2조: 종전 기준에 해당하는 회사는 신기준 해당 여부와 관계없이 대상, 해당하지 않는 회사의 신기준은 2019.11.1. 이후 시작 사업연도부터)
+    #   (대통령령 제29269호 부칙 제2조: 2019.11.1. 전 개시 사업연도는 종전 제2조① — 1호 가목 회사(종전·신기준 모두 해당)는 2018.11.1.이 속하는 사업연도부터
+    #    신기준이지만 신·구 모두 대상이라 결과 같음, 1호 나목·2호 회사는 2019.11.1. 이후 시작 사업연도부터 신기준)
     # 2019.11.1. 이후 개시 사업연도(12월 결산 2020년부터): 「주식회사 등의 외부감사에 관한 법률 시행령」 제5조 —
     #   자산 500억 또는 매출 500억 이상 / 4개(자산 120억·부채 70억·매출 100억·종업원 100명) 중 2개 이상, 유한회사는 사원 50명을 더한 5개 중 3개 이상.
     listed = bool(args.get("listed", False))
