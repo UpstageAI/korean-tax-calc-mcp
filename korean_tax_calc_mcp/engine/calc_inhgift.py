@@ -54,7 +54,7 @@ def _장례비용(funeral_cost, enshrinement_cost):
 
 
 def _인적공제(year, children, minors, seniors, disabled, spouse, sole_spouse_heir, filed):
-    """기초공제 + 그밖의인적공제 + 일괄공제 선택."""
+    """기초공제 + 그밖의인적공제 + 일괄공제 선택. filed = 제21조제1항 단서의 '신고'가 있는지(기한내 신고, 2020.1.1. 이후 기한후신고 포함)."""
     voc = vocab.rule("상속세_인적공제", year)
     기초 = voc["기초공제"]  # 2억
     자녀 = voc["자녀공제"]  # 5천만
@@ -229,8 +229,12 @@ def inheritance_tax(
     gift_tax_credit: int = 0,
     other_credits: int = 0,
     filed: bool = True,
+    late_filed_on: str | None = None,
 ):
-    """상속세 과세가액·공제·과세표준·산출세액·납부할세액 계산."""
+    """상속세 과세가액·공제·과세표준·산출세액·납부할세액 계산.
+    filed = 법정신고기한(제67조) 안 신고. late_filed_on = 기한후신고일(국세기본법 제45조의3, filed=False일 때만).
+    제21조제1항 단서(신고가 없으면 일괄공제 5억원)의 '신고'는 2019.12.31. 개정으로 기한후신고를 포함 — 법률 제16846호 부칙 제5조:
+    2020.1.1. 이후 기한후신고하는 분부터(상속개시일이 아니라 기한후신고일 기준). 신고세액공제(제69조)는 기한내 신고만."""
     if spouse is None and sole_spouse_heir:
         return {"error": "입력 확인 필요 — 계산하지 않음",
                 "문제": ["배우자 단독상속인데 spouse 입력 없음"]}
@@ -240,6 +244,21 @@ def inheritance_tax(
             _parse_legal_share(spouse["legal_share"])
         except ValueError as e:
             return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [str(e)]}
+
+    late_d = None
+    if late_filed_on:
+        try:
+            late_d = date.fromisoformat(late_filed_on)
+        except ValueError:
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"late_filed_on={late_filed_on!r} — 기한후신고일 YYYY-MM-DD"]}
+        if filed:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": ["late_filed_on(기한후신고일)은 법정신고기한 안에 신고하지 않은 경우(filed=false)에만 — 기한 안 신고면 비움"]}
+        if late_d.year < year:
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"late_filed_on={late_filed_on} — 상속개시연도 {year}보다 앞일 수 없음"]}
+    # 제21조제1항 단서의 '신고' — 기한내 신고, 또는 2020.1.1. 이후 기한후신고(법률 제16846호 부칙 제5조)
+    기한후_선택 = (not filed) and late_d is not None and late_d >= date(2020, 1, 1)
+    신고있음 = filed or 기한후_선택
 
     if prior_gift_deductions > prior_gifts_heirs + prior_gifts_others:
         return {"error": "입력 확인 필요 — 계산하지 않음",
@@ -270,7 +289,7 @@ def inheritance_tax(
     과세가액 = max(0, 상속재산가액 - nontaxable - excluded - 차감) + prior_gifts_heirs + prior_gifts_others
 
     # 6. 인적공제
-    인적적용액, 일괄적용 = _인적공제(year, children, minors, seniors, disabled, spouse, sole_spouse_heir, filed)
+    인적적용액, 일괄적용 = _인적공제(year, children, minors, seniors, disabled, spouse, sole_spouse_heir, 신고있음)
 
     # 7. 배우자공제
     배우자공제, 배우자한도 = _배우자공제(year, estate_value, deemed_estate, nontaxable,
@@ -345,6 +364,16 @@ def inheritance_tax(
         "입력값_사용": [],
         "확인필요": [],
     }
+    if not filed and not sole_spouse_heir:
+        if 기한후_선택:
+            판단["일괄공제_선택"] = {"결론": f"기한후신고({late_filed_on}) — 기초공제와 그 밖의 인적공제 합계와 일괄공제(5억원) 중 큰 금액. 신고세액공제는 없음",
+                               "근거": "상속세 및 증여세법 제21조제1항(2019.12.31. 개정), 법률 제16846호 부칙 제5조(2020.1.1. 이후 국세기본법 제45조의3에 따라 신고하는 분부터)"}
+        elif late_d is not None:
+            판단["일괄공제_선택"] = {"결론": f"기한후신고일 {late_filed_on}이 2020.1.1. 전 — 종전 제21조제1항 단서(제67조 신고가 없으면 5억원)로 일괄공제 5억원",
+                               "근거": "구 상속세 및 증여세법 제21조제1항 단서, 법률 제16846호 부칙 제5조"}
+        else:
+            판단["일괄공제_선택"] = {"결론": "무신고로 보고 일괄공제 5억원 — 2020.1.1. 이후 기한후신고를 했으면 late_filed_on에 기한후신고일을 넣는다(인적공제 합계와 5억원 중 큰 금액)",
+                               "근거": "상속세 및 증여세법 제21조제1항 단서, 법률 제16846호 부칙 제5조"}
     if 일괄적용:
         판단["일괄공제_적용"] = True
     if business_farm_deduction:
@@ -377,6 +406,8 @@ def inheritance_tax(
         "추정상속_내역": 추정_내역,
         "신고세액공제율": 신고율,
     }
+    if late_d is not None:
+        계산["기한후신고일"] = late_filed_on
 
     결과 = {
         "상속재산가액": 상속재산가액,
@@ -421,6 +452,10 @@ def gift_tax(
     filed: bool = True,
     prior_deduction_same_donor: int | None = None,
     prior_tax_base_same_donor: int | None = None,
+    kin_type: str | None = None,
+    kin_degree: int | None = None,
+    prior_gifts_before_2016: int | None = None,
+    prior_surcharge_before_2016: int = 0,
 ):
     """증여세 과세가액·증여재산공제·과세표준·산출세액·납부할세액 계산.
     공제 입력 계약(상증법 제47조②·제53조): prior_deduction_used = 10년 안에 '이번에 합산하지 않는' 증여(다른 증여자, 예: 조부모)에서 받은 증여재산공제.
@@ -428,7 +463,12 @@ def gift_tax(
     (합산하지 않을 때만 사용분으로 뺌). 합산하면서 prior_deduction_used만 들어오면 어느 쪽인지 몰라 계산하지 않는다.
     납부세액공제(제58조): prior_gift_tax_paid = 합산한 사전증여에 대해 납부했거나 납부할 증여세액(그때 증여세산출세액),
     한도(②) = 이번 산출세액 × 가산한 증여재산의 과세표준(prior_tax_base_same_donor, 생략하면 prior_gifts_same_donor − prior_deduction_same_donor)
-    ÷ 합친 금액의 과세표준."""
+    ÷ 합친 금액의 과세표준.
+    기타친족(제53조제4호): 2025.3.14. 이후 증여는 4촌 이내 혈족·3촌 이내 인척, 그 전은 6촌 이내 혈족·4촌 이내 인척(법률 제20777호 부칙 제4조).
+    kin_type(혈족|인척)·kin_degree(촌수)를 주면 범위 밖이면 공제 0. 촌수 기준은 vocab 증여재산공제 블록(기타친족_혈족_촌수·기타친족_인척_촌수).
+    세대생략 40% 할증(미성년·20억원 초과)에서 합산한 사전증여 중 2016.1.1. 전 조부모 등 증여분(prior_gifts_before_2016)은
+    상증령 부칙(제26960호, 2016.2.5.) 제9조 계산식 — {산출세액 × (그 재산가액 ÷ 총 증여재산가액) × 30/100} − 종전에 납부한 할증과세액
+    (prior_surcharge_before_2016). 나머지 재산분은 산출세액 × 나머지 비율 × 40%."""
     gift_date_dt = date.fromisoformat(gift_date)
     연도 = gift_date_dt.year
     연도_int = 연도 * 10000 + gift_date_dt.month * 100 + gift_date_dt.day
@@ -447,6 +487,18 @@ def gift_tax(
     if assumed_debt > gift_value:
         return {"error": "입력 확인 필요 — 계산하지 않음",
                 "문제": ["인수채무가 증여재산가액보다 큼"]}
+    if kin_degree is not None or kin_type is not None:
+        if relation != "기타친족":
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["kin_type·kin_degree(촌수)는 relation='기타친족'일 때만"]}
+        if kin_type not in ("혈족", "인척") or isinstance(kin_degree, bool) or not isinstance(kin_degree, int) or kin_degree < 1:
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["kin_type(혈족|인척)과 kin_degree(촌수, 1 이상 정수)를 함께 — 예: 형제자매 혈족 2촌, 사촌 혈족 4촌, 배우자의 형제자매 인척 2촌"]}
+    if prior_gifts_before_2016:
+        if prior_gifts_before_2016 < 0 or prior_gifts_before_2016 > prior_gifts_same_donor:
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"prior_gifts_before_2016 {prior_gifts_before_2016:,}원 — 합산하는 사전증여(prior_gifts_same_donor {prior_gifts_same_donor:,}원) 가운데 2016.1.1. 전 증여분(0 이상, 그 이하)"]}
+        if gift_date >= "2026-01-01":
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"prior_gifts_before_2016 — 증여일 {gift_date}부터 10년 안(제47조제2항)에 2016.1.1. 전 증여는 없음"]}
+    if prior_surcharge_before_2016 and not prior_gifts_before_2016:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["prior_surcharge_before_2016(종전에 납부한 할증과세액)은 prior_gifts_before_2016과 함께"]}
 
     # 1. 합산 여부
     합산여부 = prior_gifts_same_donor > 0 and (gift_value + prior_gifts_same_donor) >= 10 * M
@@ -474,6 +526,20 @@ def gift_tax(
         한도 = voc.get("직계존속_미성년", 0)
     else:
         한도 = voc.get(relation, 0)
+    촌수_판단 = None
+    if relation == "기타친족":
+        상한 = {"혈족": voc["기타친족_혈족_촌수"], "인척": voc["기타친족_인척_촌수"]}
+        기준 = "법률 제20777호 부칙 제4조 — 2025.3.14. 이후 증여분" if 연도_int >= 20250314 else "2025.3.14. 전 증여분(법률 제20777호 부칙 제4조로 종전)"
+        if kin_degree is not None:
+            if kin_degree > 상한[kin_type]:
+                한도 = 0
+                촌수_판단 = {"결론": f"{kin_type} {kin_degree}촌 — 기타친족 범위({상한['혈족']}촌 이내 혈족·{상한['인척']}촌 이내 인척) 밖이라 증여재산공제 없음",
+                          "근거": f"상속세 및 증여세법 제53조제4호, {기준}"}
+            else:
+                촌수_판단 = {"결론": f"{kin_type} {kin_degree}촌 — 기타친족 범위({상한['혈족']}촌 이내 혈족·{상한['인척']}촌 이내 인척) 안", "근거": f"상속세 및 증여세법 제53조제4호, {기준}"}
+        elif 연도_int >= 20250314:
+            촌수_판단 = {"결론": f"촌수 미입력 — 기타친족(1천만원 공제)으로 계산. 2025.3.14. 이후 증여는 {상한['혈족']}촌 이내 혈족·{상한['인척']}촌 이내 인척만 — "
+                              "5·6촌 혈족이나 4촌 인척이면 공제 없음(kin_type·kin_degree로 확인)", "근거": f"상속세 및 증여세법 제53조제4호, {기준}", "확인필요": True}
     # 합산하는 같은 증여자분의 기공제액은 합산 과세가액에서 공제를 다시 계산하므로 빼지 않음(이중 차감 방지), 합산 안 하면 사용분
     기사용 = prior_deduction_used + (0 if 합산여부 else 같은증여자_기공제)
     증여공제 = min(max(0, 한도 - 기사용), 과세가액)
@@ -510,6 +576,24 @@ def gift_tax(
         else:
             할증율 = 0.3
     할증세액 = _floor(산출세액, 할증율) if 할증율 > 0 else 0
+    할증_판단 = None
+    할증_계산 = None
+    if 할증율 == 0.4 and 합산여부 and prior_gifts_before_2016:
+        # 상증령 부칙(제26960호, 2016.2.5.) 제9조: 2016.1.1. 전 부모 제외 직계존속 증여재산분의 할증과세액
+        #   = {증여세 산출세액 × (그 재산가액 ÷ 총 증여재산가액) × 30/100} − 종전에 납부한 할증과세액. 나머지 재산분은 제57조·영 제46조의3(40%)
+        총 = gift_value + prior_gifts_same_donor
+        구분 = _floor(산출세액, prior_gifts_before_2016, 0.3, div=총) - prior_surcharge_before_2016
+        신분 = _floor(산출세액, 총 - prior_gifts_before_2016, 0.4, div=총)
+        할증세액 = 신분 + max(0, 구분)
+        할증_계산 = {"총_증여재산가액": 총, "2016년_전_증여분": prior_gifts_before_2016, "2016년_전분_할증": max(0, 구분),
+                  "종전_납부_할증세액": prior_surcharge_before_2016, "나머지분_할증_40%": 신분}
+        할증_판단 = {"결론": f"2016.1.1. 전 증여분 {prior_gifts_before_2016:,}원: 산출세액 {산출세액:,} × {prior_gifts_before_2016:,}/{총:,} × 30% − 종전 납부 할증세액 {prior_surcharge_before_2016:,}"
+                         f" = {구분:,}원" + (" (음수라 0으로 봄 — 부칙에 규정 없음, 확인 필요)" if 구분 < 0 else "")
+                         + f" / 나머지 {총 - prior_gifts_before_2016:,}원: 산출세액 × {총 - prior_gifts_before_2016:,}/{총:,} × 40% = {신분:,}원",
+                   "근거": "상속세 및 증여세법 시행령 부칙(대통령령 제26960호, 2016.2.5.) 제9조, 상속세 및 증여세법 제57조제1항"}
+    elif 할증율 == 0.4 and 합산여부 and prior_gifts_before_2016 is None and gift_date < "2026-01-01":
+        할증_판단 = {"결론": "합산한 사전증여 중 2016.1.1. 전에 받은 조부모 등(부모 제외 직계존속) 증여분이 있으면 prior_gifts_before_2016(그 재산가액)·prior_surcharge_before_2016(그때 낸 할증세액)을 넣는다 — "
+                         "그 재산분은 30% 기준 계산식(상증령 부칙 제9조)으로 할증. 넣지 않아 합산 전체에 40% 적용", "근거": "상속세 및 증여세법 시행령 부칙(대통령령 제26960호, 2016.2.5.) 제9조", "확인필요": True}
 
     # 8의2. 납부세액공제(제58조) — 한도: 산출세액(제56조) × 가산한 증여재산 과세표준 ÷ 합친 금액의 과세표준(②)
     납부세액공제 = 0
@@ -583,6 +667,8 @@ def gift_tax(
         "할증율": 할증율,
         "신고세액공제율": 신고율,
     }
+    if 할증_계산:
+        계산["세대생략할증_2016년전_분할"] = 할증_계산
     if prior_gift_tax_paid > 0:
         계산.update({"납부세액공제_입력": prior_gift_tax_paid, "가산분_과세표준": 가산분_과세표준, "납부세액공제_한도": 납부세액공제_한도})
 
@@ -598,6 +684,10 @@ def gift_tax(
         "과세최저한": 과세최저한,
         "기타친족_범위": 기타친족_범위,
     }
+    if 촌수_판단:
+        판단["기타친족_촌수"] = 촌수_판단
+    if 할증_판단:
+        판단["세대생략할증_2016년전_증여"] = 할증_판단
     if prior_gift_tax_paid > 0:
         출처 = ("prior_tax_base_same_donor" if prior_tax_base_same_donor is not None else
                f"prior_gifts_same_donor {prior_gifts_same_donor:,} − prior_deduction_same_donor {같은증여자_기공제:,}"

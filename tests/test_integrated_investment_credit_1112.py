@@ -95,7 +95,7 @@ def test_temp_notice_for_2024():
 
 
 def test_input_errors():
-    assert "error" in f(year=2020, size="중소기업", investments=G(100))
+    assert "error" in f(year=2019, size="중소기업", investments=G(100))         # 2020 과세연도는 2021.1.1. 이후 신고분이라 계산(법률 제17759호 부칙 제4조제1항)
     assert "error" in f(year=2024, size="소기업", investments=G(100))
     assert "error" in f(year=2024, size="중소기업", investments=[])
     assert "error" in f(year=2024, size="중소기업", investments=[{"kind": "기계", "amount": 1}])

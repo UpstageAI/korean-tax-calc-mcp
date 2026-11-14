@@ -1318,19 +1318,25 @@ def loss_limit_ratio(year, sme):
     return 0.8
 
 
-def late_payment_penalty(tax, due, until):
+def late_payment_penalty(tax, due, until, notice=False, pre2020=None):
     """납부지연가산세 일수분(국세기본법 제47조의4①1호, 영 제27조의4): 1일 1만분의 3 → 2019.2.12.부터 10만분의 25
     → 2022.2.15.부터 10만분의 22. 시행일 전 기간분은 종전 이율(영 부칙<제29534호,2019.2.12.> 제9조, 부칙<제32424호,2022.2.15.> 제6조)
-    — 기간을 나눠 각각의 율 적용(calc_vat.late_payment_rate_segments). due=법정납부기한, until=납부일·고지일."""
+    — 기간을 나눠 각각의 율 적용(calc_vat.late_payment_rate_segments). due=법정납부기한, until=납부일·고지일.
+    일수 끝점(납세의무 성립일 기준 — pre2020=2020.1.1. 전 성립, None이면 due가 2020.1.1. 전인지로 봄):
+      2020.1.1. 전 성립분: 구 제47조의4①1호 "납부기한의 다음 날부터 자진납부일 또는 납세고지일까지" — 끝날 포함(법률 제16097호 부칙 제11조).
+      2020.1.1. 이후 성립분: 제47조의4①1호(법률 제16097호) "법정납부기한의 다음 날부터 납부일까지의 기간(납세고지일부터 납세고지서에 따른
+        납부기한까지의 기간은 제외)" — 납부고지(notice=True)면 고지일 제외, 자진납부면 납부일 포함.
+      until이 2026.7.1. 이후(법률 제21212호): "납부고지일(납부고지일 전에 납부한 경우에는 그 납부일)의 전날까지" — 끝날 제외."""
     from datetime import date as _d, timedelta
     from .calc_vat import late_payment_rate_segments
     d0, b = _d.fromisoformat(due), _d.fromisoformat(until)
     if b < d0:
         raise ValueError(f"until={until}이 법정납부기한 due={due}보다 앞섬 — 납부일·고지일은 납부기한 이후 날짜")
+    if pre2020 is None:
+        pre2020 = d0 < _d(2020, 1, 1)
     a = d0 + timedelta(days=1)
     days = max(0, (b - a).days + 1)
-    # 2026.7.1. 시행(법률 제21212호): "법정납부기한의 다음 날부터 납부고지일(고지 전 납부는 납부일)의 전날까지" → until이 2026.7.1. 이후면 하루 줄어듦
-    if b >= _d(2026, 7, 1):
+    if not pre2020 and (b >= _d(2026, 7, 1) or notice):
         days = max(0, days - 1)
     seg = late_payment_rate_segments(a.isoformat(), days) if days else []
     n = {r: k for k, r in seg}
