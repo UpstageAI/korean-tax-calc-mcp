@@ -10134,13 +10134,18 @@ def foreign_subsidiary_dividend(
     hybrid: Annotated[bool, Field(description="혼성금융상품 해당 여부(기본 False)")] = False,
     cfc_low_tax: Annotated[bool, Field(description="특정외국법인 저세율(국조법 제27조, 실제부담세액 15% 이하) 여부(기본 False)")] = False,
     resource_development: Annotated[bool, Field(description="해외자원개발사업 법인 여부(기본 False)")] = False,
+    cfc_no_retained_earnings: Annotated[bool, Field(description="cfc_low_tax인 특정외국법인이 각 사업연도 말 배당 가능한 유보소득이 없어 배당간주금액이 없는지(조세특례제한법 제23조의2제2항, 2026년 수령분만 의미, 기본 False)")] = False,
+    borrowing_interest: Annotated[int | None, Field(description="그 사업연도에 지급한 차입금 이자(원, 선택 — 2026년 수령분 100% 특례의 차감 계산용, 조세특례제한법 제23조의2제3항)")] = None,
+    subsidiary_book_value_daily_sum: Annotated[int | None, Field(description="외국자회사 주식 등 장부가액의 일별 잔액 합계액(원, borrowing_interest를 넣으면 필수, 시행령 제20조제2항 B)")] = None,
+    total_assets_daily_sum: Annotated[int | None, Field(description="재무상태표상 자산총액의 일별 잔액 합계액(원, borrowing_interest를 넣으면 필수, 시행령 제20조제2항 C)")] = None,
 ) -> dict:
-    """외국자회사 수입배당금: 익금불산입(법인세법 제18조의4, 2023.1.1. 시행, 지분 10%·해외자원개발 5% 이상 외국자회사 배당의 95% 익금불산입) vs 외국납부세액공제(제57조) 판정·계산.
+    """외국자회사 수입배당금: 익금불산입(법인세법 제18조의4, 2023.1.1. 시행, 지분 10%·해외자원개발 5% 이상 외국자회사 배당의 95% 익금불산입 — 2026.1.1.~2026.12.31. 수령분은 조세특례제한법 제23조의2로 100%) vs 외국납부세액공제(제57조) 판정·계산.
     언제: 외국자회사에서 배당을 받은 내국법인의 익금불산입 적용 여부와 익금불산입 금액·외국납부세액공제를 함께 구할 때.
     입력: 배당 받은 날 → received_on, 지분율 → ownership_ratio, 보유 개월 → held_months,
       배당 총액(원천징수 전) → dividend, 외국 원천징수세액 → foreign_withholding(선택, 기본 0),
       자회사 법인세액·소득금액 → subsidiary_tax·subsidiary_income(간접외국납부세액 계산용, 선택),
-      혼성금융상품·특정외국법인 저세율·해외자원개발 여부 → hybrid·cfc_low_tax·resource_development.
+      혼성금융상품·특정외국법인 저세율·해외자원개발 여부 → hybrid·cfc_low_tax·resource_development,
+      배당간주금액 없는 특정외국법인(2026 특례) → cfc_no_retained_earnings, 차입금 이자·외국자회사 주식 장부가액 일별 합계·자산총액 일별 합계 → borrowing_interest·subsidiary_book_value_daily_sum·total_assets_daily_sum(2026 특례 차감, 선택).
     결과: 제도(익금불산입/외국납부세액공제), 수입배당금액, 익금불산입액, 익금산입액, 직접·간접외국납부세액,
       공제대상 외국법인세액, Gross-up 익금산입, 외국세 손금불산입, 판단·근거·서식.
     지분율 요건은 배당 받은 날 기준(2023.1.1. 이후 10%, 그 전 25%; 해외자원개발 5%). 간접외국납부세액 = 자회사 법인세액 × 수입배당금액 ÷ (자회사 소득금액 − 법인세액), 원 미만 절사. 익금불산입 대상은 제57조제1~6항 적용 안 함(제57조제7항)."""
@@ -10159,16 +10164,21 @@ def foreign_subsidiary_dividend(
         "hybrid": hybrid,
         "cfc_low_tax": cfc_low_tax,
         "resource_development": resource_development,
+        "cfc_no_retained_earnings": cfc_no_retained_earnings,
+        "borrowing_interest": borrowing_interest,
+        "subsidiary_book_value_daily_sum": subsidiary_book_value_daily_sum,
+        "total_assets_daily_sum": total_assets_daily_sum,
     })
     if "error" in r:
         return r
     res = r["결과"]
     세무조정 = [a for a in (
-        _adj("외국자회사 수입배당금", "익금불산입", res.get("익금불산입액") or 0, "기타", "법인세법 제18조의4①"),
+        _adj("외국자회사 수입배당금", "익금불산입", res.get("익금불산입액") or 0, "기타",
+             "조세특례제한법 제23조의2·법인세법 제18조의4①" if "제23조의2" in r["근거"] else "법인세법 제18조의4①"),
         _adj("외국자회사 배당 관련 외국법인세액", "손금불산입", res.get("외국세_손금불산입") or 0, "기타사외유출", "법인세법 제21조1호"),
         _adj("간접외국납부세액 익금산입(Gross-up)", "익금산입", res.get("Gross_up_익금산입") or 0, "기타사외유출", "법인세법 제15조②2호·제57조④")) if a["금액"]]
     return _ok(res, r["근거"], 판단=r.get("판단", []), 세무조정=세무조정, 서식=r.get("서식", ""),
-               주의=["세무조정의 외국법인세액 손금불산입은 그 세액을 결산에서 비용으로 계상한 경우의 조정 — 비용으로 계상하지 않았으면 넣지 않음"])
+               주의=["세무조정의 외국법인세액 손금불산입은 그 세액을 결산에서 비용으로 계상한 경우의 조정 — 비용으로 계상하지 않았으면 넣지 않음"] + list(r.get("주의") or []))
 
 
 @mcp.tool(annotations=CALC)

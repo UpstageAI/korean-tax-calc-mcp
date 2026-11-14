@@ -7,12 +7,12 @@ def _fn(t):
 
 
 def test_dividend_without_subsidiary_figures():
-    # 자회사 세액·소득 없이 배당만: 익금불산입 95%(제18조의4), 외국 원천세는 손금불산입
+    # 자회사 세액·소득 없이 배당만: 2026 수령분 익금불산입 100%(조특법 제23조의2, 2026-11-14 고침), 외국 원천세는 손금불산입
     r = _fn(S.foreign_subsidiary_dividend)(received_on="2026-06-30", ownership_ratio=1.0, held_months=28,
                                            dividend=200_000_000, foreign_withholding=10_000_000)
     assert "error" not in r, r
-    assert r["결과"]["제도"] == "익금불산입" and r["결과"]["익금불산입액"] == 190_000_000
-    assert r["결과"]["익금산입액"] == 10_000_000 and r["결과"]["외국세_손금불산입"] == 10_000_000
+    assert r["결과"]["제도"] == "익금불산입" and r["결과"]["익금불산입액"] == 200_000_000
+    assert r["결과"]["익금산입액"] == 0 and r["결과"]["외국세_손금불산입"] == 10_000_000
 
 
 def test_dividend_credit_path_without_subsidiary_figures_notes_zero_indirect():

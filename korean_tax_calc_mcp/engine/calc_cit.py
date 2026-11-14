@@ -3437,7 +3437,9 @@ def foreign_subsidiary_dividend(args: dict):
     입력(dict): received_on(YYYY-MM-DD 필수), ownership_ratio(0<r≤1 필수), held_months(int≥0 필수),
       dividend(원 int>0 필수), foreign_withholding(원 int≥0, 기본 0), subsidiary_tax(원, 선택),
       subsidiary_income(원, 선택), hybrid(bool 기본 False), cfc_low_tax(bool 기본 False),
-      resource_development(bool 기본 False).
+      resource_development(bool 기본 False), cfc_no_retained_earnings(bool 기본 False — 배당간주금액이 없는 특정외국법인, 조특법 제23조의2제2항),
+      borrowing_interest·subsidiary_book_value_daily_sum·total_assets_daily_sum(원, 선택 — 조특법 제23조의2제3항 차입금 이자 차감).
+    2026.1.1.~2026.12.31. 수령분은 조세특례제한법 제23조의2(법률 제21549호)로 익금불산입률 100%(차입금 이자 차감 후).
     반환: {"결과": {제도, 수입배당금액, 익금불산입액, 익금산입액, 직접외국납부세액, 간접외국납부세액,
                      공제대상_외국법인세액, Gross_up_익금산입, 외국세_손금불산입},
            "판단": [...], "근거": "...", "서식": "..."} 또는 {"error": ...}.
@@ -3453,8 +3455,24 @@ def foreign_subsidiary_dividend(args: dict):
     hybrid = bool(args.get("hybrid", False))
     cfc_low_tax = bool(args.get("cfc_low_tax", False))
     resource_dev = bool(args.get("resource_development", False))
+    cfc_no_retained = args.get("cfc_no_retained_earnings", False)
+    borrowing_interest = args.get("borrowing_interest", None)
+    sub_book_days = args.get("subsidiary_book_value_daily_sum", None)
+    assets_days = args.get("total_assets_daily_sum", None)
 
     # ── 입력 검증 ──────────────────────────────────────────────────────
+    if not isinstance(cfc_no_retained, bool):
+        return {"error": "입력 오류: cfc_no_retained_earnings는 bool"}
+    for _k, _v in (("borrowing_interest", borrowing_interest), ("subsidiary_book_value_daily_sum", sub_book_days),
+                   ("total_assets_daily_sum", assets_days)):
+        if _v is not None and (not isinstance(_v, int) or isinstance(_v, bool) or _v < 0):
+            return {"error": f"입력 오류: {_k}은 원 int≥0"}
+    if borrowing_interest and (sub_book_days is None or not assets_days):
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": ["borrowing_interest(차입금 이자)를 넣으면 subsidiary_book_value_daily_sum(외국자회사 주식 장부가액 일별 잔액 합계)과 "
+                         "total_assets_daily_sum(자산총액 일별 잔액 합계, 0 초과)도 필요 — 조세특례제한법 시행령 제20조제2항 차감금액 = 이자 × 장부가액 합계 ÷ 자산총액 합계"]}
+    if sub_book_days is not None and assets_days and sub_book_days > assets_days:
+        return {"error": "입력 오류: subsidiary_book_value_daily_sum이 total_assets_daily_sum보다 큼"}
     if not isinstance(received_on, str) or received_on == "":
         return {"error": "입력 오류: received_on(YYYY-MM-DD) 필요"}
     try:
@@ -3495,8 +3513,17 @@ def foreign_subsidiary_dividend(args: dict):
     지분충족 = ownership >= 기준지분
     보유충족 = held_months >= 6
 
+    # ── 조세특례제한법 제23조의2(법률 제21549호, 2026.4.21. 신설) — 2026.1.1.~2026.12.31. 받은 수입배당금액 100% 익금불산입 ──
+    # 부칙 제2조: 2026.1.1. 이후 외국자회사로부터 수입배당금액을 받는 경우부터 적용. 기간은 조문 자체가 2026.12.31.까지로 정함.
+    특례기간 = 20260101 <= ymd <= 20261231
+    # 제2항: 배당 가능한 유보소득이 없어 배당간주금액이 없는 특정외국법인(국조법 제27조제1항)에서 받은 배당은
+    # 법인세법 제18조의4제4항제1호에도 불구하고 100% 익금불산입
+    cfc_특례 = 특례기간 and cfc_low_tax and cfc_no_retained
+    if not 특례기간 and cfc_no_retained:
+        cfc_no_retained = False   # 특례기간 밖이면 의미 없음 — 판단에만 남김
+
     # ── 익금불산입 요건 판정 ─────────────────────────────────────────────
-    요건충족 = (ymd >= 20230101) and 지분충족 and 보유충족 and (not hybrid) and (not cfc_low_tax)
+    요건충족 = (ymd >= 20230101) and 지분충족 and 보유충족 and (not hybrid) and ((not cfc_low_tax) or cfc_특례)
 
     판단 = []
     if ymd < 20230101:
@@ -3509,10 +3536,41 @@ def foreign_subsidiary_dividend(args: dict):
         판단.append({"항목": "지분율", "결론": f"지분율 {ownership:.0%} < {기준지분:.0%}{'(자원개발 5%)' if resource_dev else ''} → 익금불산입 대상 아님", "근거": "법인세법 제18조의4제1항"})
     if hybrid:
         판단.append({"항목": "혼성금융상품", "결론": "혼성금융상품 해당 → 익금불산입 제외(제18조의4제4항제2호)", "근거": "법인세법 제18조의4제4항제2호"})
-    if cfc_low_tax:
+    if cfc_low_tax and not cfc_특례:
         판단.append({"항목": "특정외국법인", "결론": "특정외국법인 저세율(국조법 제27조) → 익금불산입 제외(제18조의4제4항제1호)", "근거": "법인세법 제18조의4제4항제1호"})
 
-    if 요건충족:
+    주의 = []
+    if cfc_특례:
+        판단.append({"항목": "특정외국법인 배당 특례", "결론": "배당 가능한 유보소득이 없어 배당간주금액이 없는 특정외국법인에서 2026년에 받은 배당 → "
+                     "법인세법 제18조의4제4항제1호에도 불구하고 100% 익금불산입(조세특례제한법 제23조의2제2항)", "근거": "조세특례제한법 제23조의2제2항"})
+    if 요건충족 and 특례기간:
+        제도 = "익금불산입"
+        # 조세특례제한법 제23조의2제1항·제2항: 수입배당금액의 100분의 100. 제3항: 차입금 이자가 있으면 시행령 제20조제2항 차감금액을 뺌(0 미만이면 0)
+        차감금액 = 0
+        if borrowing_interest:
+            차감금액 = borrowing_interest * sub_book_days // assets_days     # 원 미만 절사(조문에 끝수 규정 없음)
+        익금불산입액 = max(dividend - 차감금액, 0)
+        익금산입액 = dividend - 익금불산입액
+        판단.append({"항목": "적용 시기(조특법 특례)", "결론": f"수령일 {received_on} → 2026.1.1.~2026.12.31. 수령분, 익금불산입률 100%(법인세법 제18조의4제1항의 95% 대신)",
+                     "근거": "조세특례제한법 제23조의2제1항, 법률 제21549호(2026.4.21.) 부칙 제2조"})
+        if borrowing_interest:
+            판단.append({"항목": "차입금 이자 차감", "결론": f"{borrowing_interest:,} × {sub_book_days:,} ÷ {assets_days:,} = {차감금액:,}원 → 익금불산입액 {dividend:,} − {차감금액:,} = {익금불산입액:,}",
+                         "근거": "조세특례제한법 제23조의2제3항, 시행령 제20조제2항"})
+        else:
+            주의.append("2026년 수령분 100% 특례는 그 사업연도에 지급한 차입금 이자가 있으면 '이자 × 외국자회사 주식 장부가액 일별 잔액 합계 ÷ 자산총액 일별 잔액 합계'를 빼고 익금불산입함"
+                        "(조세특례제한법 제23조의2제3항, 시행령 제20조제2항) — 이자가 있으면 borrowing_interest·subsidiary_book_value_daily_sum·total_assets_daily_sum을 넣을 것. 지금은 이자 없음으로 계산")
+        주의.append("차감금액은 외국자회사별 금액의 합계를 그 사업연도 수입배당금액 합계에서 뺌(제23조의2제3항) — 외국자회사가 여럿이면 자회사별로 따로 넣은 결과를 합산해 확인")
+        직접외국납부세액 = 0
+        간접외국납부세액 = 0
+        공제대상_외국법인세액 = 0
+        grossup = 0
+        외국세_손금불산입 = foreign_withholding
+        판단.append({"항목": "제도 적용", "결론": "조세특례제한법 제23조의2에 따라 법인세법 제18조의4제1항을 적용(익금불산입률 100%) — 제57조제7항에 따라 외국납부세액공제 불가",
+                     "근거": "조세특례제한법 제23조의2·법인세법 제18조의4제1항·제57조제7항"})
+        근거 = ("조세특례제한법 제23조의2(외국자회사 수입배당금의 익금불산입 특례, 2026.1.1.~12.31. 수령분 100%)·시행령 제20조, 법률 제21549호 부칙 제2조, "
+                "법인세법 제18조의4(수입배당금 익금불산입)·제57조제7항(익금불산입 배당은 외국납부세액공제 배제)·제21조제1호(외국납부 세액은 손금불산입)")
+        서식 = "외국자회사 수입배당금액 명세서(제18조의4제5항)"
+    elif 요건충족:
         제도 = "익금불산입"
         익금불산입액 = int(dividend * 95 // 100)          # trunc(dividend × 95/100), 원 미만 절사
         익금산입액 = dividend - 익금불산입액
@@ -3572,6 +3630,7 @@ def foreign_subsidiary_dividend(args: dict):
         "판단": 판단,
         "근거": 근거,
         "서식": 서식,
+        "주의": 주의,
     }
 
 
