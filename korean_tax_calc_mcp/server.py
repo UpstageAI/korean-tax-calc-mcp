@@ -199,6 +199,7 @@ mcp = MCPServer(
     "korean-tax-calc-mcp", title="Korea Tax Calculator (한국 세금 계산)", version=_SERVER_VERSION,
     instructions="도구가 많으므로 맞는 도구 이름을 모르면 먼저 find_tool(query=평소 말)로 찾고, '도구가 없다'고 판단하기 전에도 find_tool을 부를 것. "
                  "답에 들어가는 금액과 판단마다 직접 계산하기 전에 맞는 도구가 있는지 먼저 확인하고, 도구가 있는 항목은 직접 계산보다 먼저 도구를 부를 것. 질문의 자료를 도구 입력으로 옮겨 계산하고, 도구 없이 답을 끝내지 않는다. "
+                 "이 서버는 주어진 사실과 세율로 금액을 계산한다. 요건·소득 구분·적용 세율·조약 적용 같은 판단의 출발점은 짝 서버 korean-tax-mcp의 요건 안내 도구(이름이 _guide로 끝남 — 예: 외국에 지급하는 사용료는 royalty_withholding_guide)이고, 거기서 따질 요건과 확인할 사실을 받은 뒤 이 서버로 금액을 구한다. 메모·의견서(Word)는 korean-tax-mcp의 tax_memo_guide·build_tax_memo, 계산 근거 엑셀은 이 서버의 export_workbook(영문 표기는 lang=\"en\"). "
                  "귀속·공급시기·성립시기 판단은 korean-tax-mcp의 timing_rules를 먼저 본다. "
                  "세액공제·세액감면처럼 요건과 과세연도에 따라 적용 여부가 갈리는 제도는 계산하기 전에 korean-tax-mcp로 그 과세연도의 요건을 먼저 확인한다"
                  "(연구·인력개발비는 rnd_credit_requirements_guide, 고용증대·통합고용은 employment_credit_requirements_guide, 중소기업 조세지원은 sme_tax_incentives_guide, 그 밖은 law_article에 as_of=과세연도 말). 계산 도구는 요건을 갖춘 금액을 받아 계산만 하고 요건은 판정하지 않는다 — 사용자에게도 이 점을 알린다. "
