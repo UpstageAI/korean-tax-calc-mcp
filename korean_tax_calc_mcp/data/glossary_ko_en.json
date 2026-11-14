@@ -63,8 +63,8 @@
   },
   {
    "ko": "유보",
-   "en": "temporary difference (yubo)",
-   "note": "실무 영문 관행, 확인 필요"
+   "en": "internal reserves (yubo)",
+   "note": "법제처 영문법령 확인(2026-11-15): 법인세법 시행령 제106조제1항제2호 영문 'shall be deemed internal reserves'(2026.2.27. 시행본 번역)"
   },
   {
    "ko": "원천징수",
@@ -164,7 +164,7 @@
   {
    "ko": "국제거래명세서",
    "en": "statement of international transactions",
-   "note": "국조칙 별지 서식명, 확인 필요"
+   "note": "법제처 영문법령 확인(2026-11-15): 국제조세조정에 관한 법률 제16조제2항제1호 영문(2026.1.1. 시행본 번역), 시행규칙 제6조 영문(2018.3.19. 번역본)"
   },
   {
    "ko": "충당부채 세무조정",
@@ -309,7 +309,7 @@
   {
    "ko": "간주임대료",
    "en": "deemed rent",
-   "note": "부가가치세법 시행령 제65조 영문(부동산 임대용역 공급가액 계산)에 'deemed rent' 표현 없음 — 확인 필요"
+   "note": "공식 영문 없음 — 부가가치세법 시행령 제65조 영문과 소득세법 제25조 영문(2024.5.17. 번역본)에 이 용어를 쓴 표현이 없음(법제처 영문법령, 2026-11-15). 도구 설명의 영문 한 줄에만 씀"
   },
   {
    "ko": "매입세액 공제",
@@ -618,8 +618,8 @@
   },
   {
    "ko": "일시상각충당금·압축기장충당금",
-   "en": "temporary depreciation reserve and compression reserve",
-   "note": "소득세법 시행령 영문 'temporary depreciation reserve' 확인, 압축기장충당금 영문은 미확인 — 확인 필요"
+   "en": "lump sum depreciation reserve funds and compressed account reserve funds",
+   "note": "법제처 영문법령 확인(2026-11-15): 법인세법 시행령 제64조제3항 영문(2026.2.27. 시행본 번역)"
   },
   {
    "ko": "재고자산 평가",
@@ -649,7 +649,7 @@
   {
    "ko": "차가감소득금액",
    "en": "adjusted taxable income",
-   "note": "서식 '과세표준 및 세액조정계산서' 칸명, 확인 필요"
+   "note": "공식 영문 없음 — 법인세법 시행규칙 서식(과세표준 및 세액조정계산서)의 칸 이름이고, 법제처 영문법령에 법인세법 시행규칙 영문본이 없음(영문법령 검색, 2026-11-15)"
   },
   {
    "ko": "계산 결과 엑셀",
@@ -689,7 +689,7 @@
   {
    "ko": "공시가격",
    "en": "officially announced price",
-   "note": "개별공시지가 = individually announced land price, 확인 필요"
+   "note": "법제처 영문법령 확인(2026-11-15): 부동산 가격공시에 관한 법률 제10조 영문 'officially announced price of representative land'(표준지공시지가, 2020.12.10. 시행본 번역). 개별공시지가는 같은 조 'officially assessed individual land price'"
   },
   {
    "ko": "건물 기준시가",
@@ -708,8 +708,8 @@
   },
   {
    "ko": "원천징수이행상황신고서",
-   "en": "withholding tax status return",
-   "note": "확인 필요"
+   "en": "report on the status of withholding",
+   "note": "법제처 영문법령 확인(2026-11-15): 소득세법 시행령 제185조제2항 영문(2026.2.27. 시행본 번역)"
   },
   {
    "ko": "해외 파견 인건비",
@@ -754,7 +754,7 @@
   {
    "ko": "해외현지법인 명세서",
    "en": "overseas subsidiary statement",
-   "note": "국조법 제58조 영문 'data on overseas subsidiaries' 확인, 서식명 영문은 미확인 — 확인 필요"
+   "note": "공식 영문 없음 — 국제조세조정에 관한 법률 제58조 영문은 조 제목 'data on overseas subsidiaries', 제1항제1호 'statement of overseas direct investments'(해외직접투자의 명세)이고 서식명의 영문은 없음(국조칙 영문은 2018.3.19. 번역본, 법인세법 시행규칙 영문본 없음 — 법제처 영문법령, 2026-11-15)"
   },
   {
    "ko": "통고처분 벌금상당액",
@@ -1069,37 +1069,37 @@
   {
    "ko": "지점세",
    "en": "branch profits tax",
-   "note": "법인세법 제96조 영문 제목은 'Special provisions on taxation on domestic place of business of foreign corporation' — 'branch tax' 표현 없음, 확인 필요"
+   "note": "공식 영문 없음 — 법인세법 제96조 영문 제목은 'Special provisions on taxation on domestic place of business of foreign corporation'이고 'branch tax' 표현이 없음(2025.3.14. 시행본 번역, 2026-11-15)"
   },
   {
    "ko": "결정세액",
    "en": "determined tax amount",
-   "note": "영문법령에서 같은 표현을 찾지 못함 — 확인 필요"
+   "note": "공식 영문 없음 — 소득세법 제15조 영문은 'shall be determined as the tax amount'로 풀어 쓰고 용어로 두지 않음(2024.5.17. 번역본, 2026-11-15)"
   },
   {
    "ko": "자본금상당액",
    "en": "amount equivalent to capital",
-   "note": "법인세법 제96조 영문 대조 못함 — 확인 필요"
+   "note": "법제처 영문법령 확인(2026-11-15): 법인세법 시행령 제134조제1항 영문(2026.2.27. 시행본 번역)"
   },
   {
    "ko": "직접외국납부세액",
    "en": "direct foreign tax paid",
-   "note": "법인세법 제57조 영문은 'amount of foreign corporate tax'만 확인 — 확인 필요"
+   "note": "공식 영문 없음 — 법인세법 제57조 영문은 직접·간접·간주를 나눠 부르지 않고 'amount of foreign corporate tax'로만 씀(2025.3.14. 시행본 번역, 2026-11-15)"
   },
   {
    "ko": "간접외국납부세액",
    "en": "indirect foreign tax paid",
-   "note": "법인세법 제57조제4항 영문 대조 못함 — 확인 필요"
+   "note": "공식 영문 없음 — 법인세법 제57조제4항 영문은 'shall be deemed the amount of foreign corporate tax'로 쓰고 용어로 두지 않음(2025.3.14. 시행본 번역, 2026-11-15)"
   },
   {
    "ko": "간주외국납부세액",
    "en": "deemed foreign tax paid",
-   "note": "법인세법 제57조제3항 영문 대조 못함 — 확인 필요"
+   "note": "공식 영문 없음 — 법인세법 제57조제3항 영문은 'shall be deemed the amount of foreign corporate tax'로 쓰고 용어로 두지 않음(2025.3.14. 시행본 번역, 2026-11-15)"
   },
   {
    "ko": "단일세율",
    "en": "flat tax rate",
-   "note": "조특법 제18조의2 영문은 'multiplying the relevant earned income by 19/100' — 용어로 쓴 표현 없음, 확인 필요"
+   "note": "공식 영문 없음 — 조세특례제한법 제18조의2 영문은 'multiplying the relevant earned income by 19/100'이고 용어로 쓴 표현이 없음(법제처 영문법령 확인, 2026-11-14)"
   }
  ]
 }
