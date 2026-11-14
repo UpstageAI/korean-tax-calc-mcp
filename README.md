@@ -302,7 +302,7 @@ flowchart LR
 | `nonresident_withholding` | 비거주자 원천징수 |
 | `nonresident_capital_gains_withholding` | 비거주자·외국법인 국내 부동산·주식 양도소득 원천징수(10%·양도차익 20% 중 적은 금액, 상장주식 25% 미만·조약 면제 제외) |
 | `nonresident_inheritance_gift` | 비거주자 상속세(기초공제 2억원만, 신고기한 9개월)·비거주자 수증자 증여세(증여재산공제 없음, 연대납부) |
-| `withholding_return` | 원천징수이행상황신고서(별지 제21호서식 제1쪽) 집계 — 코드별 가감계·총합계·조정환급·납부세액(2025년 귀속분) |
+| `withholding_return` | 원천징수이행상황신고서(별지 제21호서식 제1쪽) 집계 — 코드별 가감계·총합계·조정환급·납부세액(2016~2026년 귀속, 신고일에 시행 중인 서식) |
 | `retirement_income_tax` | 퇴직소득세 |
 | `wage_income_tax` | 근로소득세 |
 | `foreign_worker_flat_tax` | 외국인근로자 단일세율(17%·19%) vs 누진세율 비교 — 적용기간·시작 기한·특수관계기업·사택 이익, 지방소득세 포함 (조특법 제18조의2) |

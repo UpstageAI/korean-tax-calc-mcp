@@ -113,7 +113,7 @@ def test_high_dividend_threshold_interpretation_shown():
     r = _hd(30 * M, more=[{"kind": "상장법인현금배당", "amount": 15 * M}, {"kind": "예금이자", "amount": 10 * M}])
     assert r["결과"]["Gross-up"] == 500_000 and r["결과"]["합산액"] == 25_500_000    # 특례 제외: (2,500만 − 2,000만) × 10%
     assert r["결과"]["기준금액_포함시"] == {"분리과세": False, "Gross-up": 1_500_000, "합산액": 26_500_000}   # 포함: 1,500만 전부 × 10%
-    assert any("해석 미확인" in n for n in r["주의"])
+    assert any("근거 없음" in n and "서면질의 필요" in n for n in r["주의"])   # 2026-11-15: 검색 기록을 남기고 닫음
 
 
 def test_high_dividend_not_before_2026():

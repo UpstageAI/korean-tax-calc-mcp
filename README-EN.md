@@ -296,7 +296,7 @@ Click a group to expand its tools.
 | `nonresident_withholding` | non-resident withholding |
 | `nonresident_capital_gains_withholding` | withholding on Korean real estate/securities gains of nonresidents and foreign corporations |
 | `nonresident_inheritance_gift` | inheritance tax for nonresident decedents, gift tax for nonresident donees |
-| `withholding_return` | monthly withholding tax return (Form 21, page 1) — subtotals by income code, grand total, refund offset and tax payable (2025 only) |
+| `withholding_return` | monthly withholding tax return (Form 21, page 1) — subtotals by income code, grand total, refund offset and tax payable (2016–2026 attribution years, using the form in force on the filing date) |
 | `retirement_income_tax` | retirement income |
 | `wage_income_tax` | wage income |
 | `foreign_worker_flat_tax` | foreign worker flat-rate tax (17%/19%) vs progressive tax (STTCL Art. 18-2) |

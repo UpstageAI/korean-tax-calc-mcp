@@ -1,6 +1,7 @@
 """소득세·원천세 계산(2016~2026 귀속 연도표, 기본 2025 귀속) — 국세청 연말정산·중소기업 취업자 감면 안내 예시로 검증. 작성 Mia(윤승미)
 플레이북: knowledge/14_소득세_원천세_연말정산_조사포인트.md. 2026 귀속 변경분은 표 추가 후 적용.
 """
+from fractions import Fraction
 import json
 import math
 import os
@@ -472,6 +473,44 @@ def retirement_tax_steps(income, years, retire_year=2025):
     conv_tax = _tier(base, RATES[_y(retire_year)])   # 기본세율은 퇴직한 해의 표(제55조②1호 "제1항의 세율")
     return {"근속연수공제": int(sd), "환산급여": int(conv), "환산급여공제": int(conv_ded), "과세표준": int(base),
             "환산산출세액": int(conv_tax), "산출세액": int(conv_tax / 12 * years)}
+
+
+# 2016~2019년 퇴직 특례 — 법률 제12852호(2014.12.23.) 부칙 제25조: "2016년 1월 1일부터 2019년 12월 31일까지의 기간 동안 퇴직한 경우에는 …
+# 제48조제1항·제2항 및 제55조제2항의 개정규정에도 불구하고 퇴직소득 산출세액을 다음 표 … 계산식에 따른 금액으로 한다"
+#   2016년 종전 80% + 개정 20% / 2017년 60% + 40% / 2018년 40% + 60% / 2019년 20% + 80%.
+# 종전 규정(2015.7.1. 시행본): 제48조제1항 퇴직소득금액의 40% + 근속연수공제(같은 표), 제2항 공제 합계가 퇴직소득금액을 넘으면 퇴직소득금액,
+#   제55조제2항 (과세표준 ÷ 근속연수 × 5)에 기본세율 → ÷ 5 × 근속연수.
+# 2012.12.31. 이전 근속분: 법률 제11611호(2013.1.1.) 부칙 제22조제2항 — 과세표준 × (2012.12.31.까지 근속연수 ÷ 전체 근속연수)는 종전(2012.8.2. 시행본
+#   제55조제2항: 과세표준 ÷ 근속연수에 기본세율 → × 근속연수). 별지 제24호서식(2) <개정 2016.3.16.> 작성방법 라~사: 과세표준안분(× 각 근속연수/정산근속연수),
+#   연평균과세표준(÷ 각 근속연수), 2013.1.1. 이후분만 5배 환산, 산출세액(× 각 근속연수), 퇴직연도별 비율.
+RETIREMENT_NEW_RULE_SHARE = {2016: Fraction(20, 100), 2017: Fraction(40, 100), 2018: Fraction(60, 100), 2019: Fraction(80, 100)}
+
+
+def retirement_tax_transition(income, years, retire_year, years_before_2013=0):
+    """2016~2019년 퇴직 산출세액 = 종전 규정 세액 × (1 − 비율) + 개정규정 세액 × 비율. 분수로 계산하고 표시·최종 세액만 원 미만 버림."""
+    share = RETIREMENT_NEW_RULE_SHARE[retire_year]
+    new = retirement_tax_steps(income, years, retire_year)
+    if income <= 0 or years <= 0:
+        return {"개정규정": new, "종전규정": {"정률공제": 0, "근속연수공제": 0, "과세표준": 0, "산출세액": 0}, "개정규정_비율": share, "산출세액": 0}
+    rates = RATES[_y(retire_year)]
+    flat = _x(income) * 40 / 100
+    svc = retirement_service_deduction(years, retire_year)
+    ded = min(flat + svc, _x(income))
+    base = _x(income) - ded
+    y_pre, y_post = years_before_2013, years - years_before_2013
+    avg = base / years                                     # 안분 과세표준 ÷ 각 근속연수 = 과세표준 ÷ 정산근속연수
+    tax_pre = _tier(avg, rates) * y_pre                    # 2012.12.31. 이전분: 연분연승
+    tax_post = _tier(avg * 5, rates) / 5 * y_post          # 2013.1.1. 이후분: 5배 환산
+    old_tax = tax_pre + tax_post
+    sd = min(svc, income)
+    conv = _x(income - sd) / years * 12
+    new_exact = _tier(max(0, conv - converted_pay_deduction(conv)), rates) / 12 * years
+    total = old_tax * (1 - share) + new_exact * share
+    return {"개정규정": new,
+            "종전규정": {"정률공제": int(min(flat, _x(income))), "근속연수공제": int(ded - min(flat, _x(income))), "과세표준": int(base),
+                       "과세표준_2012이전분": int(base * y_pre / years), "과세표준_2013이후분": int(base * y_post / years),
+                       "연평균과세표준": int(avg), "산출세액_2012이전분": int(tax_pre), "산출세액_2013이후분": int(tax_post), "산출세액": int(old_tax)},
+            "개정규정_비율": share, "산출세액": int(total)}
 
 
 def retirement_tax(income, years, retire_year=2025):
