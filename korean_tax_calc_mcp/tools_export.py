@@ -1010,6 +1010,7 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
         _tpl_seen: dict[str, int] = {}
         _cd_by_tool: dict[str, list[int]] = {}  # tool → call 인덱스 목록
         _skipped_tpl: set[str] = set()  # when 조건으로 skipped된 템플릿 키
+        _생략_사유: list[tuple[str, str]] = []  # 틀 목록_생략_조건에 걸린 (이름, 설명)
         for i, cd in enumerate(결과들):
             if cd["error"] or not cd["result"]:
                 continue
@@ -1039,6 +1040,15 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
                     when_py = when_py.replace("FALSE", "False").replace("TRUE", "True")
                     if not eval(when_py, {"__builtins__": {}}, {"입력_값": 입력_값, "결과_값": 결과_값}):
                         _skipped_tpl.add(tkey)
+                        # 목록_생략_조건 [{when, 이름, t}]: 만들지 않은 이유가 그 조건이면 목록에 한 줄(예: 2021년 전 사업연도 — 구 서식 미확인)
+                        for _sk in tpl.get("목록_생략_조건", []):
+                            _sk_py = _re.sub(r"\[([^]]+)\]", _when_repl, _sk["when"]).replace("FALSE", "False").replace("TRUE", "True")
+                            try:
+                                _hit = eval(_sk_py, {"__builtins__": {}}, {"입력_값": 입력_값, "결과_값": 결과_값})
+                            except (KeyError, TypeError):
+                                _hit = False
+                            if _hit and (_sk["이름"], _sk["t"]) not in _생략_사유:
+                                _생략_사유.append((_sk["이름"], _sk["t"]))
                         continue
                 # requires_args: 그 입력이 있는 call에서만 만든다(예: 공통사용재화 공급이 없으면 부가근거63 없음)
                 req = tpl.get("requires_args")
@@ -1092,7 +1102,9 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
                              "부가15": 8.5, "부가15한도없음": 8.5, "부가19": 8.6, "부가25": 8.7,
                              "증여10": 16, "원천23의1": 17, "원천23의1법인": 17, "원천23의1국내": 17.1,
                              "원천21": 16.5, "원천23의5": 18, "원천23의5법인": 18,
-                             "별지4": 1.5, "별지8갑": 1.6}
+                             "별지4": 1.5, "별지8갑": 1.6,
+                             "국조30갑": 20, "국조31갑": 20.1, "국조31을": 20.2, "국조31병": 20.3, "국조32갑": 20.4, "국조32을": 20.5,
+                             "국조47": 21, "국조48": 21.1}
 
         def _tpl_sort_key(t):
             return (_tpl_render_order.get(t["key"], 99), not t.get("main", True), t["call_idx"])
@@ -1151,6 +1163,14 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
                     ws_list.cell(행, 1, _t["sheet"])
                     ws_list.cell(행, 2, _t["목록_생략"])
                     행 += 1
+
+        for 이름, 설명 in _생략_사유:
+            if 이름 in _목록_본:
+                continue
+            _목록_본.add(이름)
+            ws_list.cell(행, 1, 이름)
+            ws_list.cell(행, 2, 설명)
+            행 += 1
 
         # 종소배당이 when 조건으로 skipped된 경우 목록 줄에 해당 없음 추가
         if "종소배당" in _skipped_tpl:
