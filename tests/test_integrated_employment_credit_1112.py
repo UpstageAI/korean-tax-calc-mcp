@@ -126,7 +126,7 @@ def test_conversion_and_childcare_return():
 
 
 def test_out_of_scope_years_and_input_errors():
-    assert "2026" in f(year=2026, size="중소기업", headcounts=H((2025, 20, 8), (2026, 30, 12)))["문제"][0]
+    assert "2026" in f(year=2027, size="중소기업", headcounts=H((2026, 20, 8), (2027, 30, 12)))["문제"][0]       # 2026은 2024·2025 증가분 종전 계산(부칙 제34조)
     assert "제29조의7" in f(year=2022, size="중소기업", headcounts=H((2021, 20, 8), (2022, 30, 12)))["문제"][0]
     assert "error" in f(year=2024, size="중소기업", headcounts=H((2024, 30, 12)))                       # 직전 과세연도 없음
     assert "error" in f(year=2024, size="중소기업", headcounts=H((2023, 20, 25), (2024, 30, 12)))       # 청년등 > 전체

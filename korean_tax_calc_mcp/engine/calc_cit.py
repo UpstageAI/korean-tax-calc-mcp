@@ -84,11 +84,33 @@ def ent_term(year):
     return "기업업무추진비" if year >= 2024 else "접대비"
 
 
+# 조특법 제136조⑥ 전통시장등 추가한도 — 적용 시기는 부칙마다 기준이 다르다(사업연도 개시일이 아님).
+#   법률 제19936호(2023.12.31.) 부칙 제35조: 2024.1.1. 이후 과세표준을 신고하는 경우부터(전통시장, 10%)
+#   법률 제21223호(2025.12.23.) 부칙 제31조: 2026.1.1. 이후 과세표준을 신고하는 경우부터(지역사랑상품권 추가, 20%)
+#   법률 제21612호(2026.5.12.) 부칙 제4조: 시행일(2026.5.12.)이 속하는 과세연도에 지출하는 분부터(온누리상품권 추가)
+# 비율 값은 연도표(YEAR)에서 읽는다 — 각 구간의 비율을 가진 대표 사업연도 키(2023: 19936 구간, 2026: 21223 구간).
+_MARKET_BY_FILING = ((date(2026, 1, 1), 2026, ("전통시장", "지역사랑상품권"), "법률 제21223호 부칙 제31조"),
+                     (date(2024, 1, 1), 2023, ("전통시장",), "법률 제19936호 부칙 제35조"))
+_ONNURI_FROM = date(2026, 5, 12)          # 법률 제21612호 시행일 — 이 날이 속하는 사업연도의 지출분부터
+
+
+def market_regime(filed: date, fy_end: date) -> dict:
+    """신고일·사업연도 종료일 → {비율, 대상(성격 목록), 부칙}. 신고일이 2024.1.1. 전이면 추가한도 없음."""
+    for since, ykey, kinds, basis in _MARKET_BY_FILING:
+        if filed >= since:
+            kinds = kinds + (("온누리상품권",) if fy_end >= _ONNURI_FROM else ())
+            if "온누리상품권" in kinds:
+                basis += "·법률 제21612호 부칙 제4조"
+            return {"비율": YEAR[ykey]["전통시장등_비율"], "대상": kinds, "부칙": basis}
+    return {"비율": 0, "대상": (), "부칙": "법률 제19936호 부칙 제35조(2024.1.1. 전 신고분은 추가한도 없음)"}
+
+
 def entertain(year, sme, general_revenue, related_revenue, expensed, asset_part=0, no_card_over=0, culture=0, months=12,
-              market=0, rental_corp=False, gov_invested=False, days_2020=None):
+              market=0, rental_corp=False, gov_invested=False, days_2020=None, market_ratio=None):
     """접대비 한도초과(법인세법 제25조). expensed=비용 계상 접대비(증빙 미수취분 포함), asset_part=자산(건설가계정 등) 계상분,
     no_card_over=1회 기준금액(YEAR 적격증빙_기준, receipt_disallowed) 초과 적격증빙 미수취분(직부인, 기타사외유출), culture=문화접대비.
-    days_2020=(2020년에 속하는 일수, 사업연도 일수): 2020년이 2개 이상 사업연도에 걸친 법인의 수입금액별 한도 일할 안분(조특법 제136조⑤)."""
+    days_2020=(2020년에 속하는 일수, 사업연도 일수): 2020년이 2개 이상 사업연도에 걸친 법인의 수입금액별 한도 일할 안분(조특법 제136조⑤).
+    market_ratio: 전통시장등 추가한도 비율을 신고일로 고른 값(market_regime) — None이면 사업연도 표(YEAR[year])의 비율."""
     y = YEAR[year]
     base = y["접대비_기본"]["중소" if sme else "일반"] * months / 12
     def rev_limit(tiers):
@@ -104,7 +126,8 @@ def entertain(year, sme, general_revenue, related_revenue, expensed, asset_part=
     if rental_corp and y.get("접대비_임대법인_50", True): general_limit *= 0.5      # 제25조⑤(2017 이후 개시 사업연도) 부동산임대 등 요건 법인
     if gov_invested: general_limit *= 0.7     # 조특법 제136조② 정부출자기관 등
     culture_limit = min(culture, general_limit * y["문화접대비_비율"])
-    market_limit = min(market, general_limit * y.get("전통시장등_비율", 0))  # 조특법 제136조⑥(2023~2025 10%, 2026~2028 20%)
+    ratio = y.get("전통시장등_비율", 0) if market_ratio is None else market_ratio
+    market_limit = min(market, general_limit * ratio)  # 조특법 제136조⑥ — 비율은 신고일 기준(법률 19936 부칙§35·21223 부칙§31)
     limit = general_limit + culture_limit + market_limit
     total = expensed + asset_part - no_card_over
     over = max(0, total - limit)
@@ -641,17 +664,24 @@ def bad_debt_allowance(receivables, loss_rate, set_amount, prior_disallowed=0):
 
 
 def donation(base_income, carried_loss, special, general, special_carry=0, general_carry=0, sme=True, social_enterprise=False,
-             year=None):
+             year=None, carry_first=None, social_ratio=None):
     """기부금 손금산입 한도(법인세법 제24조). base_income=기준소득금액(기부금 손금산입 전 소득, 양도손익 제외).
     year=None(종전 호출): 결손금 차감 비중소 기준소득 80% 한도, 이월분 먼저, 사회적기업 20%.
     year 지정: 연도표 — 결손금 차감 한도는 2021 이후 개시 사업연도만(제13조 한도율 60%/80%, 그 전은 전액 차감),
-    이월분 먼저 공제는 2019 사업연도부터(그 전은 당기분 먼저, 남은 한도에서 이월분), 사회적기업 일반한도율은 연도별(2017 이전 없음→10%, 2018~2025 20%, 2026~ 30%)."""
+    이월분 먼저 공제는 2019 사업연도부터(그 전은 당기분 먼저, 남은 한도에서 이월분), 사회적기업 일반한도율은 연도별(2017 이전 없음→10%, 2018~2025 20%, 2026~ 30%).
+    carry_first·social_ratio: 신고일로 고른 값(도구가 filing_date·fy_end로 정함) — None이면 연도표."""
+    _cf, _sr = carry_first, social_ratio
     if year is None:
         cap_ratio, carry_first, social_ok = (1.0 if sme else 0.8), True, True
+        social_ratio = YEAR[2018]["기부금_사회적기업_비율"] if _sr is None else (_sr or None)   # 종전 호출: 20%(2018~2025 표)
     else:
         y = YEAR[year]
         cap_ratio = loss_limit_ratio(year, sme) if y["기부금_결손금한도"] else 1.0
         carry_first, social_ratio = y["기부금_이월우선"], y["기부금_사회적기업_비율"]
+        if _cf is not None:
+            carry_first = _cf
+        if _sr is not None:
+            social_ratio = _sr or None
     loss = min(carried_loss, base_income * cap_ratio)
 
     def use(carry, cur, lim):
@@ -774,7 +804,7 @@ def min_tax_adjust(
     donation_excess=0, donation_carryover=0,
     loss_carryforward=0, nontaxable=0, nontaxable_mt=0,
     exclusion_mt=0, income_deduction=0, income_deduction_mt=0,
-    reductions=None, credits=None, exclusion_order=None,
+    reductions=None, credits=None, exclusion_order=None, carry10=None,
 ):
     """최저한세 조정(조세특례제한법 제132조제1항, 시행령 제126조제5항, 미공제 이월 제144조).
     반환: {결과, 계산, 근거} — 도구에서 _ok로 감싼다.
@@ -848,12 +878,13 @@ def min_tax_adjust(
                     # 개정 후 10년. 부칙 제35조: 2021.1.1. 이후 신고분부터 / 제51조: 시행 전에 종전 기간이 지난 세액은 종전 규정
                     # (서면-2022-법인-1779: 12월 결산 2015년 발생분은 10년). period=종전 규정의 기간(5·7·10, 기본 5).
                     old = cf.get("period", 5)
+                    new_period = (year >= 2020) if carry10 is None else carry10   # 부칙 제35조: 2021.1.1. 이후 신고분 — 도구가 신고일로 정해 넘김
                     if old not in (5, 7, 10):
                         문제.append(f"carryforward.period={old} — 종전 이월공제기간은 5·7·10 중 하나(2020.12.29. 개정 전 조세특례제한법 제144조①)")
-                    elif year <= 2019 and cy < year - old:
+                    elif not new_period and cy < year - old:
                         문제.append(f"이월공제기간 경과 — {cy} 사업연도 발생분은 {year} 사업연도에 공제할 수 없음(당시 조세특례제한법 제144조①: {old}년, {cy + old} 사업연도까지). "
                                     "창업 중소기업의 제5조(7년)·제10조(10년), 제10조①1호(10년) 세액이면 carryforward에 period를 넣는다")
-                    elif year >= 2020 and cy + old <= 2019:
+                    elif new_period and cy + old <= 2019 and cy + old < year:   # 이 사업연도가 종전 기간 안이면(비역년 2019 개시 등) 아직 지나지 않음
                         문제.append(f"이월공제기간 경과 — {cy} 사업연도 발생분은 종전 {old}년이 2021.1.1. 전에 지나 10년으로 늘어나지 않음"
                                     f"(조세특례제한법 법률 제17759호 부칙 제51조, {cy + old} 사업연도까지). 종전 기간이 7·10년인 세액이면 carryforward에 period를 넣는다")
         # current 음수 검증은 아래에서
@@ -1318,19 +1349,25 @@ def loss_limit_ratio(year, sme):
     return 0.8
 
 
-def late_payment_penalty(tax, due, until):
+def late_payment_penalty(tax, due, until, notice=False, pre2020=None):
     """납부지연가산세 일수분(국세기본법 제47조의4①1호, 영 제27조의4): 1일 1만분의 3 → 2019.2.12.부터 10만분의 25
     → 2022.2.15.부터 10만분의 22. 시행일 전 기간분은 종전 이율(영 부칙<제29534호,2019.2.12.> 제9조, 부칙<제32424호,2022.2.15.> 제6조)
-    — 기간을 나눠 각각의 율 적용(calc_vat.late_payment_rate_segments). due=법정납부기한, until=납부일·고지일."""
+    — 기간을 나눠 각각의 율 적용(calc_vat.late_payment_rate_segments). due=법정납부기한, until=납부일·고지일.
+    일수 끝점(납세의무 성립일 기준 — pre2020=2020.1.1. 전 성립, None이면 due가 2020.1.1. 전인지로 봄):
+      2020.1.1. 전 성립분: 구 제47조의4①1호 "납부기한의 다음 날부터 자진납부일 또는 납세고지일까지" — 끝날 포함(법률 제16097호 부칙 제11조).
+      2020.1.1. 이후 성립분: 제47조의4①1호(법률 제16097호) "법정납부기한의 다음 날부터 납부일까지의 기간(납세고지일부터 납세고지서에 따른
+        납부기한까지의 기간은 제외)" — 납부고지(notice=True)면 고지일 제외, 자진납부면 납부일 포함.
+      until이 2026.7.1. 이후(법률 제21212호): "납부고지일(납부고지일 전에 납부한 경우에는 그 납부일)의 전날까지" — 끝날 제외."""
     from datetime import date as _d, timedelta
     from .calc_vat import late_payment_rate_segments
     d0, b = _d.fromisoformat(due), _d.fromisoformat(until)
     if b < d0:
         raise ValueError(f"until={until}이 법정납부기한 due={due}보다 앞섬 — 납부일·고지일은 납부기한 이후 날짜")
+    if pre2020 is None:
+        pre2020 = d0 < _d(2020, 1, 1)
     a = d0 + timedelta(days=1)
     days = max(0, (b - a).days + 1)
-    # 2026.7.1. 시행(법률 제21212호): "법정납부기한의 다음 날부터 납부고지일(고지 전 납부는 납부일)의 전날까지" → until이 2026.7.1. 이후면 하루 줄어듦
-    if b >= _d(2026, 7, 1):
+    if not pre2020 and (b >= _d(2026, 7, 1) or notice):
         days = max(0, days - 1)
     seg = late_payment_rate_segments(a.isoformat(), days) if days else []
     n = {r: k for k, r in seg}
@@ -3707,6 +3744,8 @@ def corporate_filing_obligations(args: dict):
 
     if not isinstance(year, int) or year < 2016 or year > 2026:
         return {"error": "입력 오류: year은 2016~2026"}
+    from .date_basis import fiscal_year, corp_filing_due, month_end_plus
+    fs, fe, fy_given = fiscal_year(year, args.get("fy_start"), args.get("fy_end"))
     if corp_type not in ("주식회사", "유한회사"):
         return {"error": "입력 확인 필요 — 계산하지 않음",
                 "문제": [f"corp_type='{corp_type}' 은(는) 지원하지 않음 — '주식회사'|'유한회사'"],
@@ -3751,7 +3790,7 @@ def corporate_filing_obligations(args: dict):
     listed = bool(args.get("listed", False))
     매출 = revenue_prev
     충족조건 = []
-    구기준 = year <= 2019
+    구기준 = fs < date(2019, 11, 1)          # 대통령령 제29269호 부칙 제2조(코드 근거): 신기준은 2019.11.1. 이후 시작하는 사업연도부터
     if 구기준:
         if corp_type == "주식회사":
             if assets >= 12_000_000_000: 충족조건.append("직전 사업연도 말 자산 120억 원 이상")
@@ -3794,7 +3833,7 @@ def corporate_filing_obligations(args: dict):
     if established_on is not None:
         try:
             est_date = date.fromisoformat(established_on)
-            fy_end = date(year, 12, 31)
+            fy_end = fe
             설립_plus_2y = date(est_date.year + 2, est_date.month, est_date.day)
             if fy_end <= 설립_plus_2y and revenue >= 300_000_000:
                 세무조정사유.append("제4호 설립 2년 이내 사업연도 + 당기 수입금액 3억 원 이상")
@@ -3844,13 +3883,13 @@ def corporate_filing_obligations(args: dict):
     # 2019 사업연도까지: 법인세 신고기한(구 법인세법 제121조의2① — 12월 결산 다음 해 3.31.)
     # 2020 사업연도부터: 사업연도 종료일이 속하는 달의 말일부터 6개월(국조법 제58조① — 2021.1.1. 시행, 법률 제17651호 부칙 제17조:
     #   시행 전에 개시한 사업연도분도 종전 제출기한이 지나지 않았으면 적용 → 2020 사업연도분부터 6.30.)
+    #   비역년 사업연도는 종전 기한(법인세 신고기한 = 종료일이 속하는 달의 말일부터 3개월)이 2021.1.1. 현재 지나지 않았는지로 나눈다(부칙 제17조·제28조).
     해외직접 = {"대상": foreign_direct_investment}
-    if foreign_direct_investment:
-        해외직접["기한"] = f"{year + 1}-06-30" if year >= 2020 else f"{year + 1}-03-31"
-    else:
-        해외직접["기한"] = None
-    해외근거 = ("국제조세조정에 관한 법률 제58조①(사업연도 종료일이 속하는 달의 말일부터 6개월)" + ("" if year >= 2021 else ", 법률 제17651호 부칙 제17조") if year >= 2020
-               else "구 법인세법 제121조의2①(법인세 신고기한까지 — 12월 결산 기준)")
+    종전기한 = corp_filing_due(fe)
+    해외_6개월 = fs >= date(2021, 1, 1) or 종전기한 >= date(2021, 1, 1)
+    해외직접["기한"] = (month_end_plus(fe, 6) if 해외_6개월 else 종전기한).isoformat() if foreign_direct_investment else None
+    해외근거 = ("국제조세조정에 관한 법률 제58조①(사업연도 종료일이 속하는 달의 말일부터 6개월)" + ("" if fs >= date(2021, 1, 1) else ", 법률 제17651호 부칙 제17조(종전 기한이 2021.1.1. 현재 지나지 않은 분)") if 해외_6개월
+               else "구 법인세법 제121조의2①(법인세 신고기한까지), 법률 제17651호 부칙 제28조(2021.1.1. 전에 종전 기한이 지난 분)")
 
     결과 = {
         "외부감사": 외부감사,
@@ -3880,7 +3919,7 @@ def corporate_filing_obligations(args: dict):
     #   지나지 않았으면 2021.1.1. 전 개시 사업연도에도 적용 → 12월 결산 2020 사업연도분부터)
     # 2024~: 괄호 삭제(법률 제19928호, 부칙: 2024.1.1. 전 개시 사업연도분은 종전 규정) → 함께 제출
     if 통합보고서 and (국제거래명세서 or 요약손익 or 정상가격신고서):
-        if 2020 <= year <= 2023:
+        if 해외_6개월 and year <= 2023:      # 법률 제17651호 부칙 제5조②: 종전 국제거래명세서 기한(=종전기한)이 2021.1.1. 현재 지나지 않은 분부터
             결과["통합보고서_제출자_제외"] = True
             판단.append({"항목": "통합·개별기업보고서 제출자", "결론": "통합·개별기업보고서 제출 대상이라 국제거래명세서·요약손익계산서·정상가격 산출방법 신고서 제출 대상에서 제외(법 제16조② 괄호)",
                          "근거": "국제조세조정에 관한 법률 제16조②(법률 제17651호, 2021.1.1. 시행 — 부칙에 따라 12월 결산 2020 사업연도분부터), 2023.12.31. 개정 전"})
@@ -3896,13 +3935,14 @@ def corporate_filing_obligations(args: dict):
             판단.append({"항목": "통합·개별기업보고서 제출자", "결론": "국제거래명세서를 내고 국제거래정보통합보고서를 추가로 제출(갈음 규정 없음)",
                          "근거": "구 국제조세조정에 관한 법률 제11조①"})
     if 국제거래명세서 or 요약손익 or 정상가격신고서:
-        결과["제출기한"] = (f"{year + 1}-06-30(사업연도 종료일이 속하는 달의 말일부터 6개월, 12월 결산 기준)" if year >= 2020
-                       else f"{year + 1}-03-31(법인세 신고기한, 12월 결산 기준)")
+        # 법률 제17651호 부칙 제5조①·제23조①: 2021.1.1. 전 개시 사업연도도 종전 기한(법인세 신고기한)이 2021.1.1. 현재 지나지 않았으면 6개월
+        결과["제출기한"] = (f"{month_end_plus(fe, 6).isoformat()}(사업연도 종료일이 속하는 달의 말일부터 6개월)" if 해외_6개월
+                       else f"{종전기한.isoformat()}(법인세 신고기한)")
     if 국제거래명세서:
         판단.append({"항목": "국제거래명세서", "결론": ("국제거래명세서 제출 대상 — 국외특수관계인 거래 재화 5억·용역 1억·무형자산 1억 중 하나 초과(영 제36조 1호)" if 무형포함
                                                     else "국제거래명세서 제출 대상 — 국외특수관계인과 국제거래가 있음(금액 기준 면제는 2023.1.1. 이후 개시 과세연도부터)")
                                                    + f" — 기한 {결과['제출기한']}",
-                     "근거": 국조근거 + (", 법률 제17651호 부칙(2020 사업연도분도 6개월)" if year == 2020 else "")})
+                     "근거": 국조근거 + (", 법률 제17651호 부칙 제5조①(종전 기한이 2021.1.1. 현재 지나지 않은 분도 6개월)" if 해외_6개월 and fs < date(2021, 1, 1) else "")})
     elif 국제거래합계 > 0 and not 결과.get("통합보고서_제출자_제외"):
         판단.append({"항목": "국제거래명세서", "결론": "국제거래명세서 제출 면제 — 재화 5억·용역 1억·무형자산 1억 모두 이하(영 제36조 1호)", "근거": 국조근거})
     if 요약손익:
@@ -3919,11 +3959,20 @@ def corporate_filing_obligations(args: dict):
         판단.append({"항목": "국제거래정보통합보고서", "결론": "국제거래정보 통합보고서 제출 대상 — 매출 1,000억↑ & 국외특수관계인 거래 500억↑",
                      "근거": "국제조세조정에 관한 법률 제16조·시행령 제34조" if year >= 2021 else "구 국제조세조정에 관한 법률 제11조②, 구 시행령 제21조의2(2020년 제21조의3)"})
     if 해외직접["대상"]:
-        판단.append({"항목": "해외직접투자명세", "결론": f"해외현지법인 명세서등 제출 대상 — 기한: {해외직접['기한']}(12월 결산 기준)", "근거": 해외근거})
+        판단.append({"항목": "해외직접투자명세", "결론": f"해외현지법인 명세서등 제출 대상 — 기한: {해외직접['기한']}" + ("" if fy_given else "(12월 결산 기준)"), "근거": 해외근거})
 
+    주의 = []
+    if not fy_given and year in (2019, 2020):
+        주의.append(f"사업연도를 역년({year}.1.1.~{year}.12.31.)으로 보고 판정 — 사업연도가 역년과 다르면 fy_start·fy_end를 넣는다"
+                  "(외부감사 신기준은 2019.11.1. 이후 시작 사업연도, 국제거래명세서·해외현지법인 자료 6개월 기한은 종전 기한이 2021.1.1. 현재 지나지 않은 분부터)")
     근거 = (외감근거 + ", 법인세법 제60조제9항·시행령 제97조의2 제1항, " + 국조근거 + ", " + 해외근거)
-    return {
+    out = {
         "결과": 결과,
         "판단": 판단,
         "근거": 근거,
     }
+    if fy_given:
+        out["사업연도"] = {"개시일": fs.isoformat(), "종료일": fe.isoformat()}
+    if 주의:
+        out["주의"] = 주의
+    return out
