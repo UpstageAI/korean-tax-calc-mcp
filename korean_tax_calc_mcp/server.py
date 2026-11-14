@@ -209,6 +209,7 @@ mcp = MCPServer(
                  "연도표가 없는 해는 오류로 멈추므로 추정하지 않는다. 계산 근거 원문·해석은 korean-tax-mcp로 확인한다. "
                  "계산 결과를 엑셀이나 법정서식으로 달라고 하면 엑셀 파일을 직접 만들지 말고 export_workbook(calls=이미 부른 도구 호출 목록)을 쓴다 — 법정서식 틀(금액 칸은 수식), 계산 근거, 입력·가정, 판단·근거 시트가 함께 나온다. "
                  "자료 불일치·가정·확인할 서류·판단이 갈리는 쟁점은 export_workbook의 review_notes에 넣어 '요약' 시트에 싣는다. 서식 틀이 없는 항목은 따로 정리해 덧붙여도 된다. "
+                 "도구 결과는 한국어로 나오지만, 답변은 사용자가 질문한 언어로 작성한다(국문 용어는 괄호로 병기). Tool results are in Korean; always answer in the language the user asked in, keeping key Korean terms in parentheses. "
                  + AUDIT_INSTRUCTIONS)
 CALC = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
 YEAR = Annotated[int, Field(description="사업연도·귀속연도(2016~2026)", ge=2016, le=2026)]
