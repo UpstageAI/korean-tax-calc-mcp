@@ -71,3 +71,9 @@ def test_deemed_dividend_adjustment_basis_by_year():
     assert any("구 법 제20조①" in n for n in r["주의"])
     r = S.cfc_deemed_dividend(year=2025, **{**kw, "fy_end": "2025-12-31"})
     assert "제27조①·제31조" in r["세무조정"][0]["근거"] and any("cfc_actual_dividend" in n for n in r["주의"])
+
+
+def test_individual_remainder_basis_1114():
+    r = S.cfc_actual_dividend(2025, 3 * M, [{"year": 2024, "amount": 1 * M}], entity="개인")
+    p = {x["항목"]: x for x in r["판단"]}["나머지 배당"]
+    assert p["근거"] == "소득세법 제17조①" and "배당소득" in p["결론"]
