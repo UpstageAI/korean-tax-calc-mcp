@@ -6,7 +6,9 @@ Install: `uvx korean-tax-calc-mcp` (Claude Code: `claude mcp add korean-tax-calc
 
 Registry name: `io.github.UpstageAI/korean-tax-calc-mcp` · PyPI: `korean-tax-calc-mcp` · License: MIT
 
-Tool names are English; descriptions and result keys are mostly Korean. Inputs use Korean enum values (e.g. income_kind "사용료" = royalties, recipient_type "법인" = corporation) — read each tool's input schema. If you do not know which tool fits, call `find_tool` first.
+Tool names are English, and every tool description starts with an English line followed by the Korean term; `find_tool` accepts English queries. Result keys and enum values are mostly Korean (e.g. income_kind "사용료" = royalties, recipient_type "법인" = corporation) — read each tool's input schema and see the [glossary](https://github.com/UpstageAI/korean-tax-calc-mcp/blob/main/docs/glossary_ko_en.md). If you do not know which tool fits, call `find_tool` first.
+
+If you build an agent with Anthropic's BM25 tool search (`tool_search_tool_bm25`), it does not match Hangul queries (checked 2026-11-14: Korean words present verbatim in descriptions returned 0 results; English matched). Search with English keywords — every tool description starts with an English line — or use the regex tool search (`tool_search_tool_regex`), which matches Korean terms. If unsure which tool to use, call `find_tool` first — it accepts Korean and English queries.
 
 ## Which tool for which question
 
@@ -55,7 +57,7 @@ The table lists the main tools; `find_tool` searches all 139.
 - Seconded staff: `expat_cost_recharge`; residency of the employee: korean-tax-mcp `residency_check`
 - Korean parent of foreign subsidiaries: `foreign_subsidiary_dividend`, `foreign_tax_credit`, `cfc_deemed_dividend`, `overseas_subsidiary_statement`
 - Intercompany pricing: `arm_length_range`, `international_transaction_statement`
-- Worked examples (with korean-tax-mcp): [Use cases](https://github.com/UpstageAI/korean-tax-mcp/tree/main/docs/use-cases)
+- Worked examples (with korean-tax-mcp): [Use cases](https://upstageai.github.io/korean-tax-mcp/use-cases/)
 
 ## Companion servers
 
@@ -74,5 +76,7 @@ The table lists the main tools; `find_tool` searches all 139.
 - [README (English)](https://github.com/UpstageAI/korean-tax-calc-mcp/blob/main/README-EN.md)
 - [README (Korean)](https://github.com/UpstageAI/korean-tax-calc-mcp/blob/main/README.md)
 - [CHANGELOG](https://github.com/UpstageAI/korean-tax-calc-mcp/blob/main/CHANGELOG.md)
+- [Site and use cases](https://upstageai.github.io/korean-tax-mcp/)
+- [Korean–English glossary](https://github.com/UpstageAI/korean-tax-calc-mcp/blob/main/docs/glossary_ko_en.md)
 - [PyPI: korean-tax-calc-mcp](https://pypi.org/project/korean-tax-calc-mcp/)
 - [MCP Registry: io.github.UpstageAI/korean-tax-calc-mcp](https://registry.modelcontextprotocol.io/v0/servers?search=io.github.UpstageAI/korean-tax-calc-mcp)

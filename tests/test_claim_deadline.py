@@ -223,7 +223,7 @@ def test_readme_tool_count_matches():
     n = len(asyncio.run(S.mcp.list_tools()))
     import pathlib
     root = pathlib.Path(__file__).resolve().parents[1]
-    assert f"## 도구 ({n}개)" in (root / "README.md").read_text(encoding="utf-8")
-    assert f"## Tools ({n})" in (root / "README-EN.md").read_text(encoding="utf-8")
+    assert f"<summary><b>도구 전체 ({n}개)</b></summary>" in (root / "README.md").read_text(encoding="utf-8")
+    assert f"<summary><b>All tools ({n})</b></summary>" in (root / "README-EN.md").read_text(encoding="utf-8")
     assert f"{n} tools" in (root / "server.json").read_text(encoding="utf-8")
     assert "`refund_claim_deadline`" in (root / "README.md").read_text(encoding="utf-8")

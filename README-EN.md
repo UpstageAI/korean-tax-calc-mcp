@@ -8,24 +8,92 @@
 
 [![PyPI](https://img.shields.io/pypi/v/korean-tax-calc-mcp)](https://pypi.org/project/korean-tax-calc-mcp/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-korean--tax--calc--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=korean-tax-calc-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Built with Upstage Solar Pro 4](https://img.shields.io/badge/Built%20with-Upstage%20Solar%20Pro%204-7A3FF2)](https://www.upstage.ai/) · [한국어](README.md)
 
-> **Authorship notice:** Versions 0.3.0–0.12.2 (2026-10-10 to 10-26) were written by **Solar Pro 4** (Solar Work CLI), reviewed by CodeSolar and cross-checked with tests by Claude (parts of 0.8.0 and all of 0.9.2 were fixed/written by Claude). **From 0.13.0 (2026-10-28) on, the existing calculator skeleton remains Solar Pro 4's, while new tools, year-by-year statute checks and bug fixes are written by Claude (Anthropic)** and reviewed by CodeSolar. Each [CHANGELOG](CHANGELOG.md) section states who wrote it. 139 tools.
+**Korean tax calculations for AI agents — code, not guesses.**
 
-**Korean tax calculations for AI agents — code, not guesses.** [한국어](README.md)
+AI models often get tax arithmetic wrong. This server computes Korean corporate, income, VAT, withholding, international, inheritance and gift tax — and the tax adjustments behind them — in code, and attaches the statutory basis to every result. 139 tools, rate and limit tables for 2016–2026; for a year without a table it stops instead of guessing. It covers foreign companies, expats and Korean subsidiaries (foreign worker flat tax, non-resident withholding, branch profits tax, exit tax and more). Ask in English: every tool description starts with an English line, and `find_tool` takes English queries. Results can be exported to a review workbook laid out as the statutory forms.
+
+> Not tax advice. Results show sources and computations for review; confirm filings and appeals with a tax professional. Only the 3 PDF tools use generative AI, and their results say so — [full notices](#disclaimer)
+
+## Install
+
+```bash
+claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp
+```
+
+```json
+{
+  "mcpServers": {
+    "korean-tax-calc": { "command": "uvx", "args": ["korean-tax-calc-mcp"] },
+    "korean-tax":      { "command": "uvx", "args": ["korean-tax-mcp"], "env": { "LAW_OC": "law.go.kr OC (free, optional)" } }
+  }
+}
+```
+
+No key needed. The second entry is the companion server [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp) for statutes and rulings; the first line alone is enough if you only need calculations.
 
 ## How it works
 
 ```mermaid
 flowchart LR
-  D["Closing files<br/>ledgers, registers, contracts"] --> M["AI<br/>maps the facts to tool inputs"]
+  Q["Question in English or Korean"] --> F["find_tool<br/>plain-language or English search"]
+  D["Closing files<br/>ledgers, registers, contracts"] --> M
+  F --> M["AI<br/>maps the facts to tool inputs"]
   M --> V["Check input<br/>reject unknown or missing fields"]
-  V --> T["Values for that year<br/>rates, limits, credit rates"]
-  T --> E["Item calculation<br/>in the order of the statute"]
-  E --> A["Adjustment items<br/>type, amount, disposition, basis"]
-  A --> S["Aggregation<br/>taxable income, VAT return<br/>withholding return"]
-  S --> X["Review workbook<br/>summary, statutory forms, calculation, basis"]
+  V --> T["Values for that year<br/>rates, limits, credit rates 2016-2026"]
+  T --> E["Calculation and adjustment tools<br/>corporate, income, VAT, withholding<br/>cross-border, inheritance and gift"]
+  T --> P["Foreign workers and foreign companies<br/>flat tax, foreign expert reduction<br/>non-resident withholding, inheritance and gift<br/>branch profits tax, exit tax"]
+  E --> R["Result<br/>amounts, steps<br/>statute citations, limits"]
+  P --> R
+  R --> X["Aggregation and review workbook<br/>statutory forms, basis"]
   T -.->|no table for the year| N["Stop<br/>no guessed calculation"]
-  M -.->|requirements, rulings| K["korean-tax-mcp<br/>statutes, rulings, requirement guides"]
+  M -.->|requirements, treaty rates| K["korean-tax-mcp<br/>statutes, rulings, requirement guides, PE test"]
+  R -.->|statute check| K
+  F -.->|no calculator for the question| K
 ```
+
+## Try asking
+
+| Question | Tools |
+|---|---|
+| "Corporate tax on a 500M KRW tax base for fiscal year 2025?" | `corporate_tax` |
+| "Shareholder loan of 200M on Mar 1, 100M repaid Sep 30 — deemed interest?" | `deemed_interest` |
+| "Under-reported 10M KRW of tax, paying on Oct 7 — what are the penalties?" | `underreporting_penalty` · `late_payment_penalty` |
+| "Here is our closing folder — do the FY2025 corporate tax adjustments as statutory-form Excel, including transactions with our overseas subsidiary" | adjustment tools → `income_adjustment_total` → `export_workbook` |
+| "Our Korean subsidiary pays a USD 100,000 royalty to its US parent. How much Korean withholding tax applies, and what does the treaty change?" | `nonresident_withholding` (treaty cap: korean-tax-mcp `treaty_withholding_rates`) |
+| "We seconded an engineer to our Vietnam subsidiary for 2026. How much should we recharge with a 5% markup, and how much of the salary is deductible in Korea?" | `expat_cost_recharge` |
+| "Our Korean subsidiary received a dividend from its 30%-owned Singapore company in 2026. Exclusion or foreign tax credit?" | `foreign_subsidiary_dividend` |
+| "I'm a foreign employee with KRW 80 million salary in 2025. Is the 19% flat tax option cheaper than the regular rates?" | `foreign_worker_flat_tax` |
+
+If you do not know which tool to use, ask `find_tool` in plain words.
+
+**Links:** [Korean README](README.md) · [Use cases](https://upstageai.github.io/korean-tax-mcp/use-cases/) · [Site](https://upstageai.github.io/korean-tax-mcp/) · [Korean–English glossary](docs/glossary_ko_en.md) · [llms.txt](llms.txt) · [Changelog](CHANGELOG.md) · companions [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp) (legal basis) · [korean-report-hwpx](https://github.com/UpstageAI/korean-report-hwpx) (government documents as HWPX)
+
+---
+
+<details>
+<summary><b>Install in detail — companion server, new releases, optional keys</b></summary>
+
+[korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp) is the companion server for statutes, addenda, rulings and cases. With both installed, "find the basis → compute → fill the form" runs in one conversation, and this server's `find_tool` returns ready-to-call statute lookups for questions it has no calculator for (rent tax credit, pension-account credit, stock gains …).
+
+To pick up a new release right away: `uvx --refresh korean-tax-calc-mcp` (uvx caches the downloaded version). Pin with `uvx korean-tax-calc-mcp@0.53.1`.
+
+Optional keys: `LAW_OC` (law.go.kr lookups in two audit tools), `UPSTAGE_API_KEY` (PDF table extraction), `VWORLD_KEY` (official property price lookup).
+
+</details>
+
+<details>
+<summary><b>More example questions</b></summary>
+
+- "Retirement income tax on 100M KRW after 15 years of service"
+- "Here are five entertainment-expense ledger lines — give me the FY2025 adjustments"
+- "Review our second-half VAT return and give it to me in the statutory return form"
+- "Make this month's withholding tax return from these payroll and payment records"
+- "Our US sales subsidiary has a 7.5% operating margin; here are the margins of 8 comparables — is it within the arm's length range?"
+
+</details>
+
+<details>
+<summary><b>How it works in detail — 5 steps</b></summary>
 
 1. **Check input** — if a field is unknown or missing, it does not calculate and says what is needed.
 2. **Values for that year** — rates and limits come from year tables in code (corporate and income tax 2016–2026, VAT 2016 H1–2026 H2); item-level criteria come from `facts_vocab.json` (107 items with periods and statutory basis). The tables were checked against each year's statute and addenda.
@@ -33,11 +101,16 @@ flowchart LR
 4. **Adjustment items** — adjustment tools return the adjustment type and amount, the income disposition (reserve, bonus, other outflow; provisional reserve for cross-border adjustments) and the statutory basis. These items go straight into the aggregation tools.
 5. **Aggregation and forms** — `income_adjustment_total` for corporate tax, `vat_return_general` for VAT and `withholding_return` for withholding tax collect the figures in form order, and `export_workbook` re-runs the same calls to build a review workbook.
 
-Requirements and year-specific judgments (credit eligibility, arm's-length methods) belong to the companion server [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp). This server computes from amounts that meet the requirements and points to the statute check in its output.
+Requirements and year-specific judgments (credit eligibility, arm's-length methods, permanent establishment) belong to the companion server [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp). This server computes from amounts that meet the requirements and points to the statute check in its output.
 
-136 of the 139 tools run in code without generative AI (the 2 price lookups only fetch public data from KRX and VWORLD). Only the 3 PDF tools use Upstage, and only when `UPSTAGE_API_KEY` is set.
+Of the 139 tools, the 136 other than the 3 PDF tools run in code without generative AI; two of them (price lookups) only fetch public data from KRX and VWORLD. The 3 PDF tools use Upstage only when `UPSTAGE_API_KEY` is set.
 
-### How the tools chain by tax type
+</details>
+
+<details>
+<summary><b>How the tools chain by tax type</b></summary>
+
+Tools work on their own, but each one's output is shaped to be the next one's input.
 
 ```mermaid
 flowchart TD
@@ -51,13 +124,62 @@ flowchart TD
   B --> C["Tax<br/>corporate_tax"]
   C --> G["Credits, reductions, minimum tax<br/>employment, investment, R and D, startup"]
   G --> X["Review workbook<br/>export_workbook"]
-  V1["VAT parts<br/>tax base, deemed supply, input tax, FX"] --> V2["VAT return<br/>vat_return_general"] --> X
-  W1["Withholding<br/>residents, non-residents, wages"] --> W2["Withholding return<br/>withholding_return"] --> X
+  V1["VAT parts<br/>tax base, deemed supply, input tax, FX, reverse charge"] --> V2["VAT return<br/>vat_return_general"] --> X
+  W1["Withholding<br/>residents, non-residents, wages, daily workers"] --> W2["Withholding return<br/>withholding_return"] --> X
+  P["Foreign workers and foreign companies<br/>flat tax, foreign expert reduction<br/>non-resident gains withholding, inheritance and gift<br/>branch profits tax, exit tax"] -->|calculation sheet| X
 ```
 
-If you do not know which tool to use, ask `find_tool` in plain words.
+</details>
 
-### What the review workbook contains
+<details>
+<summary><b>Using the three servers together</b></summary>
+
+```mermaid
+flowchart LR
+  U["Tax question<br/>English or Korean"] --> L["korean-tax-mcp<br/>basis: statutes, rulings, treaties, requirements, PE"]
+  U --> F["find_tool<br/>korean-tax-calc-mcp"]
+  F -->|matching calculator| C
+  F -.->|no calculator: ready statute lookup| L
+  L -->|"qualifying amounts, treaty caps"| C["korean-tax-calc-mcp<br/>calculation, adjustments, statutory forms"]
+  C -.->|"statute check pointers"| L
+  C --> X["Review workbook"]
+  L --> H["korean-report-hwpx<br/>review memo as HWPX"]
+  C --> H
+```
+
+[korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp) finds the legal basis, this server computes the amounts, adjustments and statutory-form workbook, and [korean-report-hwpx](https://github.com/UpstageAI/korean-report-hwpx) turns the review into a Korean government-format (HWPX) report.
+
+</details>
+
+<details>
+<summary><b>For foreign companies, expats and Korean subsidiaries</b></summary>
+
+Ask in English, get Korean statute-backed answers. Every tool description starts with an English line followed by the Korean term (for example `Entertainment expense limit and non-deductible excess for corporate tax (기업업무추진비 한도).`), and `find_tool` accepts English queries such as "late payment penalty" or "transfer pricing arm's length range". The English terms follow the official English translations of Korean tax laws where they exist ([glossary](docs/glossary_ko_en.md)); results cite the Korean statute articles. Worked examples with the companion server: [use cases](https://upstageai.github.io/korean-tax-mcp/use-cases/).
+
+| Question | Tool |
+|---|---|
+| Is this person a Korean tax resident? | `residency_check` · `residency_report` in the companion [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp) |
+| Treaty withholding rate for a country | `treaty_withholding_rates` · `tax_treaty` in korean-tax-mcp |
+| Withholding on interest, dividends, royalties or services paid to a nonresident or foreign company | `nonresident_withholding` |
+| Reverse-charge VAT on services bought from a foreign business | `vat_reverse_charge` |
+| Interest on loans from a foreign parent beyond the debt-equity limit | `thin_capitalization` |
+| Arm's length range, comparable screening, international transaction statement | `arm_length_range` · `tp_comparable_screen` · `international_transaction_statement` |
+| Foreign tax credit (company / individual) | `foreign_tax_credit` · `individual_foreign_tax_credit` |
+| Dividends from a foreign subsidiary — exclusion vs. credit, including the 100% exclusion for dividends received in 2026 (RSTA Art. 23-2) | `foreign_subsidiary_dividend` |
+| Seconded employees — recharge with arm's length markup, deduction, overseas work exemption | `expat_cost_recharge` |
+| CFC rules for low-tax subsidiaries | `cfc_deemed_dividend` · `cfc_actual_dividend` · `cfc_share_disposal` |
+| Overseas subsidiary reporting, outbound investment FX reporting, overseas financial accounts | `overseas_subsidiary_statement` · `foreign_exchange_reporting` · `overseas_account_reporting` |
+| Foreign worker: 19% flat tax option vs regular progressive tax; foreign engineer/researcher reduction | `foreign_worker_flat_tax` · `foreign_expert_income_reduction` |
+| Nonresident selling Korean real estate or shares — withholding; inheritance/gift tax for nonresidents | `nonresident_capital_gains_withholding` · `nonresident_inheritance_gift` |
+| Foreign company with a Korean branch — branch profits tax; Korean PE test | `branch_profits_tax` · `permanent_establishment_guide` (korean-tax-mcp) |
+| Resident major shareholder emigrating — departure (exit) tax | `emigration_exit_tax` |
+
+The example questions in "Try asking" above (royalty to a US parent, secondee recharge, Singapore dividend, flat tax) all use these tools.
+
+</details>
+
+<details>
+<summary><b>What the review workbook contains (sheets and statutory forms)</b></summary>
 
 | Sheet | Content |
 |---|---|
@@ -78,94 +200,10 @@ If you do not know which tool to use, ask `find_tool` in plain words.
 
 Form templates were built by checking cell layout against the official form PDFs on law.go.kr. Some pages and cells are not carried over (personal details, sub-schedules); the List sheet says which. The workbook is a reference for review, not a filed return.
 
-## Sources
+</details>
 
-| Source | Used for | How it was checked |
-|---|---|---|
-| Statutes in force (Acts, Decrees, Rules) | year tables of rates, limits and credit rates; when requirements change | the version in force for each supported year; lookups go through korean-tax-mcp (law.go.kr Open API) |
-| Addenda of amendments | from which tax year or transaction an amendment applies | application and transitional clauses; where none exists, rulings are searched, and if still unconfirmed the tool refuses and says so |
-| Official forms | cell layout, line numbers and instructions for form templates | form PDFs on law.go.kr |
-| NTS rulings and tribunal decisions | points the statute alone does not settle, cited by document number in the output | summary and full text on taxlaw.nts.go.kr |
-| NTS filing guides | e.g. the formula for deemed gifts from related-party transactions | the published guide |
-| Fact vocabulary (`facts_vocab.json`) | criteria, periods, statutory basis and aliases for 107 items | bundled after checking against the statute |
-| KRX and VWORLD public data | listed share prices, official land and housing prices | per call |
-| Foreign Exchange Transactions Regulation | outbound investment filing and follow-up reports | all editions 2015–2026 |
-
-Each result carries its statutory basis, and its notes say what could not be confirmed. The [changelog](CHANGELOG.md) records what each version was checked against.
-
-## Try asking
-
-- "Corporate tax on a 500M KRW tax base for fiscal year 2025?"
-- "Shareholder loan of 200M on Mar 1, 100M repaid Sep 30 — deemed interest?"
-- "Under-reported 10M KRW of tax, paying on Oct 7 — what are the penalties?"
-- "Retirement income tax on 100M KRW after 15 years of service"
-- "Here are five entertainment-expense ledger lines — give me the FY2025 adjustments"
-
-## For foreign companies, expats and Korean subsidiaries
-
-Ask in English, get Korean statute-backed answers. Every tool description starts with an English line followed by the Korean term (for example `Entertainment expense limit and non-deductible excess for corporate tax (기업업무추진비 한도).`), and `find_tool` accepts English queries such as "late payment penalty" or "transfer pricing arm's length range". The English terms follow the official English translations of Korean tax laws where they exist ([glossary](docs/glossary_ko_en.md)); results cite the Korean statute articles.
-
-| Question | Tool |
-|---|---|
-| Is this person a Korean tax resident? | `residency_check` · `residency_report` in the companion [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp) |
-| Treaty withholding rate for a country | `treaty_withholding_rates` · `tax_treaty` in korean-tax-mcp |
-| Withholding on interest, dividends, royalties or services paid to a nonresident or foreign company | `nonresident_withholding` |
-| Reverse-charge VAT on services bought from a foreign business | `vat_reverse_charge` |
-| Interest on loans from a foreign parent beyond the debt-equity limit | `thin_capitalization` |
-| Arm's length range, comparable screening, international transaction statement | `arm_length_range` · `tp_comparable_screen` · `international_transaction_statement` |
-| Foreign tax credit (company / individual) | `foreign_tax_credit` · `individual_foreign_tax_credit` |
-| Dividends from a foreign subsidiary — exclusion vs. credit, including the 100% exclusion for dividends received in 2026 (RSTA Art. 23-2) | `foreign_subsidiary_dividend` |
-| Seconded employees — recharge with arm's length markup, deduction, overseas work exemption | `expat_cost_recharge` |
-| CFC rules for low-tax subsidiaries | `cfc_deemed_dividend` · `cfc_actual_dividend` · `cfc_share_disposal` |
-| Overseas subsidiary reporting, outbound investment FX reporting, overseas financial accounts | `overseas_subsidiary_statement` · `foreign_exchange_reporting` · `overseas_account_reporting` |
-| Foreign worker: 19% flat tax option vs regular progressive tax; foreign engineer/researcher reduction | `foreign_worker_flat_tax` · `foreign_expert_income_reduction` |
-| Nonresident selling Korean real estate or shares — withholding; inheritance/gift tax for nonresidents | `nonresident_capital_gains_withholding` · `nonresident_inheritance_gift` |
-| Foreign company with a Korean branch — branch profits tax; Korean PE test | `branch_profits_tax` · `permanent_establishment_guide` (korean-tax-mcp) |
-| Resident major shareholder emigrating — departure (exit) tax | `emigration_exit_tax` |
-
-Example questions:
-
-- "Our Korean subsidiary pays a USD 100,000 royalty to its US parent. How much Korean withholding tax applies, and what does the treaty change?"
-- "We seconded an engineer to our Vietnam subsidiary for 2026. How much should we recharge with a 5% markup, and how much of the salary is deductible in Korea?"
-- "Our Korean subsidiary received a dividend from its 30%-owned Singapore company in 2026. Exclusion or foreign tax credit?"
-
-- "I'm a foreign employee with KRW 80 million salary in 2025. Is the 19% flat tax option cheaper than the regular rates?"
-
-## Install
-
-```bash
-claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp
-```
-
-```json
-{
-  "mcpServers": {
-    "korean-tax-calc": { "command": "uvx", "args": ["korean-tax-calc-mcp"] },
-    "korean-tax":      { "command": "uvx", "args": ["korean-tax-mcp"], "env": { "LAW_OC": "law.go.kr OC (free, optional)" } }
-  }
-}
-```
-
-The second entry, [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp), is the companion server for statutes, addenda, rulings and cases. With both installed, "find the basis → compute → fill the form" runs in one conversation, and this server's `find_tool` returns ready-to-call statute lookups for questions it has no calculator for (rent tax credit, pension-account credit, stock gains …). The first line alone is enough if you only need calculations.
-
-To pick up a new release right away: `uvx --refresh korean-tax-calc-mcp` (uvx caches the downloaded version). Pin with `uvx korean-tax-calc-mcp@0.28.1`.
-
-No key needed. Optional: `LAW_OC` (law.go.kr lookups in two audit tools), `UPSTAGE_API_KEY` (PDF table extraction).
-
-## Recommended system prompt
-
-Five rules that tell the AI when to call the tools and when to trust their answers. The server instructions carry the same rules, but some clients weight them lightly or ignore them. Adding the block below to your system prompt (Claude Desktop project instructions, Claude Code `CLAUDE.md`, or other custom instructions) makes the AI follow them more closely.
-
-```text
-When answering Korean tax questions, use korean-tax-mcp and korean-tax-calc-mcp as follows.
-1. For every amount and every judgment, first check whether a tool exists. If you do not know the name, use find_tool; for timing of income or supply, check timing_rules first.
-2. If a tool exists, call it before calculating by hand.
-3. If the tool result differs from your own calculation, do not pick one right away. Recheck the inputs, open the deciding provision with law_article, and match its requirements to the facts one by one.
-4. If no provision shows the tool is wrong, use the tool result. If you use a different value, state the reason (input error or article number) in one line.
-5. If two values come out (before/after apportionment, total vs. taxable part, etc.), answer only the one the question asks for.
-```
-
-## Tools (139)
+<details>
+<summary><b>All tools (139)</b></summary>
 
 Click a group to expand its tools.
 
@@ -197,7 +235,7 @@ Click a group to expand its tools.
 
 </details>
 <details>
-<summary><b>International tax and cross-border</b> (11)</summary>
+<summary><b>International tax and cross-border</b> (18)</summary>
 
 | Tool | What it does |
 |---|---|
@@ -214,13 +252,20 @@ Click a group to expand its tools.
 | `cfc_actual_dividend` | CFC actual dividend exclusion — when previously deemed-dividend income is actually distributed, exclude it in order of accrual (incl. intermediate-company cap); returns the exclusion adjustment and updated ledger (ITA art.32(1), Decree art.68; pre-2021 articles by year) |
 | `cfc_share_disposal` | CFC share disposal exclusion — (deemed dividends on the sold shares − actual dividends on them), capped at the gain (ITA art.32(2); pre-2021 articles by year) |
 | `overseas_subsidiary_statement` | Overseas subsidiary statement & financial status (Act art. 58, Decree art. 98) — filing targets (10%/KRW 100M, related party), loss-transaction statement, 6-month deadline, accounting identity checks |
-| `tax_crime_settlement_amount` | Tax-crime settlement (notice disposition) amount — per the Tax Crime Procedure Decree schedule (2014/2019/2026 versions): 1st/2nd/3rd+ amounts, habitual increase, voluntary-amendment reductions, aiding/impairment, concurrence rules, 10-won truncation and statutory fine caps |
-| `nominee_gift_tax` | Gift tax on deemed gifts of nominee-held property (IGTA art. 45-2) — tax base (value less appraisal fee, no gift deduction), computed tax, filing credit, taxpayer by period, filing deadline and assessment-period expiry |
 | `expat_cost_recharge` | expat cost recharge — arm-length fee, deduction, overseas work exemption |
 | `individual_foreign_tax_credit` | individual foreign tax credit: per-country limit, treaty-rate cap, 10-year carryforward, retirement income (Income Tax Act art. 57) |
 | `foreign_exchange_reporting` | overseas direct investment: FX reporting (prior/post) deadline, bank, documents, follow-up reports, liquidation, NTS investment statement deadline |
 | `overseas_account_reporting` | overseas financial account reporting: duty (month-end balance over KRW 500m), exemptions, deadline, penalties and reductions (Int'l Tax Adjustment Act arts. 53, 90) |
 | `corporate_filing_obligations` | external audit, tax adjustment, international transaction filing obligations |
+
+</details>
+<details>
+<summary><b>Tax crimes and nominee property</b> (2)</summary>
+
+| Tool | What it does |
+|---|---|
+| `tax_crime_settlement_amount` | Tax-crime settlement (notice disposition) amount — per the Tax Crime Procedure Decree schedule (2014/2019/2026 versions): 1st/2nd/3rd+ amounts, habitual increase, voluntary-amendment reductions, aiding/impairment, concurrence rules, 10-won truncation and statutory fine caps |
+| `nominee_gift_tax` | Gift tax on deemed gifts of nominee-held property (IGTA art. 45-2) — tax base (value less appraisal fee, no gift deduction), computed tax, filing credit, taxpayer by period, filing deadline and assessment-period expiry |
 
 </details>
 <details>
@@ -242,7 +287,7 @@ Click a group to expand its tools.
 
 </details>
 <details>
-<summary><b>Income, withholding, transfer, inheritance</b> (26)</summary>
+<summary><b>Income, withholding, transfer, inheritance</b> (30)</summary>
 
 | Tool | What it does |
 |---|---|
@@ -394,11 +439,16 @@ Click a group to expand its tools.
 </details>
 
 - **Excel export**: see 'What the review workbook contains' above for the sheets and forms. `entertainment_limit` also produces Form 23(a) and (b).
+- **Cross-border adjustments chain on**: the arm's-length range, outbound loan interest, secondee cost, foreign subsidiary dividend, CFC and provision tools return adjustment items (type, amount, disposition, basis) with their results, so they go straight into `income_adjustment_total` and on to the statement of adjustments (Form 15). Arm's-length adjustments are recorded as provisional reserve (code 700) until repatriation is confirmed.
 - **Ledger input**: adjustment tools take ledger lines as written (name, amount, receipt, nature) and return item judgments, adjustments and income dispositions.
 - **Issue flags**: non-resident withholding and thin capitalization results list points that may be disputed and what to check (no conclusion).
-- **Years**: corporate tax FY2016–2026, income tax 2016–2026, VAT 2016-1 to 2026-2; penalties and limitation periods follow current law. Other years stop with an error. Local income tax is separate.
 
-## What it does not handle
+</details>
+
+<details>
+<summary><b>Supported years and what it does not handle</b></summary>
+
+- **Years**: corporate tax FY2016–2026, income tax 2016–2026, VAT 2016-1 to 2026-2; penalties and limitation periods follow current law. Other years stop with an error. Local income tax is separate.
 
 When a case is out of scope, the tool stops with "input needed" or an error, or flags "확인 필요 (check needed)" in `판단`. Check this list before relying on a result.
 
@@ -432,12 +482,67 @@ When a case is out of scope, the tool stops with "input needed" or an error, or 
 Each tool's description has the full scope.
 </details>
 
-## Disclaimers and notices
+</details>
+
+<details>
+<summary><b>Sources — what the calculations were checked against</b></summary>
+
+| Source | Used for | How it was checked |
+|---|---|---|
+| Statutes in force (Acts, Decrees, Rules) | year tables of rates, limits and credit rates; when requirements change | the version in force for each supported year; lookups go through korean-tax-mcp (law.go.kr Open API) |
+| Addenda of amendments | from which tax year or transaction an amendment applies | application and transitional clauses; where none exists, rulings are searched, and if still unconfirmed the tool refuses and says so |
+| Official forms | cell layout, line numbers and instructions for form templates | form PDFs on law.go.kr |
+| NTS rulings and tribunal decisions | points the statute alone does not settle, cited by document number in the output | summary and full text on taxlaw.nts.go.kr |
+| NTS filing guides | e.g. the formula for deemed gifts from related-party transactions | the published guide |
+| Fact vocabulary (`facts_vocab.json`) | criteria, periods, statutory basis and aliases for 107 items | bundled after checking against the statute |
+| KRX and VWORLD public data | listed share prices, official land and housing prices | per call |
+| Foreign Exchange Transactions Regulation | outbound investment filing and follow-up reports | all editions 2015–2026 |
+
+Each result carries its statutory basis, and its notes say what could not be confirmed. The [changelog](CHANGELOG.md) records what each version was checked against.
+
+</details>
+
+<details>
+<summary><b>Recommended system prompt (5 rules)</b></summary>
+
+Five rules that tell the AI when to call the tools and when to trust their answers. The server instructions carry the same rules, but some clients weight them lightly or ignore them. Adding the block below to your system prompt (Claude Desktop project instructions, Claude Code `CLAUDE.md`, or other custom instructions) makes the AI follow them more closely.
+
+```text
+When answering Korean tax questions, use korean-tax-mcp and korean-tax-calc-mcp as follows.
+1. For every amount and every judgment, first check whether a tool exists. If you do not know the name, use find_tool; for timing of income or supply, check timing_rules first.
+2. If a tool exists, call it before calculating by hand.
+3. If the tool result differs from your own calculation, do not pick one right away. Recheck the inputs, open the deciding provision with law_article, and match its requirements to the facts one by one.
+4. If no provision shows the tool is wrong, use the tool result. If you use a different value, state the reason (input error or article number) in one line.
+5. If two values come out (before/after apportionment, total vs. taxable part, etc.), answer only the one the question asks for.
+```
+
+</details>
+
+<details>
+<summary><b>Building an agent — tool search</b></summary>
+
+If you build an agent with Anthropic's BM25 tool search (`tool_search_tool_bm25`), it does not match Hangul queries (checked 2026-11-14: Korean words present verbatim in the descriptions returned 0 results; English words matched). Search with English keywords — every tool description starts with an English line — or use the regex tool search (`tool_search_tool_regex`), which matches Korean terms. If unsure which tool to use, call `find_tool` first — it accepts Korean and English queries.
+
+</details>
+
+<details>
+<summary><b>Authorship (Solar Pro 4 and Claude)</b></summary>
+
+**Authorship notice:** Versions 0.3.0–0.12.2 (2026-10-10 to 10-26) were written by **Solar Pro 4** (Solar Work CLI), reviewed by CodeSolar and cross-checked with tests by Claude (parts of 0.8.0 and all of 0.9.2 were fixed/written by Claude). **From 0.13.0 (2026-10-28) on, the existing calculator skeleton remains Solar Pro 4's, while new tools, year-by-year statute checks and bug fixes are written by Claude (Anthropic)** and reviewed by CodeSolar. **From 0.26.0 (2026-11-10) on, Claude writes the spec and answer tests for each new tool first, Solar Pro 4 implements the skeleton, and Claude reviews and completes it** (author noted per commit). Each [CHANGELOG](CHANGELOG.md) section states who wrote it.
+
+</details>
+
+<a name="disclaimer"></a>
+
+<details>
+<summary><b>Disclaimer, not a tax agent service, AI use and data transmission (full text)</b></summary>
 
 - **Disclaimer:** Results are a review aid, not tax advice. Verify statutes and rulings with a tax accountant, CPA or attorney before filing, during a tax audit, or in appeals. Check the statute text and case law in the original source.
 - **Not a tax agent service:** This tool does not perform **tax agent services under Article 2 of the Certified Tax Accountant Act** (preparing tax adjustment statements, filing on behalf of a taxpayer, tax consultation); only certified tax accountants and registered CPAs or attorneys may do so (Article 20). It is software that turns statutory formulas into code and shows the computation for the inputs given; please verify the facts and make the final judgment together with a tax professional (tax accountant, CPA or attorney).
-- **AI use notice:** The 123 computation, judgment and lookup tools run in code and do not use generative AI. The 3 PDF review tools (`extract_relations`, `tunnelling_from_pdf`, `return_precheck_pdf`) use generative AI (Upstage Solar Pro 4) when UPSTAGE_API_KEY is set, and mark that fact in their results. Without a key, they use pypdf for local text extraction (host_ai mode) and provide 정리 안내 (cleanup guidance) so the next tool input can be prepared manually.
+- **AI use notice:** All computation, judgment and lookup tools other than the 3 PDF review tools run in code and do not use generative AI. The 3 PDF review tools (`extract_relations`, `tunnelling_from_pdf`, `return_precheck_pdf`) use generative AI (Upstage Solar Pro 4) when UPSTAGE_API_KEY is set, and mark that fact in their results. Without a key, they use pypdf for local text extraction (host_ai mode) and provide 정리 안내 (cleanup guidance) so the next tool input can be prepared manually.
 - **Data transmission:** Document content is sent to the Upstage API (api.upstage.ai) only when UPSTAGE_API_KEY is set and the PDF tools are used. The price lookups send only a ticker and date to KRX (`stock_price_lookup`) or an address, parcel number and year to VWORLD (`official_property_price`, needs VWORLD_KEY). Without a key (pypdf local extraction), no data is transmitted externally. Do not submit documents containing personal or sensitive information when using the API-based flow.
+
+</details>
 
 ## License
 
