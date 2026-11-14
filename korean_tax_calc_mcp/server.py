@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from .engine import calc as K, calc_cit as C, calc_income as I, calc_vat as V, calc_capgains as CG
 from .engine import calc_nonprofit as NP
 from .engine import calc_foreign as F
+from .engine import calc_branch_exit as BX
 from .engine import calc_provision as PV
 from .engine import calc_tp as ALR
 from .engine import calc_tp_screen as TPS
@@ -648,6 +649,67 @@ def foreign_tax_credit(
     if "error" in r:
         return r
     return _ok(r["결과"], r["근거"], 연도별_근거=r.get("연도별_근거", {}))
+
+
+# ── 외국법인 지점세·국외전출세(0.52 후보, 2026-11-14) ─────────────────────────────
+@mcp.tool(annotations=CALC)
+@_guard
+def branch_profits_tax(
+    year: YEAR,
+    pe_income: Annotated[int, Field(description="국내사업장의 각 사업연도 소득금액(원). 결손이면 음수")],
+    corporate_tax: Annotated[int, Field(description="법인세법 제95조에 따른 법인세(산출세액, 원)", ge=0)],
+    treaty_allows_branch_tax: Annotated[bool, Field(description="거주지국과의 조세조약이 지점세(이윤 추가 과세)를 허용하면 true. 허용하지 않으면 지점세 없음")],
+    credits_reductions: Annotated[int, Field(description="제96조제2항제1호가목 — 외국납부세액공제·재해손실세액공제와 다른 법률에 따른 감면세액·세액공제액(원)", ge=0)] = 0,
+    penalties_additional: Annotated[int, Field(description="제96조제2항제1호나목 — 가산세와 법인세법·조세특례제한법에 따른 추가 납부세액(원)", ge=0)] = 0,
+    local_income_tax: Annotated[int, Field(description="법인지방소득세(원)", ge=0)] = 0,
+    thin_cap_disallowed: Annotated[int, Field(description="국제조세조정에 관한 법률(2020년까지 제14조, 2021년부터 제22조)에 따라 손금에 산입되지 않은 금액(원)", ge=0)] = 0,
+    capital_begin: Annotated[int, Field(description="사업연도 개시일 현재 자본금상당액(원) — 재무상태표 자산 합계 − 부채(충당금 포함, 미지급법인세 제외)")] = 0,
+    capital_end: Annotated[int, Field(description="사업연도 종료일 현재 자본금상당액(원)")] = 0,
+    untaxed_retained_prior: Annotated[int, Field(description="직전 사업연도 종료일 현재 미과세누적유보소득(원, 음수 가능) — 시행령 제134조제3항")] = 0,
+    treaty_branch_rate: Annotated[float | None, Field(description="조세조약에서 정한 지점세 세율(소수, 예 0.05). 생략하면 법인세법 제98조 인용 세율 100분의 20")] = None,
+    residence_country_taxes_korean_branches: Annotated[bool, Field(description="거주지국이 그 나라에 있는 우리나라 법인의 국외사업장에 추가 과세하면 true(기본). false면 제96조제1항 단서로 지점세 없음")] = True,
+    treaty_basis: Annotated[Literal["소득금액", "송금액"], Field(description="조약의 과세 기준 — 소득금액(기본) 또는 이윤 송금액")] = "소득금액",
+    remitted_profit: Annotated[int | None, Field(description="송금액 기준일 때 각 사업연도에 실제로 송금된 이윤(원)")] = None,
+    prior_year_taxable: Annotated[int | None, Field(description="송금액 기준일 때 직전 사업연도 과세대상소득금액(원)")] = None,
+    pe_closed: Annotated[bool, Field(description="국내사업장을 가지지 않게 된 의제사업연도면 true — 종료일 자본금상당액을 0으로 봄")] = False,
+) -> dict:
+    """Branch profits tax on a foreign corporation's Korean permanent establishment (지점세, 법인세법 제96조).
+외국법인 국내사업장의 지점세 — 과세대상소득금액(각 사업연도 소득금액 − 법인세 등 − 법인지방소득세 − 재투자 인정액 − 과소자본 손금불산입액 + 자본금상당액감소액)에 조약 세율을 곱한다.
+언제: 외국법인 지점이 법인세를 낸 뒤 본점 송금 이윤에 추가로 내는 세금을 구할 때. 조약이 지점세를 허용하지 않으면 0.
+입력: year(사업연도 2016~2026), pe_income(각 사업연도 소득금액), corporate_tax(제95조 법인세), treaty_allows_branch_tax(조약 허용 여부),
+  credits_reductions·penalties_additional(제96조제2항제1호 가목·나목), local_income_tax, thin_cap_disallowed, capital_begin·capital_end(자본금상당액),
+  untaxed_retained_prior(직전 사업연도 말 미과세누적유보소득), treaty_branch_rate(조약 세율, 생략 시 100분의 20), residence_country_taxes_korean_branches(제96조제1항 단서),
+  treaty_basis·remitted_profit·prior_year_taxable(송금액 기준 조약), pe_closed(의제사업연도).
+결과: 지점세, 과세대상 금액, 세율·근거, 계산 내역(재투자 공제·자본금상당액 증감), 연도별 인용 조문, 한계.
+  재투자 인정액은 시행령 제134조제1항(자본금상당액증가액 + 음수 미과세누적유보소득, 한도 있음), 결손 사업연도는 같은 조 제4항, 송금액 기준은 제5항.
+  조약의 지점세 허용·세율은 조문 MCP tax_treaty로 확인한다. 원 미만 처리 규정이 없어 최종 세액만 버린다."""
+    r = BX.branch_profits_tax(year, pe_income, corporate_tax, credits_reductions, penalties_additional, local_income_tax, thin_cap_disallowed,
+                                 capital_begin, capital_end, untaxed_retained_prior, treaty_allows_branch_tax, treaty_branch_rate,
+                              residence_country_taxes_korean_branches, treaty_basis, remitted_profit, prior_year_taxable, pe_closed)
+    return _ok(r.pop("결과"), r.pop("근거"), **r)
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def emigration_exit_tax(
+    departure_date: Annotated[str, Field(description="출국일 YYYY-MM-DD(2018-01-01~2026-12-31). 2018년 전 출국은 과세 없음, 2027년 이후는 개정규정 미대조로 계산 안 함")],
+    residence_years_in_10: Annotated[float, Field(description="출국일 10년 전부터 출국일까지 국내에 주소·거소를 둔 기간 합계(년) — 5년 이상이어야 과세", ge=0, le=10)],
+    major_shareholder: Annotated[bool, Field(description="출국일이 속하는 연도의 직전 연도 종료일 현재 대주주(소득세법 시행령 제167조의8제1항)이면 true")],
+    holdings: Annotated[list, Field(description="출국 당시 소유한 국내주식등 [{name?, market_value(출국일 시가, 원), acquisition_cost(필요경비 제97조, 원), sme?(중소기업 주식등이면 true — 2019년 출국분 세율 구분)}]")],
+    holdings_reported: Annotated[bool, Field(description="출국일 전날까지 국내주식등 보유현황을 빠짐없이 신고했으면 true(기본)")] = True,
+    unreported_face_value: Annotated[int, Field(description="보유현황 미신고·누락분의 액면금액 또는 출자가액(원) — 2019년 이후 출국분 100분의 2 가산", ge=0)] = 0,
+    manager_reported: Annotated[bool, Field(description="납세관리인을 출국일 전날까지 신고했으면 true — 2019년 이후 출국분 신고기한 안내")] = False,
+) -> dict:
+    """Departure (exit) tax on a Korean resident major shareholder's domestic shares (국외전출세, 소득세법 제118조의9~제118조의18).
+국외전출세 — 출국일 시가로 양도한 것으로 보아 양도소득금액 − 연 250만원 = 과세표준, 세율은 출국일로 고른다.
+언제: 대주주인 거주자가 해외로 이주하면서 보유한 국내주식에 내는 양도소득세와 신고기한·납부유예·실제 양도 후 공제를 확인할 때.
+입력: departure_date(출국일), residence_years_in_10(10년 중 국내 주소·거소 기간), major_shareholder(직전 연도 말 대주주 여부),
+  holdings(종목별 출국일 시가·필요경비·중소기업 여부), holdings_reported·unreported_face_value(보유현황 미신고 가산), manager_reported(납세관리인 신고).
+결과: 납세의무 여부, 양도소득금액·과세표준·산출세액·미신고 가산, 세율 구간, 신고·납부기한, 조정공제·외국납부세액공제·비거주자 세액공제 안내, 납부유예 요건·이자상당액, 재전입 환급, 한계.
+  세율: 2018년 출국분 20%, 2019년 이후 출국분 3억원 이하 20%·초과 25%(2019년 출국분 중소기업 주식등은 20%, 2018.12.31. 법률 제16104호 부칙 제1조 단서).
+  대주주 기준·출국일 시가는 입력값이다. 원 미만 처리 규정이 없어 최종 금액만 버린다."""
+    r = BX.emigration_exit_tax(departure_date, residence_years_in_10, major_shareholder, holdings, holdings_reported, unreported_face_value, manager_reported)
+    return _ok(r.pop("결과"), r.pop("근거"), **r)
 
 
 # ── 기업업무추진비 기준일(지출분·신고분) ─────────────────────────────────────────────
