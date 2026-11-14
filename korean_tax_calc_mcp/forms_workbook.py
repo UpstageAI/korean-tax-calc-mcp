@@ -1035,6 +1035,11 @@ def export_form_inputs(tool: str, args: dict | None, data: dict | None) -> dict 
             loss_ratio = loss_limit_ratio(year, sme) if ytbl.get("기부금_결손금한도") else 1.0
             carry_first = ytbl.get("기부금_이월우선", False)
             social_ratio = ytbl.get("기부금_사회적기업_비율")
+            _gj = data.get("기준") or {}                       # 도구가 신고일로 고른 값(fy_start·fy_end·filing_date 입력 시)
+            if "이월분_먼저" in _gj:
+                carry_first = _gj["이월분_먼저"]
+            if "사회적기업_비율" in _gj:
+                social_ratio = _gj["사회적기업_비율"]
         else:
             loss_ratio = 1.0 if sme else 0.8
             carry_first = True
@@ -1125,7 +1130,7 @@ def export_form_inputs(tool: str, args: dict | None, data: dict | None) -> dict 
                _inp("수입구간2_한도", rev_tiers[1][0], "수입구간2 한도(500억원)"),
                _inp("수입구간2_비율", rev_tiers[1][1], "수입구간2 비율(일반수입금액 기준)"),
                _inp("수입구간3_비율", rev_tiers[2][1], "수입구간3 비율(일반수입금액 기준)"),
-               _inp("전통시장등비율", ytbl.get("전통시장등_비율", 0), "전통시장등 추가한도 비율"),
+               _inp("전통시장등비율", (calc or {}).get("전통시장등비율", ytbl.get("전통시장등_비율", 0)), "전통시장등 추가한도 비율(신고일 기준 — 도구 계산값)"),
                _inp("전통시장등금액", a.get("market", 0), "전통시장·지역사랑상품권·온누리상품권 지출액")]
         # 결과에 별칭 추가 (서식 확인 칸용)
         result = dict(res)

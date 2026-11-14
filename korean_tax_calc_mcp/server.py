@@ -309,6 +309,7 @@ class ReceiptItem(BaseModel):
     amount: int           # 1회 지출액(원)
     qualified: bool = False       # 적격증빙 여부
     congratulatory: bool = False  # 경조금 여부
+    spent_on: str | None = None   # 지출일 YYYY-MM-DD(선택) — 기준금액을 지출일로 고름(영 31443 부칙§9: 2021.1.1. 이후 지출분)
 
 
 # ── 세무조사 판정 도구 입력 스키마 ──
@@ -640,6 +641,41 @@ def foreign_tax_credit(
     return _ok(r["결과"], r["근거"], 연도별_근거=r.get("연도별_근거", {}))
 
 
+# ── 기업업무추진비 기준일(지출분·신고분) ─────────────────────────────────────────────
+# 전통시장등 추가한도는 신고일(법률 19936 부칙§35·21223 부칙§31), 온누리상품권은 2026.5.12.이 속하는 사업연도 지출분(21612 부칙§4),
+# 2020 수입금액 특례는 2020년 지출분(조특법 제136조④⑤ — 2020년이 두 사업연도에 걸치면 일할), 적격증빙 1만→3만 원은 2021.1.1. 이후 지출분(영 31443 부칙§9).
+_FY_START_DESC = "사업연도 개시일 YYYY-MM-DD(선택, year 안의 날짜) — 사업연도가 역년과 다를 때. fy_end만 주면 1년 사업연도로 봄"
+_FY_END_DESC = "사업연도 종료일 YYYY-MM-DD(선택) — 신고기한(종료일이 속하는 달의 말일부터 3개월) 추정과 지출분 부칙 판정에 씀"
+_FILING_DESC = ("과세표준 신고일 YYYY-MM-DD(선택) — '과세표준을 신고하는 경우부터' 적용하는 부칙 판정. 없으면 fy_end 기준 신고기한에 신고한 것으로 봄. "
+                "기한후·수정신고가 이 부칙의 신고에 들어가는지는 판단하지 않음")
+
+
+def _ent_dates(year, fy_start, fy_end, filing_date, market_used: bool, revenue_used: bool) -> dict:
+    """기업업무추진비 도구 공통 — 날짜가 있으면 신고일·지출일로 전통시장등 비율·대상과 2020 일할을 고르고, 없으면 종전(사업연도 표) 그대로 + 경계 연도 주의."""
+    from .engine import date_basis as DB
+    out = {"주의": [], "기준": None, "regime": None, "days_2020": None}
+    if fy_start is None and fy_end is None and filing_date is None:
+        if market_used and 2022 <= year <= 2026:
+            out["주의"].append(f"전통시장등 추가한도 비율·대상을 {year} 사업연도 표로 골랐음 — 부칙은 신고일(2024.1.1.·2026.1.1. 이후 신고분)과 "
+                             "온누리상품권은 2026.5.12.이 속하는 사업연도 지출분 기준이라, 사업연도가 역년과 다르거나 신고일이 다르면 fy_start·fy_end·filing_date를 넣는다")
+        if revenue_used and year in (2019, 2020):
+            out["주의"].append("2020 수입금액 특례(조특법 제136조④)를 역년 사업연도로 적용 — 2020년이 두 사업연도에 걸치면 일할(같은 조 ⑤)이라 fy_start·fy_end를 넣는다")
+        return out
+    fs, fe, _ = DB.fiscal_year(year, fy_start, fy_end)
+    filed, est = DB.filing_day(fe, filing_date)
+    reg = C.market_regime(filed, fe)
+    out["regime"] = reg
+    out["기준"] = {"사업연도": f"{fs.isoformat()}~{fe.isoformat()}", "신고일": filed.isoformat() + (" (신고기한 추정)" if est else ""),
+                 "전통시장등_비율": reg["비율"], "전통시장등_대상": list(reg["대상"]), "전통시장등_부칙": reg["부칙"]}
+    d20 = DB.days_overlap(fs, fe, date(2020, 1, 1), date(2020, 12, 31))
+    if d20:
+        out["days_2020"] = (d20, (fe - fs).days + 1)
+        out["기준"]["2020년_일수"] = f"{d20}/{(fe - fs).days + 1}"
+    if market_used and fe > date(2028, 12, 31):
+        out["주의"].append("조특법 제136조⑥은 2028.12.31. 이전 지출분만 — 그 뒤 지출분은 전통시장등 금액에서 빼고 넣는다")
+    return out
+
+
 @mcp.tool(annotations=CALC)
 @_guard
 def entertainment_limit(year: YEAR, sme: Annotated[bool, Field(description="중소기업 여부")],
@@ -648,13 +684,30 @@ def entertainment_limit(year: YEAR, sme: Annotated[bool, Field(description="중�
                         related_revenue: WON = 0,
                         culture: WON = 0,
                         months: Annotated[int, Field(description="사업연도 월수(1~12)")] = 12,
-                        market: Annotated[int, Field(description="전통시장(및 조특법 제136조제6항의 대상)에서 지출한 기업업무추진비(원, 2023 사업연도부터) — 일반한도의 일정 비율 안에서 추가한도", ge=0)] = 0) -> dict:
+                        market: Annotated[int, Field(description="전통시장(및 조특법 제136조제6항의 대상 — 지역사랑상품권·온누리상품권)에서 지출한 기업업무추진비(원) — 일반한도의 일정 비율 안에서 추가한도. 대상 성격은 신고일·사업연도로 갈리므로 해당 성격만 합쳐 넣는다", ge=0)] = 0,
+                        fy_start: Annotated[str | None, Field(description=_FY_START_DESC)] = None,
+                        fy_end: Annotated[str | None, Field(description=_FY_END_DESC)] = None,
+                        filing_date: Annotated[str | None, Field(description=_FILING_DESC)] = None) -> dict:
     """기업업무추진비(접대비) 한도와 한도초과액. 언제: 법인세 세무조정에서 기업업무추진비 손금불산입액을 구할 때.
-입력: 사업연도(2016~2026, 2023년까지는 '접대비') → year, 수입금액(일반, 중단사업부문 매출 포함 기업회계 매출액) → general_revenue, 특수관계인 수입 → related_revenue, 중소기업 여부 → sme, 지출액(접대비) → expensed, 문화비 → culture, 전통시장 지출 → market(2023~), 사업연도 월수 → months.
-결과: 한도·한도초과액(손금불산입)·근거(법인세법 제25조, 시행령 제42조). 기업업무추진비 한도와 한도초과액 계산; 접대비가 한도를 넘는가 확인할 때 쓴다."""
+입력: 사업연도(2016~2026, 개시일이 속하는 해, 2023년까지는 '접대비') → year, 수입금액(일반, 중단사업부문 매출 포함 기업회계 매출액) → general_revenue, 특수관계인 수입 → related_revenue, 중소기업 여부 → sme, 지출액(접대비) → expensed, 문화비 → culture, 전통시장등 지출 → market, 사업연도 월수 → months,
+  사업연도 개시일·종료일 → fy_start·fy_end, 신고일 → filing_date(선택).
+기준일: 전통시장등 추가한도는 2024.1.1. 이후 신고분 10%(전통시장, 법률 제19936호 부칙 제35조), 2026.1.1. 이후 신고분 20%(지역사랑상품권 포함, 법률 제21223호 부칙 제31조),
+  온누리상품권은 2026.5.12.이 속하는 사업연도 지출분부터(법률 제21612호 부칙 제4조). 2020 수입금액 특례는 2020년에 속하는 일수로 일할(조특법 제136조제5항).
+  날짜를 주지 않으면 사업연도 표(역년 가정)로 고르고 경계 연도면 주의를 붙인다.
+결과: 한도·한도초과액(손금불산입)·근거(법인세법 제25조, 시행령 제42조), 날짜를 주면 기준(신고일·비율·대상·2020년 일수). 기업업무추진비 한도와 한도초과액 계산; 접대비가 한도를 넘는가 확인할 때 쓴다."""
     _chk.int_range("months", months, 1, 12, "사업연도 월수 ")
-    return _ok(C.entertain(year, sme, general_revenue, related_revenue, expensed, culture=culture, months=months, market=market),
-               "법인세법 제25조, 시행령 제42조")
+    dd = _ent_dates(year, fy_start, fy_end, filing_date, market > 0, (general_revenue + related_revenue) > 0)
+    reg = dd["regime"]
+    r = C.entertain(year, sme, general_revenue, related_revenue, expensed, culture=culture, months=months, market=market,
+                    days_2020=dd["days_2020"], market_ratio=None if reg is None else reg["비율"])
+    basis = "법인세법 제25조, 시행령 제42조" + (f", 조세특례제한법 제136조⑥({reg['부칙']})" if reg and market else "") + (", 조세특례제한법 제136조④⑤(2020년 일수 일할)" if dd["days_2020"] else "")
+    extra = {}
+    if dd["기준"]:
+        extra["계산"] = {"전통시장등비율": reg["비율"]}
+        extra["기준"] = dd["기준"]
+    if dd["주의"]:
+        extra["주의"] = dd["주의"]
+    return _ok(r, basis, **extra)
 
 
 @mcp.tool(annotations=CALC)
@@ -1033,11 +1086,18 @@ wholly_owned_capital_increase=True이고 시가가 액면 미만(액면=0 포함
 
 @mcp.tool(annotations=CALC)
 @_guard
-def loss_carryforward_limit(year: YEAR, sme: Annotated[bool, Field(description="중소기업 등 여부")]) -> dict:
+def loss_carryforward_limit(year: YEAR, sme: Annotated[bool, Field(description="중소기업 등 여부(시행령 제10조제1항 각 호 법인 — 회생계획 이행 등 — 도 True)")]) -> dict:
     """이월결손금 공제 한도율(사업연도 개시일 기준). 언제: 이월결손금이 있을 때 해당 사업연도에 얼마까지 공제되는지 한도율을 확인한다.
 입력: 사업연도(2016~2026) → year, 중소기업 등 여부 → sme.
-결과: 한도율(소수)과 근거(법인세법 제13조제1항 단서). Limit on using loss carryforwards in a year; returns the deduction limit ratio by fiscal year start."""
-    return _ok({"한도율": C.loss_limit_ratio(year, sme)}, "법인세법 제13조① 단서")
+결과: 한도율(소수)과 근거(법인세법 제13조제1항 단서). 시행령 제10조제1항 각 호 법인(회생계획·경영정상화계획 이행 등)은 sme=True로 넣으면 100% —
+  같은 항 제7호(조세특례제한법 제74조에 따라 고유목적사업준비금을 손금산입할 수 있는 비영리내국법인)는 2024.1.1. 이후 개시 사업연도의 신고분부터(대통령령 제34266호 부칙 제2조). Limit on using loss carryforwards in a year; returns the deduction limit ratio by fiscal year start."""
+    extra = {}
+    if not sme and year >= 2024:
+        extra["주의"] = ["시행령 제10조제1항 각 호 법인(제7호: 조세특례제한법 제74조제1항(제4호~제6호 제외)·제4항 고유목적사업준비금 손금산입 비영리내국법인 — 2024.1.1. 이후 개시 사업연도부터, "
+                       "대통령령 제34266호 부칙 제2조)이면 한도 100% — sme=True로 다시 계산"]
+    elif not sme:
+        extra["주의"] = ["시행령 제10조제1항 각 호 법인(회생계획·경영정상화계획 이행 등)이면 한도 100% — sme=True로 다시 계산. 제7호(고유목적사업준비금 비영리법인)는 2024.1.1. 이후 개시 사업연도부터라 이 사업연도엔 해당 없음"]
+    return _ok({"한도율": C.loss_limit_ratio(year, sme)}, "법인세법 제13조① 단서", **extra)
 
 
 @mcp.tool(annotations=CALC)
@@ -1353,6 +1413,9 @@ def minimum_tax_adjustment(
     reductions: Annotated[list, Field(description="세액감면 [{code, amount}]")] = None,
     credits: Annotated[list, Field(description="세액공제 [{code, current(당기발생, 기본 0), carryforward([{year, amount, period(종전 이월공제기간 5·7·10, 기본 5)}], 기본 [])}]")] = None,
     exclusion_order: Annotated[list, Field(description="신고 때 납세의무자가 고른 배제 순서(코드 또는 \"105\"·\"106\"·\"114\"·\"113\"·\"117\"). 빈 목록이면 시행령 제126조제5항 순서")] = None,
+    fy_start: Annotated[str | None, Field(description=_FY_START_DESC)] = None,
+    fy_end: Annotated[str | None, Field(description=_FY_END_DESC)] = None,
+    filing_date: Annotated[str | None, Field(description=_FILING_DESC)] = None,
 ) -> dict:
     """법인세 최저한세 조정(조세특례제한법 제132조제1항, 시행령 제126조제5항, 미공제 이월 제144조). 언제: 세액감면·공제 후 세액이 최저한세 미달일 때 배제 내역을 구한다.
 입력:
@@ -1377,6 +1440,7 @@ def minimum_tax_adjustment(
   credits — 세액공제 [{code, current(당기발생, 기본 0), carryforward([{year, amount, period?}], 기본 [])}] 목록(기본 []).
     이월공제기간(제144조제1항): 2019 사업연도까지는 발생 다음 사업연도부터 5년(창업 중소기업 제5조 7년·제10조 10년, 제10조제1항제1호 10년 — carryforward의 period에 5·7·10), 2020 사업연도부터 10년.
     다만 종전 기간이 2021.1.1. 전에 지난 세액(12월 결산 5년 기준 2014 사업연도 이전 발생분)은 10년으로 늘어나지 않음(법률 제17759호 부칙 제35조·제51조, 서면-2022-법인-1779). 기간이 지난 이월분은 입력 오류로 거절.
+    10년 기간은 2021.1.1. 이후 과세표준을 신고하는 경우부터(부칙 제35조) — fy_start·fy_end·filing_date를 주면 신고일(없으면 신고기한)로, 없으면 사업연도 2020부터로 봄.
   exclusion_order — 신고 때 납세의무자가 고른 배제 순서(코드 또는 "105"·"106"·"114"·"113"·"117"). 빈 목록이면 시행령 제126조제5항 순서(기본 []).
 결과: 별지 제4호서식 감면후·최저한세·조정감·조정후 란과 별지 제8호서식(갑) 공제감면세액, 배제_내역·이월_미공제·최저한세_적용제외·별지8 등.
   감면전_산출세액 — 감면 등을 모두 배제했을 때의 산출세액. 이 값이 최저한세보다 적으면(예: 2023~2025 사업연도 일반법인 2억원 이하 9% < 최저한세율 10%) 판단 "최저한세가 산출세액보다 큼" — 납부할 세액은 그 산출세액.
@@ -1388,6 +1452,17 @@ def minimum_tax_adjustment(
     reductions = reductions or []
     credits = credits or []
     exclusion_order = exclusion_order or []
+    carry10, 기준, 주의_기준 = None, None, []
+    if fy_start is not None or fy_end is not None or filing_date is not None:
+        from .engine import date_basis as DB
+        _fs, _fe, _ = DB.fiscal_year(year, fy_start, fy_end)
+        _filed, _est = DB.filing_day(_fe, filing_date)
+        carry10 = _filed >= date(2021, 1, 1)          # 조특법 법률 제17759호 부칙 제35조: 2021.1.1. 이후 신고분부터 10년
+        기준 = {"사업연도": f"{_fs.isoformat()}~{_fe.isoformat()}", "신고일": _filed.isoformat() + (" (신고기한 추정)" if _est else ""),
+               "이월공제기간_10년": carry10}
+    elif year in (2019, 2020) and any((c or {}).get("carryforward") for c in credits if isinstance(c, dict)):
+        주의_기준.append("미공제 세액 이월공제기간 10년은 2021.1.1. 이후 신고분부터(법률 제17759호 부칙 제35조) — 역년 사업연도로 보고 2020 사업연도부터 적용했음. "
+                     "사업연도가 역년과 다르면 fy_start·fy_end 또는 filing_date를 넣는다")
     r = min_tax_adjust(
         year=year, sme=sme, grace_year=grace_year, months=months,
         net_income=net_income, income_add=income_add, income_deduct=income_deduct,
@@ -1395,7 +1470,7 @@ def minimum_tax_adjustment(
         donation_excess=donation_excess, donation_carryover=donation_carryover,
         loss_carryforward=loss_carryforward, nontaxable=nontaxable, nontaxable_mt=nontaxable_mt,
         exclusion_mt=exclusion_mt, income_deduction=income_deduction, income_deduction_mt=income_deduction_mt,
-        reductions=reductions, credits=credits, exclusion_order=exclusion_order,
+        reductions=reductions, credits=credits, exclusion_order=exclusion_order, carry10=carry10,
     )
     if "error" in r:
         return r
@@ -1464,18 +1539,20 @@ def minimum_tax_adjustment(
                                   "근거": "조세특례제한법 제132조①2호"})
     if r["조정"] and any(v for k, v in r["조정감"].items() if k == "세액공제"):
         총이월 = sum(x["금액"] for x in r["이월_미공제"])
+        _new10 = (year >= 2020) if carry10 is None else carry10
         if 총이월 > 0:
             판단목록.append({"항목": "이월공제",
-                              "결론": (f"{총이월:,}원 다음 사업연도부터 10년 이월" if year >= 2020 else
+                              "결론": (f"{총이월:,}원 다음 사업연도부터 10년 이월" if _new10 else
                                        f"{총이월:,}원 다음 사업연도부터 이월 — 당시 규정 5년(창업 중소기업 제5조 7년·제10조 10년). "
                                        "2015 사업연도 이후 발생분은 2020.12.29. 개정으로 10년(2021.1.1. 전에 종전 기간이 지난 세액은 제외)"),
-                              "근거": "조세특례제한법 제144조①" + ("" if year >= 2020 else "(2020.12.29. 개정 전), 법률 제17759호 부칙 제35조·제51조, 서면-2022-법인-1779")})
+                              "근거": "조세특례제한법 제144조①" + ("" if _new10 else "(2020.12.29. 개정 전), 법률 제17759호 부칙 제35조·제51조, 서면-2022-법인-1779")})
     if r["최저한세_적용제외"]["감면세액"] + r["최저한세_적용제외"]["세액공제"] > r["차감세액"]:
         판단목록.append({"항목": "적용제외 공제감면",
                           "결론": "산출세액을 넘음 — 법인세법 제59조 순서·이월공제 확인 필요",
                           "근거": "법인세법 제59조"})
+    extra = {k: v for k, v in (("기준", 기준), ("주의", 주의_기준)) if v}
     return _ok(r, "조세특례제한법 제132조①·제144조, 시행령 제126조⑤, 법인세법 시행규칙 별지 제4호·제8호서식(갑)",
-               계산={"산식": 산식}, 판단=판단목록, 계산식_입력=calc_inputs)
+               계산={"산식": 산식}, 판단=판단목록, 계산식_입력=calc_inputs, **extra)
 
 
 @mcp.tool(annotations=CALC)
@@ -1791,17 +1868,24 @@ def _range_err(*pairs):
 def invoice_penalty(supply_amount: WON, kind: Annotated[Literal["가공", "지연발급", "미발급", "미발급_종이", "지연전송", "미전송", "지연수취",
                                                                "매출처별합계표_미제출", "매출처별합계표_예정분확정제출", "신용카드매입공제"],
                                                        Field(description="가산세 유형 — 가공=실물 없는 발급·수취")],
-                    supplied_on: Annotated[str, Field(description="공급일(발급·수취일) YYYY-MM-DD — 세율 기준 연도")] = "",
-                    e_invoice_transmitted: Annotated[bool | None, Field(description="전자세금계산서 발급명세 전송 여부 — True면 전송함, False면 미전송, None이면 미확인")] = None) -> dict:
-    """세금계산서 가산세(가공 2%·3%·4%, 미발급 2%, 지연발급 1% 등, 공급일 기준 세율 적용)와 합계표 가산세·전자세금계산서 전송 면제. 언제: 세금계산서 발급·수취 의무를 위반했을 때 가산세 금액을 구한다.
-입력: 공급가액(원) → supply_amount, 가산세 유형 → kind, 공급일(YYYY-MM-DD, 세율 기준) → supplied_on, 전자세금계산서 전송 여부 → e_invoice_transmitted.
-결과: 가산세·적용 세율, 근거(부가가치세법 제60조제2항·제5항·제6항·제7항, 가공은 제60조제3항). 매출처별합계표 미제출·예정분확정제출은 e_invoice_transmitted로 면제 여부 확인.
+                    supplied_on: Annotated[str, Field(description="공급일 YYYY-MM-DD — 세율 기준일(가공은 실제 공급이 없으므로 세금계산서등을 발급·수취한 날을 넣거나 issued_on 사용)")] = "",
+                    e_invoice_transmitted: Annotated[bool | None, Field(description="전자세금계산서 발급명세 전송 여부 — True면 전송함, False면 미전송, None이면 미확인")] = None,
+                    issued_on: Annotated[str, Field(description="가공 세금계산서등을 발급하거나 발급받은 날 YYYY-MM-DD — kind='가공'의 세율 기준일(2017.12.31. 이전 2%, 2018.1.1. 이후 3%, 2026.1.1. 이후 4%). 없으면 supplied_on, 둘 다 없으면 계산하지 않음")] = "") -> dict:
+    """세금계산서 가산세(가공 2%·3%·4%는 발급·수취일 기준, 미발급 2%, 지연발급 1% 등은 공급일 기준 세율)와 합계표 가산세·전자세금계산서 전송 면제. 언제: 세금계산서 발급·수취 의무를 위반했을 때 가산세 금액을 구한다.
+입력: 공급가액(원) → supply_amount, 가산세 유형 → kind, 공급일(YYYY-MM-DD, 세율 기준) → supplied_on, 가공 세금계산서등 발급·수취일 → issued_on(kind='가공'은 issued_on 또는 supplied_on 필수), 전자세금계산서 전송 여부 → e_invoice_transmitted.
+결과: 가산세·적용 세율, 근거(부가가치세법 제60조제2항·제5항·제6항·제7항, 가공은 제60조제3항제1호·제2호와 법률 제21218호 부칙 제3조 — 2026.1.1. 전 발급·수취분은 종전 3%). 매출처별합계표 미제출·예정분확정제출은 e_invoice_transmitted로 면제 여부 확인.
   True → 가산세 0(제54조제2항), None → 주의 메시지, False → 기존 금액."""
-    _e = _range_err(("supplied_on", supplied_on))
+    _e = _range_err(("supplied_on", supplied_on), ("issued_on", issued_on))
     if _e:
         return _e
     if kind == "가공":
-        return _ok({"가산세": K.penalty_fake_invoice(supply_amount, supplied_on), "세율": K.fake_invoice_rate(supplied_on)}, "부가가치세법 제60조③")
+        발급일 = issued_on or supplied_on
+        if not 발급일:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": ["kind='가공' — 세율이 세금계산서등 발급·수취일로 갈림(2017.12.31. 이전 2%, 2018.1.1. 이후 3%, 2026.1.1. 이후 4% — 부가가치세법 제60조제3항제1호·제2호, "
+                            "법률 제15223호 부칙 제6조·제21218호 부칙 제3조). issued_on(발급·수취일 YYYY-MM-DD)을 넣는다"]}
+        return _ok({"가산세": K.penalty_fake_invoice(supply_amount, 발급일), "세율": K.fake_invoice_rate(발급일), "기준일": 발급일},
+                   "부가가치세법 제60조③1호·2호" + (", 법률 제21218호 부칙 제3조(2026.1.1. 전 발급·수취분은 종전 3%)" if 발급일 < "2026-01-01" else ""))
 
     # 매출처별합계표 관련 종류 + 전자세금계산서 전송 확인
     if kind in ("매출처별합계표_미제출", "매출처별합계표_예정분확정제출"):
@@ -1834,18 +1918,25 @@ def invoice_penalty(supply_amount: WON, kind: Annotated[Literal["가공", "지�
 
 @mcp.tool(annotations=CALC)
 @_guard
-def invoice_penalty_bundle(items: Annotated[list, Field(description="[{deal(거래 이름), kind(invoice_penalty의 kind와 같은 값), supply_amount, supplied_on?}] — 같은 거래(deal) 안에서 중복 배제 적용")]) -> dict:
+def invoice_penalty_bundle(items: Annotated[list, Field(description="[{deal(거래 이름), kind(invoice_penalty의 kind와 같은 값), supply_amount, supplied_on?, issued_on?(가공 세금계산서등 발급·수취일 — kind='가공'은 issued_on 또는 supplied_on 필수)}] — 같은 거래(deal) 안에서 중복 배제 적용")]) -> dict:
     """세금계산서 가산세 묶음 계산(부가가치세법 제60조2항 후문·9항 중복 배제 적용). 언제: 하나의 거래(공급건)에 여러 가산세 사유가 함께 있을 때 중복을 배제하고 합계를 구한다.
-입력: items=[{deal(거래 이름), kind(invoice_penalty의 kind와 같은 값), supply_amount(공급가액, 원), supplied_on?(공급일 YYYY-MM-DD, 선택)}].
+입력: items=[{deal(거래 이름), kind(invoice_penalty의 kind와 같은 값), supply_amount(공급가액, 원), supplied_on?(공급일 YYYY-MM-DD, 선택), issued_on?(가공 세금계산서등 발급·수취일)}].
+  kind='가공'은 세율이 발급·수취일로 갈려(2%·3%·4%, 법률 제21218호 부칙 제3조) issued_on 또는 supplied_on이 없으면 계산하지 않음.
   kind: 지연발급·미발급·미발급_종이·지연전송·미전송·지연수취·매출처별합계표_미제출·매출처별합계표_예정분확정제출·신용카드매입공제·가공.
   같은 deal 안에서:
     · 지연발급(제60조2항1호)·미발급·미발급_종이(2호)가 있으면 그 deal의 지연전송·미전송(3·4호)은 0
     · 미발급·미발급_종이(2호)·가공(3호)이 있으면 그 deal의 매출처별합계표_*(6호)·지연수취·신용카드매입공제(7·5호)는 0 (단 5호 신용카드매입공제는 9항에 없으므로 그대로)
     · 지연발급(1호)·지연전송·미전송(3·4호)이 있으면 그 deal의 매출처별합계표_*(6호)는 0(9항2호)
 결과: 가산세_합계, 계산.항목별: [{deal, kind, 가산세, 배제사유?}], 근거(부가가치세법 제60조2항 후문·9항)."""
-    _e = _range_err(*[(f"items[{_i}].supplied_on", (_it or {}).get("supplied_on")) for _i, _it in enumerate(items or []) if isinstance(_it, dict)])
+    _e = _range_err(*[(f"items[{_i}].{_k}", (_it or {}).get(_k)) for _i, _it in enumerate(items or []) if isinstance(_it, dict)
+                      for _k in ("supplied_on", "issued_on")])
     if _e:
         return _e
+    _no_date = [f"items[{_i}] kind='가공' — 세율이 세금계산서등 발급·수취일로 갈림(2017.12.31. 이전 2%, 2018.1.1. 이후 3%, 2026.1.1. 이후 4%). issued_on(발급·수취일)을 넣는다"
+                for _i, _it in enumerate(items or []) if isinstance(_it, dict) and _it.get("kind") == "가공"
+                and not (_it.get("issued_on") or _it.get("supplied_on"))]
+    if _no_date:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": _no_date}
     from .engine.calc_vat import invoice_penalties
 
     # 종류별 분류 (중복 배제용)
@@ -1894,7 +1985,7 @@ def invoice_penalty_bundle(items: Annotated[list, Field(description="[{deal(거�
             if 배제사유:
                 penalty = 0
             elif kind == "가공":
-                penalty = K.penalty_fake_invoice(supply_amount, supplied_on or "")
+                penalty = K.penalty_fake_invoice(supply_amount, it.get("issued_on") or supplied_on)
             else:
                 penalty = invoice_penalties(supply_amount, kind, supplied_on)
 
@@ -2461,20 +2552,46 @@ def business_car_expense(year: YEAR, upkeep: Annotated[int, Field(description="�
                          months: Annotated[int, Field(description="보유 월수(1~12)")] = 12,
                          rental_corp: Annotated[bool, Field(description="부동산임대업 주업 등 특정법인")] = False,
                          plate_ok: Annotated[bool, Field(description="법인업무용 자동차등록번호판 부착 여부(2024.1.1. 이후 취득·임차 차량 중 취득가액(임차는 기준가액) 8천만원 이상인 차량만 대상 — acquisition_cost를 주면 기준 미만 차량엔 적용하지 않음)")] = True,
-                         acquisition_cost: Annotated[int | None, Field(description="차량 취득가액(원, 임차는 기준가액). 8천만원 미만이면 번호판 요건 대상이 아니므로 plate_ok=False여도 업무사용비율 그대로", ge=0)] = None) -> dict:
+                         acquisition_cost: Annotated[int | None, Field(description="차량 취득가액(원, 임차는 기준가액). 8천만원 미만이면 번호판 요건 대상이 아니므로 plate_ok=False여도 업무사용비율 그대로", ge=0)] = None,
+                         fy_start: Annotated[str | None, Field(description=_FY_START_DESC)] = None,
+                         fy_end: Annotated[str | None, Field(description=_FY_END_DESC)] = None,
+                         share_from_2024: Annotated[float | None, Field(description="관련비용(유지비·감가상각비) 중 2024.1.1. 이후 지출분의 비율(0~1, 선택) — 사업연도가 2024.1.1.을 걸칠 때 번호판 요건 적용분. 없으면 사업연도 일수로 안분", ge=0, le=1)] = None) -> dict:
     """업무용승용차 관련비용 손금불산입(업무사용비율·사적사용·미작성 시 기준비율·감가상각 연 800만 원 한도). 언제: 임원·직원이 사용하는 승용차 관련비용을 어디까지 손금으로 인정할지 계산할 때.
-입력: 사업연도(2016~2026) → year, 유지비(유류·보험·수선 등, 원) → upkeep, 세법상 감가상각비(5년 정액, 원) → depreciation, 장부상 감가상각비(원) → booked_depreciation, 운행기록부 작성 여부 → log_kept, 업무사용비율(소수, 작성 시) → business_ratio, 보유 월수(1~12) → months, 부동산임대업 주업 등 특정법인 여부 → rental_corp, 법인 전용번호판 부착 여부 → plate_ok.
+입력: 사업연도(2016~2026, 개시일이 속하는 해) → year, 유지비(유류·보험·수선 등, 원) → upkeep, 세법상 감가상각비(5년 정액, 원) → depreciation, 장부상 감가상각비(원) → booked_depreciation, 운행기록부 작성 여부 → log_kept, 업무사용비율(소수, 작성 시) → business_ratio, 보유 월수(1~12) → months, 부동산임대업 주업 등 특정법인 여부 → rental_corp, 법인 전용번호판 부착 여부 → plate_ok,
+  사업연도 개시일·종료일 → fy_start·fy_end, 2024.1.1. 이후 지출분 비율 → share_from_2024(선택).
+기준일: 번호판 요건(영 제50조의2제4항 단서)은 2024.1.1. 이후 지출하는 관련비용부터(대통령령 제34266호 부칙 제7조). 사업연도가 2024.1.1.을 걸치면 그 뒤 지출분만 업무사용금액 0원 —
+  share_from_2024가 없으면 사업연도 일수로 안분. 날짜가 없으면 사업연도 표(2024 개시부터)로 보고 2023 사업연도면 주의를 붙임.
 결과: 업무사용비율·손금불산입·감가상각 한도 등, 근거(법인세법 제27조의2, 시행령 제50조의2)."""
     if log_kept and business_ratio is None:
         return {"error": "입력 확인 필요 — 계산하지 않음",
                 "문제": ["log_kept=True(운행기록부 작성)면 business_ratio(운행기록상 업무사용비율, 소수 0~1) 필요 — 운행기록부를 쓰지 않았으면 log_kept=False"]}
     plate_applies = (acquisition_cost is None) or (acquisition_cost >= 80_000_000)
+    주의, 기준 = [], None
+    if not plate_ok and plate_applies and (fy_start is not None or fy_end is not None):
+        from .engine import date_basis as DB
+        fs, fe, _ = DB.fiscal_year(year, fy_start, fy_end)
+        if fe < date(2024, 1, 1):
+            share = 0.0
+        elif fs >= date(2024, 1, 1):
+            share = 1.0
+        else:
+            share = share_from_2024 if share_from_2024 is not None else DB.days_overlap(fs, fe, date(2024, 1, 1), fe) / ((fe - fs).days + 1)
+        기준 = {"사업연도": f"{fs.isoformat()}~{fe.isoformat()}", "번호판요건_적용분": round(share, 6),
+               "안분": "share_from_2024 입력" if share_from_2024 is not None and 0 < share < 1 else ("사업연도 일수" if 0 < share < 1 else "전부" if share == 1 else "없음(2024.1.1. 전 지출)")}
+        base = C.business_car(year, upkeep, depreciation, booked_depreciation, log_kept, business_ratio, months, rental_corp, True)
+        eff = base["업무사용비율"] * (1 - share)    # 2024.1.1. 이후 지출분은 업무사용금액 0원(영 제50조의2④ 단서), 그 전 지출분은 종전 비율
+        r = C.business_car(year, upkeep, depreciation, booked_depreciation, True, eff, months, rental_corp, True)
+        r["번호판 요건"] = (f"2024.1.1. 이후 지출분 비율 {share:.4f} — 그 부분 업무사용금액 0원, 나머지는 업무사용비율 {base['업무사용비율']:.4f} 그대로(대통령령 제34266호 부칙 제7조)"
+                         if 0 < share < 1 else ("사업연도 전체가 2024.1.1. 이후 지출 — 업무사용금액 0원" if share == 1 else "2024.1.1. 전 지출분만 — 번호판 요건 적용 안 함"))
+        return _ok(r, "법인세법 제27조의2, 시행령 제50조의2④ 단서, 대통령령 제34266호 부칙 제7조", 산식="업무사용비율 = 종전 비율 × (1 − 2024.1.1. 이후 지출분 비율), 감가상각 업무사용분 연 800만원 한도", 기준=기준)
+    if not plate_ok and plate_applies and year == 2023:
+        주의.append("번호판 요건은 2024.1.1. 이후 지출분부터(대통령령 제34266호 부칙 제7조) — 2023 개시 사업연도를 역년으로 보고 적용하지 않았음. 사업연도가 2024년까지 걸치면 fy_start·fy_end를 넣는다")
     r = C.business_car(year, upkeep, depreciation, booked_depreciation, log_kept, business_ratio, months, rental_corp, plate_ok or not plate_applies)
     if not plate_ok and not plate_applies:
         r["번호판 요건"] = f"취득가액 {acquisition_cost:,}원 < 80,000,000원 → 법인업무용 번호판 부착 대상 아님(영 제50조의2④ 단서·규칙 기준) — 미부착이어도 업무사용비율 그대로 적용"
     elif not plate_ok and acquisition_cost is None:
         r["번호판 요건"] = "취득가액을 주지 않아 번호판 요건 대상으로 보고 업무사용금액 0원 적용 — 8천만원 미만 차량이면 acquisition_cost를 넣어 다시 계산"
-    return _ok(r, "법인세법 제27조의2, 시행령 제50조의2", 산식="미작성 시 업무사용비율 = min(1, 기준금액 ÷ 총비용), 감가상각 업무사용분 연 800만원 한도")
+    return _ok(r, "법인세법 제27조의2, 시행령 제50조의2", 산식="미작성 시 업무사용비율 = min(1, 기준금액 ÷ 총비용), 감가상각 업무사용분 연 800만원 한도", **({"주의": 주의} if 주의 else {}))
 
 
 @mcp.tool(annotations=CALC)
@@ -2484,12 +2601,39 @@ def donation_limit(year: YEAR, base_income: WON,
                    carried_loss: WON = 0,
                    special_carry: WON = 0, general_carry: WON = 0,
                    sme: Annotated[bool, Field(description="중소기업 여부")] = True,
-                   social_enterprise: Annotated[bool, Field(description="사회적기업 여부 — 일반한도율을 연도별 적용: 2017 이전 10%, 2018~2025 사업연도 20%, 2026 사업연도부터 30%")] = False) -> dict:
+                   social_enterprise: Annotated[bool, Field(description="사회적기업 여부 — 일반한도율: 2019.1.1. 이후 신고분 20%(법률 제16008호 부칙 제4조제1항, 역년이면 2018 사업연도부터), 2026.1.1. 이후 개시 사업연도 30%, 그 전 10%")] = False,
+                   fy_start: Annotated[str | None, Field(description=_FY_START_DESC)] = None,
+                   fy_end: Annotated[str | None, Field(description=_FY_END_DESC)] = None,
+                   filing_date: Annotated[str | None, Field(description=_FILING_DESC)] = None) -> dict:
     """기부금 손금산입 한도(특례기부금 50%, 일반기부금 10%)와 한도초과·이월. 언제: 기부금을 손금산입할 때 한도와 한도초과액을 구한다.
-입력: 기준소득(과세표준 계산 전 소득금액, 원) → base_income, 특례기부금 지출액(원) → special, 일반기부금 지출액(원) → general, 결손금(원) → carried_loss, 특례 이월액(원) → special_carry, 일반 이월액(원) → general_carry, 중소기업 여부 → sme, 사회적기업 여부 → social_enterprise, 사업연도(2016~2026) → year.
+입력: 기준소득(과세표준 계산 전 소득금액, 원) → base_income, 특례기부금 지출액(원) → special, 일반기부금 지출액(원) → general, 결손금(원) → carried_loss, 특례 이월액(원) → special_carry, 일반 이월액(원) → general_carry, 중소기업 여부 → sme, 사회적기업 여부 → social_enterprise, 사업연도(2016~2026, 개시일이 속하는 해) → year,
+  사업연도 개시일·종료일 → fy_start·fy_end, 신고일 → filing_date(선택).
+기준일: 이월분 먼저 공제(제24조제6항)는 2020.1.1. 이후 과세표준 신고분(법률 제16833호 부칙 제4조), 사회적기업 20%는 2019.1.1. 이후 신고분(법률 제16008호 부칙 제4조제1항),
+  30%는 2026.1.1. 이후 개시 사업연도 지출분(법률 제21217호 부칙 제3조), 결손금 차감 한도는 2021.1.1. 이후 개시 사업연도 지출분(법률 제17652호 부칙 제6조).
+  신고일은 filing_date, 없으면 fy_end(없으면 역년 종료일)의 신고기한으로 봄. 날짜를 주지 않고 경계 연도면 주의를 붙임.
 결과: 한도·한도초과·이월 손금산입, 근거(법인세법 제24조)."""
-    return _ok(C.donation(base_income, carried_loss, special, general, special_carry, general_carry, sme, social_enterprise, year=year),
-               "법인세법 제24조", 산식="특례 = (기준소득 − 결손금) × 50%, 일반 = (기준소득 − 결손금 − 특례 손금산입) × 10%(사회적기업: 2018~2025 사업연도 20%, 2026 사업연도부터 30%)")
+    from .engine import date_basis as DB
+    over = {}
+    주의, 기준 = [], None
+    if fy_start is not None or fy_end is not None or filing_date is not None:
+        fs, fe, _ = DB.fiscal_year(year, fy_start, fy_end)
+        filed, est = DB.filing_day(fe, filing_date)
+        over["carry_first"] = filed >= date(2020, 1, 1)                         # 법률 16833 부칙§4
+        if year <= 2025:                                                          # 30%는 개시 사업연도(21217 부칙§3) — 연도표 그대로
+            over["social_ratio"] = C.YEAR[2018]["기부금_사회적기업_비율"] if filed >= date(2019, 1, 1) else 0   # 법률 16008 부칙§4①, 0 = 종전 10%
+        기준 = {"사업연도": f"{fs.isoformat()}~{fe.isoformat()}", "신고일": filed.isoformat() + (" (신고기한 추정)" if est else ""),
+               "이월분_먼저": over["carry_first"]}
+        if "social_ratio" in over and social_enterprise:
+            기준["사회적기업_비율"] = over["social_ratio"] or None
+    else:
+        if year in (2018, 2019) and (special_carry or general_carry):
+            주의.append("이월분 먼저 공제는 2020.1.1. 이후 신고분부터(법률 제16833호 부칙 제4조) — 역년 사업연도로 보고 판정. 사업연도가 역년과 다르면 fy_start·fy_end 또는 filing_date를 넣는다")
+        if year in (2017, 2018) and social_enterprise:
+            주의.append("사회적기업 20%는 2019.1.1. 이후 신고분부터(법률 제16008호 부칙 제4조①) — 역년 사업연도로 보고 판정. 사업연도가 역년과 다르면 fy_start·fy_end 또는 filing_date를 넣는다")
+    r = C.donation(base_income, carried_loss, special, general, special_carry, general_carry, sme, social_enterprise, year=year, **over)
+    extra = {k: v for k, v in (("기준", 기준), ("주의", 주의)) if v}
+    return _ok(r, "법인세법 제24조" + (", 법률 제16833호 부칙 제4조·제16008호 부칙 제4조(신고일 기준)" if 기준 else ""),
+               산식="특례 = (기준소득 − 결손금) × 50%, 일반 = (기준소득 − 결손금 − 특례 손금산입) × 10%(사회적기업: 2019.1.1. 이후 신고분 20%, 2026 개시 사업연도부터 30%)", **extra)
 
 
 # ── 비영리내국법인 고유목적사업준비금 손금산입 한도 (법 제29조) ──
@@ -2588,12 +2732,39 @@ def thin_capitalization(equity: WON,
 
 @mcp.tool(annotations=CALC)
 @_guard
-def missing_receipt_disallowance(year: YEAR, items: Annotated[list[ReceiptItem], Field(description="[{amount: 1회 지출액(원), qualified: 적격증빙 여부, congratulatory: 경조금 여부}]")]) -> dict:
-    """적격증빙 미수취 기업업무추진비 손금불산입(건당 3만 원, 경조금 20만 원 초과 + 적격증빙 없음). 언제: 접대비 등을 지출했는데 적격증빙을 받지 못한 건이 있으면 손금불산입액을 구한다.
-입력: 사업연도(2016~2026) → year, 지출 건 목록 [{amount: 1회 지출액(원), qualified: 적격증빙 여부, congratulatory: 경조금 여부}] → items.
+def missing_receipt_disallowance(year: YEAR, items: Annotated[list[ReceiptItem], Field(description="[{amount: 1회 지출액(원), qualified: 적격증빙 여부, congratulatory: 경조금 여부, spent_on?: 지출일 YYYY-MM-DD}]")],
+                                 fy_start: Annotated[str | None, Field(description=_FY_START_DESC)] = None,
+                                 fy_end: Annotated[str | None, Field(description=_FY_END_DESC)] = None) -> dict:
+    """적격증빙 미수취 기업업무추진비 손금불산입(건당 3만 원(2020.12.31. 이전 지출분 1만 원), 경조금 20만 원 초과 + 적격증빙 없음). 언제: 접대비 등을 지출했는데 적격증빙을 받지 못한 건이 있으면 손금불산입액을 구한다.
+입력: 사업연도(2016~2026, 개시일이 속하는 해) → year, 지출 건 목록 [{amount: 1회 지출액(원), qualified: 적격증빙 여부, congratulatory: 경조금 여부, spent_on?: 지출일}] → items, 사업연도 개시일·종료일 → fy_start·fy_end(선택).
+기준일: 기준금액은 지출일로 고름(시행령 제41조제1항, 대통령령 제31443호 부칙 제9조·제19조 — 2021.1.1. 이후 지출분부터 3만 원). spent_on이 없으면 사업연도 표(개시연도)로 고르고,
+  사업연도가 2021.1.1.을 걸치거나(fy_start·fy_end) 2020 사업연도인데 결론이 갈리는 금액이면 주의를 붙임.
 결과: 손금불산입 합계액, 근거(법인세법 제25조제2항, 시행령 제41조제1항). 적격증빙 미수취 기업업무추진비 손금불산입."""
-    return _ok({"손금불산입": C.receipt_disallowed(year, [(int(i.amount), bool(i.qualified), bool(i.congratulatory)) for i in items])},
-               "법인세법 제25조②, 시행령 제41조①")
+    from .engine import date_basis as DB
+    span = (year == 2020)
+    if fy_start is not None or fy_end is not None:
+        fs, fe, _ = DB.fiscal_year(year, fy_start, fy_end)
+        span = DB.spans(fs, fe, date(2021, 1, 1))
+    lo = vocab.rule_on("기업업무추진비_적격증빙미수취", 20201231)["기준"]
+    hi = vocab.rule_on("기업업무추진비_적격증빙미수취", 20210101)["기준"]
+    yr = vocab.rule("기업업무추진비_적격증빙미수취", year)["기준"]
+    total, 미정 = 0, []
+    for n, i in enumerate(items):
+        if i.spent_on:
+            d = _chk.to_date(f"items[{n}].spent_on", i.spent_on)
+            std = vocab.rule_on("기업업무추진비_적격증빙미수취", DB.ymd(d))["기준"]
+        else:
+            std = yr
+            if span and not i.congratulatory and not i.qualified and lo["일반"] < int(i.amount) <= hi["일반"]:
+                미정.append(n)
+        base = std["경조금"] if i.congratulatory else std["일반"]
+        if not i.qualified and int(i.amount) > base:
+            total += int(i.amount)
+    extra = {}
+    if 미정:
+        extra["주의"] = [f"items {미정} — 기준금액이 2021.1.1. 이후 지출분부터 {lo['일반']:,}원 → {hi['일반']:,}원(대통령령 제31443호 부칙 제9조)이라 지출일에 따라 결론이 갈림. "
+                       f"사업연도 표({year})로 판정했음 — spent_on(지출일)을 넣는다"]
+    return _ok({"손금불산입": total}, "법인세법 제25조②, 시행령 제41조①" + (", 대통령령 제31443호 부칙 제9조(지출일 기준)" if any(i.spent_on for i in items) else ""), **extra)
 
 
 # ───────── 0.2 추가: 부가가치세 ─────────
@@ -3742,7 +3913,7 @@ _BD_RECIPIENT = {"법인": "기타사외유출", "사업자": "기타사외유�
 _BAD_DEBT_WRITEOFFS_DESC = (
     "대손금 목록 [{kind, amount, arose_in:'전기'|'당기'(대손 사유가 생긴 사업연도), instrument?:'외상매출금'|'받을어음'|'미수금'|'기타', "
     "months_since_default?(부도6개월: 부도발생일부터 사업연도 종료일까지 개월), mortgage?, "
-    "date?(화해·확정판결: 재판상 화해 등이 확정된 날 YYYY-MM-DD — 영 제19조의2제1항제10호는 2019.2.12. 이후 확정분부터라 2019 사업연도는 필수), "
+    "date?(화해·확정판결: 재판상 화해 등이 확정된 날 YYYY-MM-DD — 영 제19조의2제1항제10호는 2019.2.12. 이후 확정분부터라 2019 사업연도는 필수, 2018 개시 사업연도도 확정일이 2019.2.12. 이후면 10호 적용), "
     "months_since_due?(회수기일2년경과: 회수기일부터 사업연도 종료일까지 개월), related_party?(회수기일2년경과: 특수관계인 거래분이면 true), "
     "date?, account?, detail?, booked?:'상계'|'손비'|'전기부인', memo_excluded?:bool}]. "
     "kind 허용값: 소멸시효완성(영 제19조의2제1항제1호~제4호, 신고조정) · 화해·확정판결(제1항제10호) · 부도6개월(제1항제9호, instrument·months_since_default 필수) · "
@@ -3772,7 +3943,9 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
                         prior_excess: Annotated[int, Field(description="전기 대손충당금 한도초과액(원)")] = 0,
                         loss_rate_digits: Annotated[int, Field(description="대손실적률 소수 자릿수(기본 3 — 넷째 자리 이하 절사)")] = 3,
                         excluded_receivables_prev_end_book: Annotated[int, Field(description="receivables_prev_end_book 중 법 제19조의2제2항 채권(채무보증 구상채권·특수관계인 업무무관 가지급금) 잔액(원) — 설정대상에서 뺌(법 제34조제2항)", ge=0)] = 0,
-                        excluded_receivables_end_book: Annotated[int, Field(description="receivables_end_book 중 법 제19조의2제2항 채권 잔액(원) — 설정대상에서 뺌(법 제34조제2항), 서식 (20) 설정제외", ge=0)] = 0) -> dict:
+                        excluded_receivables_end_book: Annotated[int, Field(description="receivables_end_book 중 법 제19조의2제2항 채권 잔액(원) — 설정대상에서 뺌(법 제34조제2항), 서식 (20) 설정제외", ge=0)] = 0,
+                        fy_start: Annotated[str | None, Field(description=_FY_START_DESC + " — 화해·확정판결 확정일이 이 사업연도 안인지 판정")] = None,
+                        fy_end: Annotated[str | None, Field(description="사업연도 종료일 YYYY-MM-DD(선택, 생략하면 역년) — 화해·확정판결 확정일이 이 사업연도 안인지 판정")] = None) -> dict:
     """대손금·대손충당금 세무조정(법인세법 제19조의2·제34조, 시행령 제19조의2·제61조).
     언제: 법인세 세무조정에서 대손금 인정 여부와 대손충당금 한도·한도초과를 함께 계산할 때.
     입력: 사업연도(2016~2026) → year, 중소기업 여부 → sme, 전기 대손충당금 한도초과액(원) → prior_excess,
@@ -3785,12 +3958,16 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
       excluded_reason: '채무보증구상채권'|'특수관계인업무무관가지급금'(법 제19조의2제2항) — 대손금·설정대상 채권에서 빼고 손금불산입, 소득처분은 recipient(귀속자, 영 제106조제1항제1호),
       guarantee_item: 1~8(영 제19조의2제6항 호 — 손금 인정 채무보증이면 구상채권을 제외하지 않음, 호별 시행일 대조)·guarantor_business('건설업'|'전기통신업', 5호),
       booked='전기부인' + excluded_reason: 당기 대손사유 확정 시 전기 유보 정리(손금산입 △유보 + 손금불산입 귀속자 처분),
-    대손실적률 소수 자릿수(기본 3) → loss_rate_digits,
+    대손실적률 소수 자릿수(기본 3) → loss_rate_digits, 사업연도 개시일·종료일 → fy_start·fy_end(선택, 역년이 아닐 때),
     장부 채권 중 법 제19조의2제2항 채권 잔액(전기말·당기말, 원) → excluded_receivables_prev_end_book·excluded_receivables_end_book.
     결과: 판단(항목별·근거)·계산(세법상 당기 대손금·전기말·당기말 채권·실적률)·결과(한도·한도초과)·세무조정({구분, 조정, 금액, 소득처분})·서식_표·계산식_입력.
     지원 안 함: 영 제19조의2제6항 각 호의 사실 요건(업종·직접 관련성·특수관계 등) 판단 — guarantee_item 입력을 그대로 믿음. 대손금·대손충당금 세무조정."""
 
     원래_종류 = [(w or {}).get("kind") if isinstance(w, dict) else None for w in (writeoffs or [])]   # 별칭(파산 등)을 표시용으로 보관
+    화해_주의: list[str] = []
+    from .engine import date_basis as _DB
+    _bd_fs, _bd_fe0, _bd_fy_given = _DB.fiscal_year(year, fy_start, fy_end)
+    _bd_fy = (_bd_fs, _bd_fe0)
     _extra = []
     for i, w in enumerate(writeoffs or []):
         if isinstance(w, dict) and isinstance(w.get("amount"), (int, float)) and w["amount"] < 0:
@@ -3854,8 +4031,25 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
             if 확정일 is None and year == 2019:
                 return {"error": "입력 확인 필요 — 계산하지 않음",
                         "문제": ["화해·확정판결 대손(영 제19조의2①10호)은 2019.2.12. 이후 확정분부터 — 2019 사업연도는 writeoffs 항목에 date(확정일 YYYY-MM-DD) 필요"]}
-            # 2018 사업연도까지는 10호가 없던 때라 확정일과 관계없이 시행 전(사업연도가 끝난 뒤의 확정일이 들어와도 인정하지 않음)
-            시행전 = year <= 2018 or (확정일 is not None and 확정일 < "2019-02-12")
+            # 대통령령 제29529호 부칙 제7조는 '확정되는 분'(확정일) 기준 — 사업연도 개시일과 관계없음. 2018 개시 사업연도도 그 사업연도 안에서 2019.2.12. 이후 확정되면 10호.
+            #   사업연도는 fy_start·fy_end(없으면 역년). 확정일이 사업연도 밖이면 이 사업연도의 10호 대손이 아님(종전처럼 시행 전으로 처리하고 주의).
+            _bd_fe = _bd_fy[1]
+            if 확정일 is not None:
+                _d = _chk.to_date("writeoffs.date", 확정일)
+                if _d > _bd_fe and _d >= date(2019, 2, 12) and year <= 2018:
+                    화해_주의.append(f"화해·확정판결 확정일 {확정일}이 사업연도({_bd_fy[0].isoformat()}~{_bd_fe.isoformat()}) 뒤 — 이 사업연도 10호 대손으로 보지 않았음. "
+                                  "사업연도가 역년과 다르면 fy_start·fy_end를 넣는다(대통령령 제29529호 부칙 제7조: 2019.2.12. 이후 확정되는 분부터)")
+                    시행전 = True
+                else:
+                    시행전 = 확정일 < "2019-02-12"
+            else:
+                if year == 2018 and not _bd_fy_given:
+                    화해_주의.append("화해·확정판결 대손 — 확정일(date)이 없어 2018 개시 사업연도를 10호 시행(2019.2.12.) 전으로 봤음. 사업연도가 2019년까지 걸쳐 "
+                                  "2019.2.12. 이후 확정됐으면 fy_start·fy_end와 date를 넣는다(대통령령 제29529호 부칙 제7조: 확정되는 분부터)")
+                elif year == 2018 and _bd_fy[1] >= date(2019, 2, 12):
+                    return {"error": "입력 확인 필요 — 계산하지 않음",
+                            "문제": [f"화해·확정판결 대손 — 사업연도 {_bd_fy[0].isoformat()}~{_bd_fy[1].isoformat()}가 10호 시행일(2019.2.12.)을 걸침. writeoffs 항목에 date(확정일) 필요"]}
+                시행전 = year <= 2018
             if 시행전:
                 결론, 근거 = "손금불산입(유보) — 10호 시행 전", "법인세법 시행령 제19조의2①10호(2019.2.12. 신설), 대통령령 제29529호 부칙 제7조"
                 이유 = ("재판상 화해 등으로 회수불능이 확정된 채권을 대손으로 보는 10호는 2019.2.12. 이후 확정분부터 — "
@@ -4155,7 +4349,8 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
                세무조정=settlements, 판단=judgments, 계산=calc_dict,
                산식="세법상 당기 대손금 = 인정 대손금 합계(전기부인 채권의 당기 인정분 포함), 세법상 전기말 채권 = 장부 전기말 − 전기 사유 신고조정 대손(0 미만은 0) + 전기부인 유보 채권, 세법상 당기말 채권 = 장부 당기말 + 부인 채권 + 비망가액 + 전기부인 채권 중 미인정분, 실적률 = 당기 대손금 ÷ 전기말 채권(절사), 한도 = 당기말 채권 × max(1%, 실적률), 한도초과 = 장부 기말잔액 − 한도",
                서식_표=서식_표, 계산식_입력=계산식_입력,
-               키_설명={"과소환입_과다환입": "별지 제34호서식 ⑮ 과소환입·과다환입(△) = ⑬환입할 금액(장부상 충당금 기초잔액 − 기중 환입 − 충당금 부인 누계액 − 당기 대손금 상계액 − 당기 설정 충당금 보충액) − ⑭회사 환입액. 양수는 과소환입(익금산입), 음수(△)는 과다환입(익금불산입) 뜻. 전기 한도초과 손금산입과 같은 금액이면 따로 조정하지 않음."})
+               키_설명={"과소환입_과다환입": "별지 제34호서식 ⑮ 과소환입·과다환입(△) = ⑬환입할 금액(장부상 충당금 기초잔액 − 기중 환입 − 충당금 부인 누계액 − 당기 대손금 상계액 − 당기 설정 충당금 보충액) − ⑭회사 환입액. 양수는 과소환입(익금산입), 음수(△)는 과다환입(익금불산입) 뜻. 전기 한도초과 손금산입과 같은 금액이면 따로 조정하지 않음."},
+               **({"주의": list(dict.fromkeys(화해_주의))} if 화해_주의 else {}))
 
 
 @mcp.tool(annotations=CALC)
@@ -4165,12 +4360,17 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
                              include_vat: Annotated[bool, Field(description="현물 접대비 평가 시 부가가치세 포함 여부(기본 True — 사업상 증여는 매출세액 포함, 영 제42조제6항·법 제36조제1항제3호 준용)")] = True,
                              ledger: Annotated[list, Field(description="원장형 입력 [{항목, 금액, 증빙:'없음'|'영수증 등'|'적격'(기본 '적격'), 성격?:'교제목적'|'직원단체_법인'|'직원단체_비법인'|'임직원부담'|'현물'|'경조금'|'문화'|'사적사용', 시가?, 장부가액?, 건당기준초과?}] — 성격별 포함·제외는 어휘 기업업무추진비_포함항목으로 판단. '사적사용'은 시부인 대상 제외, 직접 손금불산입(상여") ] = ...,
                              revenue: Annotated[dict | None, Field(description="수입금액 원장형 입력 {매출액, 특수관계매출?(기본 0), 매출할인등:{일반?, 특수관계?}(기본 0)} — 기업회계기준 매출액 기준(영 제42조제1항). 없으면 수입금액 0")] = None,
-                             ledger_total: Annotated[int | None, Field(description="원장(계정) 합계(원) — 주면 ledger 금액 합계와 대조해 다르면 '확인 필요' 판단을 붙임(행을 옮기다 빠지거나 더하다 틀린 경우). ledger는 원장 행을 합치지 말고 한 줄씩 넣는다", ge=0)] = None) -> dict:
+                             ledger_total: Annotated[int | None, Field(description="원장(계정) 합계(원) — 주면 ledger 금액 합계와 대조해 다르면 '확인 필요' 판단을 붙임(행을 옮기다 빠지거나 더하다 틀린 경우). ledger는 원장 행을 합치지 말고 한 줄씩 넣는다", ge=0)] = None,
+                             fy_start: Annotated[str | None, Field(description=_FY_START_DESC)] = None,
+                             fy_end: Annotated[str | None, Field(description=_FY_END_DESC)] = None,
+                             filing_date: Annotated[str | None, Field(description=_FILING_DESC)] = None) -> dict:
     """기업업무추진비 세무조정 — 2023년 이전 사업연도의 "접대비"와 같은 항목(2024.1.1. 명칭 변경, 법률 19193). 접대비 문제·장부도 이 도구로 계산한다(법인세법 제25조, 시행령 제40조·제41조·제42조).
     언제: 법인세 신고에서 기업업무추진비 손금불산입을 항목별로 계산할 때.
     입력:
       · 사업연도(2016~2026) → year, 중소기업 여부 → sme, 사업연도 월수(1~12, 기본 12) → months, 현물 평가 시 부가가치세 포함 여부(기본 True) → include_vat.
-      · 원장: ledger=[{항목, 금액, 증빙:'없음'|'영수증 등'|'적격'(기본 '적격'), 성격?:'교제목적'|'직원단체_법인'|'직원단체_비법인'|'임직원부담'|'현물'|'경조금'|'문화', 시가?, 장부가액?, 건당기준초과?:(기본 true)}],
+      · 사업연도 개시일·종료일 → fy_start·fy_end, 과세표준 신고일 → filing_date(선택 — 사업연도가 역년과 다르거나 신고일 기준 부칙을 정확히 고를 때).
+      · 원장: ledger=[{항목, 금액, 증빙:'없음'|'영수증 등'|'적격'(기본 '적격'), 성격?:'교제목적'|'직원단체_법인'|'직원단체_비법인'|'임직원부담'|'현물'|'경조금'|'문화', 시가?, 장부가액?, 건당기준초과?:(기본 true), 지출일?:YYYY-MM-DD}],
+        지출일을 주면 적격증빙 기준금액(영 제41조제1항)을 그날로 고름(2021.1.1. 이후 지출분부터 상향, 대통령령 제31443호 부칙 제9조).
         revenue={매출액, 특수관계매출?(기본 0), 매출할인등:{일반?, 특수관계?}(기본 0)}.
       증빙 허용값(어휘 기반):
         · 없음 — 지출 증빙이 전혀 없는 건(손금불산입·상여, 귀속 대표자)
@@ -4181,8 +4381,10 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
         · 임직원부담 → 제외(영 제40조제1항) / 현물 → 포함(max(시가, 장부가액) + 부가세, include_vat 기본 True, 영 제42조제6항·법 제36조제1항제3호) / 경조금·문화·전통시장 → 기존과 동일
         · 사적사용 → 시부인 대상 제외, 직접 손금불산입(상여, 법인세법 제19조제2항·시행령 제40조제1항)
         · 전통시장 → 포함(「전통시장 및 상점가 육성을 위한 특별법」상 전통시장에서 쓴 적격 기업업무추진비, 조특법 제136조제6항, 전통시장등 추가한도 대상)
-        · 지역사랑상품권 → 포함(지역사랑상품권으로 지급한 적격 기업업무추진비, 조특법 제136조제6항, 2025 사업연도부터 전통시장등 추가한도 대상)
-        · 온누리상품권 → 포함(온누리상품권으로 지급한 적격 기업업무추진비, 조특법 제136조제6항, 2026 사업연도 지출분부터 전통시장등 추가한도 대상)
+        · 지역사랑상품권 → 포함(지역사랑상품권으로 지급한 적격 기업업무추진비, 조특법 제136조제6항, 2026.1.1. 이후 신고분부터 전통시장등 추가한도 대상 — 법률 제21223호 부칙 제31조)
+        · 온누리상품권 → 포함(온누리상품권으로 지급한 적격 기업업무추진비, 조특법 제136조제6항, 2026.5.12.이 속하는 사업연도 지출분부터 전통시장등 추가한도 대상 — 법률 제21612호 부칙 제4조)
+      기준일: 전통시장등 비율은 신고일로 고름 — 2024.1.1. 이후 신고분 10%(전통시장), 2026.1.1. 이후 신고분 20%(+지역사랑상품권). 날짜를 주지 않으면 사업연도 표(역년 가정)로 고르고
+        경계 연도면 주의를 붙임. 2020 수입금액 특례는 2020년이 두 사업연도에 걸치면 일할(조특법 제136조제5항).
       · 원장 합계: ledger_total(원장·계정 합계)을 주면 ledger 금액 합계와 대조. ledger는 원장 행을 직접 더해 한 줄로 합치지 말고 행마다 넣는다.
     결과: 판단(항목별·근거)·결과(한도·한도초과)·세무조정(구분·금액·소득처분)·소득처분별_합계·손금불산입_합계·계산(원장 합계 대조 포함). 기업업무추진비 세액공제."""
 
@@ -4212,6 +4414,27 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
 
     # ── 증빙 허용값 검증(어휘 기반) ──
     증빙_허용값 = _specs_from_vocab("entertainment_adjustment", "evidence")
+
+    # ── 기준일(신고일·지출일) ──
+    _시장성격 = ("전통시장", "지역사랑상품권", "온누리상품권")
+    _시장지출 = any(isinstance(it, dict) and it.get("성격") in _시장성격 and int(it.get("금액", 0) or 0) > 0 for it in ledger)
+    dd = _ent_dates(year, fy_start, fy_end, filing_date, _시장지출, (revenue_general + revenue_related) > 0)
+    주의 = list(dd["주의"])
+    if dd["regime"] is not None:
+        시장비율, 시장대상, 시장부칙 = dd["regime"]["비율"], tuple(dd["regime"]["대상"]), dd["regime"]["부칙"]
+    elif 2023 <= year <= 2028:      # 날짜가 없으면 종전대로 사업연도 표(역년 가정)
+        시장비율 = C.YEAR[year].get("전통시장등_비율", 0)
+        시장대상 = _시장성격[:1] if year in (2023, 2024) else (_시장성격[:2] if year == 2025 else _시장성격)
+        시장부칙 = "법률 19936 부칙§35" if year in (2023, 2024) else ("법률 21223 부칙§31" if year == 2025 else "법률 21612 부칙§4")
+    else:
+        시장비율, 시장대상, 시장부칙 = 0, (), "법률 19936 부칙§35"
+    시장적용 = 시장비율 > 0
+    _fs_fe = None
+    if fy_start is not None or fy_end is not None:
+        from .engine import date_basis as _DB
+        _fs, _fe, _ = _DB.fiscal_year(year, fy_start, fy_end)
+        _fs_fe = (_fs, _fe)
+    _증빙경계_미정 = []
 
     # ── 원장형 입력 처리 ──
     포함항목_규칙 = vocab.rule("기업업무추진비_포함항목", year)
@@ -4299,9 +4522,20 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
             no_receipt_total += 금액
             judgments.append({"항목": 항목명, "성격": 성격, "결론": "손금불산입·상여(대표자)", "금액": 금액, "근거": f"법인세법 제25조②(증빙서류 없는 {_용어} 손금불산입), 시행령 제106조①1호 단서", "이유": ("증빙서류 없음 — 전액 손금불산입, 귀속 불분명으로 대표자 상여 처분" + (f" — {_현물_판단_이유}" if _현물_판단_이유 else ""))})
         elif 증빙 == "영수증 등":
-            기준_일반 = vocab.rule("기업업무추진비_적격증빙미수취", year).get("기준", {}).get("일반", 30000)
-            기준_경조금 = vocab.rule("기업업무추진비_적격증빙미수취", year).get("기준", {}).get("경조금", 200000)
+            _지출일 = item.get("지출일")
+            if _지출일:
+                _기준 = vocab.rule_on("기업업무추진비_적격증빙미수취", int(_chk.to_date("ledger.지출일", _지출일).strftime("%Y%m%d"))).get("기준", {})
+            else:
+                _기준 = vocab.rule("기업업무추진비_적격증빙미수취", year).get("기준", {})
+            기준_일반 = _기준["일반"]
+            기준_경조금 = _기준["경조금"]
             limit_amount = 기준_경조금 if 성격 == "경조금" else 기준_일반
+            if not _지출일 and 성격 != "경조금" and 건당기준초과:
+                _span = (_fs_fe[0] < date(2021, 1, 1) <= _fs_fe[1]) if _fs_fe else (year == 2020)
+                _lo = vocab.rule_on("기업업무추진비_적격증빙미수취", 20201231).get("기준", {}).get("일반")
+                _hi = vocab.rule_on("기업업무추진비_적격증빙미수취", 20210101).get("기준", {}).get("일반")
+                if _span and _lo < 금액 <= _hi:
+                    _증빙경계_미정.append(항목명)
             if 건당기준초과 and 금액 > limit_amount:
                 no_qual_total += 금액
                 judgments.append({"항목": 항목명, "성격": 성격, "결론": "적격증명서류 미수취 → 손금불산입·기타사외유출", "금액": 금액, "근거": "법인세법 제25조②·시행령 제41조①(적격증빙 미수취)", "이유": (f"{성격 or '일반'} {limit_amount:,}원 초과, 적격증명서류 미수취 → 기타사외유출" + (f" — {_현물_판단_이유}" if _현물_판단_이유 else ""))})
@@ -4323,29 +4557,27 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
 
     si_bu_shin = sum(items_for_limit)
     culture_total = sum(int(item.get("금액", 0)) for item in ledger if item.get("성격") == "문화" and item.get("증빙", "적격") == "적격")
+    if _증빙경계_미정:
+        주의.append(f"적격증빙 기준금액이 2021.1.1. 이후 지출분부터 바뀌어(영 제41조①, 대통령령 제31443호 부칙 제9조) 지출일에 따라 결론이 갈리는 항목: {', '.join(map(str, _증빙경계_미정))} — "
+                  "사업연도 개시연도 표로 판정했음. 원장 항목에 지출일을 넣는다")
     전통시장_총액 = sum(int(item.get("금액", 0)) for item in ledger if item.get("성격") == "전통시장" and item.get("증빙", "적격") == "적격")
     지역사랑상품권_총액 = sum(int(item.get("금액", 0)) for item in ledger if item.get("성격") == "지역사랑상품권" and item.get("증빙", "적격") == "적격")
     온누리상품권_총액 = sum(int(item.get("금액", 0)) for item in ledger if item.get("성격") == "온누리상품권" and item.get("증빙", "적격") == "적격")
     기본한도_중소 = vocab.rule("기업업무추진비_적격수취", year).get("기본한도", {}).get("중소", 36000000)
     기본한도_일반 = vocab.rule("기업업무추진비_적격수취", year).get("기본한도", {}).get("일반", 12000000)
 
-    # ── 전통시장등 추가한도 대상 성격 합계 (연도별) ──
-    # 2023·2024: 전통시장만 (법률 19936 부칙§35, 2024.1.1. 이후 신고분 → 2023 사업연도부터)
-    # 2025: 전통시장 + 지역사랑상품권 (법률 21223 부칙§31, 2026.1.1. 이후 신고분 → 2025 사업연도부터)
-    # 2026~2028: 전통시장 + 지역사랑상품권 + 온누리상품권 (법률 21612 부칙§4, 2026.5.12 시행)
-    # 2029 이후: 대상 없음
-    if year <= 2022 or year >= 2029:
-        전통시장등_총액 = 0
-    elif year in (2023, 2024):
-        전통시장등_총액 = 전통시장_총액
-    elif year == 2025:
-        전통시장등_총액 = 전통시장_총액 + 지역사랑상품권_총액
-    else:  # 2026~2028
-        전통시장등_총액 = 전통시장_총액 + 지역사랑상품권_총액 + 온누리상품권_총액
+    # ── 전통시장등 추가한도 대상 성격 합계 — 위 기준일 판정(시장대상)대로 ──
+    # 날짜가 없으면 사업연도 표: 2023·2024 전통시장, 2025 +지역사랑상품권, 2026~2028 +온누리상품권
+    # 날짜가 있으면 신고일(19936 부칙§35·21223 부칙§31)과 2026.5.12.이 속하는 사업연도(21612 부칙§4)로
+    _성격별합 = {"전통시장": 전통시장_총액, "지역사랑상품권": 지역사랑상품권_총액, "온누리상품권": 온누리상품권_총액}
+    전통시장등_총액 = sum(_성격별합[k] for k in 시장대상)
+    _대상밖 = [k for k in _시장성격 if k not in 시장대상 and _성격별합[k] > 0]
 
     # ── 한도 계산 (계산식 단계보다 먼저 실행하여 ent 결과를 계산식 값으로 사용) ──
     ent = C.entertain(year, sme, revenue_general, revenue_related, si_bu_shin, culture=culture_total,
-                      market=전통시장등_총액, months=months)
+                      market=전통시장등_총액, months=months, days_2020=dd["days_2020"], market_ratio=시장비율)
+    if dd["days_2020"] and dd["days_2020"][0] < dd["days_2020"][1]:
+        주의.append(f"수입금액 한도는 2020년 일수 {dd['days_2020'][0]}/{dd['days_2020'][1]}로 조특법 제136조④ 특례율과 법 제25조④ 율을 일할한 값 — 계산식(엑셀)의 수입금액 구간 식은 사업연도 표 하나로 적혀 결과값과 다를 수 있음")
     limit = ent["한도"]
     over_limit = ent["한도초과(기타사외유출)"]
 
@@ -4404,10 +4636,10 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
     # 2025: 전통시장+지역사랑상품권, 비율 20% (법률 21223 부칙§31)
     # 2026~2028: 전통시장+지역사랑+온누리, 비율 20% (법률 21612 부칙§4)
     # 지출이 0이어도 비율·금액을 넘긴다 — 서식 엑셀에서 지출액을 나중에 넣어도 한도 수식이 살아 있게
-    if 2023 <= year <= 2028:
-        비율 = C.YEAR[year].get("전통시장등_비율", 0)
+    if 시장적용:
+        비율 = 시장비율
         계산식_입력.append({"이름": "전통시장등비율", "값": 비율,
-                             "설명": f"전통시장등 추가한도 비율 — 조특법 제136조⑥, {'법률 19936 부칙§35(2023·2024)' if year in (2023, 2024) else '법률 21223 부칙§31(2025)' if year == 2025 else '법률 21612 부칙§4(2026~2028)'}"})
+                             "설명": f"전통시장등 추가한도 비율 — 조특법 제136조⑥, {시장부칙}"})
         계산식_입력.append({"이름": "전통시장등금액", "값": 전통시장등_총액,
                              "설명": f"전통시장등(적격 기업업무추진비 중 해당 연도 대상 성격) 지출 합계 — 조특법 제136조⑥"})
 
@@ -4425,13 +4657,13 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
         {"이름": "문화한도", "식": "MIN(문화금액,(기본한도+수입금액한도)*0.2)",
          "값": ent_문화한도, "설명": f"문화{_용어} min(문화비, (기본한도+수입금액한도) × 20%) — 조특법 제136조③"},
     ]
-    if 2023 <= year <= 2028 and 전통시장등_총액 > 0:
-        비율 = C.YEAR[year].get("전통시장등_비율", 0)
+    if 시장적용 and 전통시장등_총액 > 0:
+        비율 = 시장비율
         계산식.append({"이름": "전통시장한도", "식": f"MIN(전통시장등금액,(기본한도+수입금액한도)*{비율})",
                         "값": ent["전통시장한도"],
                         "설명": f"전통시장등 추가한도 min(전통시장등금액, (기본한도+수입금액한도) × {비율}) — 조특법 제136조⑥"})
-    한도_식 = "기본한도+수입금액한도+문화한도" + ("+전통시장한도" if 2023 <= year <= 2028 and 전통시장등_총액 > 0 else "")
-    한도_설명 = "기본한도 + 수입금액한도 + 문화한도" + (" + 전통시장한도" if 2023 <= year <= 2028 and 전통시장등_총액 > 0 else "")
+    한도_식 = "기본한도+수입금액한도+문화한도" + ("+전통시장한도" if 시장적용 and 전통시장등_총액 > 0 else "")
+    한도_설명 = "기본한도 + 수입금액한도 + 문화한도" + (" + 전통시장한도" if 시장적용 and 전통시장등_총액 > 0 else "")
     계산식.extend([
         {"이름": "한도", "식": 한도_식,
          "값": ent_한도, "설명": 한도_설명},
@@ -4451,33 +4683,37 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
         settlements.append({"구분": "한도초과", "조정": "손금불산입", "금액": over_limit, "소득처분": "기타사외유출"})
 
     # 전통시장등 추가한도 판단 (연도별)
-    if 2023 <= year <= 2028 and 전통시장등_총액 > 0:
-        비율 = C.YEAR[year].get("전통시장등_비율", 0)
-        대상설명 = "전통시장" if year in (2023, 2024) else ("전통시장+지역사랑상품권" if year == 2025 else "전통시장+지역사랑상품권+온누리상품권")
-        부칙근거 = "법률 19936 부칙§35" if year in (2023, 2024) else ("법률 21223 부칙§31" if year == 2025 else "법률 21612 부칙§4")
-        if year == 2025:
+    if 시장적용 and 전통시장등_총액 > 0:
+        비율 = 시장비율
+        대상설명 = "+".join(시장대상)
+        부칙근거 = 시장부칙
+        if year == 2025 and dd["regime"] is None:
             judgments.append({"항목": "전통시장등 비율(2025 사업연도)", "성격": "전통시장", "결론": "20% 적용 — 2025.12.31 시행 조문 본문은 100분의 10이지만, 2025.12.23 개정 법률 제21223호 부칙 제31조로 2026.1.1 이후 신고분부터 20%. 개정 전 기준(10%)이 필요하면 따로 계산",
                               "금액": 0, "근거": "조세특례제한법 제136조⑥, 법률 제21223호 부칙 제31조", "이유": "본문 시행본과 부칙 적용 시점이 달라 결과가 다르게 보일 수 있음"})
         judgments.append({"항목": "전통시장등 추가한도", "성격": "전통시장", "결론": f"{대상설명} 지출 {전통시장등_총액:,}원 → 추가한도 min({전통시장등_총액:,}, (기본한도+수입금액한도) {ent['일반한도']:,} × {비율}) = {ent['전통시장한도']:,}원 (조특법 제136조⑥, {부칙근거})",
                           "금액": 전통시장등_총액, "근거": "조세특례제한법 제136조⑥",
                           "이유": f"전통시장등 추가한도 대상 성격 합계 {전통시장등_총액:,}원 — (기본한도+수입금액한도) × {비율}과 지출액 중 작은 금액이 추가한도"})
-    elif 2023 <= year <= 2028:
-        judgments.append({"항목": "전통시장등 추가한도", "성격": "전통시장", "결론": f"{year} 사업연도는 추가한도 적용 기간이나 전통시장등 지출이 없어 0원", "금액": 0,
-                          "근거": "조세특례제한법 제136조⑥", "이유": "추가한도 대상 성격(전통시장·지역사랑상품권·온누리상품권) 지출 0"})
+    elif 시장적용:
+        judgments.append({"항목": "전통시장등 추가한도", "성격": "전통시장", "결론": f"{year} 사업연도는 추가한도 적용 기간이나 전통시장등({'·'.join(시장대상)}) 지출이 없어 0원", "금액": 0,
+                          "근거": "조세특례제한법 제136조⑥", "이유": "추가한도 대상 성격(" + "·".join(시장대상) + ") 지출 0"})
     else:
-        judgments.append({"항목": "전통시장 추가한도", "성격": "전통시장", "결론": "전통시장 추가한도는 2024.1.1 이후 신고분(2023 사업연도)부터 — 일반 한도로 처리", "금액": 0,
+        judgments.append({"항목": "전통시장 추가한도", "성격": "전통시장", "결론": "전통시장 추가한도는 2024.1.1 이후 신고분부터 — 일반 한도로 처리", "금액": 0,
                           "근거": "조세특례제한법 제136조⑥",
-                          "이유": "전통시장등 추가한도는 2024.1.1 이후 신고분부터 적용(2023 사업연도~) — 해당 연도 이전 또는 2029 이후는 일반 기업업무추진비로 시부인"})
+                          "이유": "전통시장등 추가한도는 2024.1.1 이후 과세표준 신고분부터 적용(법률 제19936호 부칙 제35조) — 그 전 신고분 또는 2029 이후는 일반 기업업무추진비로 시부인"})
+    if _대상밖:
+        judgments.append({"항목": "전통시장등 추가한도 대상 밖", "성격": "·".join(_대상밖), "결론": f"{'·'.join(_대상밖)} 지출은 이 사업연도 추가한도 대상이 아님 — 일반 기업업무추진비로 시부인",
+                          "금액": sum(_성격별합[k] for k in _대상밖), "근거": "조세특례제한법 제136조⑥, 법률 제21223호 부칙 제31조(지역사랑상품권: 2026.1.1. 이후 신고분)·제21612호 부칙 제4조(온누리상품권: 2026.5.12.이 속하는 사업연도 지출분)",
+                          "이유": "대상 성격은 신고일·사업연도로 갈림" + ("" if dd["regime"] is not None else " — 사업연도 표(역년 가정)로 판정, 비역년이면 fy_start·fy_end·filing_date")})
 
     result = {"한도": limit, "한도초과": over_limit, "직부인_대표자상여": no_receipt_total + private_use_total, "직부인_기타사외유출": no_qual_total, "시부인_대상": si_bu_shin}
     # 지출이 0이어도 그 해 비율을 넘긴다 — 서식 엑셀에서 지출액을 나중에 넣어도 한도 수식이 살아 있게
-    전통시장등비율 = C.YEAR[year].get("전통시장등_비율", 0) if 2023 <= year <= 2028 else 0
+    전통시장등비율 = 시장비율
     calc_dict = {"기본한도": ent["기본한도"], "수입금액한도": ent["수입금액한도"], "일반한도": ent["일반한도"],
                "문화한도": ent["문화한도"], "전통시장한도": ent["전통시장한도"],
                "시부인 대상": si_bu_shin, "직부인(증빙없음·심사비)": no_receipt_total + no_qual_total,
-               "전통시장_지출": (전통시장_총액 if 2023 <= year <= 2028 else 0),
-               "지역사랑상품권_지출": (지역사랑상품권_총액 if 2025 <= year <= 2028 else 0),
-               "온누리상품권_지출": (온누리상품권_총액 if 2026 <= year <= 2028 else 0),
+               "전통시장_지출": (전통시장_총액 if "전통시장" in 시장대상 else 0),
+               "지역사랑상품권_지출": (지역사랑상품권_총액 if "지역사랑상품권" in 시장대상 else 0),
+               "온누리상품권_지출": (온누리상품권_총액 if "온누리상품권" in 시장대상 else 0),
                "전통시장등비율": 전통시장등비율}
     근거_목록 = vocab.basis("기업업무추진비_적격수취", year)
     근거_문자열 = ", ".join(f"{조문[0]} {조문[1]} {조문[2]} {조문[3]}" if 조문[3] else f"{조문[0]} {조문[1]} {조문[2]}" for 조문 in 근거_목록)
@@ -4490,9 +4726,14 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
         if 차이:
             judgments.append({"항목": "원장 합계 대조", "성격": "", "결론": f"확인 필요 — 원장 합계 {int(ledger_total):,}원 ≠ ledger 합계 {넘긴합계:,}원(차이 {차이:,}원)",
                               "금액": 차이, "근거": "", "이유": "원장 행을 옮기다 빠졌거나 직접 더하다 틀렸을 수 있음 — 원장 행을 한 줄씩 다시 넣어 확인"})
+    extra = {}
+    if dd["기준"]:
+        extra["기준"] = dd["기준"]
+    if 주의:
+        extra["주의"] = 주의
     return _ok(unified, 근거_문자열, 세무조정=settlements, 판단=judgments, 계산=calc_dict,
-               산식=f"기본한도 = 중소 {기본한도_중소:,}원·일반 {기본한도_일반:,}원 × 월수/12, 수입금액 한도 = 수입금액 구간별 비율을 적용한 금액(+ 특수관계 10%), 문화한도 = min(문화비, 일반한도 × 20%), 전통시장등한도 = min(전통시장등 지출, (기본한도+수입금액한도) × {C.YEAR[year].get('전통시장등_비율', 0)}) [2023~2028, 연도별 대상·비율 다름], 한도 = 기본 + 수입금액 + 문화 + 전통시장등, 한도초과 = 시부인 대상 − 한도",
-               계산식_입력=계산식_입력, 계산식=계산식)
+               산식=f"기본한도 = 중소 {기본한도_중소:,}원·일반 {기본한도_일반:,}원 × 월수/12, 수입금액 한도 = 수입금액 구간별 비율을 적용한 금액(+ 특수관계 10%), 문화한도 = min(문화비, 일반한도 × 20%), 전통시장등한도 = min(전통시장등 지출, (기본한도+수입금액한도) × {시장비율}) [신고일 기준 대상·비율], 한도 = 기본 + 수입금액 + 문화 + 전통시장등, 한도초과 = 시부인 대상 − 한도",
+               계산식_입력=계산식_입력, 계산식=계산식, **extra)
 
 
 # ───────── 끝에서 끝까지: 의제배당(잉여금 자본전입) ─────────
@@ -5889,9 +6130,9 @@ def simplified_vat_return(year: YEAR,
       사업 개시일 → business_start, 휴업·폐업·유형전환일 → closed_on(있으면 그 기간 공급대가를 12개월로 환산해 면제 판정, 제69조제3항).
     결과: 판단(항목·결론·근거)·계산(과세표준·부가가치율·납부세액·공제·가산세)·결과(납부의무면제·예정부과세액_공제·차가감납부세액(음수면 환급세액, 제67조제2항)·환급세액)·산식·근거."""
 
-    # 2021-07-01 이전 체계 미지원
-    if year < 2021:
-        return {"error": "2021-07-01 이전 체계 미지원"}
+    # 2021-07-01 이전 체계 미지원. 2021 과세기간은 1~6월 공급분 종전·7월~ 개정 산식이 섞여(법률 제17653호 부칙 제10조·제11조) 한 과세기간 계산을 하지 않음
+    if year < 2022:
+        return {"error": "2021-07-01 이전 체계 미지원" + (" — 2021 과세기간은 2021.6.30.까지 공급분(종전 산식)과 7.1. 이후 공급분(개정 산식)이 섞여 계산하지 않음(법률 제17653호 부칙 제10조·제11조)" if year == 2021 else "")}
 
     # ── 빈 원장 거부 ──
     if not ledger.get("공급"):
@@ -6637,8 +6878,16 @@ def bundled_supply_split(total_price: WON,
         else:
             시점_판단.append({"항목": "감정가액 시점", "결론": "감정평가일을 확인하지 않고 감정가액을 사용함 — appraisal_date·supply_date를 주면 쓸 수 있는 기간인지 판정(직전 과세기간 개시일~공급시기 과세기간 종료일)",
                               "근거": "부가가치세법 시행령 제64조①1호"})
+    # 범위: 제29조⑨1호(구분 불분명)를 전제로 안분 — 2호(실지 구분가액이 안분액과 100분의 30 이상 차이)는 판정하지 않음.
+    #   2호는 2022.1.1. 이후 공급분부터(법률 제18577호 부칙 제7조: 시행 전 공급분은 종전) — 그 전 공급분은 2호 사유가 없음.
+    _범위 = ("실지거래가액 중 토지·건물 가액 구분이 불분명한 경우(부가가치세법 제29조⑨1호)로 보고 안분 — 실지 구분가액이 안분액과 100분의 30 이상 차이 나는 경우(같은 항 2호)는 판정하지 않음"
+            + ("(2호는 2022.1.1. 이후 공급분부터 — 이 공급은 2호 사유 없음, 법률 제18577호 부칙 제7조)" if supply_date and supply_date < "2022-01-01"
+               else "(2호는 2022.1.1. 이후 공급분부터, 법률 제18577호 부칙 제7조)"))
     if other_assets or building_taxable_ratio != 1:
-        return _bundled_supply_general(total_price, vat_included, appraisal, standard_value, book_value, other_assets or [], building_taxable_ratio, 시점_판단)
+        _r = _bundled_supply_general(total_price, vat_included, appraisal, standard_value, book_value, other_assets or [], building_taxable_ratio, 시점_판단)
+        if isinstance(_r, dict) and "결과" in _r:
+            _r["범위"] = _범위
+        return _r
 
     안분_규칙 = vocab.rule("토지건물_일괄공급_안분", 2026)  # 적용 블록 없음 → 기본 판단 반환
 
@@ -6757,6 +7006,7 @@ def bundled_supply_split(total_price: WON,
         "근거": vocab.basis("토지건물_일괄공급_안분", 2026),
         "계산식_입력": 계산식_입력,
         "계산식": 계산식,
+        "범위": _범위,
     }
 
 
@@ -9901,11 +10151,14 @@ def corporate_filing_obligations(
     party_max_goods: Annotated[int, Field(description="국외특수관계인별 재화 최대 거래(원, 기본 0)")] = 0,
     party_max_services: Annotated[int, Field(description="국외특수관계인별 용역 최대 거래(원, 기본 0)")] = 0,
     party_max_intangibles: Annotated[int, Field(description="국외특수관계인별 무형재산 최대 거래(원, 기본 0)")] = 0,
+    fy_start: Annotated[str | None, Field(description="사업연도 개시일 YYYY-MM-DD(선택, 생략하면 year-01-01) — 외부감사 신기준(2019.11.1. 이후 시작 사업연도) 판정")] = None,
+    fy_end: Annotated[str | None, Field(description="사업연도 종료일 YYYY-MM-DD(선택, 생략하면 year-12-31) — 국제거래명세서·해외현지법인 자료 제출기한 계산")] = None,
 ) -> dict:
     """외부감사(외감법 제4조)·외부세무조정(법인세법 제60조제9항)·국제거래 자료 제출 의무(국조법 제16조·제34조·제36조·제58조) 판정.
     언제: 법인 사업연도 종료 후 외부감사 대상 여부, 외부세무조정(세무대리인 조정) 의무, 국제거래명세서·요약손익계산서·
     정상가격산출방법신고서·국제거래정보통합보고서·해외직접투자명세서 제출 의무를 한 번에 판정할 때.
-    입력: year — 사업연도(2016~2026). corp_type — '주식회사'|'유한회사'(기본 주식회사).
+    입력: year — 사업연도(2016~2026, 개시일이 속하는 해). corp_type — '주식회사'|'유한회사'(기본 주식회사).
+      사업연도 개시일·종료일 → fy_start·fy_end(선택, 사업연도가 역년과 다를 때).
       수익·자산·부채·종업원 → revenue·revenue_prev·assets·liabilities·employees.
       유한회사 사원 수 → members(선택). 설립일 → established_on(선택).
       외국자회사·국외사업장·특례·준비금·결정경정·합병분할·해외직접투자 → 각 bool.
@@ -9914,11 +10167,12 @@ def corporate_filing_obligations(
       국제거래명세서·요약손익계산서·정상가격산출방법신고서·국제거래정보통합보고서 각각 대상 여부,
       해외직접투자명세는 대상 여부·기한. 판단·근거.
     연도별 기준:
-      외부감사 — 2019년까지(2019.10.31. 이전 개시 사업연도) 구 기준: 자산 120억 / 상장 / 부채 70억+자산 70억 / 종업원 300명+자산 70억, 주식회사만.
+      외부감사 — 2019.10.31. 이전 개시 사업연도(fy_start, 없으면 역년) 구 기준: 자산 120억 / 상장 / 부채 70억+자산 70억 / 종업원 300명+자산 70억, 주식회사만.
         2020년부터 자산 또는 매출 500억, 4개(자산 120억·부채 70억·매출 100억·종업원 100명) 중 2개(유한회사 5개 중 3개). 값은 모두 직전 사업연도 기준.
       국제거래명세서 — 2022년까지 국외특수관계인 거래가 있으면 제출, 2023년부터 재화 5억·용역 1억·무형 1억 모두 이하면 면제.
       요약손익계산서·정상가격 산출방법 신고서 — 2022년까지 재화·용역 금액만, 2023년부터 무형자산 금액 포함.
-      해외현지법인 명세서등 기한 — 2019 사업연도까지 법인세 신고기한(3.31.), 2020 사업연도부터 6.30.(12월 결산 기준)."""
+      해외현지법인 명세서등·국제거래명세서 기한 — 사업연도 종료일이 속하는 달의 말일부터 6개월. 2021.1.1. 전 개시 사업연도는 종전 기한(법인세 신고기한)이
+        2021.1.1. 현재 지나지 않았을 때만 6개월, 지났으면 종전 기한(법률 제17651호 부칙 제5조·제17조·제23조·제28조). 12월 결산이면 2019 사업연도까지 3.31., 2020 사업연도부터 6.30."""
     r = C.corporate_filing_obligations({
         "year": year, "corp_type": corp_type,
         "revenue": revenue, "revenue_prev": revenue_prev,
@@ -9932,10 +10186,11 @@ def corporate_filing_obligations(
         "related_intangibles": related_intangibles,
         "party_max_goods": party_max_goods, "party_max_services": party_max_services,
         "party_max_intangibles": party_max_intangibles,
+        "fy_start": fy_start, "fy_end": fy_end,
     })
     if "error" in r:
         return r
-    return _ok(r["결과"], r["근거"], 판단=r.get("판단", []))
+    return _ok(r["결과"], r["근거"], 판단=r.get("판단", []), **{k: r[k] for k in ("사업연도", "주의") if k in r})
 
 # ── 도구: 해외직접투자 외국환 신고·사후보고·청산 판정 ─────────────────────────────────────
 # SPEC_fx_reporting_1110. 근거: 외국환거래법 제18조, 시행령 제8조, 외국환거래규정 제9-5조·제9-6조·제9-9조, 국조법 제58조.
