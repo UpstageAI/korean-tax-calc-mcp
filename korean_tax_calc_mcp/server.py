@@ -1111,7 +1111,7 @@ def tp_comparable_screen(tested_party: Annotated[dict, Field(description="분석
 @mcp.tool(annotations=CALC)
 @_guard
 def international_transaction_statement(
-        year: Annotated[int, Field(description="사업연도 — 개시일이 속하는 해(2016~2026). 엑셀 서식 틀은 2021 사업연도부터(2020년까지는 구 시행규칙 별지 제8호서식(갑) — 국외특수관계인별 한 장이라 틀 없음)")],
+        year: Annotated[int, Field(description="사업연도 — 개시일이 속하는 해(2016~2026). 2020년까지는 제출기한 날 시행 중인 서식 판(구 시행규칙 별지 제8호서식(갑) 2016·2017·2018판, 2021.3.16. 전부개정 별지 제16호서식(갑))으로 국외특수관계인별 한 장씩 엑셀 틀을 만듦")],
         parties: Annotated[list[dict], Field(description="국외특수관계인별 거래 [{name(법인명·상호, 필수), country, local_id(현지기업 고유번호), tax_id(현지 납세자번호), fiscal_year(상대방 사업연도 문구), "
                                                          "industry_code(주업종코드), established(설립일 'YYYY-MM'), relationship('지배'|'피지배'|'자매'|'실질 지배'|'본점ㆍ지점' — 서식 작성방법 4), "
                                                          "sales: 매출거래, purchases: 매입거래, transfer_pricing: {transaction(대상 거래), method(정상가격 산출방법), reason(선택 이유)}, "
@@ -1121,21 +1121,26 @@ def international_transaction_statement(
         fy_start: Annotated[str | None, Field(description="사업연도 개시일 YYYY-MM-DD(생략하면 year-01-01)")] = None,
         fy_end: Annotated[str | None, Field(description="사업연도 종료일 YYYY-MM-DD(생략하면 year-12-31) — 평균 대여금·차입금 분모 일수와 제출기한 계산")] = None,
         revenue: Annotated[int, Field(description="당기 매출액(원, 선택) — 국제거래정보통합보고서 대상 여부(통합·개별기업보고서 제출자의 국제거래명세서 제출 관계) 판정용", ge=0)] = 0,
-        filer: Annotated[dict | None, Field(description="정상가격 산출방법 신고서 신고인 칸(선택) {representative(대표자), industry(업종), phone(전화번호), address(소재지)}")] = None) -> dict:
+        filer: Annotated[dict | None, Field(description="정상가격 산출방법 신고서 신고인 칸(선택) {representative(대표자), industry(업종), phone(전화번호), address(소재지)}")] = None,
+        third_party: Annotated[dict | None, Field(description="국외특수관계 없는 자와의 국제거래 금액(선택, 원) {goods(재화거래), services(용역거래), intangibles(무형자산거래 — 2023년 이후 개시 과세연도만 씀)} — "
+                                                              "정상가격 산출방법 신고서 면제 가목(국제거래 전체 재화 50억·용역 10억·무형자산 10억)에만 더함. 생략하면 국외특수관계인 거래만으로 판정")] = None) -> dict:
     """Transfer pricing statement of international transactions with foreign related parties and filing duty (국제거래명세서).
     국제거래명세서 칸 집계와 제출 의무 — 국외특수관계인별 거래를 국조칙 별지 제16호서식(갑) 칸 번호대로 모아 매출·매입 계, 대여금·차입금 적수(금액×일수 합계), 평균 대여금·차입금(적수 ÷ 사업연도 일수)을 내고,
     국제거래명세서·요약손익계산서·정상가격 산출방법 신고서 제출 의무(국조법 제16조제2항, 시행령 제36조 — corporate_filing_obligations와 같은 연도표)와 제출기한, 함께 낼 서식(별지 제16호서식(을)·제17호·제18호·제19호·제20호)을 판정.
     언제: 국외특수관계인(해외 자회사·모회사 등)과 거래가 있는 법인이 국제거래명세서를 작성하거나 제출 대상인지, 어떤 서식을 함께 내야 하는지 확인할 때.
-    엑셀: export_workbook(layout='forms')에 넣으면 별지 제16호서식(갑)과 정상가격 산출방법 신고서(별지 제20호) 시트를 채움.
-    입력: 사업연도 → year(·fy_start·fy_end), 국외특수관계인별 매출·매입 거래 → parties[].sales·purchases(재화는 inventory·other_tangible, 무형자산은 royalty·intangible_sale, 용역은 guarantee·other_services·tangible_rental, 금전대차는 loans 건별 금액·일수와 interest, 가상자산·기타는 virtual_assets·other), 정상가격 산출방법 → parties[].transfer_pricing, 매출액 → revenue.
+    엑셀: export_workbook(layout='forms')에 넣으면 별지 제16호서식(갑)과 정상가격 산출방법 신고서(별지 제20호) 시트를 채움. 2016~2020 사업연도는 그 해 서식 판 — 구 별지 제8호서식(갑)(2016·2017·2018판)·별지 제16호서식(갑) 2021판을
+      국외특수관계인별 한 장씩(5명까지), 정상가격 산출방법 신고서는 구 별지 제1호의3서식(2015·2020판)·별지 제20호서식 2021판. 그 해 서식에 없는 칸에 금액이 있거나 2022.3.18. 이후에 내는 분이면 구 서식 시트 대신 목록에 사유.
+    입력: 사업연도 → year(·fy_start·fy_end), 국외특수관계인별 매출·매입 거래 → parties[].sales·purchases(재화는 inventory·other_tangible, 무형자산은 royalty·intangible_sale, 용역은 guarantee·other_services·tangible_rental, 금전대차는 loans 건별 금액·일수와 interest, 가상자산·기타는 virtual_assets·other), 정상가격 산출방법 → parties[].transfer_pricing, 매출액 → revenue, 국외특수관계 없는 자와의 국제거래 금액 → third_party(선택).
     계산(서식 작성방법 5·9·10): 매출 계 = 재고자산~가상자산 외 칸 합계(대여금 적수 칸 제외, 평균 대여금·수입이자 포함), 매입 계도 같은 방식. 적수 = 합계(금액 × 일수) — 서식 예시 100원×60일 + 200원×180일 = 42,000원.
       평균 = 적수 ÷ 사업연도 일수(365·366), 원 미만 절사 — 서식 예시 42,000 ÷ 365 = 115원.
     판정: 2023.1.1. 이후 개시 사업연도는 재화 5억·용역 1억·무형자산 1억 모두 이하면 국제거래명세서 면제, 2022년까지는 국외특수관계인과 거래가 있으면 제출. 기한은 사업연도 종료일이 속하는 달의 말일부터 6개월(2020 사업연도분부터).
       면제 금액은 매출·매입 합계로 재화(재고자산·기타 유형자산), 용역(지급보증·기타 용역·유형자산 사용료), 무형자산(사용료·매매 등)만 셈.
+      정상가격 산출방법 신고서 면제 가목(국제거래 전체 재화 50억·용역 10억, 2023년부터 무형자산 10억)에는 third_party 금액을 더함(사전-2022-법규국조-0527) — 넣지 않으면 국외특수관계인 거래만으로 판정.
     결과: 매출·매입 계·적수·평균·이자 합계, 거래 유형별 합계와 국외특수관계인별 최대, 서식별 제출 여부·제출기한, 함께_낼_서식, 계산(국외특수관계인별 칸 값), 서식_표·계산식_입력(엑셀 서식 틀용), 판단·근거·주의·한계.
     범위 밖: 정상가격 자체의 산출(arm_length_range·tp_comparable_screen), 주식 등 취득·양도와 가상자산 거래 명세(서식 제2쪽), 지급보증 정상가격(별지 제16호서식(을) 칸 계산)."""
     from .engine import calc_intl_statement as ITS
-    r = ITS.statement({"year": year, "parties": parties, "fy_start": fy_start, "fy_end": fy_end, "revenue": revenue, "filer": filer})
+    r = ITS.statement({"year": year, "parties": parties, "fy_start": fy_start, "fy_end": fy_end, "revenue": revenue, "filer": filer,
+                       "third_party": third_party})
     if "error" in r:
         return r
     extra = {k: v for k, v in r.items() if k not in ("결과", "근거")}
@@ -10784,6 +10789,9 @@ def corporate_filing_obligations(
     party_max_intangibles: Annotated[int, Field(description="국외특수관계인별 무형재산 최대 거래(원, 기본 0)")] = 0,
     fy_start: Annotated[str | None, Field(description="사업연도 개시일 YYYY-MM-DD(선택, 생략하면 year-01-01) — 외부감사 신기준(2019.11.1. 이후 시작 사업연도) 판정")] = None,
     fy_end: Annotated[str | None, Field(description="사업연도 종료일 YYYY-MM-DD(선택, 생략하면 year-12-31) — 국제거래명세서·해외현지법인 자료 제출기한 계산")] = None,
+    third_party_goods: Annotated[int, Field(description="국외특수관계 없는 자와의 국제거래 중 재화거래 금액(원, 기본 0) — 정상가격 산출방법 신고서 면제 가목(전체 50억)에만 더함", ge=0)] = 0,
+    third_party_services: Annotated[int, Field(description="국외특수관계 없는 자와의 국제거래 중 용역거래 금액(원, 기본 0) — 같은 가목(전체 10억)에만 더함", ge=0)] = 0,
+    third_party_intangibles: Annotated[int, Field(description="국외특수관계 없는 자와의 국제거래 중 무형자산거래 금액(원, 기본 0) — 2023년 이후 개시 과세연도의 같은 가목(전체 10억)에만 더함", ge=0)] = 0,
 ) -> dict:
     """External audit and external tax adjustment obligations plus transfer pricing filing duties (외부감사·외부세무조정 의무).
     외부감사(외감법 제4조)·외부세무조정(법인세법 제60조제9항)·국제거래 자료 제출 의무(국조법 제16조·제34조·제36조·제58조) 판정.
@@ -10795,6 +10803,7 @@ def corporate_filing_obligations(
       유한회사 사원 수 → members(선택). 설립일 → established_on(선택).
       외국자회사·국외사업장·특례·준비금·결정경정·합병분할·해외직접투자 → 각 bool.
       국외특수관계인 거래 합계·상대방별 최대 → related_goods/services/intangibles, party_max_goods/services/intangibles.
+      국외특수관계 없는 자와의 국제거래 금액 → third_party_goods/services/intangibles(선택 — 정상가격 산출방법 신고서 면제 가목의 전체 금액에만 더함, 사전-2022-법규국조-0527).
     결과: 외부감사는 대상 여부·충족조건, 외부세무조정은 대상 여부·사유(제1~7호) 목록,
       국제거래명세서·요약손익계산서·정상가격산출방법신고서·국제거래정보통합보고서 각각 대상 여부,
       해외직접투자명세는 대상 여부·기한. 판단·근거.
@@ -10819,6 +10828,8 @@ def corporate_filing_obligations(
         "party_max_goods": party_max_goods, "party_max_services": party_max_services,
         "party_max_intangibles": party_max_intangibles,
         "fy_start": fy_start, "fy_end": fy_end,
+        "third_party_goods": third_party_goods, "third_party_services": third_party_services,
+        "third_party_intangibles": third_party_intangibles,
     })
     if "error" in r:
         return r
@@ -11191,11 +11202,12 @@ def overseas_subsidiary_statement(
     판정: 재무상황표 — 직접 10% 이상이고 투자금액(출자+대여) 1억원 이상(영 제98조제1항제2호가목), 또는 직접·간접 10% 이상이고 특수관계(나목).
       손실거래명세서 — 나목 해당자 중 손실거래금액이 법인 단일 50억원·5년 누적 100억원(개인 10억원·20억원) 이상(제3호). 2021~2026년 시행본 문언 같음.
       2016~2020년 개시분: 종전 제출기한(법인 — 사업연도 종료일이 속하는 달의 말일부터 3개월, 개인 — 다음 연도 5.31.)이 2021.1.1. 전에 지났으면 구 법인세법 제121조의2제1항·구 시행령 제164조의2
-      (개인은 구 소득세법 제165조의2·구 시행령 제217조의2)와 구 법인세법 시행규칙 별지 제81호·제82호·제82호의2서식(개인은 구 소득세법 시행규칙 별지 제93호~제95호서식)으로 판정하고, 지나지 않았으면 현행 규정(법률 제17651호 부칙 제28조). 결과의 '적용_규정'에 표시. 엑셀 서식 틀은 2021 사업연도부터.
+      (개인은 구 소득세법 제165조의2·구 시행령 제217조의2)와 구 법인세법 시행규칙 별지 제81호·제82호·제82호의2서식(개인은 구 소득세법 시행규칙 별지 제93호~제95호서식)으로 판정하고, 지나지 않았으면 현행 규정(법률 제17651호 부칙 제28조). 결과의 '적용_규정'에 표시.
+      엑셀 서식 틀: 종전 규정 적용 법인은 구 법인세법 시행규칙 별지 제81호·제82호서식(2014.3.14. 개정본), 2020년까지 개시분 중 현행 규정 적용분은 국조칙 별지 제47호·제48호서식 2021.3.16. 전부개정본(재무상황표는 제출기한이 2022.3.18. 이후면 2022판). 개인의 종전 규정 적용분은 틀 없음.
       기한 — 종료일이 속하는 달의 말일부터 6개월(법 제58조제1항, 2021.1.1. 시행 법률 제17651호부터).
     확인: 01 = 14 + 21, 56 = 27 − 30, 57 = 56 − 31, 58 = 57 + 38 − 42, 48 = 58 − 47, 82 = 71 + 76 − 77과 하위 과목 합계(08·14·21·23·27·31·38·42·77) — 식의 코드가 모두 있을 때만, 다르면 '확인 필요'.
     결과: 명세서_제출대상·재무상황표_제출대상·재무상황표_사유·손실거래명세서_제출대상·제출기한·지분율·투자금액·항등식_확인·항등식_불일치, 판단·주의.
-    범위 밖: 2020 사업연도 이전(구 법인세법 제121조의2 시기), 해외영업소 설치현황표·해외부동산 명세서, 과태료 계산."""
+    범위 밖: 해외영업소 설치현황표·해외부동산 명세서, 과태료 계산, 구 소득세법 시행규칙 별지 제93호·제94호서식 엑셀 틀."""
     from .engine import calc_overseas_sub as OS
     r = OS.statement(year, filer, fy_end, subsidiary, ownership_direct, ownership_indirect, equity_investment,
                      loan_investment, related_party, loss_single_year, loss_cumulative_5y, financials, provisional)
@@ -11205,7 +11217,8 @@ def overseas_subsidiary_statement(
     _txt = (("현지법인명", "name"), ("거주지국", "country"), ("업종", "industry"), ("업종코드", "industry_code"),
             ("투자일", "investment_date"), ("고유번호", "local_id"), ("납세자번호", "tin"), ("소재지", "address"),
             ("현지사업연도", "fiscal_year"), ("환율_재무", "fx_bs"), ("환율_손익", "fx_pl"))
-    입력 = [("사업연도", year), ("가결산", 1 if provisional else 0), ("직접지분율", r["결과"]["직접지분율"]),
+    입력 = [("사업연도", year), ("종전규정", 1 if r["종전"] else 0), ("개인", 1 if filer == "개인" else 0), ("재무상황표_서식판", r["서식판"]),
+            ("가결산", 1 if provisional else 0), ("직접지분율", r["결과"]["직접지분율"]),
             ("간접지분율", r["결과"]["간접지분율"]), ("출자금액", int(equity_investment)), ("대여금", int(loan_investment))]
     입력 += [(n, str(sub[k])) for n, k in _txt if sub.get(k) not in (None, "")]
     입력 += [(n, sub[k]) for n, k in (("주식수", "shares"), ("배당금수입", "dividend_income"), ("대부수입이자", "loan_interest"))

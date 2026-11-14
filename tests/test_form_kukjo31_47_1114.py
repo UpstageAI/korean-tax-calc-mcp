@@ -91,7 +91,7 @@ def test_holding_32gap_and_pre2021_no_sheet(tmp_path):
     assert Evaluator(wb).v(G31, "F25").startswith("[√] 예")
     wb = wb_of(tmp_path, [{"label": "구", "tool": "cfc_deemed_dividend", "args": old}])
     assert not any(s.startswith("국조") for s in wb.sheetnames)
-    assert "구 시행규칙의 서식 번호" in listed(wb)["국조 별지 제30호~제32호서식"]
+    assert "구 시행규칙 별지 제10호의4서식" in listed(wb)["국조 별지 제30호~제32호서식"]
 
 
 # ── overseas_subsidiary_statement ──

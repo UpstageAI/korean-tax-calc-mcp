@@ -86,7 +86,7 @@ def test_input_errors_and_old_years():
     r = c(T, {"year": 2025, "parties": [{"name": "A", "relationship": "모회사"}]})
     assert "error" in r
     old = run(year=2019, parties=[{"name": "A", "sales": {"inventory": 1}}])
-    assert any("별지 제8호서식(갑)" in m and "구 서식 엑셀 틀은 만들지 않음" in m for m in old["주의"])      # 구 서식 번호 대조(2026-11-15)
+    assert any("별지 제8호서식(갑) <개정 2018. 3. 19.>" in m and "한 장씩 만들고" in m for m in old["주의"])      # 그 해 서식 판(2026-11-15, test_form_old_intl_1115.py)
 
 
 def _wbook(tmp_path, args):
@@ -106,7 +106,7 @@ def test_workbook_16gap_totals_match_tool(tmp_path):
     assert SH16 in wb.sheetnames
     ws, ev = wb[SH16], Evaluator(wb)
     assert ws["A7"].value == "Alpha Inc." and ws["A8"].value == "Beta GmbH" and ws["A16"].value == "Alpha Inc."
-    assert ws["Q7"].value == "=100*60+200*180" and ev.v(SH16, "R7") == 115
+    assert ws["Q7"].value == 42_000 and ev.v(SH16, "R7") == 115          # 적수는 값(문자열 수식이면 내보내기에서 문구로 바뀌어 ⑱이 0이 됨 — test_form_old_intl_1115.py 재계산)
     assert ev.v(SH16, "I12") == tool["매출_계"] == 1_200_000_000 + 115 + 3_000 + 40_000_000
     assert ev.v(SH16, "Q12") == tool["매출_대여금적수"] and ev.v(SH16, "R12") == tool["매출_평균대여금"]
     assert ev.v(SH16, "I21") == tool["매입_계"] == 80_000_000 + 500_000_000 + 1_000_000 + 50_000
@@ -129,6 +129,7 @@ def test_workbook_form20_and_skips(tmp_path):
     # 2022 사업연도: 기한(2023.6.30.)이 서식 개정(2024.3.22.) 전이라 머리의 개정일 표기를 뺌
     wb = _wbook(tmp_path / "y22", dict(year=2022, parties=[{"name": "A", "sales": {"inventory": 1_000_000}}]))
     assert SH16 in wb.sheetnames and "<개정" not in wb[SH16]["A1"].value
-    # 면제(2025, 재화 1백만) → 시트 없음, 2020 → 구 서식 미확인이라 시트 없음
+    # 면제(2025, 재화 1백만) → 시트 없음, 2020 → 현행 틀 대신 그 해 서식 판(2021.3.16. 전부개정 별지 제16호서식(갑), 국외특수관계인별 한 장)
     assert SH16 not in _wbook(tmp_path / "ex", dict(year=2025, parties=[{"name": "A", "sales": {"inventory": 1_000_000}}])).sheetnames
-    assert SH16 not in _wbook(tmp_path / "y20", dict(year=2020, parties=[{"name": "A", "sales": {"inventory": 1_000_000}}])).sheetnames
+    y20 = _wbook(tmp_path / "y20", dict(year=2020, parties=[{"name": "A", "sales": {"inventory": 1_000_000}}])).sheetnames
+    assert SH16 not in y20 and "국조 별지16갑 2021판 (1)" in y20
