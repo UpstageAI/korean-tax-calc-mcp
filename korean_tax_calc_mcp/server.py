@@ -40,6 +40,7 @@ from .engine import inputs as _chk
 from .engine import calc_batch0300 as B
 from .engine import calc_cfc as CF
 from .engine import calc_cfc_followup as CFF
+from .engine import calc_tax_crime_fine as TCF
 from .engine.errors import NoYearTable as _NoYearTable
 from . import vocab
 from .tools_income import earned_income_gross_pay_impl as _earned_income_gross_pay_impl
@@ -9922,6 +9923,23 @@ def cfc_share_disposal(year: Annotated[int, Field(description="특정외국법�
     return _ok(res, r["근거"], 세무조정=세무조정, 판단=r["판단"], 단계별_계산=r["단계별_계산"], 주의=r["주의"])
 
 
+@mcp.tool(annotations=CALC)
+@_guard
+def tax_crime_settlement_amount(offenses: Annotated[list[dict], Field(description="범칙행위 목록 [{offense, count, base, ...}]. offense: 제3조제1항본문·제3조제1항단서·제4조제1항·제4조제2항·제4조의2·제5조·제6조·제7조제1항·제2항·제7조제3항·제8조·제9조제1항·제9조제2항·제10조제1항·제10조제2항·제10조제3항·제10조제4항·제11조제1항·제11조제2항·제12조제1호~제3호·제12조제4호·제13조제1항·제13조제2항·제14조·제15조제1항·제16조제1항 (처벌법 조·항·호). count: 1·2·3(행위일 이전 최근 3년간 같은 범칙행위로 통고처분·유죄 확정받은 횟수 + 1). base: 그 범칙행위의 기준 금액(포탈세액등·체납액·공급가액·총급여·신고의무 위반금액 등). 선택: property_value(제7조 재산가액), vat_rate(기본 0.1), professional(제10조제4항 세무 대리 전문가), liquor(제6조 {kind: 탁주|위스키·브랜디|그 밖, liters, act: 가|나|다, liquor_tax}), habitual(제3조 상습), voluntary(제3조 수정신고·기한후신고 {type, due_date, filed_on, before_investigation, additional_tax_paid}), aiding_reduction(방조 감경률 0~1, 재량), impaired(심신미약·청각 및 언어 장애)")],
+                                notice_date: Annotated[str, Field(description="통고처분일 YYYY-MM-DD — 기본으로 이 날짜의 별표를 씀")],
+                                act_date: Annotated[str | None, Field(description="범칙행위일 YYYY-MM-DD — 처벌법 벌금 상한과, 표가 달라지는지 경고에 씀")] = None,
+                                table_basis: Annotated[Literal["통고일", "행위일"], Field(description="어느 날짜의 별표를 쓸지 — 개정 부칙에 적용례가 없어 해석 사항. 기본 통고일")] = "통고일") -> dict:
+    """통고처분 벌금상당액 — 조세범칙행위에 대해 지방국세청장·세무서장이 통고하는 벌금상당액을 시행령 별표 부과기준(1차·2차·3차 이상, 가중·감경, 경합, 10원 미만 절사, 처벌법 벌금 상한)으로 계산. 언제: 조세범칙조사 뒤 통고처분 금액을 미리 계산하거나 검토할 때.
+    입력: 범칙행위 목록 → offenses, 통고처분일 → notice_date, 행위일 → act_date, 표 기준일 → table_basis.
+    계산 순서(별표 1호 사목): 위반 횟수 → 상습 50% 가중(제3조만) → 수정신고·기한 후 신고 감경 50·20·10%(제3조만, 조사 착수 전·추가세액 납부) → 방조 감경(재량, 입력) → 심신미약 등 50% 감경 → 경합(제7~9·11·15·16조 그룹은 가장 무거운 것 + 1/2, 합산액 한도 / 나머지는 합산 / 섞이면 각각 산정 후 합산). 10원 미만 절사, 처벌법 벌금 상한을 넘으면 상한.
+    결과: 범칙행위별 개별기준·단계·벌금상당액, 경합, 합계, 적용 별표(2014.6.30.·2019.2.12.·2026.2.27. 개정본), 경고, 납부·고발 안내.
+    범위 밖: 범칙행위·단서·상습·방조 해당 여부(조문 MCP tax_crime_guide), 통고·고발·무혐의 처분 선택과 위원회 심의."""
+    r = TCF.settlement(offenses, notice_date, act_date, table_basis)
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 판단=r["판단"], 경고=r["경고"], 주의=r["주의"])
+
+
 # ── 도구: 양도소득 부당행위계산 (소득세법 제101조, 영 제167조③④⑤⑥) ─────────────────
 # SPEC_batch0300_1110. 근거: 소득세법 제101조①②③, 시행령 제98조①·제167조③④⑤⑥.
 
@@ -10026,7 +10044,7 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "소급공제": ["loss_carryback_refund"], "결손금 환급": ["loss_carryback_refund"], "결손금 소급": ["loss_carryback_refund"],
     "이월결손금 추적": ["loss_carryforward_ledger"], "결손금 잔액": ["loss_carryforward_ledger"], "결손금 소멸": ["loss_carryforward_ledger"], "이월결손금": ["loss_carryforward_ledger", "loss_carryforward_limit"],
     "해외법인 청산": ["foreign_subsidiary_liquidation", "foreign_exchange_reporting"], "자회사 청산 손실": ["foreign_subsidiary_liquidation"], "투자주식 손실": ["foreign_subsidiary_liquidation"],
-    "정상가격 범위": ["arm_length_range"], "사분위": ["arm_length_range"], "이전가격 조정액": ["arm_length_range"], "비교대상 이익률": ["arm_length_range", "tp_comparable_screen"], "비교대상 선정": ["tp_comparable_screen"], "비교기업": ["tp_comparable_screen"], "특정외국법인 배당": ["cfc_actual_dividend"], "배당간주 실제 배당": ["cfc_actual_dividend"], "특정외국법인 주식 양도": ["cfc_share_disposal"], "스크리닝": ["tp_comparable_screen"], "탈락 사유": ["tp_comparable_screen"], "벤치마크": ["tp_comparable_screen"],
+    "정상가격 범위": ["arm_length_range"], "사분위": ["arm_length_range"], "이전가격 조정액": ["arm_length_range"], "비교대상 이익률": ["arm_length_range", "tp_comparable_screen"], "비교대상 선정": ["tp_comparable_screen"], "비교기업": ["tp_comparable_screen"], "특정외국법인 배당": ["cfc_actual_dividend"], "배당간주 실제 배당": ["cfc_actual_dividend"], "특정외국법인 주식 양도": ["cfc_share_disposal"], "통고처분": ["tax_crime_settlement_amount"], "벌금상당액": ["tax_crime_settlement_amount"], "조세범칙": ["tax_crime_settlement_amount"], "스크리닝": ["tp_comparable_screen"], "탈락 사유": ["tp_comparable_screen"], "벤치마크": ["tp_comparable_screen"],
     "마일리지충당부채": ["provision_reserve_ledger"], "포인트충당부채": ["provision_reserve_ledger"], "판매보증충당부채": ["provision_reserve_ledger"],
     "충당부채": ["provision_reserve_ledger"], "유효기간 소멸": ["provision_reserve_ledger"], "마일리지 유보": ["provision_reserve_ledger"],
     "마일리지": ["vat_tax_base_adjustments", "provision_reserve_ledger"], "포인트 결제": ["vat_tax_base_adjustments"], "반품": ["vat_tax_base_adjustments"], "환입": ["vat_tax_base_adjustments"],
