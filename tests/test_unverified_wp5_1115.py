@@ -178,3 +178,16 @@ def test_investment_credit_graduate_temp_rates():
     assert r["결과"]["적용"] == "본칙" and r["결과"]["공제_대상_세액"] == 75 * M      # 7.5% > 임시 7%
     assert "error" in f(graduate_status="중소기업")
     assert "error" in I.integrated_investment_credit(2025, "중견기업", [{"kind": "일반", "amount": M}], graduate_status="일반")
+
+
+# ── 국세청 2026.3.25. 공지 첨부 파일: 받지 못해 '근거 없음'으로 닫음(2026-11-15 국세청 누리집 공지사항 검색) ──
+def test_integrated_employment_credit_notice_limit_only_from_2025():
+    r25 = I.integrated_employment_credit(2025, "중소기업", H((2024, 10, 3), (2025, 12, 4)))
+    assert len(r25["한계"]) == 1 and r25["한계"][0].startswith("근거 없음 — 국세청 2026.3.25. 공지의 첨부 파일")
+    assert "사람이 내려받아야 함" in r25["한계"][0] and "headcounts" in r25["한계"][0]
+    assert I.integrated_employment_credit(2024, "중소기업", H((2023, 10, 3), (2024, 12, 4)))["한계"] == []      # 2024 과세연도까지는 이 공지와 무관
+    # 금액은 그대로: 청년등 1 × 1,450만 + 그 외 1 × 850만
+    assert r25["결과"]["기본공제"] == 23 * M
+    tool = getattr(S.integrated_employment_credit, "fn", S.integrated_employment_credit)
+    assert "한계" in tool(2025, "중소기업", H((2024, 10, 3), (2025, 12, 4))) and "한계" not in tool(2024, "중소기업", H((2023, 10, 3), (2024, 12, 4)))
+    assert any("employment_credit_requirements_guide" in x and "근무개월 수 방식" in x for x in r25["주의"])

@@ -1331,11 +1331,12 @@ def integrated_employment_credit(year: Annotated[int, Field(description="과세�
     2026 과세연도: 2025 과세연도보다 늘어난 인원 × 금액(청년등 중소기업 700만원·수도권 밖 1,000만원, 중견 500만원, 그 밖 300만원. 청년등 외 중소기업 400만원·수도권 밖 700만원, 중견 300만원) — 2025.12.23. 개정 제29조의8제1항.
       중소기업이 아니면 최소고용증가인원수(중견 5명, 그 밖 10명)를 넘게 늘어야 하고 그 인원에 대한 금액을 뺌. 개정 계산식에는 추가 납부가 없음.
       2024·2025 과세연도 증가분의 2차·3차 공제와 추가 납부는 종전 규정으로 계산(법률 제21223호 부칙 제34조). 육아휴직 복귀 공제는 2026년에도 적용, 정규직 전환은 2024년 전환분까지.
-    범위 밖: 2022년 이전 증가분(고용증대 세액공제), 2027 과세연도 이후, 최저한세·이월(minimum_tax_adjustment), 농어촌특별세(rural_special_tax), 합병·분할 승계 인원 조정."""
+    범위 밖: 2022년 이전 증가분(고용증대 세액공제), 2027 과세연도 이후, 최저한세·이월(minimum_tax_adjustment), 농어촌특별세(rural_special_tax), 합병·분할 승계 인원 조정.
+    한계: 2025 과세연도 인원을 세는 방법은 국세청 2026.3.25. 공지(첨부 파일은 받지 못함)와 조문 MCP employment_credit_requirements_guide로 확인 — 이 도구는 넣은 인원으로만 계산."""
     r = INC.integrated_employment_credit(year, size, headcounts, outside_capital_area, converted, returned_from_leave, credits_taken, carryforward_left)
     if "error" in r:
         return r
-    return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 주의=r["주의"])
+    return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 주의=r["주의"], **({"한계": r["한계"]} if r.get("한계") else {}))
 
 
 @mcp.tool(annotations=CALC)
