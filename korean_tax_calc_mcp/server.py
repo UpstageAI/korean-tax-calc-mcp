@@ -39,6 +39,7 @@ from .engine.exact import floor_won as _floor_won, trunc_won as _trunc_won, exac
 from .engine import inputs as _chk
 from .engine import calc_batch0300 as B
 from .engine import calc_cfc as CF
+from .engine import calc_cfc_followup as CFF
 from .engine.errors import NoYearTable as _NoYearTable
 from . import vocab
 from .tools_income import earned_income_gross_pay_impl as _earned_income_gross_pay_impl
@@ -9873,10 +9874,53 @@ def cfc_deemed_dividend(
     res = r["결과"]
     세무조정, 주의 = [], list(r.get("주의", []))
     if res.get("배당간주_적용") and res.get("배당간주금액"):
-        세무조정.append(_adj("특정외국법인 배당간주금액", "익금산입", res["배당간주금액"], "유보", "국제조세조정에 관한 법률 제27조①·제31조, 법인세법 시행령 제106조①2호"))
+        _cfc_b = ("구 국제조세조정에 관한 법률 제17조①·제19조①" if year <= 2019 else "구 국제조세조정에 관한 법률 제18조①·제19조" if year == 2020
+                  else "국제조세조정에 관한 법률 제27조①·제31조")
+        세무조정.append(_adj("특정외국법인 배당간주금액", "익금산입", res["배당간주금액"], "유보", _cfc_b + ", 법인세법 시행령 제106조①2호"))
         주의.append("세무조정의 유보: 배당간주금액은 사외로 나간 금액이 아니어서 법인세법 시행령 제106조①2호(사외에 유출되지 않은 금액)에 따라 유보로 둠 — 이 처분을 직접 다룬 해석례는 찾지 못함. "
-                  "실제 배당을 받는 해에 그 금액을 익금불산입(국조법 제32조①). 익금에 넣는 사업연도는 특정외국법인 사업연도 종료일의 다음 날부터 60일이 되는 날이 속하는 사업연도(제31조)")
+                  "실제 배당을 받는 해에 그 금액을 익금불산입(국조법 제32조① — cfc_actual_dividend). 익금에 넣는 사업연도는 특정외국법인 사업연도 종료일의 다음 날부터 60일이 되는 날이 속하는 사업연도(제31조)")
     return _ok(res, r["근거"], 세무조정=세무조정, 주의=주의, 단계별_계산=r.get("단계별_계산", []))
+
+@mcp.tool(annotations=CALC)
+@_guard
+def cfc_actual_dividend(year: Annotated[int, Field(description="실제 배당을 받은 과세연도(2016~2026)")],
+                        actual_dividend: Annotated[int, Field(description="특정외국법인(또는 중간외국법인)에서 실제로 받은 배당액(원, 손익 귀속시기 환율로 환산). 의제배당 포함", ge=0)],
+                        ledger: Annotated[list[dict], Field(description="이미 익금에 넣은 배당간주금액 [{year: 익금 귀속 과세연도, amount: 배당간주금액, used: 이미 실제 배당으로 소진한 금액}] — cfc_deemed_dividend 결과의 배당간주금액·익금귀속_과세연도")],
+                        intermediate: Annotated[dict | None, Field(description="중간외국법인을 거쳐 받은 배당이면 {cfc_to_intermediate: [{amount: 특정외국법인→중간외국법인 실제 배당액, ratio: 그 당시 내국인의 중간외국법인 보유비율}], prior_excluded: 과거 익금불산입액}")] = None,
+                        entity: Annotated[Literal["법인", "개인"], Field(description="받는 내국인 — 법인(익금불산입) 또는 개인(배당소득 아님)")] = "법인",
+                        cfc_name: Annotated[str | None, Field(description="특정외국법인 이름(세무조정 과목에 씀)")] = None) -> dict:
+    """특정외국법인 실제 배당의 익금불산입 — 배당간주로 이미 과세된 유보소득을 나중에 실제로 배당받을 때, 그 금액을 익금(개인은 배당소득)에서 뺀다. 언제: 배당간주(cfc_deemed_dividend)로 익금산입한 뒤 그 특정외국법인에서 실제 배당을 받았을 때.
+    입력: 받은 과세연도 → year, 실제 배당액 → actual_dividend, 배당간주 원장 → ledger, 중간외국법인 경유 → intermediate, 법인·개인 → entity, 법인 이름 → cfc_name.
+    계산: 익금불산입 = min(실제 배당액, 배당간주금액 중 아직 소진하지 않은 금액) — 배당 가능한 유보소득이 발생한 순서대로 소진. 중간외국법인 경유면 한도 = Σ(특정외국법인→중간외국법인 실제 배당 × 당시 보유비율) − 과거 익금불산입액.
+    결과: 익금불산입, 일반배당(나머지), 소진 내역, 원장 갱신(다음 호출의 ledger), 세무조정(익금불산입·△유보 — income_adjustment_total·export_workbook에 넣음), 판단·근거·주의.
+    근거(받은 과세연도별): 2016~2019 구 국조법 제20조제1항(이월익금)·구 시행령 제36조의6, 2020 구 법 제19조의2제1항·구 시행령 제35조, 2021~ 법 제32조제1항·시행령 제68조. 2023년부터 법인세법 제18조의4제3항(95% 익금불산입 미적용) 안내."""
+    r = CFF.actual_dividend(year, actual_dividend, ledger, intermediate, entity, cfc_name)
+    if "error" in r:
+        return r
+    res = dict(r["결과"]); 세무조정 = [_adj(x["구분"], x["조정"], x["금액"], x["소득처분"], x["근거"]) for x in res.pop("세무조정")]
+    return _ok(res, r["근거"], 세무조정=세무조정, 판단=r["판단"], 주의=r["주의"])
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def cfc_share_disposal(year: Annotated[int, Field(description="특정외국법인 주식을 양도한 과세연도(2016~2026)")],
+                       deemed_total: Annotated[int, Field(description="양도한 주식에 대한 배당간주금액 합계(원)", ge=0)],
+                       actual_paid: Annotated[int, Field(description="그 양도한 주식에 대하여 실제로 배당한 금액(원)", ge=0)],
+                       gain: Annotated[int, Field(description="해당 주식의 양도차익(원, 차손이면 음수)")],
+                       entity: Annotated[Literal["법인", "개인"], Field(description="양도한 내국인 — 법인 또는 개인")] = "법인",
+                       sold_ratio: Annotated[float | None, Field(description="deemed_total·actual_paid가 보유 주식 전체 기준일 때 양도한 비율(0~1) — 주면 그 비율로 나눔(이 도구의 가정)")] = None,
+                       cfc_name: Annotated[str | None, Field(description="특정외국법인 이름(세무조정 과목에 씀)")] = None) -> dict:
+    """특정외국법인 주식 양도 때 배당간주 미배당분의 익금불산입 — 배당간주로 과세됐지만 아직 실제로 배당받지 않은 금액을 양도차익 한도로 익금(개인은 양도소득)에서 뺀다. 언제: 배당간주로 익금산입한 특정외국법인의 주식을 팔 때.
+    입력: 양도 과세연도 → year, 양도 주식분 배당간주금액 합계 → deemed_total, 그 주식의 실제 배당액 → actual_paid, 양도차익 → gain, 법인·개인 → entity, 일부 양도 비율 → sold_ratio.
+    계산: (양도한 주식에 대한 배당간주금액 합계 − 그 주식에 실제로 배당한 금액), 0 이하는 0, 양도차익 한도.
+    결과: 익금불산입(법인)·양도소득 제외(개인), 계산 전 금액, 양도차익 한도, 세무조정(익금불산입·△유보), 판단·근거·주의.
+    근거(양도 과세연도별): 2016~2019 구 국조법 제20조제2항, 2020 구 법 제19조의2제2항, 2021~ 법 제32조제2항."""
+    r = CFF.share_disposal(year, deemed_total, actual_paid, gain, entity, sold_ratio, cfc_name)
+    if "error" in r:
+        return r
+    res = dict(r["결과"]); 세무조정 = [_adj(x["구분"], x["조정"], x["금액"], x["소득처분"], x["근거"]) for x in res.pop("세무조정")]
+    return _ok(res, r["근거"], 세무조정=세무조정, 판단=r["판단"], 단계별_계산=r["단계별_계산"], 주의=r["주의"])
+
 
 # ── 도구: 양도소득 부당행위계산 (소득세법 제101조, 영 제167조③④⑤⑥) ─────────────────
 # SPEC_batch0300_1110. 근거: 소득세법 제101조①②③, 시행령 제98조①·제167조③④⑤⑥.
@@ -9982,7 +10026,7 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "소급공제": ["loss_carryback_refund"], "결손금 환급": ["loss_carryback_refund"], "결손금 소급": ["loss_carryback_refund"],
     "이월결손금 추적": ["loss_carryforward_ledger"], "결손금 잔액": ["loss_carryforward_ledger"], "결손금 소멸": ["loss_carryforward_ledger"], "이월결손금": ["loss_carryforward_ledger", "loss_carryforward_limit"],
     "해외법인 청산": ["foreign_subsidiary_liquidation", "foreign_exchange_reporting"], "자회사 청산 손실": ["foreign_subsidiary_liquidation"], "투자주식 손실": ["foreign_subsidiary_liquidation"],
-    "정상가격 범위": ["arm_length_range"], "사분위": ["arm_length_range"], "이전가격 조정액": ["arm_length_range"], "비교대상 이익률": ["arm_length_range", "tp_comparable_screen"], "비교대상 선정": ["tp_comparable_screen"], "비교기업": ["tp_comparable_screen"], "스크리닝": ["tp_comparable_screen"], "탈락 사유": ["tp_comparable_screen"], "벤치마크": ["tp_comparable_screen"],
+    "정상가격 범위": ["arm_length_range"], "사분위": ["arm_length_range"], "이전가격 조정액": ["arm_length_range"], "비교대상 이익률": ["arm_length_range", "tp_comparable_screen"], "비교대상 선정": ["tp_comparable_screen"], "비교기업": ["tp_comparable_screen"], "특정외국법인 배당": ["cfc_actual_dividend"], "배당간주 실제 배당": ["cfc_actual_dividend"], "특정외국법인 주식 양도": ["cfc_share_disposal"], "스크리닝": ["tp_comparable_screen"], "탈락 사유": ["tp_comparable_screen"], "벤치마크": ["tp_comparable_screen"],
     "마일리지충당부채": ["provision_reserve_ledger"], "포인트충당부채": ["provision_reserve_ledger"], "판매보증충당부채": ["provision_reserve_ledger"],
     "충당부채": ["provision_reserve_ledger"], "유효기간 소멸": ["provision_reserve_ledger"], "마일리지 유보": ["provision_reserve_ledger"],
     "마일리지": ["vat_tax_base_adjustments", "provision_reserve_ledger"], "포인트 결제": ["vat_tax_base_adjustments"], "반품": ["vat_tax_base_adjustments"], "환입": ["vat_tax_base_adjustments"],

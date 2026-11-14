@@ -8,7 +8,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/korean-tax-calc-mcp)](https://pypi.org/project/korean-tax-calc-mcp/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-korean--tax--calc--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=korean-tax-calc-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Built with Upstage Solar Pro 4](https://img.shields.io/badge/Built%20with-Upstage%20Solar%20Pro%204-7A3FF2)](https://www.upstage.ai/) · [English](README-EN.md)
 
-> **작성 주체(정확한 고지):** 0.3.0부터 0.12.2까지(2026-10-10부터 10-26까지)는 **Solar Pro 4**(Solar Work CLI)가 코드를 쓰고 CodeSolar가 리뷰, Claude가 테스트로 교차 검증했습니다(0.8.0 일부 문법 오류와 0.9.2는 Claude가 수정·작성). **0.13.0(2026-10-28)부터는 기존 계산기 뼈대는 Solar Pro 4 그대로이고, 새 도구·연도별 조문 대조·버그 수정은 Claude(Anthropic)가 작성**하며 CodeSolar가 리뷰합니다. **0.26.0(2026-11-10)부터 새 도구는 Claude가 명세·정답 테스트를 먼저 쓰고 Solar Pro 4가 뼈대를 구현한 뒤 Claude가 검수·보완합니다**(커밋별 작성자 표기). 버전별 작성 주체는 [CHANGELOG](CHANGELOG.md) 각 절 머리에 적혀 있습니다. 도구 127개.
+> **작성 주체(정확한 고지):** 0.3.0부터 0.12.2까지(2026-10-10부터 10-26까지)는 **Solar Pro 4**(Solar Work CLI)가 코드를 쓰고 CodeSolar가 리뷰, Claude가 테스트로 교차 검증했습니다(0.8.0 일부 문법 오류와 0.9.2는 Claude가 수정·작성). **0.13.0(2026-10-28)부터는 기존 계산기 뼈대는 Solar Pro 4 그대로이고, 새 도구·연도별 조문 대조·버그 수정은 Claude(Anthropic)가 작성**하며 CodeSolar가 리뷰합니다. **0.26.0(2026-11-10)부터 새 도구는 Claude가 명세·정답 테스트를 먼저 쓰고 Solar Pro 4가 뼈대를 구현한 뒤 Claude가 검수·보완합니다**(커밋별 작성자 표기). 버전별 작성 주체는 [CHANGELOG](CHANGELOG.md) 각 절 머리에 적혀 있습니다. 도구 129개.
 
 **Korean tax calculations for AI agents — code, not guesses.** [English](README-EN.md)
 
@@ -39,7 +39,7 @@ flowchart LR
 
 요건과 과세연도별 판단(세액공제 대상 여부, 정상가격 산출방법 등)은 짝 서버 [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp)가 맡습니다. 이 서버는 요건을 갖춘 금액을 받아 계산만 하고, 결과에서 조문 확인을 안내합니다.
 
-도구 127개 중 123개는 생성형 AI 없이 코드로 동작합니다(시세·공시가격 조회 2개는 KRX·브이월드 공개 데이터만 가져옵니다). PDF 도구 3개만 `UPSTAGE_API_KEY`가 있을 때 Upstage를 씁니다.
+도구 129개 중 123개는 생성형 AI 없이 코드로 동작합니다(시세·공시가격 조회 2개는 KRX·브이월드 공개 데이터만 가져옵니다). PDF 도구 3개만 `UPSTAGE_API_KEY`가 있을 때 Upstage를 씁니다.
 
 ### 세목별로 이어지는 모양
 
@@ -148,7 +148,7 @@ AI가 도구를 언제 부르고, 도구의 답을 언제 믿을지 정해 주�
 5. 답이 두 개 나오면(안분 전후, 전체와 과세분 등) 질문이 묻는 하나만 답한다.
 ```
 
-## 도구 (127개)
+## 도구 (129개)
 
 묶음 이름을 누르면 도구 목록이 펼쳐집니다.
 
@@ -191,6 +191,8 @@ AI가 도구를 언제 부르고, 도구의 답을 언제 믿을지 정해 주�
 | `foreign_subsidiary_dividend` | 외국자회사 수입배당금 익금불산입·외국납부세액공제 |
 | `foreign_subsidiary_liquidation` | 해외 자회사 청산 손익 — 의제배당 또는 청산손실과 손금 귀속 사업연도(법인세법 제16조①4호) |
 | `cfc_deemed_dividend` | 특정외국법인(CFC) 유보소득 배당간주액 — 저율과세·지분율 10%·적용제외·배당가능 유보소득·적용되는 배당간주(전부/수동소득) 판정(국조법 제27조~제31조) |
+| `cfc_actual_dividend` | 특정외국법인 실제 배당의 익금불산입 — 배당간주로 과세된 유보소득을 실제로 배당받으면 발생 순서대로 소진해 익금불산입(중간외국법인 경유 한도 포함), 세무조정 익금불산입·△유보와 원장 갱신(국조법 제32조①·영 제68조, 2016~2020 구 조문) |
+| `cfc_share_disposal` | 특정외국법인 주식 양도 때 배당간주 미배당분의 익금불산입 — (양도 주식분 배당간주금액 − 실제 배당액)을 양도차익 한도로(국조법 제32조②, 2016~2020 구 조문) |
 | `expat_cost_recharge` | 해외 파견 인건비 청구액·정상가격·손금·비과세 |
 | `individual_foreign_tax_credit` | 거주자 외국납부세액공제 — 국가별 한도·조약 제한세율 상한·10년 이월·퇴직소득(소득세법 제57조) |
 | `foreign_exchange_reporting` | 해외직접투자 해당 여부·외국환 신고(사전/사후) 기한·기관·서류, 사후관리 보고서 일정, 청산, 해외직접투자명세 기한 |
