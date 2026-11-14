@@ -72,6 +72,6 @@ def test_foreign_related_loan_has_no_5_percent_threshold():
 def test_foreign_related_loan_rejections():
     r = _fn(S.deemed_interest)(movements=[S.Movement(date="2020-03-01", amount=1_000_000_000)], year_end="2020-12-31",
                                rate_mode="당좌선택", foreign_related=True)
-    assert "error" in r and "2021" in r["문제"][0]
+    assert "error" not in r and "구 시행령 제6조⑦" in r["근거"]      # 2020년까지도 구 국조령 제6조⑦로 계산(2026-11-15)
     r = _loan(rate_mode="가중평균", foreign_related=True, borrowings=[])
     assert "error" in r and "가중평균" in r["문제"][0]

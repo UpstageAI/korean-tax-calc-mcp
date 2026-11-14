@@ -46,7 +46,8 @@ def test_expat_items_and_old_years():
     r = _fn(S.expat_cost_recharge)(**EXPAT)
     assert _items(r) == [("손금불산입", 118_000_000, "기타소득"), ("익금산입", 7_300_000, "임시유보")]
     old = _fn(S.expat_cost_recharge)(**{**EXPAT, "year": 2020})
-    assert [a["소득처분"] for a in old["세무조정"]] == ["기타소득"] and any("2020 사업연도까지" in x for x in old["주의"])
+    # 2020년까지도 구 국조법 제9조·구 시행령 제15조로 임시유보 항목을 냄(2026-11-15 구 시행령 대조)
+    assert [a["소득처분"] for a in old["세무조정"]] == ["기타소득", "임시유보"] and any("구 국조법 제9조①" in x for x in old["주의"])
 
 
 def test_provision_dividend_cfc_items():

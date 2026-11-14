@@ -120,7 +120,7 @@ def test_os_deadline_and_errors():
     assert run(fy_end="2025-03-31", year=2024)["결과"]["제출기한"] == "2025-09-30"
     assert run(fy_end="2024-08-31", year=2023)["결과"]["제출기한"] == "2025-02-28"
     assert run(year=2021, fy_end="2021-12-31")["결과"]["제출기한"] == "2022-06-30"
-    assert "error" in run(year=2020) and "error" in run(financials={"45": 1}) and "error" in run(ownership_direct=0.7, ownership_indirect=0.4)
+    assert "error" in run(year=2015) and "error" in run(financials={"45": 1}) and "error" in run(ownership_direct=0.7, ownership_indirect=0.4)
 
 
 def test_os_identities():

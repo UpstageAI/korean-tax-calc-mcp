@@ -86,7 +86,7 @@ def test_input_errors_and_old_years():
     r = c(T, {"year": 2025, "parties": [{"name": "A", "relationship": "모회사"}]})
     assert "error" in r
     old = run(year=2019, parties=[{"name": "A", "sales": {"inventory": 1}}])
-    assert any("구 서식" in m and "미확인" in m for m in old["주의"])
+    assert any("별지 제8호서식(갑)" in m and "구 서식 엑셀 틀은 만들지 않음" in m for m in old["주의"])      # 구 서식 번호 대조(2026-11-15)
 
 
 def _wbook(tmp_path, args):
