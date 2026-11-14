@@ -8,7 +8,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/korean-tax-calc-mcp)](https://pypi.org/project/korean-tax-calc-mcp/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-korean--tax--calc--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=korean-tax-calc-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Built with Upstage Solar Pro 4](https://img.shields.io/badge/Built%20with-Upstage%20Solar%20Pro%204-7A3FF2)](https://www.upstage.ai/) · [한국어](README.md)
 
-> **Authorship notice:** Versions 0.3.0–0.12.2 (2026-10-10 to 10-26) were written by **Solar Pro 4** (Solar Work CLI), reviewed by CodeSolar and cross-checked with tests by Claude (parts of 0.8.0 and all of 0.9.2 were fixed/written by Claude). **From 0.13.0 (2026-10-28) on, the existing calculator skeleton remains Solar Pro 4's, while new tools, year-by-year statute checks and bug fixes are written by Claude (Anthropic)** and reviewed by CodeSolar. Each [CHANGELOG](CHANGELOG.md) section states who wrote it. 129 tools.
+> **Authorship notice:** Versions 0.3.0–0.12.2 (2026-10-10 to 10-26) were written by **Solar Pro 4** (Solar Work CLI), reviewed by CodeSolar and cross-checked with tests by Claude (parts of 0.8.0 and all of 0.9.2 were fixed/written by Claude). **From 0.13.0 (2026-10-28) on, the existing calculator skeleton remains Solar Pro 4's, while new tools, year-by-year statute checks and bug fixes are written by Claude (Anthropic)** and reviewed by CodeSolar. Each [CHANGELOG](CHANGELOG.md) section states who wrote it. 130 tools.
 
 **Korean tax calculations for AI agents — code, not guesses.** [한국어](README.md)
 
@@ -35,7 +35,7 @@ flowchart LR
 
 Requirements and year-specific judgments (credit eligibility, arm's-length methods) belong to the companion server [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp). This server computes from amounts that meet the requirements and points to the statute check in its output.
 
-126 of the 129 tools run in code without generative AI (the 2 price lookups only fetch public data from KRX and VWORLD). Only the 3 PDF tools use Upstage, and only when `UPSTAGE_API_KEY` is set.
+127 of the 130 tools run in code without generative AI (the 2 price lookups only fetch public data from KRX and VWORLD). Only the 3 PDF tools use Upstage, and only when `UPSTAGE_API_KEY` is set.
 
 ### How the tools chain by tax type
 
@@ -134,7 +134,7 @@ When answering Korean tax questions, use korean-tax-mcp and korean-tax-calc-mcp 
 5. If two values come out (before/after apportionment, total vs. taxable part, etc.), answer only the one the question asks for.
 ```
 
-## Tools (129)
+## Tools (130)
 
 Click a group to expand its tools.
 
@@ -179,6 +179,7 @@ Click a group to expand its tools.
 | `cfc_deemed_dividend` | CFC deemed dividend on retained earnings — low-tax test, 10% ownership, exclusions, distributable retained earnings, full/passive inclusion (Int'l Tax Adjustment Act arts. 27–31) |
 | `cfc_actual_dividend` | CFC actual dividend exclusion — when previously deemed-dividend income is actually distributed, exclude it in order of accrual (incl. intermediate-company cap); returns the exclusion adjustment and updated ledger (ITA art.32(1), Decree art.68; pre-2021 articles by year) |
 | `cfc_share_disposal` | CFC share disposal exclusion — (deemed dividends on the sold shares − actual dividends on them), capped at the gain (ITA art.32(2); pre-2021 articles by year) |
+| `tax_crime_settlement_amount` | Tax-crime settlement (notice disposition) amount — per the Tax Crime Procedure Decree schedule (2014/2019/2026 versions): 1st/2nd/3rd+ amounts, habitual increase, voluntary-amendment reductions, aiding/impairment, concurrence rules, 10-won truncation and statutory fine caps |
 | `expat_cost_recharge` | expat cost recharge — arm-length fee, deduction, overseas work exemption |
 | `individual_foreign_tax_credit` | individual foreign tax credit: per-country limit, treaty-rate cap, 10-year carryforward, retirement income (Income Tax Act art. 57) |
 | `foreign_exchange_reporting` | overseas direct investment: FX reporting (prior/post) deadline, bank, documents, follow-up reports, liquidation, NTS investment statement deadline |
