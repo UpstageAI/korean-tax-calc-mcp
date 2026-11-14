@@ -495,6 +495,7 @@ def _write_detail_blocks(ws, start_row: int, res: dict, calc_dict, *, bold, head
         for rw in rws:
             for cc, v in enumerate(rw, 1):
                 _put(행, cc, v, str(hdr[cc - 1]))
+            ws.__dict__.setdefault("_ktc_value_rows", set()).add(행)   # 자료 행 표시(lang='en' 후처리가 A열을 라벨로 보지 않게)
             행 += 1
         행 += 1
     return 행
@@ -536,7 +537,7 @@ def _judgement_rows(data: dict, calc_sheet: str) -> list[dict]:
              "근거": 근거 if isinstance(근거, str) else _cell_value(근거), "이유": data.get("주의", "")}]
 
 
-def _summary_sheet(wb, title, company, period, calls, 결과들, review_notes, bold, header_fill, set_money):
+def _summary_sheet(wb, title, company, period, calls, 결과들, review_notes, bold, header_fill, set_money, key_tr=None):
     """맨 앞 '요약' 시트(0.42.0) — 세액 요약, 세무조정 항목(근거·계산 시트), 계산 결과 한눈에, 검토·확인 필요 사항, 범례. 값은 각 call 결과에서 옮긴다."""
     from openpyxl.styles import Alignment, Font
     ws = wb.create_sheet("요약")
@@ -595,7 +596,8 @@ def _summary_sheet(wb, title, company, period, calls, 결과들, review_notes, b
             res = (cd.get("data") or {}).get("결과")
             if isinstance(res, dict) and isinstance(res.get("합계"), dict) and not any(isinstance(v, (int, float, str)) and not isinstance(v, bool) for v in res.values()):
                 res = res["합계"]           # 결과가 합계·항목별로만 된 도구(파견 인건비 등)
-            vals = [f"{k} {v:,}" if isinstance(v, int) else f"{k} {v}" for k, v in (res.items() if isinstance(res, dict) else [])
+            _k = key_tr or (lambda x: x)     # lang='en'이면 결과 키를 'English (국문)'으로
+            vals = [f"{_k(k)} {v:,}" if isinstance(v, int) else f"{_k(k)} {v}" for k, v in (res.items() if isinstance(res, dict) else [])
                     if isinstance(v, (int, float, str)) and not isinstance(v, bool) and v not in ("", None)][:4]
             ws.cell(r, 3, " / ".join(str(x) for x in vals)[:300]).alignment = wrap
             ws.merge_cells(start_row=r, start_column=3, end_row=r, end_column=6)
@@ -624,7 +626,7 @@ def _summary_sheet(wb, title, company, period, calls, 결과들, review_notes, b
 
 
 def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str | None = None, layout: str = "forms",
-                        company: str = "", period: str = "", biz_no: str = "", review_notes=None) -> dict:
+                        company: str = "", period: str = "", biz_no: str = "", review_notes=None, lang: str = "ko") -> dict:
     """server.export_workbook의 본문(서명·설명은 그쪽 참조). mcp는 순환 import를 피해 호출 시점에 가져온다."""
     from .server import mcp
     # ── calls가 문자열이면 JSON으로 풀기 ──
@@ -726,6 +728,11 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
     _FORM_TEMPLATES = _load_form_templates()
 
     시트이름들: list[str] = []
+    _서식_표기: dict[str, str] = {}   # {서식 틀 시트 이름: 서식 표기} — lang='en' 시트 안내용(틀 시트는 한국어 그대로)
+    _T = None
+    if lang == "en":
+        from .workbook_i18n import Translator
+        _T = Translator()
 
     if layout == "steps":
         # ── 1. 요약 시트 (steps 모드, 기존 동작) ──
@@ -1822,6 +1829,7 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
             if (_info or {}).get("개정일_생략"):
                 _개정일_생략.append((tinfo["sheet"], _info["개정일_생략"]))
             시트이름들.append(tinfo["sheet"])
+            _서식_표기[tinfo["sheet"]] = tinfo.get("form", "")
 
         # 같은 금액을 두 도구가 따로 계산했는데 값이 다르면(입력이 서로 다름) 서식 시트와 목록에 알린다
         # (서식 도구, 그 결과 키, 같은 금액을 내는 다른 도구, 그 결과 키, 서식 틀, 이름)
@@ -2249,13 +2257,23 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
                 review_notes = _json.loads(review_notes)
             except Exception:
                 review_notes = [review_notes]
-        _summary_sheet(wb, title, company, period, calls, 결과들, review_notes if isinstance(review_notes, list) else None, bold, header_fill, _set_money)
+        _summary_sheet(wb, title, company, period, calls, 결과들, review_notes if isinstance(review_notes, list) else None, bold, header_fill, _set_money,
+                       key_tr=_T.label if _T else None)
         시트이름들.insert(0, "요약")
+    # ── lang='en': 표기만 영문으로(용어집에 없는 라벨은 한국어 그대로 + '번역 없음' 목록). 숫자·수식·서식 틀 시트는 그대로 ──
+    _경고: list[str] = []
+    if _T is not None:
+        from .workbook_i18n import apply_english, UNTRANSLATED_TITLE
+        _ren = apply_english(wb, _T, layout=layout, title=title, form_info=_서식_표기, results=결과들)
+        시트이름들 = [_ren.get(n, n) for n in 시트이름들]
+        if _T.missing:
+            _경고.append(f"{UNTRANSLATED_TITLE}: {len(_T.missing)} label(s) have no glossary entry and are kept in Korean — "
+                        + "; ".join(_T.missing))
     # ── 저장 ──
     base = filename if filename else title
     fpath = _unique_path(output_dir, base)
     wb.save(fpath)
-    return {
+    out = {
         "결과": {
             "파일": os.path.abspath(fpath),
             "시트": 시트이름들,
@@ -2264,3 +2282,9 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
         },
         "근거": "계산 도구 결과 정리(세무 자문 아님)",
     }
+    if _T is not None:   # lang='ko' 결과는 그대로(키를 더하지 않음)
+        out["결과"]["lang"] = "en"
+        out["결과"]["번역_라벨_수"] = len(_T.translated)
+        out["결과"]["번역_없음"] = list(_T.missing)
+        out["warnings"] = _경고
+    return out

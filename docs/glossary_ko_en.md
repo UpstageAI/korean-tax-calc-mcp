@@ -3,6 +3,7 @@
 - 도구 설명 첫 줄의 영문 한 줄(예: `Entertainment expense limit and non-deductible excess for corporate tax (기업업무추진비 한도).`)에 쓰는 용어를 한 국문 용어당 영문 하나로 맞춘다.
 - 출처: 법제처 영문법령(law.go.kr, 한국법제연구원 번역) 명칭 우선. '법제처 영문법령 확인(2026-11-14)'은 그날 받은 영문법령(소득세법·법인세법·각 시행령, 조특법, 국세기본법, 부가가치세법·시행령, 상증법, 국조법, 조세범 처벌절차법)에서 표현을 찾은 행이다.
 - 'KLRI'만 적힌 행은 영문법령 관행에 따른 표기이며 행별 원문 대조는 하지 않았다. '확인 필요'는 공식 영문을 찾지 못한 행이다.
+- 아래쪽 '결과 라벨' 행(지방소득세부터)은 엑셀 내보내기 영문 표기(export_workbook lang='en')의 번역표로 쓰는 결과 키·표 머리글이다. 법제처 영문법령에서 표현을 찾은 것과 일반 회계·통계 용어만 넣었고, '확인 필요' 행은 엑셀에서 번역하지 않고 국문 그대로 둔다. 표를 고치면 `python -m korean_tax_calc_mcp.workbook_i18n docs/glossary_ko_en.md`로 패키지 사본(korean_tax_calc_mcp/data/glossary_ko_en.json)을 다시 만든다.
 - 검색어로 더 흔한 영문(penalty tax, loss, capital gains, CFC, entertainment expense)을 고른 행은 비고에 법제처 영문 표현을 함께 적는다.
 
 | 국문 용어 | English | 근거/비고 |
@@ -162,3 +163,68 @@
 | 명의신탁재산 증여의제 | deemed gift of nominee-held property | 법제처 영문법령 확인(2026-11-14): 상증법 제45조의2 영문 'Legal fiction of property registered in name of another person as donation' |
 | 양도소득 부당행위계산 | capital gains wrongful calculation | 소득세법 제101조 |
 | 계산 도구 찾기 | find the right tool |  |
+| 지방소득세 | local income tax | 법제처 영문법령 확인(2026-11-15): 법인세법·소득세법 영문 'local income tax' |
+| 세율 | tax rate | 법제처 영문법령 확인(2026-11-15): 각 세법 영문 'tax rate' |
+| 적용세율 | applicable tax rate | 법제처 영문법령 확인(2026-11-15): 소득세법·법인세법 시행령 영문 'applicable tax rate' |
+| 제한세율 | limited tax rate | 법제처 영문법령 확인(2026-11-15): 법인세법 영문 'limited tax rate pursuant to a tax treaty' |
+| 조세조약 | tax treaty | 법제처 영문법령 확인(2026-11-15): 법인세법·소득세법·국조법 영문 'tax treaty' |
+| 거주지국 | country of residence | 법제처 영문법령 확인(2026-11-15): 법인세법 제96조·국조법 영문 'country of residence' |
+| 국내원천소득 | domestic source income | 법제처 영문법령 확인(2026-11-15): 법인세법 제93조·소득세법 제119조 영문 |
+| 국외원천소득 | foreign source income | 법제처 영문법령 확인(2026-11-15): 법인세법 제57조 영문 |
+| 국내사업장 | domestic place of business | 법제처 영문법령 확인(2026-11-15): 법인세법·소득세법·부가가치세법 영문 |
+| 지급금액 | amount paid | 법제처 영문법령 확인(2026-11-15): 각 세법 영문 'amount paid' |
+| 지급이자 | interest paid | 법제처 영문법령 확인(2026-11-15): 국조법 제22조 영문 'interest paid' |
+| 초과차입금 | excessive borrowings | 법제처 영문법령 확인(2026-11-15): 국조법 제22조 제목 영문 'interest paid on excessive borrowings compared to amount of investment' |
+| 출자금액 | amount of investment | 법제처 영문법령 확인(2026-11-15): 국조법 제22조 제목 영문 'amount of investment' |
+| 외국법인세액 | amount of foreign corporate tax | 법제처 영문법령 확인(2026-11-15): 법인세법 제57조 영문 |
+| 공제한도 | deduction limit amount | 법제처 영문법령 확인(2026-11-15): 법인세법 제57조 영문 'deduction limit amount'(외국납부세액공제 한도). 다른 공제의 한도에도 같은 말로 씀 |
+| 수입배당금액 | amount of dividend income | 법제처 영문법령 확인(2026-11-15): 법인세법·시행령 영문 'amount of dividend income' |
+| 수입금액 | revenue amount | 법제처 영문법령 확인(2026-11-15): 법인세법·시행령 영문 'revenue amount' |
+| 각 사업연도 소득금액 | income for each business year | 법제처 영문법령 확인(2026-11-15): 법인세법 영문 'income for each business year' |
+| 과세대상소득금액 | taxable income | 법제처 영문법령 확인(2026-11-15): 법인세법 제96조제2항 영문 'amount of taxable income'(외국법인 국내사업장 과세특례) |
+| 소득처분 | disposal of income | 법제처 영문법령 확인(2026-11-15): 법인세법 제67조 영문 'Disposal of income' |
+| 정상가격 | arm's length price | 법제처 영문법령 확인(2026-11-15): 국조법 영문 'arm's length price' |
+| 취득가액 | acquisition value | 법제처 영문법령 확인(2026-11-15): 소득세법·법인세법 영문 'acquisition value' |
+| 양도가액 | transfer value | 법제처 영문법령 확인(2026-11-15): 소득세법·법인세법 영문 'transfer value' |
+| 양도차익 | gains on transfer | 법제처 영문법령 확인(2026-11-15): 소득세법·법인세법 영문 'gains on transfer'(일부 조문은 'transfer margin') |
+| 양도비용 | transfer expenses | 법제처 영문법령 확인(2026-11-15): 소득세법·법인세법 영문 'transfer expenses' |
+| 필요경비 | necessary expenses | 법제처 영문법령 확인(2026-11-15): 소득세법 영문 'necessary expenses' |
+| 기본공제 | basic deduction | 법제처 영문법령 확인(2026-11-15): 소득세법 영문 'basic deduction' |
+| 종합소득금액 | amount of global income | 법제처 영문법령 확인(2026-11-15): 소득세법 영문 'amount of global income' |
+| 근로소득금액 | amount of wage and salary income | 법제처 영문법령 확인(2026-11-15): 소득세법 제20조 영문 'amount of wage and salary income' |
+| 근로소득공제 | wage and salary income deduction | 법제처 영문법령 확인(2026-11-15): 소득세법 제47조 관련 부칙 영문 'Wage and Salary Income Deduction' |
+| 근로소득세액공제 | tax credit for wage and salary income | 법제처 영문법령 확인(2026-11-15): 소득세법 제59조 관련 영문 'Tax Credit for Wage and Salary Income' |
+| 총급여 | total salary | 법제처 영문법령 확인(2026-11-15): 위 '근로소득 총급여액' 행과 같은 말(소득세법 시행령·조특법 영문 'total salary') |
+| 감면세액 | amount of tax reduced or exempted | 법제처 영문법령 확인(2026-11-15): 조특법·소득세법 영문 'amount of tax reduced or exempted' |
+| 감면율 | reduction rate | 법제처 영문법령 확인(2026-11-15): 조특법 영문 'reduction rate' |
+| 납세의무 | tax liability | 법제처 영문법령 확인(2026-11-15): 국세기본법 영문 'tax liability' |
+| 외국인근로자 | foreign worker | 법제처 영문법령 확인(2026-11-15): 조특법 제18조의2 영문 'foreign worker' |
+| 월수 | number of months | 법제처 영문법령 확인(2026-11-15): 법인세법·소득세법 영문 'number of months' |
+| 일수 | number of days | 법제처 영문법령 확인(2026-11-15): 법인세법·시행령 영문 'number of days' |
+| 합계 | total | 일반 회계·통계 용어 |
+| 차이 | difference | 일반 회계·통계 용어 |
+| 최솟값 | minimum | 일반 회계·통계 용어 |
+| 최댓값 | maximum | 일반 회계·통계 용어 |
+| 중위값 | median | 일반 회계·통계 용어 |
+| 평균값 | mean | 일반 회계·통계 용어 |
+| 제1사분위 | first quartile | 일반 회계·통계 용어 |
+| 제3사분위 | third quartile | 일반 회계·통계 용어 |
+| 하한 | lower limit | 일반 회계·통계 용어 |
+| 상한 | upper limit | 일반 회계·통계 용어 |
+| 범위 | range | 일반 회계·통계 용어 |
+| 국가 | country | 일반 회계·통계 용어 |
+| 원가 | cost | 일반 회계·통계 용어 |
+| 한도 | limit | 일반 회계·통계 용어 |
+| 한도초과액 | excess over limit | 일반 회계·통계 용어 |
+| 한도초과 | excess over limit | 일반 회계·통계 용어 |
+| 조정액 | adjustment amount | 일반 회계·통계 용어 |
+| 국내세율 | domestic tax rate | 일반 회계·통계 용어 |
+| 조약세율 | treaty tax rate | 일반 회계·통계 용어 |
+| 총차입금 | total borrowings | 일반 회계·통계 용어 |
+| 지점세 | branch profits tax | 법인세법 제96조 영문 제목은 'Special provisions on taxation on domestic place of business of foreign corporation' — 'branch tax' 표현 없음, 확인 필요 |
+| 결정세액 | determined tax amount | 영문법령에서 같은 표현을 찾지 못함 — 확인 필요 |
+| 자본금상당액 | amount equivalent to capital | 법인세법 제96조 영문 대조 못함 — 확인 필요 |
+| 직접외국납부세액 | direct foreign tax paid | 법인세법 제57조 영문은 'amount of foreign corporate tax'만 확인 — 확인 필요 |
+| 간접외국납부세액 | indirect foreign tax paid | 법인세법 제57조제4항 영문 대조 못함 — 확인 필요 |
+| 간주외국납부세액 | deemed foreign tax paid | 법인세법 제57조제3항 영문 대조 못함 — 확인 필요 |
+| 단일세율 | flat tax rate | 조특법 제18조의2 영문은 'multiplying the relevant earned income by 19/100' — 용어로 쓴 표현 없음, 확인 필요 |
