@@ -474,7 +474,7 @@ When a case is out of scope, the tool stops with "input needed" or an error, or 
 | `vat_supply_timing` | Gift cards, processing, vending machines, bonded areas, consignment, deemed supply, exports other than shipment date, real-estate rental and prepaid annual fees, international transport, deemed closure, late-invoice penalties |
 | `vat_deemed_supply_items` | Employee gift limits before 2020-1 |
 | `refund_claim_deadline` | Causes or notices before 2016, transition rules before 2015, whether a later-arising cause applies |
-| `tax_priority_distribution` | Provisional-attachment pro-rating, tax-to-tax absorption, circular priority among security interests, public charges, tax security, etc. (returned as input needed) |
+| `tax_priority_distribution` | Provisional-attachment pro-rating, circular priority among security interests, public charges, tax security, etc. (returned as input needed). Among taxes, absorption by the first-seizing tax is computed; taxes that only requested delivery are not re-divided |
 | `individual_donation_expense` | The donation tax credit amount itself |
 | `stock_major_shareholder` | Market-cap lookup (enter it yourself) |
 | `minimum_tax_adjustment` | Ship standard profit (119); Article 59 ordering and limits for excluded items; donation limit recalculation; deduction/credit summary statement (appendix) and additional tax payable (b) |

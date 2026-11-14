@@ -1488,7 +1488,7 @@ def foreign_subsidiary_liquidation(tax_basis: Annotated[int, Field(description="
     계산: 분배액이 취득가액을 넘으면 초과액은 의제배당. 못 미치면 차액은 청산손실 — 청산이 끝나 잔여재산 분배가 완료된 날이 속하는 사업연도의 손금(법인46012-442, 사전-2015-법령해석법인-0057, 사전-2021-법령해석법인-1372).
     결과: 구분(의제배당·청산손실·손익 없음), 의제배당, 청산손실, 손금 귀속(사업연도 종료일·기준일), 유보 정리, 판단·근거·주의.
     범위 밖: 자회사에 대한 대여금·미수금의 대손과 채권 포기(따로 판정), 의제배당의 익금불산입 요건(foreign_subsidiary_dividend), 외국환 청산보고(foreign_exchange_reporting)."""
-    r = MY.foreign_subsidiary_liquidation(tax_basis, distribution, completed_on, fy_end, 1.0, book_value)
+    r = MY.foreign_subsidiary_liquidation(tax_basis, distribution, completed_on, fy_end, book_value)
     if "error" in r:
         return r
     return _ok(r["결과"], r["근거"], 판단=r["판단"], 주의=r["주의"])
@@ -8498,7 +8498,7 @@ def inheritance_tax(
     prior_gift_deductions: WON = 0,
     bequest_to_non_heirs: WON = 0,
     renounced_to_next: WON = 0,
-    spouse: Annotated[dict | None, Field(description="실제 상속받은 금액·법정상속분 등. {actual(실제 상속액), legal_share('3/5' 같은 분수 문자열 또는 0.6 같은 0 초과 1 이하 소수)}")] = None,
+    spouse: Annotated[dict | None, Field(description="실제 상속받은 금액·법정상속분 등. {actual(실제 상속액), legal_share('3/5' 같은 분수 문자열 또는 0.6 같은 0 초과 1 이하 소수), prior_gift_tax_base(선택 — 가산한 증여재산 중 배우자가 사전증여받은 재산의 증여세 과세표준, 한도식에서 뺌)}")] = None,
     sole_spouse_heir: Annotated[bool, Field(description="배우자 단독상속")] = False,
     children: Annotated[int, Field(description="자녀 수")] = 0,
     minors: Annotated[list, Field(description="[미성년자별 19세까지 남은 연수]")] = None,
@@ -10301,7 +10301,7 @@ def tax_priority_distribution(
     국세 우선권에 따른 매각대금 배분 순서·금액(경매·공매, 국세기본법 제35조·제36조). 언제: 체납자 재산이 경매·공매로 매각될 때 집행비용 → 최우선변제 → 당해세 → 법정기일과 담보 설정일 비교 → 임금 → 그 밖의 조세 → 일반채권 순으로 누가 얼마를 받는지 계산할 때.
     입력: 매각대금 → sale_amount, 매각(허가)결정일 → sale_date, 채권 목록 → claims, 집행비용 → execution_cost, 재산 종류 → property_type, 직전 보유자 체납(양도된 재산) → prior_owner.
     지원 연도: 2016.1.1.~2026.12.31. 매각결정분. 2023.4.1. 이후 매각결정분은 제1항제3호의2(양도 전 설정 담보 > 현 소유자 국세, 직전 보유자 체납액 한도 안 국세는 우선)·제3항 후단(3호의2 재산은 종부세만 당해세 우선)·제7항(주택 임차인 당해세 순위 대신 변제), 2024.1.1. 이후는 한도 안 국세를 법정기일이 설정일보다 빠른 것으로 한정. 지방세 당해세·법정기일 비교(지방세기본법 제71조), 국세·지방세 상호간 압류선착(제36조·지방세기본법 제73조, 압류 없으면 동순위 안분).
-    지원하지 않음(입력 확인 필요로 반환): 가압류채권과 후순위 담보권 안분·흡수배당, 조세 상호간 흡수배당(조세가 담보권 앞뒤로 나뉘고 뒤 조세가 덜 받는 경우), 담보권 사이 순환관계, 공과금, 납세담보(제37조), 3호·3호의2 담보 혼재·3호의2 담보 둘 이상, 일반임금채권과 전세권·확정일자 임차권의 순위, 제35조제7항 대상 임차인 둘 이상. 소액임차 일정액·최우선임금 범위는 계산된 금액을 넣는다(2분의 1 한도만 적용).
+    지원하지 않음(입력 확인 필요로 반환): 가압류채권과 후순위 담보권 안분·흡수배당, 담보권 사이 순환관계, 공과금, 납세담보(제37조), 3호·3호의2 담보 혼재·3호의2 담보 둘 이상, 일반임금채권과 전세권·확정일자 임차권의 순위, 제35조제7항 대상 임차인 둘 이상. 소액임차 일정액·최우선임금 범위는 계산된 금액을 넣는다(2분의 1 한도만 적용).
     결과: 채권별 배분액·미배분액·단계별 근거, 배분 순서, 잔여(소유자 몫), 판단(적용한 개정·특례), 적용표."""
     try:
         return TP.distribute(sale_amount, execution_cost, sale_date, property_type, claims, prior_owner)
@@ -11201,15 +11201,17 @@ def nominee_gift_tax(asset_value: Annotated[int, Field(ge=0, description="명의
                      share_appraisal_count: Annotated[int, Field(ge=1, description="비상장주식 평가기관 수")] = 1,
                      filed: Annotated[bool, Field(description="법정신고기한 내 신고 여부 — 신고세액공제, 부과제척기간 10년·15년")] = True,
                      nominee_kind: Annotated[Literal["개인", "영리법인", "비영리법인"], Field(description="명의자 구분 — 2018.12.31. 이전 의제분에서 영리법인이면 실제소유자가 납부")] = "개인",
-                     prior_gifts_same_donor: Annotated[int, Field(ge=0, description="같은 증여자(실제소유자)로부터 10년 내 받은 다른 증여(원) — 2019.1.1. 이후 의제분은 합산배제라 쓰지 않음, 종전 규정 의제분에 넣으면 '확인 필요'")] = 0) -> dict:
+                     prior_gifts_same_donor: Annotated[int, Field(ge=0, description="같은 증여자(실제소유자)로부터 10년 내 받은 다른 증여재산가액(원, 다른 명의신탁 의제분 포함) — 2019.1.1. 이후 의제분은 합산배제라 쓰지 않음, 종전 규정 의제분은 1천만원 이상이면 가산")] = 0,
+                     prior_gift_tax_paid: Annotated[int, Field(ge=0, description="가산한 증여에 대한 증여세 산출세액(원) — 납부세액공제(제58조), 종전 규정 의제분에만")] = 0,
+                     prior_gifts_deduction: Annotated[int, Field(ge=0, description="가산한 증여가 일반 증여일 때 그 증여에 적용된 증여재산공제(원) — 가산분이 명의신탁 의제분이면 0")] = 0) -> dict:
     """Gift tax on deemed gift of nominee-held property: tax base, tax and taxpayer (명의신탁재산 증여의제).
     명의신탁재산 증여의제 증여세(상속세 및 증여세법 제45조의2) — 증여의제일의 시행본으로 과세표준(명의신탁재산의 금액 − 감정평가수수료, 증여재산공제 없음)·산출세액·신고세액공제·납부할세액, 납세의무자(2019.1.1. 이후 의제분 실제소유자, 명의자 물적납세의무), 신고기한과 부과제척기간 만료일. 언제: 차명주식·차명 등록재산이 증여의제로 과세될 때 세액과 누가 내는지, 언제까지 부과될 수 있는지 계산할 때.
     입력: 재산 가액 → asset_value, 유형 → trust_type, 증여의제일 → deemed_gift_date(타인명의), 소유권취득일 → acquisition_date(명의개서해태), 감정평가수수료 → appraisal_fee·share_appraisal_fee, 신고 여부 → filed, 명의자 구분 → nominee_kind.
-    시점 구분(법률 제16102호 부칙 제3조·제6조): 2019.1.1. 이후 의제분은 실제소유자가 납세의무자(제4조의2제2항)이고 합산배제(제47조제1항). 2018.12.31. 이전 의제분과, 2018.12.31. 이전 취득 후 명의개서 해태로 2019.1.1. 이후 의제되는 분은 종전 규정(명의자 납세의무, 실제소유자 연대).
+    시점 구분(법률 제16102호 부칙 제3조·제6조): 2019.1.1. 이후 의제분은 실제소유자가 납세의무자(제4조의2제2항)이고 합산배제(제47조제1항). 2018.12.31. 이전 의제분과, 2018.12.31. 이전 취득 후 명의개서 해태로 2019.1.1. 이후 의제되는 분은 종전 규정(명의자 납세의무, 실제소유자 연대, 같은 증여자 10년 내 증여재산 1천만원 이상이면 가산하고 납부세액공제 — prior_gifts_same_donor·prior_gift_tax_paid).
     결과: 증여의제일·평가기준일·적용 규정·과세표준·산출세액·신고세액공제·납부할세액·납세의무자·연대·물적납세의무·법정신고기한·부과제척기간(assessment_limitation과 같은 계산). 2016~2026 의제분만.
-    범위 밖: 증여의제 요건(대상 재산, 조세회피목적, 반복 과세 제한 — 조문 MCP nominee_trust_guide), 세대생략 할증, 가산세. 부동산실명법 과징금은 시행령 별표 부과기준을 원문 대조하지 못해 계산 도구를 두지 않음."""
+    범위 밖: 증여의제 요건(대상 재산, 조세회피목적, 반복 과세 제한 — 조문 MCP nominee_trust_guide), 세대생략 할증(조심 2014서5656에 따라 계산하지 않음), 가산세. 부동산실명법 과징금은 계산하지 않음(부과기준 안내는 조문 MCP nominee_trust_guide)."""
     r = NOM.nominee_gift_tax(asset_value, trust_type, deemed_gift_date, acquisition_date, appraisal_fee, share_appraisal_fee,
-                             share_appraisal_count, filed, nominee_kind, prior_gifts_same_donor)
+                             share_appraisal_count, filed, nominee_kind, prior_gifts_same_donor, prior_gift_tax_paid, prior_gifts_deduction)
     if "error" in r:
         return r
     lim = assessment_limitation.__wrapped__(r["결과"]["법정신고기한(이월 전)"], case="일반" if filed else "무신고", inheritance_gift=True)

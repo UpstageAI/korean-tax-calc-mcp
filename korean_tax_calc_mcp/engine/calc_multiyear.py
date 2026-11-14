@@ -89,7 +89,7 @@ def loss_carryforward_ledger(years, sme=True, opening_losses=None):
                    "한도율은 중소기업 등 100% — 회생계획 이행 법인 등 시행령 제10조①의 법인도 100%이므로 해당하면 sme=true로 입력"]}
 
 
-def foreign_subsidiary_liquidation(tax_basis, distribution, completed_on="", fy_end="", ownership_ratio=1.0, book_value=None):
+def foreign_subsidiary_liquidation(tax_basis, distribution, completed_on="", fy_end="", book_value=None):
     문제 = []
     for nm, v in (("tax_basis", tax_basis), ("distribution", distribution)):
         if isinstance(v, bool) or not isinstance(v, int) or v < 0:

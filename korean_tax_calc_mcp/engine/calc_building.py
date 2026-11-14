@@ -145,7 +145,7 @@ def building_standard_price(year: int, area_m2: float, structure: str, use: str,
     lidx = location_index(float(land_price_per_m2))
     rr, grp, n = residual_rate(sname, int(built_year), int(year))
     approx = year != 2026
-    adj = 1.0; adj_lines = []
+    adj = 1.0; adj_lines = []; adj_notes = []
     if purpose in ("상증세", "상속", "증여", "상속증여"):
         A = R["adjustment_rate_2026_상증세만"]
         if sidx < 100 and roof:
@@ -168,21 +168,35 @@ def building_standard_price(year: int, area_m2: float, structure: str, use: str,
         if floor_use:
             low = floor_use.replace(" ", "")
             fv = None
-            if "지하2" in low or "지하3" in low: fv = 70
-            elif "지하" in low: fv = 80
+            m_b = re.search(r"지하(\d+)", low)
+            if any(k in low for k in ("주차장", "기계실", "보일러", "대피소", "옥탑", "부속")): fv = 60   # 번호 24·25 — 20~23에도 해당하면 60
+            elif "지하" in low:
+                # 번호 22·23은 '최고층수 5층 이하 건물'의 지하층만. floors를 주지 않으면 5층 이하로 보고 적용하고 알린다
+                if floors is not None and floors > 5:
+                    adj_lines.append("지하층 조정 없음(최고층수 5층 초과 건물)")
+                else:
+                    fv = 70 if (m_b and int(m_b.group(1)) >= 2) else 80
+                    if floors is None: adj_notes.append("지하층 지수는 최고층수 5층 이하 건물에만 적용 — floors를 주지 않아 5층 이하로 보고 적용")
             elif "1층" in low: fv = 120
             elif "2층" in low: fv = 105
-            elif any(k in low for k in ("주차장", "기계실", "보일러", "대피소", "옥탑", "부속")): fv = 60
             if fv:
                 adj *= fv / 100; adj_lines.append(f"층별·부속 {fv}")
         if safety_grade:
             sv = {"B": 90, "C": 80, "D": 60, "E": 30}.get(safety_grade.strip().upper()[:1])
-            if sv:
+            if sv and year <= 2020:
+                adj_notes.append(f"구조안전진단 지수(구분 Ⅶ)는 2021.1.1. 시행 고시(제2020-42호)부터 표에 있음 — {year}년 적용분에는 반영하지 않음")
+            elif sv:
                 adj *= sv / 100; adj_lines.append(f"안전진단 {safety_grade} {sv}")
         if remodel_count:
             rv = 110 if remodel_count == 1 else 120
             adj *= rv / 100; adj_lines.append(f"일부개축 {remodel_count}회 {rv}(개축 부분만 — 전체에 적용했으니 면적 비례 조정 필요)")
-        판단.append({"항목": "개별건물 특성 조정률", "결론": (f"{adj:.4f} = " + " × ".join(adj_lines)) if adj_lines else "입력 없음 → 1.0 (지붕·규모·층별·안전진단·개축 자료를 주면 반영)", "근거": "고시 제11조 (상속·증여세 평가에만 적용, 항목별 곱 — 2024 해설서 기준, 확인 필요)"})
+        if year < 2020:
+            adj_notes.append(f"{year}년 적용 고시의 제11조 표는 대조하지 못함 — 법제처 행정규칙 연혁은 2020.1.1. 시행 고시(제2019-32호)부터 등록(조회 2026-11-15). 2020년 표로 계산했으니 그 해 국세청 고시 원문으로 확인")
+        판단.append({"항목": "개별건물 특성 조정률", "결론": (f"{adj:.4f} = " + " × ".join(adj_lines)) if adj_lines else "입력 없음 → 1.0 (지붕·규모·층별·안전진단·개축 자료를 주면 반영)",
+                   "근거": "고시 제11조 표(상속·증여세 평가에만 적용) — 2020~2026년 적용 고시 7개 판의 표를 대조(법제처, 2026-11-15): 구분 Ⅰ~Ⅵ 지수는 같고 구분 Ⅶ(안전진단·철거대상·멸실)은 2021년 적용분부터. "
+                         "구분이 여럿일 때 서로 곱하는 것은 고시에 규정이 없어 국세청 건물 기준시가 계산방법 해설(2024)의 방식을 따름"})
+        for _n in adj_notes:
+            판단.append({"항목": "조정률 주의", "결론": _n, "근거": "국세청 건물 기준시가 계산방법 고시 제11조"})
     per_m2_raw = base["amount"] * sidx / 100 * uidx / 100 * lidx / 100 * rr * adj
     per_m2 = int(per_m2_raw // 1000 * 1000)
     total = per_m2 * float(area_m2)
