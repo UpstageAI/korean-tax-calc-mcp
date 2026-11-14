@@ -8,7 +8,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/korean-tax-calc-mcp)](https://pypi.org/project/korean-tax-calc-mcp/) [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-korean--tax--calc--mcp-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=korean-tax-calc-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) [![Built with Upstage Solar Pro 4](https://img.shields.io/badge/Built%20with-Upstage%20Solar%20Pro%204-7A3FF2)](https://www.upstage.ai/) · [한국어](README.md)
 
-> **Authorship notice:** Versions 0.3.0–0.12.2 (2026-10-10 to 10-26) were written by **Solar Pro 4** (Solar Work CLI), reviewed by CodeSolar and cross-checked with tests by Claude (parts of 0.8.0 and all of 0.9.2 were fixed/written by Claude). **From 0.13.0 (2026-10-28) on, the existing calculator skeleton remains Solar Pro 4's, while new tools, year-by-year statute checks and bug fixes are written by Claude (Anthropic)** and reviewed by CodeSolar. Each [CHANGELOG](CHANGELOG.md) section states who wrote it. 130 tools.
+> **Authorship notice:** Versions 0.3.0–0.12.2 (2026-10-10 to 10-26) were written by **Solar Pro 4** (Solar Work CLI), reviewed by CodeSolar and cross-checked with tests by Claude (parts of 0.8.0 and all of 0.9.2 were fixed/written by Claude). **From 0.13.0 (2026-10-28) on, the existing calculator skeleton remains Solar Pro 4's, while new tools, year-by-year statute checks and bug fixes are written by Claude (Anthropic)** and reviewed by CodeSolar. Each [CHANGELOG](CHANGELOG.md) section states who wrote it. 133 tools.
 
 **Korean tax calculations for AI agents — code, not guesses.** [한국어](README.md)
 
@@ -35,7 +35,7 @@ flowchart LR
 
 Requirements and year-specific judgments (credit eligibility, arm's-length methods) belong to the companion server [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp). This server computes from amounts that meet the requirements and points to the statute check in its output.
 
-127 of the 130 tools run in code without generative AI (the 2 price lookups only fetch public data from KRX and VWORLD). Only the 3 PDF tools use Upstage, and only when `UPSTAGE_API_KEY` is set.
+130 of the 133 tools run in code without generative AI (the 2 price lookups only fetch public data from KRX and VWORLD). Only the 3 PDF tools use Upstage, and only when `UPSTAGE_API_KEY` is set.
 
 ### How the tools chain by tax type
 
@@ -73,7 +73,7 @@ If you do not know which tool to use, ask `find_tool` in plain words.
 | Corporate tax | Forms 3, 4, 8(a), 15 (with disposition codes), 16-2, 20(1)(2), 21, 23(a)(b), 26(a)(b), 29, 32, 33, 34, 50(b) of the Corporate Tax Act Enforcement Rule |
 | VAT | Form 21 return page 1 lines 1–30 and page 4 penalty schedule, Form 22, Form 15, Form 19(1), Form 25, and calculation sheets for common input tax and bundled supply (no statutory form) |
 | Withholding | withholding tax return (Income Tax Act Enforcement Rule Form 21) page 1, Form 23(1) interest and dividend statement, Form 23(5) non-resident statement |
-| International tax | CFC retained earnings statement (Adjustment of International Taxes Act Enforcement Rule Form 30(a), fiscal years from 2021) |
+| International tax | Adjustment of International Taxes Act Enforcement Rule Forms 16(a) (international transactions), 20 (transfer-pricing method report), 30(a) (CFC retained earnings), 31(a)(b)(c) (CFC inclusion test), 32(a)(b) (scope test), 47 (overseas subsidiary statement), 48 (financial status) — fiscal years from 2021 |
 | Income, capital gains, gift | Form 40(1) schedules for interest, dividend, wage, pension and other income; Form 84 capital gains tax calculation and Schedule 1; gift tax Form 10 |
 
 Form templates were built by checking cell layout against the official form PDFs on law.go.kr. Some pages and cells are not carried over (personal details, sub-schedules); the List sheet says which. The workbook is a reference for review, not a filed return.
@@ -135,7 +135,7 @@ When answering Korean tax questions, use korean-tax-mcp and korean-tax-calc-mcp 
 5. If two values come out (before/after apportionment, total vs. taxable part, etc.), answer only the one the question asks for.
 ```
 
-## Tools (130)
+## Tools (133)
 
 Click a group to expand its tools.
 
@@ -175,12 +175,15 @@ Click a group to expand its tools.
 | `thin_capitalization` | thin capitalization |
 | `arm_length_range` | Arm's length range and adjustment — interquartile/full range, median, whether the tested value is inside, adjustment amount and direction (ITA Decree art.15(5)(6)). Whether the tested party is domestic or foreign is required |
 | `tp_comparable_screen` | Comparable company screening — applies independence, data, industry, size, loss, R&D, advertising, related-party revenue, segment and special-situation screens plus human decisions (reason required) to a candidate list exported from a paid database (CSV/Excel); returns a per-company rejection matrix, final set, multi-year weighted PLI, interquartile range, sensitivity to screen choices and report annex tables. Statutory (50% related-party) vs. practice thresholds are labelled |
+| `international_transaction_statement` | International transaction statement (Enforcement Rule Form 16(A)) — per-related-party sales/purchase totals, loan balance × days and average, filing obligation and deadline (Act art. 16(2), Decree art. 36), accompanying forms |
 | `foreign_subsidiary_dividend` | foreign subsidiary dividend — exclusion vs foreign tax credit |
 | `foreign_subsidiary_liquidation` | Liquidation of a foreign subsidiary — deemed dividend or liquidation loss and the fiscal year of deduction (CITA art.16(1)4) |
 | `cfc_deemed_dividend` | CFC deemed dividend on retained earnings — low-tax test, 10% ownership, exclusions, distributable retained earnings, full/passive inclusion (Int'l Tax Adjustment Act arts. 27–31) |
 | `cfc_actual_dividend` | CFC actual dividend exclusion — when previously deemed-dividend income is actually distributed, exclude it in order of accrual (incl. intermediate-company cap); returns the exclusion adjustment and updated ledger (ITA art.32(1), Decree art.68; pre-2021 articles by year) |
 | `cfc_share_disposal` | CFC share disposal exclusion — (deemed dividends on the sold shares − actual dividends on them), capped at the gain (ITA art.32(2); pre-2021 articles by year) |
+| `overseas_subsidiary_statement` | Overseas subsidiary statement & financial status (Act art. 58, Decree art. 98) — filing targets (10%/KRW 100M, related party), loss-transaction statement, 6-month deadline, accounting identity checks |
 | `tax_crime_settlement_amount` | Tax-crime settlement (notice disposition) amount — per the Tax Crime Procedure Decree schedule (2014/2019/2026 versions): 1st/2nd/3rd+ amounts, habitual increase, voluntary-amendment reductions, aiding/impairment, concurrence rules, 10-won truncation and statutory fine caps |
+| `nominee_gift_tax` | Gift tax on deemed gifts of nominee-held property (IGTA art. 45-2) — tax base (value less appraisal fee, no gift deduction), computed tax, filing credit, taxpayer by period, filing deadline and assessment-period expiry |
 | `expat_cost_recharge` | expat cost recharge — arm-length fee, deduction, overseas work exemption |
 | `individual_foreign_tax_credit` | individual foreign tax credit: per-country limit, treaty-rate cap, 10-year carryforward, retirement income (Income Tax Act art. 57) |
 | `foreign_exchange_reporting` | overseas direct investment: FX reporting (prior/post) deadline, bank, documents, follow-up reports, liquidation, NTS investment statement deadline |
