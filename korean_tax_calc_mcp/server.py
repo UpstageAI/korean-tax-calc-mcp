@@ -409,10 +409,10 @@ _도구별_필수필드 = {
         "투자신탁환매이익": {"필요": ["amount", "components"], "허용": ["withheld"]},
         "파생결합사채이익": {"필요": ["amount"], "허용": ["withheld"]},
         "장내파생상품이익": {"필요": ["amount"], "허용": ["withheld"]},
-        "상장법인현금배당": {"필요": ["amount"], "허용": ["withheld"]},
-        "비상장법인현금배당": {"필요": ["amount"], "허용": ["withheld"]},
-        "의제배당_잉여금자본전입": {"필요": ["amount", "source"], "허용": ["withheld", "self_stock_shift"]},
-        "인정배당": {"필요": ["amount"], "허용": ["withheld"]},
+        "상장법인현금배당": {"필요": ["amount"], "허용": ["withheld", "paid_date"]},
+        "비상장법인현금배당": {"필요": ["amount"], "허용": ["withheld", "paid_date"]},
+        "의제배당_잉여금자본전입": {"필요": ["amount", "source"], "허용": ["withheld", "self_stock_shift", "paid_date"]},
+        "인정배당": {"필요": ["amount"], "허용": ["withheld", "paid_date"]},
         "손해배상법정이자": {"필요": ["amount"], "허용": ["withheld"]},
         "공익신탁이익": {"필요": ["amount"], "허용": ["withheld"]},
         "통합발행채권할인액": {"필요": ["amount"]},
@@ -4629,7 +4629,7 @@ def financial_income_aggregate(year: YEAR,
         · 투자신탁환매이익 — 집합투자기구(투자신탁 등)로부터 받는 이익
         · 파생결합사채이익 — 상법상 파생결합사채(ELB 등)에서 받는 이익
         · 장내파생상품이익 — KOSPI200 선물·옵션 등 장내파생상품 거래 이익(양도소득)
-        · 상장법인현금배당 — 상장 내국법인에서 받는 이익배당(Gross-up 대상)
+        · 상장법인현금배당 — 상장법인 이익배당(Gross-up 대상, paid_date)
         · 비상장법인현금배당 — 비상장 내국법인에서 받는 이익배당(Gross-up 대상)
         · 의제배당_잉여금자본전입 — 잉여금 자본전입 무상주(재평가적립금 일부 전입 시 1% 토지분 안분, 법인세법 시행령 제12조제4항, 소득세법 시행령 제27조제5항)
         · 인정배당 — 법인세법에 따라 배당으로 소득처분된 금액(Gross-up 대상)
@@ -4668,6 +4668,16 @@ def financial_income_aggregate(year: YEAR,
     # Gross-up 가산율은 어휘에서 가져온다(연도별)
     배당_규칙 = vocab.rule("상장법인현금배당", year)
     rate = 배당_규칙.get("Gross-up가산율", 0.1)
+    # 가산율은 지급일 기준(소득세법 제17조③: 법률 제19933호 부칙 제14조 — 2024.1.1. 이후 지급분 10%, 법률 제21221호 부칙 — 2027.1.1. 이후 지급분 11%).
+    # 항목에 paid_date가 있으면 그 날짜로, 없으면 귀속연도 안에 지급한 것으로 보고 연도 가산율(어휘)을 쓴다.
+    def _gu_rate_on(paid):
+        if not paid:
+            return rate, None
+        d = date.fromisoformat(str(paid))
+        return vocab.rule_on("상장법인현금배당", int(d.strftime("%Y%m%d"))).get("Gross-up가산율", rate), d
+    gu_by_rate: dict[float, int] = {}
+    cur_rate = rate
+    지급일_주의: list[str] = []
     판단, inc, div_n, div_g, exc = [], 0, 0, 0, 0
     항목별: list[dict] = []  # 계산.항목별용: [{항목, 금액, 구분}]
 
@@ -4676,14 +4686,16 @@ def financial_income_aggregate(year: YEAR,
     cur_withheld = True
 
     def add(항목, 구분, 금액, 근거, 이유, gu=None):
-        nonlocal inc, div_n, div_g, exc, 미원천, 미원천_이자
+        nonlocal inc, div_n, div_g, exc, 미원천, 미원천_이자, cur_rate
         if 구분 in ("이자", "배당") and not cur_withheld and 항목 != "출자공동사업자배당":
             미원천 += 금액
             if 구분 == "이자":
                 미원천_이자 += 금액
             이유 = 이유 + " / 원천징수되지 않음 — 2천만원 이하여도 종합과세(소득세법 제14조③6호)"
         if 구분 == "이자": inc += 금액
-        elif 구분 == "배당" and gu: div_g += 금액
+        elif 구분 == "배당" and gu:
+            div_g += 금액
+            gu_by_rate[cur_rate] = gu_by_rate.get(cur_rate, 0) + 금액
         elif 구분 == "배당": div_n += 금액
         else: exc += 금액
         결론 = {"이자": "이자소득", "배당": "배당소득(Gross-up 대상)" if gu else "배당소득(Gross-up 비대상)"}.get(구분, "금융소득 제외")
@@ -4705,6 +4717,12 @@ def financial_income_aggregate(year: YEAR,
     for it in items:
         k, amt = it.get("kind", ""), int(it.get("amount", 0))
         cur_withheld = it.get("withheld", True) is not False
+        try:
+            cur_rate, _pd = _gu_rate_on(it.get("paid_date"))
+        except ValueError:
+            raise ValueError(f"paid_date={it.get('paid_date')!r} — 지급일 YYYY-MM-DD")
+        if _pd is not None and _pd.year != year and cur_rate != rate:
+            지급일_주의.append(f"{k} {amt:,}원: 귀속연도 {year}년이지만 지급일 {_pd} — 가산율 {cur_rate:.0%}(지급일 기준, 소득세법 제17조③ 개정 부칙)")
         if k == "예금이자":
             add(k, "이자", amt, "소득세법 제16조①1호", "국내 예금 이자")
         elif k in ("비영업대금이익", "소비대차전환이자"):
@@ -4799,7 +4817,12 @@ def financial_income_aggregate(year: YEAR,
         filled = min(threshold, inc + (div_n - partner_div))   # 이자 → 비대상 배당(비출자공동) 순으로 2천만 원 채움
         gu_base = div_g - max(0, threshold - filled)
         gu_base = max(0, min(div_g, gu_base))
-        grossup = _trunc_won(gu_base, rate)
+        if len(gu_by_rate) <= 1:
+            rate = next(iter(gu_by_rate), rate)
+            grossup = _trunc_won(gu_base, rate)
+        else:   # 지급일에 따라 가산율이 섞이면 Gross-up 기준액을 대상 배당 금액 비율로 나눠 각각 적용(어느 배당이 2천만원 초과분인지 법령에 순서 규정 없음)
+            grossup = sum(_trunc_won(gu_base * amt_r / div_g, r) for r, amt_r in sorted(gu_by_rate.items()))
+            지급일_주의.append("지급일에 따라 가산율이 다른 Gross-up 대상 배당이 섞임 — 기준액을 금액 비율로 나눠 " + ", ".join(f"{r:.0%} {a:,}원" for r, a in sorted(gu_by_rate.items())) + "에 각각 적용(초과분 귀속 순서는 법령에 없음)")
         합산 = cond_total + grossup + partner_div
         분리과세 = False
     # ── 계산식 단계 (SPEC_export_workbook_f) ──────────────────────────────
@@ -4809,7 +4832,7 @@ def financial_income_aggregate(year: YEAR,
 
     계산식_입력 = [
         {"이름": "종합과세기준금액", "값": 20000000, "설명": "금융소득 종합과세 기준액 = 2,000만 원 (소득세법 제14조③6호)"},
-        {"이름": "가산율", "값": rate, "설명": f"Gross-up 가산율 = {rate} ({year}년 기준, 소득세법 제56조)"},
+        {"이름": "가산율", "값": rate, "설명": f"Gross-up 가산율 = {rate} (지급일 기준 — paid_date가 없으면 {year}년 안 지급으로 봄, 소득세법 제17조③ 개정 부칙)"},
         {"이름": "이자소득금액", "값": inc, "설명": f"이자소득 총수입금액(2천만원 판정용) = {inc:,}원"
          + (" — 분리과세면 결과의 이자소득금액에는 합산하지 않음" if 분리과세 and inc else "")},
         {"이름": "배당비대상소득", "값": div_n, "설명": f"배당소득 중 Gross-up 비대상 = {div_n:,}원" + (f" ({', '.join(dict.fromkeys(h['항목'] for h in 항목별 if h['구분'] in ('GU비대상', '출자공동')))})" if div_n else "")},
@@ -4873,14 +4896,18 @@ def financial_income_aggregate(year: YEAR,
                판단=판단,
                산식="판정합계(이자+배당비대상+배당대상−출자공동사업자배당) ≤ 2천만 원이면 분리과세(배당소득금액=출자공동사업자배당, 합산액=출자공동사업자배당). 초과 시 이자 → 배당비대상(출자공동 제외) → 배당대상 순으로 2천만 원을 채우고, 2천만 원을 넘는 배당대상 × 가산율 = Gross-up. 출자공동사업자배당은 항상 합산액에 포함되고 2천만원 판정 합계에서는 제외.",
                계산식_입력=계산식_입력,
-               계산식=계산식, **({"입력 해석": _해석} if _해석 else {}))
+               계산식=계산식, **({"입력 해석": _해석} if _해석 else {}),
+               **({"주의": 지급일_주의} if 지급일_주의 else {}),
+               **({"가산율_안내": "Gross-up 가산율은 지급일 기준(2023.12.31.까지 지급 11%, 2024.1.1.~2026.12.31. 지급 10%, 2027.1.1. 이후 지급 11%) — "
+                   "귀속연도와 다른 해에 지급받은 배당(예: 잉여금처분결의는 12월, 지급은 다음 해 1월)은 항목에 paid_date를 넣으면 그 날짜로 계산"}
+                  if (year in (2023, 2026) and div_g and not 지급일_주의) else {}))
 
 
 # ── 배당세액공제(소득세법 제56조)와 비교과세(제62조) ─────────────────────────────
 # 연도표(조문·부칙 대조, Claude 10-28):
 #   · 제56조①④(배당세액공제 = Gross-up 금액, 대상은 2천만원 초과 배당), 제15조2호 후단(공제 후 세액이
 #     제62조2호 금액보다 작아지지 않게 — 곧 공제 한도 = 산출세액 − 제62조2호 금액): 2016~2026 문언 같음.
-#   · Gross-up 가산율: 11%(2016~2023), 10%(2024~) — financial_income_aggregate와 같은 어휘 값을 쓴다.
+#   · Gross-up 가산율: 지급일 기준 11%(2023.12.31.까지 지급)·10%(2024.1.1.~2026.12.31. 지급)·11%(2027.1.1.~) — Gross-up 금액은 financial_income_aggregate가 항목별 paid_date로 계산한 값을 쓴다.
 #   · 제62조2호 가목 단서(원천징수되지 않은 이자소득등의 세율):
 #       2016 — "제127조에 따라 원천징수되지 아니하는 소득에 대해서는 제129조제1항제1호라목의 세율"(14%) 하나.
 #       2017~ — 2)·3)으로 나뉨: 원천징수되지 않은 비영업대금의 이익(제16조①11호)은 제129조①1호나목(25%),
@@ -4905,7 +4932,7 @@ def dividend_tax_credit(year: YEAR,
 언제: 금융소득이 2천만원을 넘어 종합과세될 때 일반산출세액(제62조1호)·비교산출세액(제62조2호)·종합소득 산출세액·배당세액공제액(Gross-up과 한도 중 적은 금액)을 구할 때.
 입력: 귀속연도(2016~2026) → year, 금융소득 항목(financial_income_aggregate 형식) → items 또는 그 결과 숫자(grossup, financial_14, financial_25, partner_dividend), 금융소득을 뺀 종합소득 과세표준 → other_base(또는 과세표준 전체 → taxable_base).
 결과: 일반산출세액(1호: (이자소득등 − 2천만 + 다른 과세표준) × 기본세율 + 2천만 × 14%), 비교산출세액(2호: 이자소득등(Gross-up 제외) × 원천징수세율 + 다른 과세표준 × 기본세율, 출자공동사업자배당 비교세액 포함), 종합소득 산출세액(큰 금액), 배당세액공제 한도(산출세액 − 비교산출세액), 배당세액공제액 = min(Gross-up, 한도), 공제 후 세액.
-연도: 2016~2026. Gross-up 가산율 11%(2016~2023)·10%(2024~). 원천징수되지 않은 비영업대금 이익은 2016년 14%, 2017년부터 25%(제62조2호 가목, 법률 제14389호 부칙 제2조제1항).
+연도: 2016~2026. Gross-up 가산율은 지급일 기준 — 2023.12.31.까지 지급 11%, 2024.1.1.~2026.12.31. 지급 10%(법률 제19933호 부칙), 2027.1.1. 이후 지급 11%. 항목에 paid_date를 주면 그 날짜로, 없으면 귀속연도 안 지급으로 봄. 원천징수되지 않은 비영업대금 이익은 2016년 14%, 2017년부터 25%(제62조2호 가목, 법률 제14389호 부칙 제2조제1항).
 지원하지 않음(입력 확인 필요로 멈춤): 종합소득공제가 금융소득 외 소득보다 커서 다른 과세표준이 음수(또는 출자공동사업자배당보다 작음)인 경우, 조세특례제한법 제104조의27 배당(2016~2018), 2025년 이후 Gross-up 제외 사유 개정분 판정(Gross-up은 financial_income_aggregate 판정 그대로), 외국납부세액공제 등 다른 세액공제·감면(제15조2호 — 이 도구 결과 뒤에 적용), 비거주자."""
     M = 20_000_000
     숫자입력 = {"grossup": grossup, "financial_14": financial_14, "financial_25": financial_25, "partner_dividend": partner_dividend}
@@ -5064,7 +5091,7 @@ def dividend_tax_credit(year: YEAR,
                 "Gross-up": gu, "배당세액공제한도": 한도, "배당세액공제액": 공제, "공제후세액": 산출 - 공제},
                "소득세법 제56조①④·제62조·제15조2호, 시행령 제116조의2",
                계산={"입력": 출처, "종합과세": 종합과세, "이자소득등(Gross-up 포함)": F, "다른 종합소득 과세표준": other_base,
-                     "종합소득 과세표준": F + other_base, "Gross-up 가산율": rate_gu,
+                     "종합소득 과세표준": F + other_base, "Gross-up 가산율(귀속연도 기준, 지급일이 다르면 항목별)": rate_gu,
                      "2호가목_14%대상": f14, "2호가목_25%대상": f25, "2호가목": 가목,
                      "2호나목_본문": 나목_본문, "2호나목_출자공동비교세액": 나목_비교, "2호나목": 나목,
                      "출자공동사업자배당": partner},
