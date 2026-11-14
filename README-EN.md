@@ -191,6 +191,17 @@ The example questions in "Try asking" above (royalty to a US parent, secondee re
 | Inputs | the named input values the form formulas use |
 | Judgments | conclusion, amount, statutory basis and reason per item |
 
+Pass `scenarios`, `sources` and `issues` to put a combined workings set in front (without them the layout above is unchanged).
+
+| Sheet | Contents |
+|---|---|
+| Summary | key figures linked to the scenario sheets, a one-line note per block (for example the due date), colour key |
+| Inputs | input values and statutory rates in one place, each with a source column (document or article) |
+| Scenario sheets | calculations side by side (for example A as contracted / B alternative) with a basis / note column; formulas on the input cells, checked against the tool values at the end of each block |
+| Issues Log | number, issue, finding, risk, action — shown exactly as you wrote them (the tool does not assess issues) |
+
+Colour key: blue = input, green = link to another sheet, black = formula, yellow = key result or assumption.
+
 | Tax | Forms |
 |---|---|
 | Corporate tax | Forms 3, 4, 8(a), 15 (with disposition codes), 16-2, 20(1)(2), 21, 23(a)(b), 26(a)(b), 29, 32, 33, 34, 50(b) of the Corporate Tax Act Enforcement Rule |

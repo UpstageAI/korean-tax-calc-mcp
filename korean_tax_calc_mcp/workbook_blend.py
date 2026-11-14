@@ -1,0 +1,750 @@
+"""export_workbook 통합 문서 — 요약(Summary)·입력·출처(Inputs)·시나리오 시트·쟁점 목록(Issues Log).
+
+선택 입력(scenarios·sources·issues) 가운데 하나라도 있을 때만 쓴다. 없으면 이 모듈은 불리지 않고 기존 출력 그대로다.
+
+- 입력·세율은 '입력·출처' 시트 한곳에 두고(값마다 출처 열), 시나리오 시트는 그 칸을 가리키는 수식으로 계산한다.
+- 시나리오 시트는 call을 열로 나란히 놓고 오른쪽에 '근거·메모' 열을 둔다. 줄마다 수식이고, 블록 끝에서 도구 값과 대조한다.
+- 요약 시트는 시나리오 시트의 핵심 칸을 링크한다.
+- 쟁점 목록은 호출자가 준 글을 그대로 표로 싣는다(도구가 판단을 만들지 않음).
+- 색 규칙: 파랑 = 입력, 초록 = 다른 시트 링크, 검정 = 수식, 노랑 = 핵심 결과·가정.
+
+도구별 수식 틀: nonresident_withholding·withholding_late_payment_penalty는 전용 틀, 결과에 `계산식`이 있는 도구는 그 단계를
+수식으로, 그 밖의 도구는 결과 값을 그대로 옮긴다(값 줄은 회색 — 수식 아님).
+"""
+from __future__ import annotations
+
+import json as _json
+import re as _re
+from datetime import date as _date, timedelta as _timedelta
+from typing import Any
+
+NAVY, BAND, BLUE, GREEN, GREY, YELLOW = "1F3864", "D9E1F2", "0000FF", "008000", "555555", "FFFF00"
+NUM = '#,##0;(#,##0);"-"'
+PCT = "0.0###%"
+DATE = "yyyy-mm-dd"
+_RISK_FILL = {"high": "F8CBAD", "높음": "F8CBAD", "상": "F8CBAD", "medium": "FFE699", "중간": "FFE699", "보통": "FFE699", "중": "FFE699",
+              "low": "E2EFDA", "낮음": "E2EFDA", "하": "E2EFDA", "info": "DDEBF7", "참고": "DDEBF7", "정보": "DDEBF7",
+              "none": "EDEDED", "없음": "EDEDED"}
+_BAD_SHEET = _re.compile(r"[\[\]:*?/\\]")
+_ISSUE_KEYS = {"no": ("no", "번호", "#", "No"), "issue": ("issue", "쟁점", "Issue", "항목"), "finding": ("finding", "발견", "Finding", "내용"),
+               "risk": ("risk", "위험도", "Risk"), "action": ("action", "조치", "Action")}
+
+_TXT = {
+    "summary": ("요약", "Summary"), "inputs": ("입력·출처", "Inputs"), "issues": ("쟁점 목록", "Issues Log"),
+    "old_summary": ("호출 요약", "Call summary (호출 요약)"), "old_inputs": (None, "Call inputs (입력·가정)"),
+    "summary_title": ("{t} — 요약", "{t} — summary"),
+    "summary_sub": ("단위: 원. 계산은 뒤 시트의 수식, 입력과 출처는 '{i}' 시트.", "All amounts KRW. Workings on the following tabs; inputs and sources on the '{i}' tab."),
+    "inputs_title": ("입력과 출처", "Inputs and sources"),
+    "inputs_sub": ("파랑 = 입력값(출처는 C열). 노랑 = 바꿀 수 있는 가정. 계산 시트는 이 칸을 가리키는 수식이라 값을 바꾸면 따라 바뀜.",
+                   "Blue = input (source in column C). Yellow = assumption you may change. The workings tabs are formulas on these cells."),
+    "item": ("항목", "Item"), "value": ("값", "Value"), "source": ("출처", "Source"),
+    "rates": ("법정 세율·이율", "Statutory rates"),
+    "note_col": ("근거 · 메모", "Basis / note"),
+    "check": ("도구 값 대조(수식 = 계산 도구 결과)", "Check: formulas agree with the calculation tool"),
+    "ok": ("일치", "Match (일치)"), "ng": ("확인 필요", "Check (확인 필요)"),
+    "key": ("색 규칙: 파랑 = 입력, 초록 = 다른 시트 링크, 검정 = 수식, 노랑 = 핵심 결과·가정.",
+            "Colour key: blue = input; green = link to another tab; black = formula; yellow = key result or assumption."),
+    "support": ("뒤 시트: 법정서식 틀, call별 도구 결과('계산 N'), 도구가 돌려준 판단·근거.",
+                "Supporting tabs after these: statutory form sheets, tool results per call ('Calc N'), and the judgements returned by the tools."),
+    "disclaimer": ("계산 도구 결과를 정리한 참고 자료이며 세무 자문이 아닙니다. 신고 전에 세무 전문가와 확인하세요.",
+                   "Reference workings from calculation tool results, not tax advice — confirm with a tax professional before filing."),
+    "issues_title": ("쟁점 목록", "Issues log"),
+    "issues_sub": ("작성자가 넣은 내용을 그대로 실음 — 계산 도구는 쟁점을 판단하지 않음.", "Entered by the preparer and shown as provided — the calculation tool does not assess issues."),
+    "issues_hdr": (("#", "쟁점", "발견", "위험도", "조치"), ("#", "Issue", "Finding", "Risk", "Action")),
+    "issues_line": ("쟁점 {n}건 — '{s}' 시트", "{n} issue(s) — see the '{s}' tab"),
+    "less": ("차감: 이미 납부한 금액 등", "Less: amount already paid or deducted"),
+    "tool_value": ("도구 값(수식 아님)", "Tool value (not a formula)"),
+    "no_formula": ("이 도구는 수식 틀이 없어 결과 값을 옮김", "No formula layout for this tool — values copied from the tool result"),
+}
+
+
+def _t(key: str, en: bool, **kw) -> Any:
+    v = _TXT[key][1 if en else 0]
+    return v.format(**kw) if kw and isinstance(v, str) else v
+
+
+# ── 입력 정리·검증 ─────────────────────────────────────────────────────────
+def _as_list(v: Any, name: str) -> tuple[list | None, str | None]:
+    if v is None or v == "" or v == []:
+        return None, None
+    if isinstance(v, str):
+        try:
+            v = _json.loads(v)
+        except Exception:
+            return None, f"{name}가 올바른 JSON 배열이 아님"
+    if isinstance(v, dict):
+        v = [v]
+    if not isinstance(v, list):
+        return None, f"{name}는 목록(JSON 배열)이어야 함"
+    return v, None
+
+
+def _call_ref(ref: Any, calls: list) -> int | None:
+    """call 지정 — 1부터 세는 순번 또는 label. 없으면 None."""
+    if isinstance(ref, bool):
+        return None
+    if isinstance(ref, int):
+        return ref - 1 if 1 <= ref <= len(calls) else None
+    if isinstance(ref, str):
+        for i, c in enumerate(calls):
+            if isinstance(c, dict) and c.get("label") == ref:
+                return i
+        if ref.strip().isdigit():
+            return _call_ref(int(ref.strip()), calls)
+    return None
+
+
+def normalize(scenarios: Any, sources: Any, issues: Any, calls: list) -> tuple[dict | None, dict | None]:
+    """선택 입력을 정리한다. 돌려주는 값: (cfg 또는 None, 오류 dict 또는 None). 셋 다 비면 (None, None) — 기존 출력."""
+    err = lambda msg: (None, {"error": "입력 확인 필요 — " + msg, "안내": "scenarios=[{sheet, title, heading, columns:[{call, heading}], notes, summary_note}], "
+                              "sources=[{call, arg, source, assumption, from_call, from_row, less}], issues=[{no, issue, finding, risk, action}]"})
+    sc, e1 = _as_list(scenarios, "scenarios")
+    so, e2 = _as_list(sources, "sources")
+    iss, e3 = _as_list(issues, "issues")
+    for e in (e1, e2, e3):
+        if e:
+            return err(e)
+    if sc is None and so is None and iss is None:
+        return None, None
+    blocks: list[dict] = []
+    used: set[int] = set()
+    for n, b in enumerate(sc or [], 1):
+        if not isinstance(b, dict):
+            return err(f"scenarios[{n}]가 객체가 아님")
+        cols_in = b.get("columns") or ([b["call"]] if b.get("call") is not None else [])
+        if not isinstance(cols_in, list) or not cols_in:
+            return err(f"scenarios[{n}].columns가 비어 있음 — [{{call, heading}}]")
+        cols = []
+        for c in cols_in:
+            ref, heading = (c.get("call"), c.get("heading")) if isinstance(c, dict) else (c, None)
+            idx = _call_ref(ref, calls)
+            if idx is None:
+                return err(f"scenarios[{n}].columns의 call '{ref}'를 calls에서 찾지 못함(label 또는 1부터 세는 순번)")
+            if idx in used:
+                return err(f"scenarios[{n}].columns의 call '{ref}'가 두 번 쓰임 — call 하나는 한 열에만")
+            used.add(idx)
+            cols.append({"idx": idx, "heading": str(heading) if heading else str(calls[idx].get("label") or f"call {idx + 1}")})
+        if len({calls[c["idx"]].get("tool") for c in cols}) > 1:
+            return err(f"scenarios[{n}].columns는 같은 도구의 call이어야 함 — 다른 도구는 블록을 나눔(sheet 이름이 같으면 한 시트에 차례로 놓임)")
+        notes = b.get("notes") or {}
+        if not isinstance(notes, dict):
+            return err(f"scenarios[{n}].notes는 {{줄 이름: 메모}} 객체")
+        blocks.append({"sheet": str(b.get("sheet") or b.get("title") or cols[0]["heading"]), "title": str(b.get("title") or ""),
+                       "subtitle": str(b.get("subtitle") or ""), "heading": str(b.get("heading") or b.get("title") or b.get("sheet") or cols[0]["heading"]),
+                       "columns": cols, "notes": {str(k): str(v) for k, v in notes.items()}, "summary_note": str(b.get("summary_note") or "")})
+    src: dict[tuple[int, str], dict] = {}
+    for n, s in enumerate(so or [], 1):
+        if not isinstance(s, dict) or not s.get("arg"):
+            return err(f"sources[{n}]는 {{call, arg, source}} 객체")
+        idx = _call_ref(s.get("call"), calls)
+        if idx is None:
+            return err(f"sources[{n}]의 call '{s.get('call')}'를 calls에서 찾지 못함")
+        item = {"source": str(s.get("source") or ""), "assumption": bool(s.get("assumption")), "label": s.get("label")}
+        if s.get("from_call") is not None:      # 이 입력이 다른 call의 결과 줄에서 온 값(예: 가산세의 미납세액 = 정당 세액 − 기납부)
+            fidx = _call_ref(s.get("from_call"), calls)
+            if fidx is None or fidx == idx or not s.get("from_row"):
+                return err(f"sources[{n}]의 from_call '{s.get('from_call')}'·from_row를 확인 — 다른 call의 label(또는 순번)과 그 결과 줄 이름")
+            less = s.get("less")
+            if less is not None and (isinstance(less, bool) or not isinstance(less, (int, float))):
+                return err(f"sources[{n}].less는 숫자(차감할 금액)")
+            item.update({"from": fidx, "from_row": str(s["from_row"]), "less": less, "less_label": s.get("less_label"), "less_source": str(s.get("less_source") or "")})
+        src[(idx, str(s["arg"]))] = item
+    rows: list[dict] = []
+    for n, x in enumerate(iss or [], 1):
+        if not isinstance(x, dict):
+            return err(f"issues[{n}]가 객체가 아님 — {{no, issue, finding, risk, action}}")
+        row = {k: next((x[a] for a in al if x.get(a) not in (None, "")), "") for k, al in _ISSUE_KEYS.items()}
+        row["no"] = row["no"] if row["no"] != "" else n
+        rows.append(row)
+    return {"blocks": blocks, "sources": src, "issues": rows, "used": used}, None
+
+
+# ── 도구별 수식 틀 ─────────────────────────────────────────────────────────
+def _inp(id_: str, ko: str, en: str, value: Any, *, fmt: str = NUM, kind: str = "input", arg: str | None = None,
+         src_ko: str = "", src_en: str = "", summary: bool = False) -> dict:
+    return {"id": id_, "ko": ko, "en": en, "value": value, "fmt": fmt, "kind": kind, "arg": arg, "src_ko": src_ko, "src_en": src_en,
+            "summary": summary, "key": False}
+
+
+def _row(id_: str, ko: str, en: str, f: str | None = None, *, value: Any = None, fmt: str = NUM, check: Any = None, key: bool = False,
+         summary: bool = False, note_ko: str = "", note_en: str = "", alias: tuple = ()) -> dict:
+    return {"id": id_, "ko": ko, "en": en, "f": f, "value": value, "fmt": fmt, "check": check, "key": key, "summary": summary,
+            "note_ko": note_ko, "note_en": note_en, "alias": alias}
+
+
+_KIND_EN = {"이자": "interest", "배당": "dividends", "사용료": "royalties", "인적용역": "personal services", "기타": "other income"}
+
+
+def _with_ko(en: str, ko: Any) -> str:
+    """영문 설명 뒤에 국문 원문(근거 조문)을 괄호로 붙인다."""
+    ko = str(ko or "").strip()
+    return f"{en} ({ko})" if ko else en
+
+
+def _spec_nonresident(args: dict, data: dict) -> dict:
+    res = data.get("결과") or {}
+    kind = str(args.get("income_kind", ""))
+    corp = args.get("recipient_type") == "법인"
+    treaty = args.get("treaty_rate")
+    covered = str(res.get("조약_대상조세_지방소득세", "")).startswith("포함")
+    local_bears = bool(args.get("payer_bears_local_tax"))
+    net = bool(args.get("net_of_tax")) or local_bears
+    basis = str(data.get("근거") or res.get("근거") or "")
+    law = basis.split(" · ")[0]
+    local_basis = str(res.get("지방소득세_근거") or "")
+    gross = res.get("역산") if isinstance(res.get("역산"), dict) else {}
+    tax_ko, tax_en = ("법인세", "Corporate tax") if corp else ("소득세", "Income tax")
+    inputs = [
+        _inp("amount", "지급액(순액 약정이면 약정 순액)", "Payment amount (agreed net amount under a net-of-tax clause)", args.get("amount", 0), arg="amount"),
+        _inp("domestic_rate", f"국내 원천징수세율 — {kind}", f"Domestic withholding rate — {_KIND_EN.get(kind, kind)}", res.get("국내세율"),
+             fmt=PCT, kind="rate", src_ko=law, src_en=_with_ko("Statutory rate", law)),
+    ]
+    if treaty is not None:
+        inputs.append(_inp("treaty_rate", "조세조약 제한세율", "Treaty limited rate", treaty, fmt=PCT, arg="treaty_rate",
+                           src_ko="입력값 — 조약 조문은 korean-tax-mcp treaty_withholding_rates·tax_treaty로 확인",
+                           src_en="As entered — confirm the treaty article with korean-tax-mcp treaty_withholding_rates / tax_treaty"))
+    inputs.append(_inp("local_ratio", "지방소득세 비율(원천징수세액 대비)", "Local income tax as % of tax withheld", 0.1, fmt=PCT, kind="rate",
+                       src_ko=local_basis, src_en=_with_ko("Special collection of local income tax", local_basis)))
+    if covered:
+        inputs.append(_inp("local_factor", "조약 대상조세에 지방소득세 포함 — 국세분 = 합계 상한 ÷ 1.1", "Treaty covers local income tax — national portion = cap ÷ 1.1",
+                           1.1, fmt="0.0", kind="rate", src_ko=local_basis, src_en=_with_ko("Treaty cap applies to national + local tax", local_basis)))
+    bearing = (("지급자 부담 — 순액 약정(법인세·소득세와 지방소득세까지 역산)", "Payer bears the tax — net-of-tax clause, gross-up including local income tax") if local_bears else
+               ("지급자 부담 — 순액 약정(국세분만 역산)", "Payer bears the national tax — net-of-tax clause, gross-up on national tax only") if net else
+               ("수취인 부담 — 지급액에서 원천징수", "Recipient bears the tax — withheld from the payment"))
+    rows = [_row("bearing", "세금 부담", "Who bears the Korean tax", value=bearing, fmt="@")]
+    if treaty is None:
+        f_app = "={domestic_rate}"
+    elif covered:
+        f_app = "=MIN({treaty_rate},{domestic_rate}*{local_factor})"
+    else:
+        f_app = "=MIN({domestic_rate},{treaty_rate})"
+    rows.append(_row("applicable", "적용세율", "Rate applied (lower of domestic and treaty rate)", f_app, fmt=PCT, check=res.get("적용세율"),
+                     note_ko=basis, note_en=_with_ko("Basis returned by the tool", basis), alias=("적용세율",)))
+    nat = "applicable"
+    if covered:
+        nat = "national"
+        rows.append(_row("national", "국세분 세율(합계 상한 ÷ 1.1)", "National tax portion of the rate (cap ÷ 1.1)", "={applicable}/{local_factor}", fmt=PCT))
+    gross_basis = str(gross.get("근거") or "법인세법 기본통칙 98-0…2")
+    if net:
+        rows.append(_row("gross_rate", "역산에 쓴 세율", "Gross-up rate",
+                         "={" + nat + "}*(1+{local_ratio})" if local_bears else "={" + nat + "}", fmt=PCT, check=gross.get("역산에_쓴_세율"),
+                         note_ko=f"{gross.get('세율_구성', '')} — {gross.get('확신도', '')}".strip(" —"),
+                         note_en=_with_ko("National tax rate, plus the local income tax portion when the payer bears it", gross.get("확신도", "")),
+                         alias=("역산에_쓴_세율",)))
+        rows.append(_row("base", "과세표준", "Withholding tax base", "=ROUNDDOWN(ROUND({amount}/(1-{gross_rate}),4),0)", check=res.get("과세표준"), summary=True,
+                         note_ko=f"순액 약정이면 약정 순액 ÷ (1 − 역산 세율), 아니면 지급액 — {gross_basis}",
+                         note_en=_with_ko("Agreed net amount ÷ (1 − gross-up rate) under a net-of-tax clause; otherwise the payment amount", gross_basis),
+                         alias=("과세표준",)))
+        f_tax = "=ROUNDDOWN(ROUND({amount}/(1-{gross_rate})*{" + nat + "},4),-1)"
+    else:
+        rows.append(_row("base", "과세표준", "Withholding tax base", "={amount}", summary=True,
+                         note_ko=f"순액 약정이면 약정 순액 ÷ (1 − 역산 세율), 아니면 지급액 — {gross_basis}",
+                         note_en=_with_ko("Agreed net amount ÷ (1 − gross-up rate) under a net-of-tax clause; otherwise the payment amount", gross_basis),
+                         alias=("과세표준",)))
+        f_tax = "=ROUNDDOWN(ROUND({amount}*{" + nat + "},4),-1)"
+    rows += [
+        _row("tax", f"원천징수세액({tax_ko})", f"{tax_en} to withhold", f_tax, check=res.get("원천징수세액"), key=True, summary=True,
+             note_ko="과세표준 × 국세분 세율, 10원 미만 절사(도구 방식 — 역산은 절사 전 과세표준으로 계산)",
+             note_en="Tax base × national rate, truncated to KRW 10 (tool convention; computed on the tax base before rounding)", alias=("원천징수세액",)),
+        _row("local", "지방소득세(특별징수)", "Local income tax to withhold", "=ROUNDDOWN(ROUND({tax}*{local_ratio},4),-1)", check=res.get("지방소득세"),
+             key=True, summary=True, note_ko=local_basis, note_en=_with_ko("Local income tax on the tax withheld", local_basis), alias=("지방소득세",)),
+        _row("total", "합계", "Total Korean tax", "={tax}+{local}", check=res.get("합계"), key=True, summary=True, alias=("합계",)),
+        _row("net_paid", "수취인 송금액(과세표준 − 합계)", "Net amount remitted (tax base − total tax)", "={base}-{total}", summary=True),
+    ]
+    return {"inputs": inputs, "rows": rows, "links": {"지급액": "base", "적용세율": "applicable"}}
+
+
+def _spec_wh_penalty(args: dict, data: dict) -> dict | None:
+    """원천징수 납부지연가산세 — 납부고지 전(자진납부) 경로만 수식으로. 납부고지가 있으면 None(일반 틀로)."""
+    from .engine.calc_vat import late_payment_rate_segments
+    res = data.get("결과") or {}
+    if args.get("notice_due") or args.get("paid_on") or res.get("고지후분") or "일수" not in res:
+        return None
+    try:
+        d0, d1 = _date.fromisoformat(str(args.get("due"))), _date.fromisoformat(str(args.get("until")))
+    except ValueError:
+        return None
+    days = int(res.get("일수") or 0)
+    judge = next((j for j in data.get("판단") or [] if isinstance(j, dict)), {})
+    j_ko = " — ".join(str(x) for x in (_re.sub(r"^\d+일 — ", "", str(judge.get("결론") or "")), judge.get("근거")) if x)
+    off = (d1 - d0).days - days          # 0 = 납부일까지, 1 = 납부일 전날까지(2026.7.1. 개정)
+    if off not in (0, 1):
+        return None
+    segs = late_payment_rate_segments((d0 + _timedelta(days=1)).isoformat(), days) or [(0, 0.00022)]
+    inputs = [
+        _inp("unpaid", "미납·과소납부 세액", "Tax not paid or underpaid", args.get("unpaid_tax", 0), arg="unpaid_tax", summary=True),
+        _inp("due", "법정납부기한", "Statutory due date", d0, fmt=DATE, kind="date", arg="due"),
+        _inp("until", "납부일", "Payment date", d1, fmt=DATE, kind="date", arg="until"),
+        _inp("rate3", "원천징수 납부지연가산세 — 미납세액의 3%", "Withholding late-payment penalty — fixed portion", 0.03, fmt=PCT, kind="rate",
+             src_ko="국세기본법 제47조의5제1항제1호", src_en="Framework Act on National Taxes (국세기본법) Art. 47-5(1)(i)"),
+    ]
+    rows: list[dict] = []
+    end_ko, end_en = (("납부일의 전날까지", "the day before payment") if off else ("납부일까지", "the payment date"))
+    if len(segs) == 1:
+        inputs.append(_inp("daily", "원천징수 납부지연가산세 — 1일 이율", "Withholding late-payment penalty — daily rate", segs[0][1], fmt=PCT, kind="rate",
+                           src_ko="국세기본법 시행령 제27조의4", src_en="Enforcement Decree of the Framework Act on National Taxes (국세기본법 시행령) Art. 27-4"))
+        days_id = "days_prev" if off else "days"      # 끝날 규정이 다르면 다른 줄(같은 블록에 종전·개정이 섞여도 줄 이름이 맞게)
+        rows.append(_row(days_id, f"일수(법정납부기한 다음 날부터 {end_ko})", f"Days (day after the statutory due date to {end_en})",
+                         "=MAX(0,{until}-{due}" + ("-1)" if off else ")"), fmt="0", check=days, summary=True, note_ko=j_ko,
+                         note_en=_with_ko("Period counted under Art. 47-5(1)(ii)", j_ko), alias=("일수",)))
+        daily_expr = "{unpaid}*{" + days_id + "}*{daily}"
+    else:
+        terms = []
+        for i, (n, r) in enumerate(segs, 1):
+            inputs.append(_inp(f"daily{i}", f"원천징수 납부지연가산세 — 1일 이율(기간 {i})", f"Withholding late-payment penalty — daily rate (period {i})", r,
+                               fmt=PCT, kind="rate", src_ko="국세기본법 시행령 제27조의4(이율 변경일 기준 기간 안분)",
+                               src_en="Enforcement Decree of the Framework Act on National Taxes Art. 27-4 (period split at the rate change date)"))
+            rows.append(_row(f"days{i}", f"일수 — 기간 {i}(이율 변경일 기준, 도구 값)", f"Days — period {i} (split at the rate change date, tool value)",
+                             value=n, fmt="0", note_ko=j_ko, note_en=_with_ko("Period counted under Art. 47-5(1)(ii)", j_ko)))
+            terms.append(f"{{days{i}}}*{{daily{i}}}")
+        daily_expr = "{unpaid}*(" + "+".join(terms) + ")"
+    inputs.append(_inp("cap10", "납부고지 전 한도(1호 + 2호)", "Cap before a payment notice (fixed + daily portions)", 0.10, fmt=PCT, kind="rate",
+                       src_ko="국세기본법 제47조의5제1항 각 호 외의 부분 괄호", src_en="Framework Act on National Taxes Art. 47-5(1), parenthetical"))
+    rows += [
+        _row("fixed", "1호 — 미납세액의 3%", "Fixed 3% portion", "=IF({until}>{due},ROUNDDOWN(ROUND({unpaid}*{rate3},4),0),0)", check=res.get("3%분"),
+             note_ko="국세기본법 제47조의5제1항제1호", note_en="Art. 47-5(1)(i)", alias=("3%분",)),
+        _row("daily_amt", "2호 — 일수분", "Daily portion", f"=ROUNDDOWN(ROUND({daily_expr},4),0)", check=res.get("일수분"),
+             note_ko="미납세액 × 일수 × 1일 이율 — 국세기본법 제47조의5제1항제2호", note_en="Unpaid tax × days × daily rate — Art. 47-5(1)(ii)", alias=("일수분",)),
+        _row("cap", "한도(미납세액의 10%)", "Cap (10% of the unpaid tax)", "=ROUNDDOWN(ROUND({unpaid}*{cap10},4),0)", check=res.get("한도_10%"), alias=("한도_10%",)),
+        _row("penalty", "가산세", "Penalty", "=IF({until}>{due},ROUNDDOWN(ROUND(MIN({unpaid}*{rate3}+" + daily_expr + ",{unpaid}*{cap10}),4),0),0)",
+             check=res.get("가산세"), key=True, summary=True, note_ko="min(1호 + 2호, 10% 한도), 원 미만 절사",
+             note_en="Lower of (fixed + daily portions) and the 10% cap, truncated to KRW 1", alias=("가산세",)),
+    ]
+    return {"inputs": inputs, "rows": rows, "links": {}}
+
+
+def _spec_generic(args: dict, data: dict, label) -> dict:
+    """`계산식`이 있으면 그 단계를 수식으로, 없으면 결과의 숫자 값을 그대로(수식 아님)."""
+    from .tools_export import _이름_치환
+    res = data.get("결과") if isinstance(data.get("결과"), dict) else {}
+    steps = [s for s in data.get("계산식") or [] if isinstance(s, dict) and s.get("이름") and s.get("식") is not None]
+    if steps:
+        inputs, links = [], {}
+        for i in data.get("계산식_입력") or []:
+            if not isinstance(i, dict) or not i.get("이름"):
+                continue
+            v = i.get("값")
+            if isinstance(v, float) and v in (float("inf"), float("-inf")):
+                continue
+            num = isinstance(v, (int, float)) and not isinstance(v, bool)
+            inputs.append(_inp(i["이름"], str(i["이름"]), label(i["이름"]), v, fmt=NUM if num and (isinstance(v, int) or abs(v) >= 10) else ("0.0#####" if num else "@"),
+                               kind="input" if num else "text", arg=i["이름"], src_ko=str(i.get("설명") or ""), src_en=str(i.get("설명") or "")))
+            if num:
+                links[i["이름"]] = i["이름"]
+        names = {x["id"] for x in inputs} | {s["이름"] for s in steps}
+        rows = []
+        for n, s in enumerate(steps):
+            v = s.get("값")
+            num = isinstance(v, (int, float)) and not isinstance(v, bool)
+            last = n == len(steps) - 1
+            rows.append(_row(s["이름"], str(s["이름"]), label(s["이름"]), "=" + _이름_치환(str(s["식"]), {k: "{" + k + "}" for k in names}),
+                             fmt=NUM if not num or isinstance(v, int) or abs(v) >= 10 else "0.0#####", check=v if num else None, key=last,
+                             summary=last or s["이름"] in res, note_ko=str(s.get("설명") or ""), note_en=str(s.get("설명") or "")))
+        return {"inputs": inputs, "rows": rows, "links": links}
+    inputs = [_inp(k, k, k, v, kind="input", arg=k, fmt=NUM if isinstance(v, int) or abs(v) >= 10 else "0.0#####")
+              for k, v in (args or {}).items() if isinstance(v, (int, float)) and not isinstance(v, bool)]
+    items = [(k, v) for k, v in res.items() if isinstance(v, (int, float)) and not isinstance(v, bool)]
+    rows = [_row(f"r_{k}", str(k), label(k), value=v, fmt=NUM if isinstance(v, int) or abs(v) >= 10 else "0.0#####", summary=n < 4,
+                 note_ko=_t("tool_value", False), note_en=_t("tool_value", True), alias=(k,)) for n, (k, v) in enumerate(items)]
+    return {"inputs": inputs, "rows": rows, "links": {}, "plain": True}
+
+
+def _spec(tool: str, args: dict, data: dict, label) -> dict:
+    sp = None
+    if tool == "nonresident_withholding":
+        sp = _spec_nonresident(args, data)
+    elif tool == "withholding_late_payment_penalty":
+        sp = _spec_wh_penalty(args, data)
+    return sp or _spec_generic(args, data, label)
+
+
+# ── 시트 그리기 ────────────────────────────────────────────────────────────
+def _sheet_name(wb, raw: str, taken: set[str]) -> str:
+    s = _BAD_SHEET.sub(" ", raw).strip().strip("'")[:31] or "Sheet"
+    base, n = s, 2
+    while s in wb.sheetnames or s in taken:
+        suf = f" ({n})"
+        s, n = base[:31 - len(suf)] + suf, n + 1
+    taken.add(s)
+    return s
+
+
+def _q(sheet: str) -> str:
+    return "'" + sheet.replace("'", "''") + "'"
+
+
+def rename_sheets(wb, ren: dict[str, str]) -> None:
+    """시트 이름을 바꾸고, 그 이름을 가리키는 수식·정의된 이름·시트 이름만 적힌 칸을 맞춘다."""
+    ren = {o: n for o, n in ren.items() if n and o in wb.sheetnames and n not in wb.sheetnames}
+    if not ren:
+        return
+    for o, n in ren.items():
+        wb[o].title = n
+    quoted = _re.compile("|".join(_re.escape(f"'{o}'") for o in sorted(ren, key=len, reverse=True)))
+    bare_names = [o for o in ren if " " not in o and "(" not in o]
+    bare = _re.compile(r"(?<![\w'가-힣·])(" + "|".join(_re.escape(o) for o in bare_names) + r")!") if bare_names else None
+
+    def fix(s: str) -> str:
+        s = quoted.sub(lambda m: _q(ren[m.group(0)[1:-1]]), s)
+        return bare.sub(lambda m: _q(ren[m.group(1)]) + "!", s) if bare else s
+
+    for dn in wb.defined_names.values():
+        if dn.attr_text:
+            dn.attr_text = fix(dn.attr_text)
+    for ws in wb.worksheets:
+        for row in ws.iter_rows():
+            for c in row:
+                v = c.value
+                if not isinstance(v, str):
+                    continue
+                nv = fix(v) if c.data_type == "f" else (ren[v] if v in ren else quoted.sub(lambda m: _q(ren[m.group(0)[1:-1]]), v))
+                if nv != v:
+                    c.value = nv
+
+
+def add_sheets(wb, cfg: dict, *, lang: str, title: str, company: str, period: str, calls: list, results: list[dict],
+               label=None) -> dict:
+    """통합 문서 시트를 워크북 맨 앞에 넣는다. 돌려주는 값: {"시트": 새 시트 이름(순서대로), "이름_바꿈": {옛: 새}, "warnings": [...]}."""
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter as L
+    en = lang == "en"
+    label = label or (lambda s: s)
+    face = "Calibri" if en else "맑은 고딕"
+    F = lambda **k: Font(name=face, **{"size": 10, **k})
+    f_title, f_sub = F(bold=True, size=14), F(italic=True, size=9, color=GREY)
+    f_band, f_head = F(bold=True), F(bold=True, color="FFFFFF")
+    fill = lambda c: PatternFill("solid", fgColor=c)
+    wrap = Alignment(wrap_text=True, vertical="top")
+    warnings: list[str] = []
+
+    # 이름이 겹치는 기존 시트는 '호출 …'로
+    ren = {}
+    if en:
+        ren = {"Summary (요약)": _t("old_summary", True), "Inputs (입력·가정)": _t("old_inputs", True), "요약": _t("old_summary", True)}
+    else:
+        ren = {"요약": _t("old_summary", False)}
+    ren = {o: n for o, n in ren.items() if o in wb.sheetnames}
+    rename_sheets(wb, ren)
+
+    # 블록: 시나리오에 없는 성공 call은 call마다 한 블록(한 열)
+    blocks = [dict(b) for b in cfg["blocks"]]
+    for i, cd in enumerate(results):
+        if i in cfg["used"] or cd.get("error") or not cd.get("result"):
+            continue
+        lab = str(cd.get("label") or f"call {i + 1}")
+        blocks.append({"sheet": lab, "title": lab, "subtitle": "", "heading": lab, "columns": [{"idx": i, "heading": lab}], "notes": {}, "summary_note": ""})
+    for b in blocks:
+        for c in b["columns"]:
+            cd = results[c["idx"]]
+            c["error"] = cd.get("error") or ("" if cd.get("result") else "결과 없음")
+            c["spec"] = None if c["error"] else _spec(cd.get("tool", ""), (calls[c["idx"]] or {}).get("args") or {}, cd.get("data") or {}, label)
+
+    taken: set[str] = set()
+    n_sum, n_inp = _sheet_name(wb, _t("summary", en), taken), _sheet_name(wb, _t("inputs", en), taken)
+    sheet_of: dict[str, str] = {}
+    for b in blocks:
+        if b["sheet"] not in sheet_of:
+            sheet_of[b["sheet"]] = _sheet_name(wb, b["sheet"], taken)
+    n_iss = _sheet_name(wb, _t("issues", en), taken) if cfg["issues"] else None
+
+    def page(ws, widths: list[float], freeze: str = "A4") -> None:
+        for j, w in enumerate(widths, 1):
+            ws.column_dimensions[L(j)].width = w
+        ws.freeze_panes = freeze
+        ws.sheet_view.showGridLines = False
+        ws.page_setup.orientation = "landscape"
+        ws.page_setup.paperSize = 9
+        ws.page_setup.fitToWidth, ws.page_setup.fitToHeight = 1, 0
+        ws.sheet_properties.pageSetUpPr.fitToPage = True
+
+    def band(ws, r: int, text: str, last_col: int) -> None:
+        ws.cell(r, 1, text).font = f_band
+        for j in range(1, last_col + 1):
+            ws.cell(r, j).fill = fill(BAND)
+
+    def heads(ws, r: int, texts: list[str], first_col: int = 1) -> None:
+        for j, h in enumerate(texts, first_col):
+            c = ws.cell(r, j, h)
+            c.font, c.fill, c.alignment = f_head, fill(NAVY), Alignment(wrap_text=True, vertical="center")
+
+    def lines(text: Any, width: float, small: bool = False) -> int:
+        """그 너비 칸에서 줄바꿈될 줄 수(대략) — 한글은 두 칸, 9pt 기울임(메모·출처)은 한 줄에 더 들어감."""
+        w = sum(2 if "가" <= ch <= "힣" else 1 for ch in str(text or ""))
+        return max(1, -(-w // max(8, int(width * (1.4 if small else 1.05)))))
+
+    # ── 입력·출처 ──
+    ws_i = wb.create_sheet(n_inp)
+    ws_i.cell(1, 1, _t("inputs_title", en)).font = f_title
+    ws_i.cell(2, 1, _t("inputs_sub", en)).font = f_sub
+    heads(ws_i, 4, [_t("item", en), _t("value", en), _t("source", en)])
+    ri = 5
+    in_ref: dict[tuple[int, str], str] = {}      # (call 순번, 입력 id) → 'Inputs'!$B$n
+
+    def put_input(inp: dict, text: str, src: str, assumption: bool) -> str:
+        nonlocal ri
+        ws_i.cell(ri, 1, text).font = F()
+        ws_i.cell(ri, 1).alignment = wrap
+        c = ws_i.cell(ri, 2, inp["value"])
+        c.font, c.number_format = F(color=BLUE), inp["fmt"]
+        c.alignment = Alignment(horizontal="right" if isinstance(inp["value"], str) else None, vertical="top")
+        if assumption:
+            c.fill = fill(YELLOW)
+        s = ws_i.cell(ri, 3, src)
+        s.font, s.alignment = f_sub, wrap
+        ws_i.row_dimensions[ri].height = 14 * max(lines(text, 52), lines(src, 80, True))
+        ri += 1
+        return f"{_q(n_inp)}!$B${ri - 1}"
+
+    cols_all = [(b, c) for b in blocks for c in b["columns"] if c["spec"]]
+    pending: list[tuple[int, dict, str, int, Any]] = []     # (입력 칸 행, 출처 항목, 차감 칸 주소, call 순번, 입력 값) — 시나리오 시트를 그린 뒤 수식으로
+    rate_rows: dict[tuple, str] = {}
+    if any(i["kind"] == "rate" for _, c in cols_all for i in c["spec"]["inputs"]):
+        band(ws_i, ri, _t("rates", en), 3)
+        ri += 1
+        for _, c in cols_all:
+            for inp in c["spec"]["inputs"]:
+                if inp["kind"] != "rate":
+                    continue
+                k = (inp["ko"], inp["value"])
+                if k not in rate_rows:
+                    rate_rows[k] = put_input(inp, inp["en"] if en else inp["ko"], inp["src_en"] if en else inp["src_ko"], False)
+                in_ref[(c["idx"], inp["id"])] = rate_rows[k]
+        ri += 1
+    for b in blocks:
+        cols = [c for c in b["columns"] if c["spec"] and any(i["kind"] != "rate" for i in c["spec"]["inputs"])]
+        if not cols:
+            continue
+        band(ws_i, ri, b["heading"] if b["heading"] == sheet_of[b["sheet"]] else f"{sheet_of[b['sheet']]} — {b['heading']}", 3)
+        ri += 1
+        ids: list[str] = []
+        for c in cols:
+            ids += [i["id"] for i in c["spec"]["inputs"] if i["kind"] != "rate" and i["id"] not in ids]
+        for id_ in ids:
+            have = [(c, next(i for i in c["spec"]["inputs"] if i["id"] == id_)) for c in cols if any(i["id"] == id_ for i in c["spec"]["inputs"])]
+            many = (len({str(i["value"]) for _, i in have}) > 1 or len({(cfg["sources"].get((c["idx"], i["arg"])) or {}).get("source") for c, i in have}) > 1
+                    or any("from" in (cfg["sources"].get((c["idx"], i["arg"])) or {}) for c, i in have))
+            done: dict[str, str] = {}
+            for c, inp in have:
+                s = cfg["sources"].get((c["idx"], inp["arg"])) or {}
+                if not many and done:
+                    in_ref[(c["idx"], id_)] = next(iter(done.values()))
+                    continue
+                text = str(s.get("label") or (inp["en"] if en else inp["ko"])) + (f" — {c['heading']}" if many and len(have) > 1 else "")
+                less_ref = ""
+                if s.get("less") is not None:
+                    less_ref = put_input(_inp("less", "", "", s["less"]), str(s.get("less_label") or _t("less", en)), s.get("less_source", ""), False)
+                done[c["heading"]] = in_ref[(c["idx"], id_)] = put_input(inp, text, s.get("source") or (inp["src_en"] if en else inp["src_ko"]), bool(s.get("assumption")))
+                if "from" in s:
+                    pending.append((ri - 1, s, less_ref, c["idx"], inp["value"]))
+        ri += 1
+    for (idx, arg), s in cfg["sources"].items():
+        cd = next((c for _, c in cols_all if c["idx"] == idx), None)
+        if cd is None or not any(i["arg"] == arg for i in cd["spec"]["inputs"]):
+            warnings.append(f"sources: call {idx + 1}의 입력 '{arg}'는 '{n_inp}' 시트에 실린 입력이 아니라 출처를 싣지 못함")
+    page(ws_i, [52, 20, 80], "A5")
+
+    # ── 시나리오 시트 ──
+    cell_of: dict[tuple[int, str], str] = {}     # (call 순번, 줄 id) → 'Sheet'!$B$n
+    summary_rows: list[tuple[dict, list[tuple[str, dict]]]] = []
+    rows_at: dict[str, int] = {}
+    sheet_ncol: dict[str, int] = {}              # 시트마다 가장 넓은 블록의 열 수 — '근거 · 메모' 열을 한 자리에
+    for b in blocks:
+        sheet_ncol[sheet_of[b["sheet"]]] = max(sheet_ncol.get(sheet_of[b["sheet"]], 1), len(b["columns"]))
+    for b in blocks:
+        name = sheet_of[b["sheet"]]
+        new = name not in wb.sheetnames
+        ws = wb.create_sheet(name) if new else wb[name]
+        ncol = len(b["columns"])
+        if new:
+            ws.cell(1, 1, b["title"] or name).font = f_title
+            ws.cell(2, 1, b["subtitle"]).font = f_sub
+            rows_at[name] = 4
+        r = rows_at[name]
+        last = sheet_ncol[name] + 2
+        band(ws, r, b["heading"], last)
+        r += 1
+        heads(ws, r, [c["heading"] for c in b["columns"]] + [""] * (sheet_ncol[name] - ncol) + [_t("note_col", en)], 2)
+        ws.row_dimensions[r].height = 15 * max(lines(c["heading"], 16) for c in b["columns"])     # 굵은 글씨라 한 줄에 덜 들어감
+        r += 1
+        specs = [c["spec"] for c in b["columns"]]
+        if not any(specs):
+            for j, c in enumerate(b["columns"], 2):
+                ws.cell(r, j, c["error"]).font = F(color="C00000")
+            rows_at[name] = r + 2
+            continue
+        # 줄 순서: 입력(링크) 먼저, 이어서 계산 줄 — 열마다 있는 줄을 차례로 합친다
+        def merged(kind: str) -> list[dict]:
+            out: list[dict] = []
+            for sp in specs:
+                prev = -1
+                for x in (sp or {}).get(kind, []):
+                    at = next((k for k, y in enumerate(out) if y["id"] == x["id"]), None)
+                    if at is None:
+                        out.insert(prev + 1, x)
+                        at = prev + 1
+                    prev = at
+            return out
+        in_rows, calc_rows = merged("inputs"), merged("rows")
+        row_no = {x["id"]: r + k for k, x in enumerate(in_rows + calc_rows)}
+        notes = dict(b["notes"])
+        for x in in_rows + calc_rows:
+            rr = row_no[x["id"]]
+            is_input = x in in_rows
+            ws.cell(rr, 1, x["en"] if en else x["ko"]).font = F()
+            ws.cell(rr, 1).alignment = wrap
+            for j, c in enumerate(b["columns"], 2):
+                sp = c["spec"]
+                mine = next((y for y in (sp or {}).get("inputs" if is_input else "rows", []) if y["id"] == x["id"]), None)
+                if mine is None:
+                    continue
+                cell = ws.cell(rr, j)
+                cell.number_format = mine["fmt"]
+                cell.alignment = Alignment(vertical="top")
+                if is_input:
+                    cell.value, cell.font = "=" + in_ref[(c["idx"], x["id"])], F(color=GREEN)
+                elif mine["f"] is None:
+                    v = mine["value"]
+                    cell.value = v[1 if en else 0] if isinstance(v, tuple) else v
+                    cell.font = F(color=GREY) if sp.get("plain") or isinstance(cell.value, (int, float)) else F()
+                    if isinstance(cell.value, str):
+                        cell.alignment = wrap
+                else:
+                    cell.value = _re.sub(r"\{([^{}]+)\}", lambda m: f"{L(j)}{row_no[m.group(1)]}", mine["f"])
+                    cell.font = F()
+                    if mine["key"]:
+                        cell.fill = fill(YELLOW)
+                cell_of[(c["idx"], x["id"])] = f"{_q(name)}!${L(j)}${rr}"
+            note = x["note_en" if en else "note_ko"] if not is_input else ""
+            extra = next((notes.pop(k) for k in (x["id"], x["ko"], x["en"], *x.get("alias", ())) if k in notes), "")
+            text = " — ".join(t for t in (extra, note) if t)
+            nc = ws.cell(rr, last, text)
+            nc.font, nc.alignment = f_sub, wrap
+            ws.row_dimensions[rr].height = 14 * max(lines(ws.cell(rr, 1).value, 58), lines(text, 70, True),
+                                                     *(lines(ws.cell(rr, j).value, 20) for j in range(2, last) if isinstance(ws.cell(rr, j).value, str) and not str(ws.cell(rr, j).value).startswith("=")))
+        r += len(in_rows) + len(calc_rows)
+        for k in notes:
+            warnings.append(f"scenarios notes: '{k}'에 맞는 줄이 '{name}' 시트 '{b['heading']}' 블록에 없음 — 줄 이름(시트 A열)이나 결과 키로 적음")
+        # 도구 값 대조 — 블록마다 한 줄
+        checks_any = False
+        for j, c in enumerate(b["columns"], 2):
+            sp = c["spec"]
+            conds = []
+            for y in (sp or {}).get("rows", []):
+                v = y.get("check")
+                if y["f"] is None or not isinstance(v, (int, float)) or isinstance(v, bool):
+                    continue
+                d = 0 if isinstance(v, int) else 6
+                conds.append(f"ROUND({L(j)}{row_no[y['id']]},{d})={round(v, d)!r}")
+            if conds:
+                checks_any = True
+                cc = ws.cell(r, j, f'=IF(AND({",".join(conds)}),"{_t("ok", en)}","{_t("ng", en)}")')
+                cc.font, cc.alignment = F(size=9, color=GREY), Alignment(horizontal="right")
+        if checks_any:
+            ws.cell(r, 1, _t("check", en)).font = F(size=9, color=GREY)
+            r += 1
+        elif all((c["spec"] or {}).get("plain") for c in b["columns"]):
+            ws.cell(r, 1, _t("no_formula", en)).font = f_sub
+            r += 1
+        rows_at[name] = r + 1
+        summary_rows.append((b, [(c["heading"], c) for c in b["columns"]]))
+        b["_rows"] = [x for x in in_rows if x.get("summary")] + ([x for x in calc_rows if x["summary"]] or calc_rows[-1:])
+    for name in set(sheet_of.values()):
+        page(wb[name], [58] + [22] * sheet_ncol[name] + [70])
+
+    # ── 다른 call의 결과 줄에서 온 입력(sources의 from_call·from_row·less) — 값이 맞을 때만 수식으로 연결 ──
+    for row_i, s, less_ref, idx, value in pending:
+        fc = next((c for _, c in cols_all if c["idx"] == s["from"]), None)
+        y = next((y for y in (fc["spec"]["rows"] if fc else []) if s["from_row"] in (y["id"], y["ko"], y["en"], *y.get("alias", ()))), None)
+        ref = cell_of.get((s["from"], y["id"])) if y else None
+        tool_v = y.get("check") if y else None
+        if tool_v is None and y is not None and y["f"] is None:
+            tool_v = y["value"]
+        if not ref or not isinstance(tool_v, (int, float)) or isinstance(tool_v, bool):
+            warnings.append(f"sources: call {idx + 1}의 from_row '{s['from_row']}'를 call {s['from'] + 1}의 줄에서 찾지 못해 연결하지 않음(값은 입력 그대로)")
+            continue
+        if tool_v - (s.get("less") or 0) != value:
+            warnings.append(f"sources: call {idx + 1} 입력 {value:,}이(가) call {s['from'] + 1}의 '{s['from_row']}' {tool_v:,}"
+                            + (f" − {s['less']:,}" if s.get("less") is not None else "") + "과 달라 연결하지 않음(값은 입력 그대로)")
+            continue
+        cell = ws_i.cell(row_i, 2)
+        cell.value = "=" + ref + (f"-{less_ref.split('!')[1]}" if less_ref else "")
+        cell.font = F(color=GREEN)
+
+    # ── 서식 칸이 가리키는 이름(입력·가정)을 새 칸에 연결 — 입력을 바꾸면 서식 시트도 따라 바뀜 ──
+    for _, c in cols_all:
+        for nm, id_ in (c["spec"].get("links") or {}).items():
+            target = cell_of.get((c["idx"], id_)) or in_ref.get((c["idx"], id_))
+            dn = wb.defined_names.get(_re.sub(r"_+", "_", _re.sub(r"[^가-힣A-Za-z0-9_.]+", "_", f"호출{c['idx'] + 1}_{nm}")).rstrip("_"))
+            m = _re.fullmatch(r"'?(.+?)'?!\$([A-Z]+)\$(\d+)", (dn.attr_text or "") if dn is not None else "")
+            if not target or not m or m.group(1).replace("''", "'") not in wb.sheetnames:
+                continue
+            cell = wb[m.group(1).replace("''", "'")][f"{m.group(2)}{m.group(3)}"]
+            if isinstance(cell.value, (int, float)) and not isinstance(cell.value, bool):
+                cell.value = "=" + target
+                cell.font = Font(color=GREEN)
+
+    # ── 요약 ──
+    ws_s = wb.create_sheet(n_sum)
+    ws_s.cell(1, 1, _t("summary_title", en, t=title)).font = f_title
+    ws_s.cell(2, 1, " | ".join(x for x in (company, period, _t("summary_sub", en, i=n_inp)) if x)).font = f_sub
+    r = 4
+    max_cols = max([len(b["columns"]) for b in blocks] or [1])
+    for b, cols in summary_rows:
+        name = sheet_of[b["sheet"]]
+        band(ws_s, r, b["heading"] if b["heading"] == name else f"{name} — {b['heading']}", max_cols + 2)
+        r += 1
+        heads(ws_s, r, [h for h, _ in cols], 2)
+        ws_s.row_dimensions[r].height = 15 * max(lines(h, 16) for h, _ in cols)
+        r += 1
+        for x in b["_rows"]:
+            ws_s.cell(r, 1, x["en"] if en else x["ko"]).font = F(bold=x["key"] and x["id"] in ("total", "penalty"))
+            for j, (_, c) in enumerate(cols, 2):
+                ref = cell_of.get((c["idx"], x["id"]))
+                if ref:
+                    cc = ws_s.cell(r, j, "=" + ref)
+                    cc.font, cc.number_format = F(color=GREEN), x["fmt"]
+            r += 1
+        if b["summary_note"]:
+            ws_s.cell(r, 1, b["summary_note"]).font = f_sub
+            r += 1
+        r += 1
+    if n_iss:
+        band(ws_s, r, _t("issues_line", en, n=len(cfg["issues"]), s=n_iss), max_cols + 2)
+        r += 1
+        counts: dict[str, int] = {}
+        for x in cfg["issues"]:
+            if str(x["risk"]).strip():
+                counts[str(x["risk"]).strip()] = counts.get(str(x["risk"]).strip(), 0) + 1
+        if counts:
+            ws_s.cell(r, 1, " · ".join(f"{k} {v}" for k, v in counts.items())).font = F()
+            r += 1
+        r += 1
+    for key in ("key", "support", "disclaimer"):
+        ws_s.cell(r, 1, _t(key, en)).font = f_sub
+        r += 1
+    page(ws_s, [64] + [22] * max_cols + [50])
+
+    # ── 쟁점 목록 ──
+    if n_iss:
+        ws_x = wb.create_sheet(n_iss)
+        ws_x.cell(1, 1, _t("issues_title", en)).font = f_title
+        ws_x.cell(2, 1, _t("issues_sub", en)).font = f_sub
+        heads(ws_x, 4, list(_t("issues_hdr", en)))
+        for k, x in enumerate(cfg["issues"], 5):
+            for j, key in enumerate(("no", "issue", "finding", "risk", "action"), 1):
+                v = x[key]
+                c = ws_x.cell(k, j, v if isinstance(v, (int, float)) and not isinstance(v, bool) else str(v))
+                c.font, c.alignment = F(), wrap
+                if c.data_type == "f":           # '='로 시작하는 글이 수식으로 저장되지 않게
+                    c.data_type, c.quotePrefix = "s", True
+            rk = str(x["risk"]).strip().lower()
+            if rk in _RISK_FILL:
+                ws_x.cell(k, 4).fill = fill(_RISK_FILL[rk])
+            ws_x.row_dimensions[k].height = 14 * max(lines(x["issue"], 34), lines(x["finding"], 66), lines(x["action"], 60))
+        page(ws_x, [5, 34, 66, 12, 60], "A5")
+
+    # ── 순서: 요약 → 입력·출처 → 시나리오 시트 → 쟁점 목록 → 기존 시트 ──
+    front = [n_sum, n_inp] + list(dict.fromkeys(sheet_of[b["sheet"]] for b in blocks)) + ([n_iss] if n_iss else [])
+    wb._sheets = [wb[n] for n in front] + [s for s in wb._sheets if s.title not in front]
+    wb.active = 0
+    return {"시트": front, "이름_바꿈": ren, "warnings": warnings}

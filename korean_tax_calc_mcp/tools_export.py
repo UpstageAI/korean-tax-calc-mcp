@@ -626,7 +626,8 @@ def _summary_sheet(wb, title, company, period, calls, 결과들, review_notes, b
 
 
 def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str | None = None, layout: str = "forms",
-                        company: str = "", period: str = "", biz_no: str = "", review_notes=None, lang: str = "ko") -> dict:
+                        company: str = "", period: str = "", biz_no: str = "", review_notes=None, lang: str = "ko",
+                        scenarios=None, sources=None, issues=None) -> dict:
     """server.export_workbook의 본문(서명·설명은 그쪽 참조). mcp는 순환 import를 피해 호출 시점에 가져온다."""
     from .server import mcp
     # ── calls가 문자열이면 JSON으로 풀기 ──
@@ -648,6 +649,12 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
         return {"error": "입력 확인 필요 — output_dir 없음", "안내": "output_dir을 지정하세요"}
     if not os.path.isdir(output_dir):
         return {"error": "입력 확인 필요 — output_dir이 폴더가 아님", "안내": f"'{output_dir}'은(는) 폴더가 아님"}
+
+    # ── 통합 문서 선택 입력(scenarios·sources·issues) — 셋 다 없으면 _blend는 None이고 기존 출력 그대로 ──
+    from .workbook_blend import normalize as _blend_normalize
+    _blend, _blend_err = _blend_normalize(scenarios, sources, issues, calls if all(isinstance(c, dict) for c in calls) else [])
+    if _blend_err:
+        return _blend_err
 
     오류_call: list[str] = []
     결과들: list[dict] = []  # 각 call의 (label, tool, result_or_error, basis)
@@ -683,6 +690,8 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
             r = asyncio.run(mcp.call_tool(tool, args))
             raw = r.content[0].text if hasattr(r, "content") else r[0][0].text
             data = _json.loads(raw)
+            if isinstance(data, dict):
+                data.pop("엑셀", None)   # 공통 꼬리(export_workbook 안내)는 엑셀에 싣지 않음
         except Exception as e:
             오류_call.append(label)
             결과들.append({"label": label, "tool": tool,
@@ -2269,6 +2278,14 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
         if _T.missing:
             _경고.append(f"{UNTRANSLATED_TITLE}: {len(_T.missing)} label(s) have no glossary entry and are kept in Korean — "
                         + "; ".join(_T.missing))
+    # ── 통합 문서: 요약·입력·출처·시나리오 시트·쟁점 목록을 맨 앞에(선택 입력이 있을 때만) ──
+    _통합 = None
+    if _blend is not None:
+        from .workbook_blend import add_sheets as _blend_add
+        _통합 = _blend_add(wb, _blend, lang=lang, title=title, company=company, period=period, calls=calls, results=결과들,
+                         label=_T.label if _T else None)
+        시트이름들 = _통합["시트"] + [_통합["이름_바꿈"].get(n, n) for n in 시트이름들]
+        _경고 += _통합["warnings"]
     # ── 저장 ──
     base = filename if filename else title
     fpath = _unique_path(output_dir, base)
@@ -2287,4 +2304,11 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
         out["결과"]["번역_라벨_수"] = len(_T.translated)
         out["결과"]["번역_없음"] = list(_T.missing)
         out["warnings"] = _경고
+    if _통합 is not None:   # 선택 입력이 없으면 결과 키도 그대로
+        out["결과"]["통합_시트"] = _통합["시트"]
+        if _T is not None:
+            out["결과"]["번역_라벨_수"] = len(_T.translated)
+            out["결과"]["번역_없음"] = list(_T.missing)
+        if _경고:
+            out["warnings"] = _경고
     return out

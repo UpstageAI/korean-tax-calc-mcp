@@ -44,7 +44,8 @@ If you build an agent with Anthropic's BM25 tool search (`tool_search_tool_bm25`
 | Inheritance and gift tax, valuation | `inheritance_tax`, `gift_tax`, `inheritance_gift_valuation`, `unlisted_stock_valuation` |
 | Penalties, assessment period, refund claim deadline | `underreporting_penalty`, `late_payment_penalty`, `withholding_late_payment_penalty`, `invoice_penalty`, `assessment_limitation`, `refund_claim_deadline` |
 | Tax-audit checks (return precheck, tunnelling gift) | `return_precheck`, `tunnelling_gift`, `tunnelling_gift_nts` |
-| Put results into Excel | `export_workbook` |
+| Excel / xlsx / spreadsheet / workings (엑셀, 계산 근거): a finished .xlsx file with live formulas, saved to `output_dir` — use this instead of writing a spreadsheet script | `export_workbook` |
+| Several calculations in one workbook: Summary, Inputs with sources, side-by-side scenarios, Issues Log | `export_workbook` with `scenarios`, `sources`, `issues` |
 | Excel workings in English for foreign readers (labels as "English (Korean)") | `export_workbook` with `lang="en"` |
 
 The table lists the main tools; `find_tool` searches all 139.
