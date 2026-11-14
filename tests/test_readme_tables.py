@@ -38,3 +38,8 @@ def test_pyproject_description_has_no_stale_count():
     desc = re.search(r'^description = "(.*)"$', txt, re.M).group(1)
     for n in re.findall(r"(\d+) tools", desc):
         assert int(n) == len(NAMES)
+
+
+def test_server_instructions_answer_in_user_language():
+    ins = S.mcp.instructions
+    assert "language the user asked" in ins and "질문한 언어로" in ins
