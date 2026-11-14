@@ -173,6 +173,7 @@ Ask in English, get Korean statute-backed answers. Every tool description starts
 | Nonresident selling Korean real estate or shares — withholding; inheritance/gift tax for nonresidents | `nonresident_capital_gains_withholding` · `nonresident_inheritance_gift` |
 | Foreign company with a Korean branch — branch profits tax; Korean PE test | `branch_profits_tax` · `permanent_establishment_guide` (korean-tax-mcp) |
 | Resident major shareholder emigrating — departure (exit) tax | `emigration_exit_tax` |
+| Workings in English for a head-office tax team or a foreign accountant — labels as "English (Korean)" | `export_workbook` with `lang="en"` |
 
 The example questions in "Try asking" above (royalty to a US parent, secondee recharge, Singapore dividend, flat tax) all use these tools.
 
@@ -197,6 +198,8 @@ The example questions in "Try asking" above (royalty to a US parent, secondee re
 | Withholding | withholding tax return (Income Tax Act Enforcement Rule Form 21) page 1, Form 23(1) interest and dividend statement, Form 23(5) non-resident statement |
 | International tax | Adjustment of International Taxes Act Enforcement Rule Forms 16(a) (international transactions), 20 (transfer-pricing method report), 30(a) (CFC retained earnings), 31(a)(b)(c) (CFC inclusion test), 32(a)(b) (scope test), 47 (overseas subsidiary statement), 48 (financial status) — fiscal years from 2021 |
 | Income, capital gains, gift | Form 40(1) schedules for interest, dividend, wage, pension and other income; Form 84 capital gains tax calculation and Schedule 1; gift tax Form 10 |
+
+With `lang="en"` the sheet names, summary labels, table headers and result keys are written as "English (Korean)" — for example "Tax base (과세표준)" — using [the glossary](docs/glossary_ko_en.md). A Korean label with no glossary entry is left as it is and listed under "Untranslated labels (번역 없음)" on the Summary sheet and in the result's `warnings`; statutory form sheets stay in Korean with a one-line English description each; tool notes (basis, cautions, limitations) are not machine-translated and stay in Korean under "Notes (Korean original)". Numbers and formulas are the same as in the Korean workbook.
 
 Form templates were built by checking cell layout against the official form PDFs on law.go.kr. Some pages and cells are not carried over (personal details, sub-schedules); the List sheet says which. The workbook is a reference for review, not a filed return.
 

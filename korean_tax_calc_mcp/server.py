@@ -10255,7 +10255,8 @@ def export_workbook(
     company: Annotated[str, Field(description="법인명 또는 상호·성명(개인 세목) — 서식 머리에 표시, 기본 빈 문자열")] = "",
     period: Annotated[str, Field(description="사업연도 표기(예 '2025.01.01 ~ 2025.12.31', 기본 빈 문자열)")] = "",
     biz_no: Annotated[str, Field(description="사업자등록번호(서식 머리에 표시, 기본 빈 문자열)")] = "",
-    review_notes: Annotated[list | str | None, Field(description="검토·확인 필요 사항 [{항목, 내용}] 또는 문장 목록(선택) — 자료 불일치, 가정, 확인할 서류, 판단이 갈리는 쟁점을 적으면 맨 앞 '요약' 시트에 실림")] = None,
+    review_notes: Annotated[list | str | None, Field(description="검토·확인 필요 사항 [{항목, 내용}] 또는 문장 목록(선택) — 자료 불일치, 가정, 확인할 서류, 판단이 갈리는 쟁점을 적으면 맨 앞 '요약' 시트에 실림. lang='en'이면 영문으로 적는다")] = None,
+    lang: Annotated[Literal["ko", "en"], Field(description="표기 언어 — 'ko'(기본, 기존과 같음) 또는 'en'(English labels with the Korean original in parentheses, for foreign readers)")] = "ko",
 ) -> dict:
     """Excel export of calculation tool results as an .xlsx workbook (계산 결과 엑셀).
     계산 도구 결과를 엑셀(.xlsx)로 정리한다. 각 call은 서버가 직접 다시 실행하며, 결과·계산·세무조정·판단·산식을 탭으로 펼친다.
@@ -10270,6 +10271,12 @@ def export_workbook(
   period — 사업연도 표기(예 '2025.01.01 ~ 2025.12.31', 기본 '').
   biz_no — 사업자등록번호(서식 머리에 표시, 기본 '').
   review_notes — 검토·확인 필요 사항 [{항목, 내용}](선택). 맨 앞 '요약' 시트에 실림.
+  lang — 'ko'(기본: 기존 출력 그대로) 또는 'en'(English view for foreign readers such as head-office tax teams).
+    lang='en': 시트 이름·요약 시트 라벨·표 머리글·결과 키를 'English (국문)'으로 적는다(예: 'Tax base (과세표준)'). 번역표는 용어집
+    docs/glossary_ko_en.md이고, 용어집에 없는 국문 라벨은 그대로 두어 요약 시트의 'Untranslated labels (번역 없음)' 목록과 결과의
+    warnings에 모은다(번역을 지어내지 않음). 법정서식 틀 시트는 한국어 신고 서식이라 그대로 두고 요약 시트에 시트마다 한 줄 영문 안내를 붙인다.
+    도구가 돌려준 문장(판단 근거·주의·한계)은 번역하지 않고 'Notes (Korean original)' 칸에 한국어로 둔다. 숫자·수식·파일명 기본값은 같다.
+    With lang='en', write review_notes in English.
   '요약' 시트(layout='forms'): 세액 요약(소득금액 집계·산출세액 call이 있을 때), 세무조정 항목별 근거와 계산 시트, call별 주요 값, 검토·확인 필요 사항.
   시트 규칙: '계산 N'은 N번째 call(오류 call 포함, call마다 한 장). 같은 도구를 여러 번 부르면 신고서 한 부에 한 장인
     서식(별지3·15·34, 부가 별지19 등)은 마지막 call이 본 시트, 앞선 call은 '<시트> (호출 N)' 시트. 자산·거래·소득자마다 한 장인
@@ -10281,8 +10288,9 @@ def export_workbook(
   결과.시트 — 시트 이름 목록.
   결과.call_수 — calls 길이.
   결과.오류_call — 오류 발생한 call의 label 목록.
+  lang='en'일 때만: 결과.lang, 결과.번역_라벨_수, 결과.번역_없음(용어집에 없는 국문 라벨 목록), warnings(같은 내용을 한 줄로).
   근거 — '계산 도구 결과 정리(세무 자문 아님)'."""
-    return _export_workbook_impl(title, calls, output_dir, filename, layout, company, period, biz_no, review_notes)
+    return _export_workbook_impl(title, calls, output_dir, filename, layout, company, period, biz_no, review_notes, lang)
 
 
 # ── 국세 우선권에 따른 매각대금 배분(국세기본법 제35조·제36조) ──────────────────────
