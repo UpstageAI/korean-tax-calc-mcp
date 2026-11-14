@@ -4,13 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "korean-tax-calc-mcp"
-version = "0.51.1"
+version = "0.52.0"
 description = "Korea (South Korea) tax calculator MCP server — 133 tools: tax calculation (incl. end-to-end adjustments from raw facts) + tax audit judgment (related party, tunnelling gift, return precheck, PDF review). 한국 세금 계산 + 세무조사 판정 MCP"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = ["mcp>=2.2", "pypdf>=5.0", "uvicorn>=0.30", "openpyxl>=3.1"]
-keywords = ["mcp", "mcp-server", "korea", "south-korea", "tax", "tax-calculator", "세금", "세법", "가산세"]
+keywords = ["mcp", "mcp-server", "korea", "south-korea", "tax", "tax-calculator", "세금", "세법", "가산세", "expat", "withholding-tax", "nonresident", "transfer-pricing", "korean-subsidiary", "foreign-tax-credit"]
 
 [project.optional-dependencies]
 stock = ["pykrx>=1.0.45"]

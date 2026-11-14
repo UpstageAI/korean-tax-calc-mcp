@@ -101,6 +101,32 @@ Each result carries its statutory basis, and its notes say what could not be con
 - "Retirement income tax on 100M KRW after 15 years of service"
 - "Here are five entertainment-expense ledger lines — give me the FY2025 adjustments"
 
+## For foreign companies, expats and Korean subsidiaries
+
+Ask in English, get Korean statute-backed answers. Every tool description starts with an English line followed by the Korean term (for example `Entertainment expense limit and non-deductible excess for corporate tax (기업업무추진비 한도).`), and `find_tool` accepts English queries such as "late payment penalty" or "transfer pricing arm's length range". The English terms follow the official English translations of Korean tax laws where they exist ([glossary](docs/glossary_ko_en.md)); results cite the Korean statute articles.
+
+| Question | Tool |
+|---|---|
+| Is this person a Korean tax resident? | `residency_check` · `residency_report` in the companion [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp) |
+| Treaty withholding rate for a country | `treaty_withholding_rates` · `tax_treaty` in korean-tax-mcp |
+| Withholding on interest, dividends, royalties or services paid to a nonresident or foreign company | `nonresident_withholding` |
+| Reverse-charge VAT on services bought from a foreign business | `vat_reverse_charge` |
+| Interest on loans from a foreign parent beyond the debt-equity limit | `thin_capitalization` |
+| Arm's length range, comparable screening, international transaction statement | `arm_length_range` · `tp_comparable_screen` · `international_transaction_statement` |
+| Foreign tax credit (company / individual) | `foreign_tax_credit` · `individual_foreign_tax_credit` |
+| Dividends from a foreign subsidiary — exclusion vs. credit, including the 100% exclusion for dividends received in 2026 (RSTA Art. 23-2) | `foreign_subsidiary_dividend` |
+| Seconded employees — recharge with arm's length markup, deduction, overseas work exemption | `expat_cost_recharge` |
+| CFC rules for low-tax subsidiaries | `cfc_deemed_dividend` · `cfc_actual_dividend` · `cfc_share_disposal` |
+| Overseas subsidiary reporting, outbound investment FX reporting, overseas financial accounts | `overseas_subsidiary_statement` · `foreign_exchange_reporting` · `overseas_account_reporting` |
+
+Example questions:
+
+- "Our Korean subsidiary pays a USD 100,000 royalty to its US parent. How much Korean withholding tax applies, and what does the treaty change?"
+- "We seconded an engineer to our Vietnam subsidiary for 2026. How much should we recharge with a 5% markup, and how much of the salary is deductible in Korea?"
+- "Our Korean subsidiary received a dividend from its 30%-owned Singapore company in 2026. Exclusion or foreign tax credit?"
+
+Not yet supported: the 19% flat tax option for foreign workers (RSTA Art. 18-2). Wage tax tools compute the regular progressive rates only.
+
 ## Install
 
 ```bash
