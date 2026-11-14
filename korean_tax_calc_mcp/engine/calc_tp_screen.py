@@ -295,12 +295,14 @@ def _run(companies, tested, years, tested_years, pli, averaging, sc, decisions, 
     for cid in final:
         v = _avg(companies[cid]["years"], years, pli, averaging)
         if v is None:
-            rows[cid]["S2"] = ("탈락", f"{pli} 계산에 필요한 항목 없음"); continue
+            rows[cid]["S2"] = ("탈락", f"{pli} 계산에 필요한 항목 없음")
+            continue
         if wca:
             wc = _wc_ratio(companies[cid]["years"], years)
             if wc is None or tested.get("_wc") is None:
-                rows[cid]["S8"] = ("탈락", "운전자본 조정을 하는데 재고·매출채권·매입채무 자료 없음"); continue
-            v = v - Fraction(str(wca["rate"])) * (wc - tested["_wc"])
+                rows[cid]["S8"] = ("탈락", "운전자본 조정을 하는데 재고·매출채권·매입채무 자료 없음")
+                continue
+            v = v - Fraction(str(wca["rate"])) * (wc - tested["_wc"])     # 운전자본 조정(단순형)
         vals[cid] = v
     final = [c for c in final if c in vals]
     stats = None
@@ -358,7 +360,7 @@ def comparable_screen(rows=None, file_path=None, column_map=None, tested_party=N
             문제.append(f"manual_decisions[{i}] — {{company_id, decision: accept|reject, reason, evidence, reviewer}}"); continue
         if not str(d.get("reason", "")).strip():
             문제.append(f"manual_decisions[{i}]({d['company_id']}) — reason 없음: 사람의 판단은 사유가 있어야 반영(시행규칙 제7조①7호)"); continue
-        decisions[d["company_id"]] = d
+        decisions[str(d["company_id"]).strip()] = d
     if 문제:
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제}
     try:

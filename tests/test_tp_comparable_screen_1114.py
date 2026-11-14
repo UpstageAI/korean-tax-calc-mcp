@@ -177,3 +177,15 @@ def test_filing_no_contradiction_1114():
     from korean_tax_calc_mcp.engine import calc_cit
     r = calc_cit.corporate_filing_obligations(dict(year=2022, revenue=2000 * 10**8, related_goods=600 * 10**8, party_max_goods=600 * 10**8))
     assert not any("5억·용역 1억·무형자산 1억 모두 이하" in p["결론"] for p in r["판단"])
+
+
+def test_wca_changes_values_and_int_ids_1114():
+    base = {f["company_id"]: f["가중평균%"] for f in run()["최종_비교대상"]}
+    adj = {f["company_id"]: f["가중평균%"] for f in run(wca={"rate": 0.05, "rate_basis": "예시"})["최종_비교대상"]}
+    assert base != adj and adj["C01"] != base["C01"]          # 운전자본 조정이 실제로 적용됨
+    import csv
+    rows = list(csv.DictReader(open(CSV, encoding="utf-8")))
+    for x in rows:
+        x["company_id"] = x["company_id"].replace("C", "")      # 숫자 id
+    r = run(file_path=None, rows=[dict(x, manual_decision="", manual_reason="") for x in rows], manual_decisions=[{"company_id": 20, "decision": "reject", "reason": "소매"}])
+    assert {m["company_id"]: m["최종"] for m in r["탈락_매트릭스"]}["20"] == "탈락(S12)"
