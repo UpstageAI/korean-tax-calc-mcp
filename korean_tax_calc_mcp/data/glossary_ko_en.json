@@ -1100,6 +1100,176 @@
    "ko": "단일세율",
    "en": "flat tax rate",
    "note": "공식 영문 없음 — 조세특례제한법 제18조의2 영문은 'multiplying the relevant earned income by 19/100'이고 용어로 쓴 표현이 없음(법제처 영문법령 확인, 2026-11-14)"
+  },
+  {
+   "ko": "조세조약 제한세율 {n}%",
+   "en": "limited tax rate under the tax treaty {n}%",
+   "note": "근거 구절 — 법인세법 영문 'limited tax rate pursuant to a tax treaty'"
+  },
+  {
+   "ko": "제한세율 {n}%",
+   "en": "limited tax rate {n}%",
+   "note": "근거 구절 — 법인세법 영문 'limited tax rate'"
+  },
+  {
+   "ko": "지방소득세 {n}% 별도",
+   "en": "plus local income tax of {n}%",
+   "note": "근거 구절 — 법인세법 영문 'local income tax'"
+  },
+  {
+   "ko": "조약 대상조세에 지방소득세 없음",
+   "en": "local income tax is not a tax covered by the tax treaty",
+   "note": "근거 구절 — 'local income tax'·'tax treaty'(법인세법 영문) 조합"
+  },
+  {
+   "ko": "조약 대상조세에 지방소득세 포함",
+   "en": "local income tax is a tax covered by the tax treaty",
+   "note": "근거 구절 — 'local income tax'·'tax treaty'(법인세법 영문) 조합"
+  },
+  {
+   "ko": "대상조세",
+   "en": "taxes covered",
+   "note": "근거 구절 — 조세조약 대상조세 조문의 표제로 쓰는 표현"
+  },
+  {
+   "ko": "한미 조세조약",
+   "en": "Korea-U.S. tax treaty",
+   "note": "근거 구절 — 'tax treaty'(법인세법 영문) + 나라 이름"
+  },
+  {
+   "ko": "순액 약정 역산",
+   "en": "gross-up under a net-of-tax clause",
+   "note": "근거 구절 — 통합 문서 영문 줄 이름('net-of-tax clause', 'gross-up rate')과 같은 실무 표기"
+  },
+  {
+   "ko": "외국법인 특별징수",
+   "en": "special collection from foreign corporations",
+   "note": "근거 구절 — 법제처 영문법령 'special collection'·'foreign corporation'"
+  },
+  {
+   "ko": "원천징수하는 법인세의 {n}%",
+   "en": "{n}% of the corporate tax withheld",
+   "note": "근거 구절 — 법인세법 영문 'tax withheld'"
+  },
+  {
+   "ko": "일수분",
+   "en": "daily portion",
+   "note": "통합 문서 영문 줄 이름 'Daily portion'과 같은 표기"
+  },
+  {
+   "ko": "{n}% 한도",
+   "en": "{n}% limit",
+   "note": "근거 구절 — 용어집 '한도 = limit'"
+  },
+  {
+   "ko": "전체 {n}% 한도",
+   "en": "overall {n}% limit",
+   "note": "근거 구절 — 용어집 '한도 = limit'"
+  },
+  {
+   "ko": "이율 변경일 기준 기간 안분",
+   "en": "period split at the rate change date",
+   "note": "근거 구절 — 통합 문서 영문 출처 글과 같은 표기"
+  },
+  {
+   "ko": "이율 변경일로 기간 안분",
+   "en": "period split at the rate change date",
+   "note": "근거 구절 — 통합 문서 영문 출처 글과 같은 표기"
+  },
+  {
+   "ko": "법정납부기한 다음 날부터 납부일의 전날까지",
+   "en": "from the day after the statutory due date to the day before the payment date",
+   "note": "근거 구절 — 통합 문서 영문 줄 이름과 같은 표기"
+  },
+  {
+   "ko": "법정납부기한 다음 날부터 납부일까지",
+   "en": "from the day after the statutory due date to the payment date",
+   "note": "근거 구절 — 통합 문서 영문 줄 이름과 같은 표기"
+  },
+  {
+   "ko": "{d} 시행",
+   "en": "in force from {d}",
+   "note": "근거 구절 — 법제처 영문법령 부칙 'enter into force'"
+  },
+  {
+   "ko": "{d} 개정",
+   "en": "amended on {d}",
+   "note": "근거 구절 — 법제처 영문법령 조문 꼬리표 'Amended on'"
+  },
+  {
+   "ko": "{d} 신설",
+   "en": "newly inserted on {d}",
+   "note": "근거 구절 — 법제처 영문법령 조문 꼬리표 'Newly Inserted on'"
+  },
+  {
+   "ko": "{d} 이후 양도분",
+   "en": "transfers on or after {d}",
+   "note": "근거 구절 — 법제처 영문법령 부칙 'transferred on or after'"
+  },
+  {
+   "ko": "부칙",
+   "en": "Addenda",
+   "note": "근거 구절 — 법제처 영문법령 'ADDENDA'"
+  },
+  {
+   "ko": "준용",
+   "en": "applied mutatis mutandis",
+   "note": "근거 구절 — 법제처 영문법령 'shall apply mutatis mutandis'"
+  },
+  {
+   "ko": "포함",
+   "en": "included",
+   "note": "근거 구절 — 법제처 영문법령 'including'"
+  },
+  {
+   "ko": "제외",
+   "en": "excluded",
+   "note": "근거 구절 — 법제처 영문법령 'excluding'"
+  },
+  {
+   "ko": "기본세율",
+   "en": "basic tax rates",
+   "note": "근거 구절 — 소득세법 영문 'basic tax rates'"
+  },
+  {
+   "ko": "누진세율",
+   "en": "progressive tax rates",
+   "note": "근거 구절 — 법제처 영문법령 'progressive tax rate'"
+  },
+  {
+   "ko": "세율 {n}%",
+   "en": "tax rate {n}%",
+   "note": "근거 구절 — 용어집 '세율 = tax rate'"
+  },
+  {
+   "ko": "지급액",
+   "en": "amount paid",
+   "note": "근거 구절 — 법제처 영문법령 'amount paid'"
+  },
+  {
+   "ko": "국세분",
+   "en": "national tax portion",
+   "note": "근거 구절 — 통합 문서 영문 줄 이름 'National tax portion'과 같은 표기"
+  },
+  {
+   "ko": "{t} 도구",
+   "en": "{t} tool",
+   "note": "근거 구절 — 도구 이름 뒤의 '도구'"
+  },
+  {
+   "ko": "1년 미만",
+   "en": "less than one year",
+   "note": "근거 구절 — 법인세법 영문 'business year is less than one year'"
+  },
+  {
+   "ko": "사용료로 봄",
+   "en": "deemed royalties",
+   "note": "근거 구절 — 법인세법 영문 'royalties' + 'deemed'"
+  },
+  {
+   "ko": "사업소득으로 봄",
+   "en": "deemed business income",
+   "note": "근거 구절 — 소득세법 영문 'business income' + 'deemed'"
   }
  ]
 }

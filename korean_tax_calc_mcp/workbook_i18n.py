@@ -6,7 +6,9 @@
   '번역 없음' 목록에 모은다 — 이 서버는 문장을 만들어 내지 않는다(생성형 AI 없음).
 - 용어집 비고에 '공식 영문 없음'이나 '확인 필요'가 있는 행은 번역에 쓰지 않는다.
 - 법정서식 틀 시트는 한국어 신고 서식이므로 글자를 건드리지 않는다(다른 시트 이름을 가리키는 수식 참조만 새 이름으로 맞춘다).
-- 숫자·수식·표시 형식은 그대로다. 도구가 돌려준 문장(판단 근거·주의·한계)은 한국어 그대로 'Notes (Korean original)' 칸에 둔다.
+- 숫자·수식·표시 형식은 그대로다. 도구가 돌려준 문장(결론·이유·주의·한계)은 한국어 그대로 'Notes (Korean original)' 칸에 둔다.
+- 도구가 돌려준 근거(근거·…_근거 키, 판단의 근거 열)는 citation_en의 규칙으로 법령명·조문 번호를 영문 인용으로 바꾼다
+  (예: 'Corporate Tax Act (법인세법) Art. 98(1)6'). 용어집에 통째로 있는 구절만 영문으로, 나머지는 국문 그대로 '번역 없음'에 올린다.
 """
 from __future__ import annotations
 
@@ -20,6 +22,7 @@ _DATA = Path(__file__).parent / "data" / "glossary_ko_en.json"
 _HANGUL = re.compile(r"[가-힣]")
 _UNCERTAIN = "확인 필요"
 _NO_OFFICIAL = "공식 영문 없음"     # 영문법령의 해당 조문에 그 용어가 없음을 확인한 행 — 번역에 쓰지 않는다
+_PHRASE_NOTE = "근거 구절"         # 근거 문자열의 서술 구절 행 — citation_en만 쓴다(결과 키·라벨 번역에는 쓰지 않음)
 NOTES_HEADER = "Notes (Korean original)"
 UNTRANSLATED_TITLE = "Untranslated labels (번역 없음)"
 _HEADER_FILL = "D9E1F2"
@@ -51,7 +54,7 @@ def load_glossary() -> dict[str, str]:
     out: dict[str, str] = {}
     for row in data["terms"]:
         note = row.get("note") or ""
-        if not row.get("en") or _UNCERTAIN in note or _UNCERTAIN in row["en"] or _NO_OFFICIAL in note:
+        if not row.get("en") or _UNCERTAIN in note or _UNCERTAIN in row["en"] or _NO_OFFICIAL in note or note.startswith(_PHRASE_NOTE):
             continue
         out.setdefault(_norm(row["ko"]), row["en"])
     return out
@@ -99,11 +102,17 @@ _FORMULA_LITERALS = {'"일치"': '"Match (일치)"', '"확인 필요"': '"Check 
 
 _YES_NO = {"예": "Yes (예)", "아니오": "No (아니오)"}
 
-# 서식 표기 앞의 법령명(법제처 영문법령 제명)
-_LAW_EN = (("국제조세조정에 관한 법률", "Adjustment of International Taxes Act"),
-           ("상속세 및 증여세법", "Inheritance Tax and Gift Tax Act"),
-           ("조세특례제한법", "Restriction of Special Taxation Act"),
-           ("부가가치세법", "Value-Added Tax Act"), ("법인세법", "Corporate Tax Act"), ("소득세법", "Income Tax Act"))
+# 서식 표기 앞의 법령명(법제처 영문법령 제명 — data/law_names_ko_en.json)
+_FORM_LAWS = ("국제조세조정에 관한 법률", "상속세 및 증여세법", "조세특례제한법", "부가가치세법", "법인세법", "소득세법")
+_BASIS_HEADER = "Basis (근거)"
+
+
+def is_basis_key(key: Any) -> bool:
+    """결과 키(점 경로 포함)가 근거 문자열을 담는 키인가 — '근거', '…_근거', '역산.근거'."""
+    if not isinstance(key, str):
+        return False
+    last = key.strip().split(".")[-1]
+    return last == "근거" or last.endswith("_근거")
 
 
 def _has_hangul(s: str) -> bool:
@@ -161,6 +170,12 @@ class Translator:
         self.missing: list[str] = []
         self.translated: list[str] = []
         self.custom = custom
+        from .citation_en import Citer
+        self.citer = Citer(custom, missing=self.missing)      # 근거 구절의 '번역 없음'도 같은 목록에
+
+    def basis(self, s: Any) -> Any:
+        """도구가 돌려준 근거 문자열 → 영문 인용 표기(법령명·조문 번호는 규칙, 구절은 용어집에 있는 것만)."""
+        return self.citer.convert(s) if isinstance(s, str) and not s.startswith("=") else s
 
     def _lookup(self, s: str) -> str | None:
         if s in _UI:
@@ -272,6 +287,7 @@ def _calc_sheet(ws, T: Translator) -> None:
                     c.value = T.label(c.value)
             state, hdr_row = ("kv" if kind in ("항목", "세부 항목") else "other"), r
             continue
+        key = a.value
         if _is_text(a) and not a.quotePrefix:
             a.value = T.label(a.value)
         if state == "kv":
@@ -279,7 +295,7 @@ def _calc_sheet(ws, T: Translator) -> None:
             if b.value in _YES_NO and b.data_type != "f":
                 b.value = _YES_NO[b.value]
             elif _is_text(b) and not b.quotePrefix and _HANGUL.search(b.value) and c3.value is None:
-                c3.value, b.value = b.value, None
+                c3.value, b.value = (T.basis(b.value) if is_basis_key(key) else b.value), None
                 c3.alignment = Alignment(wrap_text=True, vertical="top")
                 h = ws.cell(hdr_row, 3)
                 if h.value is None:
@@ -338,8 +354,8 @@ def _summary_cells(ws, T: Translator, title: str, layout: str) -> None:
                     row[0].value = en + T.label(key[4:])
 
 
-def _plain_sheet(ws, T: Translator, *, label_col: int | None = None, header_map: dict | None = None) -> None:
-    """머리글 줄(색 채움)만 옮기는 시트. label_col을 주면 그 열의 글자도 라벨로 옮긴다."""
+def _plain_sheet(ws, T: Translator, *, label_col: int | None = None, header_map: dict | None = None, basis_col: int | None = None) -> None:
+    """머리글 줄(색 채움)만 옮기는 시트. label_col을 주면 그 열의 글자도 라벨로, basis_col을 주면 그 열(근거)을 영문 인용으로 옮긴다."""
     for row in ws.iter_rows():
         for c in row:
             if not _is_text(c):
@@ -348,6 +364,8 @@ def _plain_sheet(ws, T: Translator, *, label_col: int | None = None, header_map:
                 c.value = (header_map or {}).get(c.value) or T.label(c.value)
             elif label_col is not None and c.column == label_col:
                 c.value = T.label(c.value)
+            elif basis_col is not None and c.column == basis_col and not c.quotePrefix:
+                c.value = T.basis(c.value)
             elif c.value.startswith("서식 틀 없음 — ") and c.column == 1:
                 c.value = "No form template (서식 틀 없음) — " + c.value.split(" — ", 1)[1]
             else:
@@ -409,7 +427,8 @@ def _rename_sheets(wb, form_sheets: set[str]) -> dict[str, str]:
 
 
 def _form_line(sheet: str, form: str) -> str:
-    law = next((en for ko, en in _LAW_EN if form.startswith(ko)), None)
+    from .citation_en import law_name_en
+    law = next((law_name_en(ko) for ko in _FORM_LAWS if form.startswith(ko)), None)
     kind = f"statutory form under the {law}" if law else "statutory form"
     return f"Sheet '{sheet}' — {kind}: {form} (Korean filing format, kept in Korean)"
 
@@ -425,7 +444,8 @@ def append_guide(ws, wb, T: Translator, *, form_info: dict[str, str], ren: dict[
     r += 1
     for line in (
         "Labels are shown as 'English (Korean original)', using the server glossary (docs/glossary_ko_en.md). Numbers, formulas and number formats are the same as in the Korean workbook.",
-        f"Free-text notes returned by the tools (basis, cautions, limitations) are not machine-translated: they stay in Korean under '{NOTES_HEADER}'. Review notes are shown as entered.",
+        f"Free-text notes returned by the tools (conclusions, reasons, cautions, limitations) are not machine-translated: they stay in Korean under '{NOTES_HEADER}'. Review notes are shown as entered.",
+        "The statutory basis returned by the tools is shown as an English citation by rule — official English titles of the statutes (Korea Ministry of Government Legislation) and article numbers, e.g. 'Corporate Tax Act (법인세법) Art. 98(1)6'. Phrases with no glossary entry stay in Korean.",
         "Statutory form sheets are Korean filing forms and are kept in Korean.",
     ):
         ws.cell(r, 1, line)
@@ -456,7 +476,7 @@ def append_guide(ws, wb, T: Translator, *, form_info: dict[str, str], ren: dict[
         elif old == "입력·가정":
             text = f"Sheet '{name}' — inputs passed to each tool call and the named cells the formulas refer to"
         elif old == "판단·근거":
-            text = f"Sheet '{name}' — judgements, statutory basis and reasons per call ({NOTES_HEADER})"
+            text = f"Sheet '{name}' — judgements, statutory basis (English citations) and reasons per call ({NOTES_HEADER})"
         else:
             text = f"Sheet '{name}'"
         ws.cell(r, 1, n)
@@ -468,7 +488,7 @@ def append_guide(ws, wb, T: Translator, *, form_info: dict[str, str], ren: dict[
     ws.cell(r, 1, UNTRANSLATED_TITLE).font = bold
     r += 1
     if T.missing:
-        ws.cell(r, 1, "Korean labels with no glossary entry are left as they are (no translation is invented). Add them to docs/glossary_ko_en.md to have them translated.")
+        ws.cell(r, 1, "Korean labels and basis phrases with no glossary entry are left as they are (no translation is invented). Add them to docs/glossary_ko_en.md to have them translated.")
         _wide(ws, r)
         r += 1
         for j, h in enumerate(("No.", "Label (Korean)"), 1):
@@ -504,8 +524,8 @@ def apply_english(wb, T: Translator, *, layout: str, title: str, form_info: dict
         elif _CALC_RE.match(name):
             _calc_sheet(ws, T)
         elif name == "판단·근거":
-            _plain_sheet(ws, T, label_col=2, header_map={
-                "결론": f"{NOTES_HEADER} — conclusion (결론)", "근거": f"{NOTES_HEADER} — basis (근거)",
+            _plain_sheet(ws, T, label_col=2, basis_col=5, header_map={
+                "결론": f"{NOTES_HEADER} — conclusion (결론)", "근거": _BASIS_HEADER,
                 "이유": f"{NOTES_HEADER} — reason (이유)"})
         elif name in ("목록", "입력·가정"):
             _plain_sheet(ws, T)

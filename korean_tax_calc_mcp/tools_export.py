@@ -2329,10 +2329,7 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
         from .workbook_i18n import apply_english, UNTRANSLATED_TITLE
         _ren = apply_english(wb, _T, layout=layout, title=title, form_info=_서식_표기, results=결과들, guide=_blend is None)
         시트이름들 = [_ren.get(n, n) for n in 시트이름들]
-        if _T.missing:
-            _경고.append(f"{UNTRANSLATED_TITLE}: {len(_T.missing)} label(s) have no glossary entry and are kept in Korean "
-                        f"(to show them in English pass them in `labels` and call again — do not edit the saved file) — "
-                        + "; ".join(_T.missing))
+        _경고.append(None)      # '번역 없음' 한 줄의 자리 — 통합 시트까지 그린 뒤 채운다(근거 구절이 더해질 수 있음)
     elif _labels is not None:      # 국문: '계산 N' 시트의 항목 이름을 호출자가 준 글로
         from .workbook_i18n import apply_labels_ko
         apply_labels_ko(wb, _labels)
@@ -2342,7 +2339,7 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
         from .workbook_blend import add_sheets as _blend_add
         try:
             _통합 = _blend_add(wb, _blend, lang=lang, title=title, company=company, period=period, calls=calls, results=결과들,
-                             label=_T.label if _T else None, detail=_detail, roles=_구실, judgement_counts=_판단_줄수, labels=_labels, extra=_extra)
+                             label=_T.label if _T else None, cite=_T.basis if _T else None, detail=_detail, roles=_구실, judgement_counts=_판단_줄수, labels=_labels, extra=_extra)
         except ValueError as e:      # key_figures·issues의 amount가 가리키는 곳을 찾지 못함 — 쓸 수 있는 이름을 알려 줌
             return {"error": f"입력 확인 필요 — {e}", "안내": "call은 calls의 label 또는 1부터 세는 순번, row·from_row는 그 결과의 줄 이름"}
         if _detail == "full":
@@ -2399,6 +2396,10 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
         else:
             시트이름들 = list(wb.sheetnames)
         _경고 += _자유_경고
+    if _T is not None:      # '번역 없음' 한 줄 — 라벨과 근거 구절
+        _줄 = (f"{UNTRANSLATED_TITLE}: {len(_T.missing)} label(s) or basis phrase(s) have no glossary entry and are kept in Korean "
+              f"(to show them in English pass them in `labels` and call again — do not edit the saved file) — " + "; ".join(_T.missing)) if _T.missing else None
+        _경고 = [w for w in ((_줄 if w is None else w) for w in _경고) if w]
     # ── 저장 ──
     base = filename if filename else title
     fpath = _unique_path(output_dir, base)
@@ -2450,8 +2451,8 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
                 ("labels: no label with this name on the sheets (not applied) — " if _T is not None else "labels: 시트에서 이 이름의 라벨을 찾지 못해 적용하지 않음 — ")
                 + "; ".join(_안쓴)]
     if _T is not None and _T.missing:
-        out["결과"]["번역_없음_안내"] = ("영문 표기가 필요하면 파일을 열어 고치지 말고 labels={원래 라벨: 영문}에 넣어 다시 호출 — "
-                                 "To show these in English, pass labels={Korean label: English text} and call again; do not edit the saved file.")
+        out["결과"]["번역_없음_안내"] = ("영문 표기가 필요하면 파일을 열어 고치지 말고 labels={원래 라벨·근거 구절: 영문}에 넣어 다시 호출 — "
+                                 "To show these in English, pass labels={Korean label or basis phrase: English text} and call again; do not edit the saved file.")
     out["결과"]["파일_안내"] = ("이 파일을 openpyxl 등으로 다시 저장하면 저장된 계산값이 지워져 휴대폰·미리보기에서 0으로 보임 — 글·라벨·쟁점·출처는 입력(labels·scenarios·sources·issues·review_notes)을 "
                           "고쳐 다시 호출해 바꾸고, 다시 저장했다면 verify_workbook을 거치면 계산값이 다시 채워짐. "
                           "Re-saving this file with openpyxl or similar drops the stored values (phone viewers show 0) — change the inputs and call again, or run verify_workbook on the re-saved file.")
