@@ -1102,6 +1102,16 @@
    "note": "공식 영문 없음 — 조세특례제한법 제18조의2 영문은 'multiplying the relevant earned income by 19/100'이고 용어로 쓴 표현이 없음(법제처 영문법령 확인, 2026-11-14)"
   },
   {
+   "ko": "수취인_송금액",
+   "en": "net amount remitted to the recipient",
+   "note": "통합 문서 영문 줄 이름('Net amount remitted to the recipient')과 같은 실무 표기 — 법제처 영문법령에서 찾은 표현은 아님"
+  },
+  {
+   "ko": "끝수_차이",
+   "en": "difference from fractional numbers",
+   "note": "법제처 영문법령 확인(2026-11-15): 국고금 관리법 제47조 영문 제목 'Calculation of fractional numbers in national funds', 본문 'a fractional number of less than ten won'(2020.6.9. 시행본 번역)의 'fractional number'"
+  },
+  {
    "ko": "조세조약 제한세율 {n}%",
    "en": "limited tax rate under the tax treaty {n}%",
    "note": "근거 구절 — 법인세법 영문 'limited tax rate pursuant to a tax treaty'"

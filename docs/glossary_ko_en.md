@@ -229,6 +229,8 @@
 | 간접외국납부세액 | indirect foreign tax paid | 공식 영문 없음 — 법인세법 제57조제4항 영문은 'shall be deemed the amount of foreign corporate tax'로 쓰고 용어로 두지 않음(2025.3.14. 시행본 번역, 2026-11-15) |
 | 간주외국납부세액 | deemed foreign tax paid | 공식 영문 없음 — 법인세법 제57조제3항 영문은 'shall be deemed the amount of foreign corporate tax'로 쓰고 용어로 두지 않음(2025.3.14. 시행본 번역, 2026-11-15) |
 | 단일세율 | flat tax rate | 공식 영문 없음 — 조세특례제한법 제18조의2 영문은 'multiplying the relevant earned income by 19/100'이고 용어로 쓴 표현이 없음(법제처 영문법령 확인, 2026-11-14) |
+| 수취인_송금액 | net amount remitted to the recipient | 통합 문서 영문 줄 이름('Net amount remitted to the recipient')과 같은 실무 표기 — 법제처 영문법령에서 찾은 표현은 아님 |
+| 끝수_차이 | difference from fractional numbers | 법제처 영문법령 확인(2026-11-15): 국고금 관리법 제47조 영문 제목 'Calculation of fractional numbers in national funds', 본문 'a fractional number of less than ten won'(2020.6.9. 시행본 번역)의 'fractional number' |
 | 조세조약 제한세율 {n}% | limited tax rate under the tax treaty {n}% | 근거 구절 — 법인세법 영문 'limited tax rate pursuant to a tax treaty' |
 | 제한세율 {n}% | limited tax rate {n}% | 근거 구절 — 법인세법 영문 'limited tax rate' |
 | 지방소득세 {n}% 별도 | plus local income tax of {n}% | 근거 구절 — 법인세법 영문 'local income tax' |
