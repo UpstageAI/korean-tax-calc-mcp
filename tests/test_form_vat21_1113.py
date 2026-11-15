@@ -62,11 +62,12 @@ def test_recalculated_values_match_tool(book):
     assert checks and set(checks) == {"일치"}, checks
 
 
-def test_old_years_have_no_form_sheet(tmp_path):
+def test_old_years_use_that_years_form(tmp_path):
+    # 2024년 이전 과세기간은 그 해 서식 판(부가21_2016~2023 틀) — 자세한 대조는 test_form_vat21_years.py
     r = _fn(S.export_workbook)(title="o", calls=[{"label": "신고서", "tool": "vat_return_general", "args": {**ARGS, "year": 2023, "penalties": []}}], output_dir=str(tmp_path))
-    assert r["결과"]["오류_call"] == [] and SHEET not in r["결과"]["시트"]
-    wb = openpyxl.load_workbook(r["결과"]["파일"])
-    assert any("2024년 이전" in str(c) for row in wb["목록"].iter_rows(values_only=True) for c in row if c)
+    assert r["결과"]["오류_call"] == [] and SHEET + " 2023판" in r["결과"]["시트"] and SHEET not in r["결과"]["시트"]
+    ws = openpyxl.load_workbook(r["결과"]["파일"])[SHEET + " 2023판"]
+    assert "<개정 2023. 3. 20.>" in ws["A1"].value and ws["F36"].value == "(27)"
 
 
 def test_negative_amounts_are_rejected_by_tool():
