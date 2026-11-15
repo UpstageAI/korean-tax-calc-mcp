@@ -629,7 +629,8 @@ def _summary_sheet(wb, title, company, period, calls, 결과들, review_notes, b
 
 def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str | None = None, layout: str = "forms",
                         company: str = "", period: str = "", biz_no: str = "", review_notes=None, lang: str = "ko",
-                        scenarios=None, sources=None, issues=None, detail: str | None = None, labels=None) -> dict:
+                        scenarios=None, sources=None, issues=None, detail: str | None = None, labels=None,
+                        extra_sheets=None, actions=None, key_figures=None) -> dict:
     """server.export_workbook의 본문(서명·설명은 그쪽 참조). mcp는 순환 import를 피해 호출 시점에 가져온다."""
     from .server import mcp
     # ── calls가 문자열이면 JSON으로 풀기 ──
@@ -653,8 +654,19 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
         return {"error": "입력 확인 필요 — output_dir이 폴더가 아님", "안내": f"'{output_dir}'은(는) 폴더가 아님"}
 
     # ── 통합 문서 선택 입력(scenarios·sources·issues) — 셋 다 없으면 _blend는 None이고 기존 출력 그대로 ──
+    # ── 자유 형식 시트(extra_sheets)·조치·기한(actions) — 둘 다 없으면 기존 출력 그대로. actions는 통합 문서(요약 시트)에 실린다 ──
+    from .workbook_extra import normalize_actions as _norm_actions, normalize_extra as _norm_extra, normalize_key_figures as _norm_figs
+    _extra, _extra_err = _norm_extra(extra_sheets)
+    if _extra_err:
+        return _extra_err
+    _actions, _actions_err = _norm_actions(actions)
+    if _actions_err:
+        return _actions_err
+    _figs, _figs_err = _norm_figs(key_figures)
+    if _figs_err:
+        return _figs_err
     from .workbook_blend import normalize as _blend_normalize
-    _blend, _blend_err = _blend_normalize(scenarios, sources, issues, calls if all(isinstance(c, dict) for c in calls) else [])
+    _blend, _blend_err = _blend_normalize(scenarios, sources, issues, calls if all(isinstance(c, dict) for c in calls) else [], _actions, _figs)
     if _blend_err:
         return _blend_err
     if detail not in (None, "", "compact", "forms", "full"):
@@ -2328,8 +2340,11 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
     _통합 = None
     if _blend is not None:
         from .workbook_blend import add_sheets as _blend_add
-        _통합 = _blend_add(wb, _blend, lang=lang, title=title, company=company, period=period, calls=calls, results=결과들,
-                         label=_T.label if _T else None, detail=_detail, roles=_구실, judgement_counts=_판단_줄수, labels=_labels)
+        try:
+            _통합 = _blend_add(wb, _blend, lang=lang, title=title, company=company, period=period, calls=calls, results=결과들,
+                             label=_T.label if _T else None, detail=_detail, roles=_구실, judgement_counts=_판단_줄수, labels=_labels, extra=_extra)
+        except ValueError as e:      # key_figures·issues의 amount가 가리키는 곳을 찾지 못함 — 쓸 수 있는 이름을 알려 줌
+            return {"error": f"입력 확인 필요 — {e}", "안내": "call은 calls의 label 또는 1부터 세는 순번, row·from_row는 그 결과의 줄 이름"}
         if _detail == "full":
             시트이름들 = _통합["시트"] + [_통합["이름_바꿈"].get(n, n) for n in 시트이름들]
             if _T is not None and _구실["summary"] is not None:      # 영문 시트 안내 표 — 앞에 더한 시트까지 나열
@@ -2342,6 +2357,48 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
     # ── 호출자가 준 글(제목·회사·기간·검토 의견·label·시나리오·출처·쟁점)이 '='로 시작해도 수식으로 저장되지 않게 — 영문 표기·통합 시트까지 그린 뒤 한 번 더 ──
     _labels_as_text(wb, [title, company, period, biz_no, review_notes, calls, scenarios, sources, issues, _blend,
                          [cd.get("data") or cd.get("result") for cd in 결과들]])
+    # ── 자유 형식 시트(extra_sheets) — 호출자가 준 표를 그대로. 위의 글 정리 뒤에 그려야 받은 수식이 글로 바뀌지 않는다 ──
+    _자유 = None
+    if _extra:
+        from .workbook_extra import draw as _extra_draw, verify as _extra_verify
+        from .workbook_blend import _sheet_name as _blend_sheet_name, _spec as _blend_spec, make_resolver as _make_resolver
+        _en = lang == "en"
+        if _통합 is not None:
+            _names, _at, _resolve = _통합["자유_시트"], _통합["자유_위치"], _통합["resolve"]
+        else:       # 기존 출력: 요약 시트 바로 뒤에. 계산 도구 결과 링크는 가리킬 칸이 없어 도구 값을 옮긴다
+            _taken: set[str] = set()
+            _names, _at = [_blend_sheet_name(wb, x["sheet"], _taken) for x in _extra], 1
+            _specs: dict[int, Any] = {}
+
+            def _spec_of(i):
+                if i not in _specs:
+                    cd = 결과들[i]
+                    _specs[i] = _blend_spec(cd.get("tool", ""), (calls[i] or {}).get("args") or {}, cd.get("data") or {}, _T.label if _T else (lambda x: x))
+                return _specs[i]
+            _resolve = _make_resolver(calls, 결과들, _spec_of, None)
+        _before = list(wb._sheets)
+        try:
+            _자유, _자유_경고 = _extra_draw(wb, _extra, _names, en=_en, resolve=_resolve)
+        except ValueError as e:
+            return {"error": f"입력 확인 필요 — extra_sheets: {e}", "안내": "칸 값 {from_call, from_row}의 from_call은 calls의 label 또는 1부터 세는 순번, from_row는 그 결과의 줄 이름"}
+        _why = _extra_verify(wb, _names)
+        if _why:
+            return {"error": "입력 확인 필요 — " + _why, "안내": "extra_sheets의 수식은 같은 시트의 표 안 칸만 가리킴 — 머리 행 4행, 첫 행 5행, 첫 열 A"}
+        _new = [w for w in wb._sheets if all(w is not b for b in _before)]
+        wb._sheets = _before[:_at] + _new + _before[_at:]
+        wb.active = 0
+        if _통합 is None:       # 기존 요약 시트 끝에 범례 한 줄(통합 문서는 요약 시트 범례에 이미 있음)
+            _ws0 = wb.worksheets[0]
+            if _ws0.title in ("요약", "Summary (요약)"):
+                from .workbook_blend import _t as _blend_t
+                from openpyxl.styles import Font as _Font
+                _ws0.cell(_ws0.max_row + 2, 1, _blend_t("extra_key", _en, s=", ".join(f"'{n}'" for n in _names))).font = _Font(italic=True, size=9, color="555555")
+            시트이름들 = 시트이름들[:1] + _names + 시트이름들[1:]
+        elif _detail == "full":
+            시트이름들 = 시트이름들[:_at] + _names + 시트이름들[_at:]
+        else:
+            시트이름들 = list(wb.sheetnames)
+        _경고 += _자유_경고
     # ── 저장 ──
     base = filename if filename else title
     fpath = _unique_path(output_dir, base)
@@ -2377,6 +2434,12 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
             out["결과"]["번역_없음"] = list(_T.missing)
         if _경고:
             out["warnings"] = _경고
+    if _자유 is not None:      # 자유 형식 시트 — 이름과 칸 자리(다음 호출에서 수식을 고칠 때 쓸 주소)
+        out["결과"]["자유_시트"] = _자유
+        out["결과"]["자유_시트_안내"] = ("호출자가 넣은 표 — 계산 도구의 검증을 거치지 않음(시트 머리와 요약 범례에 표시). 사용자에게도 이 표가 계산 도구 검증을 거치지 않았음을 밝힘. "
+                                 "Preparer's own tables, not verified by the calculation tools (marked on each sheet and on the summary).")
+        if _자유_경고 and "warnings" not in out:
+            out["warnings"] = _경고
     if _캐시_경고:
         out["warnings"] = list(out.get("warnings") or []) + [_캐시_경고]
     if _labels is not None:
@@ -2389,7 +2452,7 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
     if _T is not None and _T.missing:
         out["결과"]["번역_없음_안내"] = ("영문 표기가 필요하면 파일을 열어 고치지 말고 labels={원래 라벨: 영문}에 넣어 다시 호출 — "
                                  "To show these in English, pass labels={Korean label: English text} and call again; do not edit the saved file.")
-    out["결과"]["파일_안내"] = ("이 파일을 openpyxl 등으로 열어 다시 저장하지 말 것 — 저장된 계산값이 지워져 휴대폰·미리보기에서 0으로 보임. "
-                          "글·라벨·쟁점·출처를 바꾸려면 입력(labels·scenarios·sources·issues·review_notes)을 고쳐 다시 호출. "
-                          "Do not re-save this file with openpyxl or similar (stored values are lost and phone viewers show 0) — change the inputs and call again.")
+    out["결과"]["파일_안내"] = ("이 파일을 openpyxl 등으로 다시 저장하면 저장된 계산값이 지워져 휴대폰·미리보기에서 0으로 보임 — 글·라벨·쟁점·출처는 입력(labels·scenarios·sources·issues·review_notes)을 "
+                          "고쳐 다시 호출해 바꾸고, 다시 저장했다면 verify_workbook을 거치면 계산값이 다시 채워짐. "
+                          "Re-saving this file with openpyxl or similar drops the stored values (phone viewers show 0) — change the inputs and call again, or run verify_workbook on the re-saved file.")
     return out

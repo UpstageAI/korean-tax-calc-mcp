@@ -152,13 +152,18 @@ def test_inputs_sheet_sources_and_colour_rules(tmp_path):
 def test_summary_links_to_scenario_cells(tmp_path):
     wb = openpyxl.load_workbook(_export(tmp_path)["결과"]["파일"])
     ws = wb["요약"]
-    assert ws["A1"].value == "통합 — 요약" and ws.freeze_panes == "A4"
-    r = _find(ws, "배당 — 1. 약정별 세액")
-    assert [ws.cell(r + 1, j).value for j in (2, 3)] == ["A 총액 약정", "B 순액 약정"]
-    r_tot = next(k for k in range(r, r + 9) if ws.cell(k, 1).value == "합계")
-    assert ws.cell(r_tot, 2).value.startswith("='배당'!$B$") and ws.cell(r_tot, 3).value.startswith("='배당'!$C$")
-    assert ws.cell(r_tot, 2).font.color.rgb == GREEN
-    assert ws.cell(next(k for k in range(r, r + 12) if ws.cell(k, 1).value == "납부기한 한 줄"), 1).font.i
+    # 0.56.0: 요약은 핵심 숫자 표 한 장 — 블록마다 권고 열(없으면 첫 열)의 결과 줄, 그 아래 나머지 열의 합계 줄. 시나리오 블록을 되풀이하지 않음
+    assert ws["A1"].value == "통합 — 요약" and ws.freeze_panes == "A5"
+    assert [ws.cell(4, j).value for j in (1, 2, 3, 4)] == ["핵심 숫자", "금액(원)", "계산 위치", "메모"]
+    r_tot = _find(ws, "배당 — 1. 약정별 세액 — 합계 (A 총액 약정)")
+    assert ws.cell(r_tot, 2).value.startswith("='배당'!$B$") and ws.cell(r_tot, 2).font.color.rgb == GREEN
+    assert ws.cell(r_tot, 1).font.b and ws.cell(r_tot, 2).font.b and ws.cell(r_tot, 2).fill.fgColor.rgb == YELLOW      # 합계 줄 강조
+    assert ws.cell(r_tot, 3).value == "배당" and ws.cell(r_tot, 3).hyperlink.location == "'배당'!" + ws.cell(r_tot, 2).value.split("!")[1].replace("$", "")
+    r_b = _find(ws, "배당 — 1. 약정별 세액 — 합계 (B 순액 약정)")
+    assert r_b > r_tot and ws.cell(r_b, 2).value.startswith("='배당'!$C$") and not ws.cell(r_b, 1).font.b
+    r_first = _find(ws, "배당 — 1. 약정별 세액 — 과세표준 (A 총액 약정)")
+    assert ws.cell(r_first, 4).value == "납부기한 한 줄" and ws.cell(r_first, 4).font.i
+    assert ws.max_row <= 40 and ws.page_setup.fitToHeight == 1 and ws.print_area      # 블록 5개·call 11개(같은 입력의 0.55.1 요약은 52줄)
     texts = [ws.cell(k, 1).value for k in range(1, ws.max_row + 1) if ws.cell(k, 1).value]
     assert "쟁점 3건 — '쟁점 목록' 시트" in texts and "High 1 · 낮음 1" in texts
     assert any(t.startswith("색 규칙: 파랑 = 입력, 초록 = 다른 시트 링크, 검정 = 수식, 노랑 = 핵심 결과·가정") for t in texts)
@@ -356,18 +361,20 @@ def test_description_first_sentence_says_finished_xlsx_and_where():
     tool = next(t for t in S.mcp._tool_manager.list_tools() if t.name == "export_workbook")
     first = tool.description.splitlines()[0]
     assert first.startswith("Produces a finished Excel (.xlsx) workings file with live formulas")
-    for phrase in ("output_dir", "absolute path", "instead of writing your own spreadsheet script"):
+    for phrase in ("output_dir", "absolute path", "verify_workbook", "extra_sheets"):      # 0.56.0: 금지 문구 대신 두 길(만들기·직접 짠 뒤 대조)
         assert phrase in first, phrase
     assert "언제:" in tool.description and "입력:" in tool.description
-    for name in ("scenarios", "sources", "issues"):
+    for name in ("scenarios", "sources", "issues", "extra_sheets", "actions", "key_figures"):
         assert name in tool.parameters["properties"] and f"{name}" in tool.description
-    assert len(S.mcp._tool_manager.list_tools()) == 139
+    assert len(S.mcp._tool_manager.list_tools()) == 140
 
 
 def test_instructions_tell_to_use_export_workbook_for_workings():
     ins = S.mcp.instructions
-    assert "엑셀·스프레드시트·계산 근거·workings를 원하면" in ins and "파이썬 등으로 xlsx를 직접 만들지 않는다" in ins
-    assert "do not write your own spreadsheet script" in ins
+    assert "엑셀·스프레드시트·계산 근거·workings를 원하면" in ins and "verify_workbook" in ins and "extra_sheets" in ins
+    assert "저장한 뒤 반드시 verify_workbook" in ins and "always run verify_workbook" in ins
+    for gone in ("직접 만들지", "do not write your own", "instead of writing"):      # 0.56.0: 금지 문구는 지움 — 직접 짜도 되고 대조로 받침
+        assert gone not in ins, gone
 
 
 def test_calc_results_carry_excel_tail_but_not_export_or_find():
@@ -495,7 +502,9 @@ def test_compact_and_forms_recalculate_to_tool_values(tmp_path, detail, lang):
     res = [c(x["tool"], x["args"])["결과"] for x in CALLS]
     summ = [cell.value for row in wb[r["결과"]["통합_시트"][0]].iter_rows() for cell in row]
     for i in (0, 1, 2, 3, 4):
-        assert res[i]["합계"] in summ and res[i]["원천징수세액"] in summ
+        assert res[i]["합계"] in summ                         # 열마다 합계 줄
+    for i in (0, 2, 3):
+        assert res[i]["원천징수세액"] in summ                  # 블록의 첫 열은 결과 줄 전부
     for i in (5, 6, 7, 8):
         assert res[i]["가산세"] in summ
 

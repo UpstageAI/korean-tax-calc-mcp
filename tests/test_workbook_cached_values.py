@@ -166,7 +166,7 @@ def test_cached_values_equal_tool_results(books):
     assert checks and set(checks) == {"일치"}
     summary = wb.worksheets[0]
     numbers = [cell.value for r in summary.iter_rows() for cell in r if isinstance(cell.value, (int, float)) and not isinstance(cell.value, bool)]
-    assert tool[0]["결과"]["원천징수세액"] in numbers and tool[1]["결과"]["원천징수세액"] in numbers
+    assert tool[0]["결과"]["원천징수세액"] in numbers and tool[0]["결과"]["합계"] in numbers and tool[1]["결과"]["합계"] in numbers      # 첫 열은 결과 줄, 다른 열은 합계 줄
 
 
 def test_english_summary_links_show_numbers_without_recalculation(books):
