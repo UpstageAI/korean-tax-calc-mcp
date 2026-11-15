@@ -1,6 +1,7 @@
 """소득세·원천세 계산(2016~2026 귀속 연도표, 기본 2025 귀속) — 국세청 연말정산·중소기업 취업자 감면 안내 예시로 검증. 작성 Mia(윤승미)
 플레이북: knowledge/14_소득세_원천세_연말정산_조사포인트.md. 2026 귀속 변경분은 표 추가 후 적용.
 """
+from fractions import Fraction
 import json
 import math
 import os
@@ -474,11 +475,49 @@ def retirement_tax_steps(income, years, retire_year=2025):
             "환산산출세액": int(conv_tax), "산출세액": int(conv_tax / 12 * years)}
 
 
+# 2016~2019년 퇴직 특례 — 법률 제12852호(2014.12.23.) 부칙 제25조: "2016년 1월 1일부터 2019년 12월 31일까지의 기간 동안 퇴직한 경우에는 …
+# 제48조제1항·제2항 및 제55조제2항의 개정규정에도 불구하고 퇴직소득 산출세액을 다음 표 … 계산식에 따른 금액으로 한다"
+#   2016년 종전 80% + 개정 20% / 2017년 60% + 40% / 2018년 40% + 60% / 2019년 20% + 80%.
+# 종전 규정(2015.7.1. 시행본): 제48조제1항 퇴직소득금액의 40% + 근속연수공제(같은 표), 제2항 공제 합계가 퇴직소득금액을 넘으면 퇴직소득금액,
+#   제55조제2항 (과세표준 ÷ 근속연수 × 5)에 기본세율 → ÷ 5 × 근속연수.
+# 2012.12.31. 이전 근속분: 법률 제11611호(2013.1.1.) 부칙 제22조제2항 — 과세표준 × (2012.12.31.까지 근속연수 ÷ 전체 근속연수)는 종전(2012.8.2. 시행본
+#   제55조제2항: 과세표준 ÷ 근속연수에 기본세율 → × 근속연수). 별지 제24호서식(2) <개정 2016.3.16.> 작성방법 라~사: 과세표준안분(× 각 근속연수/정산근속연수),
+#   연평균과세표준(÷ 각 근속연수), 2013.1.1. 이후분만 5배 환산, 산출세액(× 각 근속연수), 퇴직연도별 비율.
+RETIREMENT_NEW_RULE_SHARE = {2016: Fraction(20, 100), 2017: Fraction(40, 100), 2018: Fraction(60, 100), 2019: Fraction(80, 100)}
+
+
+def retirement_tax_transition(income, years, retire_year, years_before_2013=0):
+    """2016~2019년 퇴직 산출세액 = 종전 규정 세액 × (1 − 비율) + 개정규정 세액 × 비율. 분수로 계산하고 표시·최종 세액만 원 미만 버림."""
+    share = RETIREMENT_NEW_RULE_SHARE[retire_year]
+    new = retirement_tax_steps(income, years, retire_year)
+    if income <= 0 or years <= 0:
+        return {"개정규정": new, "종전규정": {"정률공제": 0, "근속연수공제": 0, "과세표준": 0, "산출세액": 0}, "개정규정_비율": share, "산출세액": 0}
+    rates = RATES[_y(retire_year)]
+    flat = _x(income) * 40 / 100
+    svc = retirement_service_deduction(years, retire_year)
+    ded = min(flat + svc, _x(income))
+    base = _x(income) - ded
+    y_pre, y_post = years_before_2013, years - years_before_2013
+    avg = base / years                                     # 안분 과세표준 ÷ 각 근속연수 = 과세표준 ÷ 정산근속연수
+    tax_pre = _tier(avg, rates) * y_pre                    # 2012.12.31. 이전분: 연분연승
+    tax_post = _tier(avg * 5, rates) / 5 * y_post          # 2013.1.1. 이후분: 5배 환산
+    old_tax = tax_pre + tax_post
+    sd = min(svc, income)
+    conv = _x(income - sd) / years * 12
+    new_exact = _tier(max(0, conv - converted_pay_deduction(conv)), rates) / 12 * years
+    total = old_tax * (1 - share) + new_exact * share
+    return {"개정규정": new,
+            "종전규정": {"정률공제": int(min(flat, _x(income))), "근속연수공제": int(ded - min(flat, _x(income))), "과세표준": int(base),
+                       "과세표준_2012이전분": int(base * y_pre / years), "과세표준_2013이후분": int(base * y_post / years),
+                       "연평균과세표준": int(avg), "산출세액_2012이전분": int(tax_pre), "산출세액_2013이후분": int(tax_post), "산출세액": int(old_tax)},
+            "개정규정_비율": share, "산출세액": int(total)}
+
+
 def retirement_tax(income, years, retire_year=2025):
     """퇴직소득 산출세액. income=퇴직소득금액(비과세 제외), years=근속연수(1년 미만 절상).
     ① 근속연수공제(퇴직소득금액 한도, 제48조②) → ② 환산급여 = (금액−①)/근속연수×12
     → ③ 과세표준 = 환산급여 − 환산급여공제 → ④ 산출세액 = 기본세율(제55조①)(과세표준)/12×근속연수(제55조②).
-    원 미만 절사만 적용(원천징수 10원 미만 절사는 국고금관리법 — 호출자 처리)."""
+    원 미만 절사만 적용 — 납부할 금액(10원 미만 버림, 국고금 관리법 제47조제1항)은 도구가 결과에 따로 붙임(engine/rounding.py)."""
     if income <= 0 or years <= 0: return 0
     return retirement_tax_steps(income, years, retire_year)["산출세액"]
 
@@ -515,7 +554,8 @@ def withholding_rate(kind, year=2025):
 
 def withholding_tax(kind, amount, year=2025):
     """분리 세율 원천징수세액(소득세분, 지방소득세 별도). 소득처분 배당 → '배당'(14%), 기타소득 처분 → '기타'(20%,
-    필요경비 없음). 상여 처분은 기본세율 재정산(deemed_bonus_resettlement). 10원 미만 절사."""
+    필요경비 없음). 상여 처분은 기본세율 재정산(deemed_bonus_resettlement).
+    한 소득자·한 번 지급분의 원천징수세액이 곧 국고에 내는 금액이라 10원 미만 버림(국고금 관리법 제47조제1항, 원천세과-240·법인22601-2481 — engine/rounding.py)."""
     return _floor(amount, withholding_rate(kind, year)) // 10 * 10
 
 
@@ -675,7 +715,7 @@ def nonresident_withholding(income_kind, amount, recipient_type, residence_count
             "근거": "법인세법 기본통칙 98-0…2" + (" · 국이22601-403(1991.7.19. 요지 — 제세에는 주민세도 포함)" if payer_bears_local_tax else ""),
             "확신도": ("유추 — 지방소득세분을 세율에 더해 역산하는 산식은 국이22601-403 요지에서 추론(회신 본문 산식 미확인)" if payer_bears_local_tax
                     else "확인함 — 통칙 98-0…2 산식") + ("" if side else " / 비거주자(개인)에 이 통칙 산식을 쓰는 것은 유추"),
-            "끝수": "과세표준은 원 미만 버림(통칙에 끝수 규정 없음 — 마지막 금액에서만 절사), 세액은 역산 전 분수에서 계산해 이 도구의 종전 방식대로 10원 미만 절사. 원 단위 값은 '원_단위_세액'",
+            "끝수": "과세표준은 원 미만 버림(통칙에 끝수 규정 없음 — 마지막 금액에서만 절사), 세액은 역산 전 분수에서 계산해 10원 미만 버림(국고금 관리법 제47조제1항 — 납부하는 금액). 원 단위 값은 '원_단위_세액'",
         }
     wh_amount = math.floor(base_exact * national) // 10 * 10
     local_income_tax = _floor(wh_amount, 0.10) // 10 * 10
@@ -713,7 +753,7 @@ def nonresident_withholding(income_kind, amount, recipient_type, residence_count
                      + ". 서식(export_workbook)에 넣을 때는 amount에 과세표준을 넣어 net_of_tax 없이 계산한 결과를 쓴다")
     ret["지방소득세_근거"] = NI.local_tax_basis(side, 포함)
     ret["한계"] = [NI.POINTER, NI.POINTER_EN,
-                 "세액은 10원 미만 절사(이 도구의 종전 방식 — 원천징수세액의 원 단위 끝수 규정은 확인하지 못함)",
+                 "끝수: 원천징수세액·지방소득세는 한 번 지급분을 납부하는 금액이라 10원 미만 버림(국고금 관리법 제47조제1항, 지방세기본법 제59조 준용, 원천세과-240·법인22601-2481). 여러 건을 한꺼번에 지급하면 소득자별로 더한 뒤 버림",
                  "조약 제한세율·요건은 내장하지 않음 — treaty_rate가 없으면 국내세율로 계산하며, 제한세율 상한은 korean-tax-mcp treaty_withholding_rates·tax_treaty로 확인해 넣는다"]
     if 판단_목록:
         ret["판단"] = 판단_목록

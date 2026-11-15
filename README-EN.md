@@ -51,6 +51,8 @@ flowchart LR
   F -.->|no calculator for the question| K
 ```
 
+**Rounding** — tax bases drop fractions of a won; computed tax figures (calculated tax, credits, reductions, penalties) are kept in whole won, truncated only at the final amount where no rule says otherwise. Amounts actually paid to or refunded by the Treasury or a local government drop anything under 10 won and are shown separately as `납부할 금액(10원 미만 버림)` (or `환급받을 금액(10원 미만 버림)` for refund-only results) — Management of the National Funds Act (국고금 관리법) Article 47; local taxes follow it through 지방세기본법 Article 59. Withholding tax is truncated on the total for one payee and one payment (`withholding_tax` and `nonresident_withholding` return that 10-won figure directly).
+
 ## Try asking
 
 | Question | Tools |
@@ -299,7 +301,7 @@ Click a group to expand its tools.
 | `nonresident_withholding` | non-resident withholding |
 | `nonresident_capital_gains_withholding` | withholding on Korean real estate/securities gains of nonresidents and foreign corporations |
 | `nonresident_inheritance_gift` | inheritance tax for nonresident decedents, gift tax for nonresident donees |
-| `withholding_return` | monthly withholding tax return (Form 21, page 1) — subtotals by income code, grand total, refund offset and tax payable (2025 only) |
+| `withholding_return` | monthly withholding tax return (Form 21, page 1) — subtotals by income code, grand total, refund offset and tax payable (2016–2026 attribution years, using the form in force on the filing date) |
 | `retirement_income_tax` | retirement income |
 | `wage_income_tax` | wage income |
 | `foreign_worker_flat_tax` | foreign worker flat-rate tax (17%/19%) vs progressive tax (STTCL Art. 18-2) |

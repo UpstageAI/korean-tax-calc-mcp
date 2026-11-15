@@ -121,7 +121,7 @@ def _egp(year, items):
 def test_childcare_2025_paid_in_2026_per_child():
     f = {"purpose": "보육", "months": 1, "child_ages": [3, 5]}
     r = _egp(2025, [{"kind": "출산·보육수당", "amount": 400_000, "facts": {**f, "paid_date": "2026-01-10"}}])
-    assert r["결과"]["비과세_합계"] == 400_000 and any("국세청 해석" in n for n in r["주의"])   # 자녀 1명당 20만 × 2
+    assert r["결과"]["비과세_합계"] == 400_000 and any("서면질의 필요" in n for n in r["주의"])   # 자녀 1명당 20만 × 2
     r = _egp(2025, [{"kind": "출산·보육수당", "amount": 400_000, "facts": {**f, "paid_date": "2025-12-26"}}])
     assert r["결과"]["비과세_합계"] == 200_000 and "주의" not in r
     r = _egp(2025, [{"kind": "출산·보육수당", "amount": 400_000, "facts": f}])                    # 날짜 없음 — 경계 연도 안내

@@ -75,7 +75,7 @@ def months_in(start, end):
 
 def corp_tax(base, year, months=12, small_rental=False):
     """법인세 산출세액(제55조). 1년 미만: {(과세표준×12/월수)×세율}×월수/12. small_rental=제60조의2①1호 법인.
-    원 미만은 절사(국고금 관리법 제47조 끝수 계산 — 종전 반올림을 0.25.5에서 고침). 분수로 계산해 부동소수 오차 없이 내림."""
+    원 미만은 절사(세액의 원 미만 처리 규정은 없어 최종 금액에서만 버림 — 종전 반올림을 0.25.5에서 고침. 국고금 관리법 제47조는 과세표준 1원 미만·납부할 때 10원 미만). 분수로 계산해 부동소수 오차 없이 내림."""
     tiers = YEAR[year]["세율_소규모" if small_rental and "세율_소규모" in YEAR[year] else "세율"]
     return math.floor(tier(_x(base) * 12 / months, tiers) * months / 12)
 
@@ -704,7 +704,7 @@ def min_tax(base_before_incentives, sme=True, grace_year=0, year=None):
     year 지정 시 연도표(YEAR[year]['최저한세']) 사용 — 2016~2025 원문 동일. year=None은 같은 값(종전 호출 유지)."""
     if year is not None: require_year(year)
     t = _MIN_TAX if year is None else YEAR[year]["최저한세"]
-    # 원 미만 절사(국고금 관리법 제47조 끝수 계산 — 종전 반올림을 0.25.5에서 고침)
+    # 원 미만 절사(세액의 원 미만 처리 규정은 없어 최종 금액에서만 버림 — 종전 반올림을 0.25.5에서 고침)
     if sme: return _floor(base_before_incentives, t["중소"])
     if grace_year: return _floor(base_before_incentives, t["유예1_3"] if grace_year <= 3 else t["유예4_5"])
     return math.floor(tier(base_before_incentives, t["일반"]))
@@ -1352,7 +1352,9 @@ def loss_limit_ratio(year, sme):
 
 def late_payment_penalty(tax, due, until, notice=False, pre2020=None):
     """납부지연가산세 일수분(국세기본법 제47조의4①1호, 영 제27조의4): 1일 1만분의 3 → 2019.2.12.부터 10만분의 25
-    → 2022.2.15.부터 10만분의 22. 시행일 전 기간분은 종전 이율(영 부칙<제29534호,2019.2.12.> 제9조, 부칙<제32424호,2022.2.15.> 제6조)
+    → 2022.2.15.부터 10만분의 22. 시행일 전 기간분은 종전 이율 — 부칙 원문 대조(법제처 2019.2.12.·2022.2.15. 시행본, 2026-11-15):
+      대통령령 제29534호 부칙 제9조 "이 영 시행 전에 납부기한이 지났거나 환급받은 경우로서 이 영 시행 이후 납부 또는 부과하는 경우 … 이 영 시행일 전일까지의
+      기간에 대한 이자율은 … 종전의 규정에 따른다", 대통령령 제32424호 부칙 제6조 "이 영 시행일 전의 기간분 … 종전의 규정 … 이 영 시행 이후의 기간분 … 개정규정"
     — 기간을 나눠 각각의 율 적용(calc_vat.late_payment_rate_segments). due=법정납부기한, until=납부일·고지일.
     일수 끝점(납세의무 성립일 기준 — pre2020=2020.1.1. 전 성립, None이면 due가 2020.1.1. 전인지로 봄):
       2020.1.1. 전 성립분: 구 제47조의4①1호 "납부기한의 다음 날부터 자진납부일 또는 납세고지일까지" — 끝날 포함(법률 제16097호 부칙 제11조).

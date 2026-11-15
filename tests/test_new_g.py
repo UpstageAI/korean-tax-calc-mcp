@@ -78,11 +78,12 @@ def test_short_term_registration_cutoff():
     assert hr(2019, hs, other_income_amount=0)["결과"]["분리과세_세액"] == 0
     # 2021~: 2020.7.10. 후 신청 단기는 제외 → 일반 50%: (1,000만 − 500만 − 200만) × 14% = 420,000
     assert hr(2021, hs, other_income_amount=0)["결과"]["분리과세_세액"] == 420_000
-    # 2020 귀속은 개정 시행령 적용 시점 미확인 → 멈춤
-    assert "입력 확인 필요" in hr(2020, hs, other_income_amount=0)["error"]
+    # 2020 귀속: 대통령령 제31083호(2020.10.7.) 부칙에 제122조의2 적용례·경과조치 없음 → 과세기간 종료일 시행본 적용, 2021과 같은 420,000
+    assert hr(2020, hs, other_income_amount=0)["결과"]["분리과세_세액"] == 420_000
     # 7.10. 이전 신청이면 2021에도 등록임대
     hs[0]["등록신청일"] = "2020-07-10"
     assert hr(2021, hs, other_income_amount=0)["결과"]["분리과세_세액"] == 0
+    assert hr(2020, hs, other_income_amount=0)["결과"]["분리과세_세액"] == 0
 
 
 def test_deemed_rent_included_in_revenue():
