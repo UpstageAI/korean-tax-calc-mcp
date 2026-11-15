@@ -249,8 +249,8 @@ class Loan(BaseModel):
     withholding: int | None = None  # 채권자불분명·비실명 이자의 원천징수세액(소득처분 분리용)
 
 
-def _weighted_average_rate(movements, fy_movements, fs, fe, days, borrowings, gajib_jeoksu_before,
-                           gajib_jeoksu_after, gupum_jeoksu, offset_blocked_jeoksu):
+def _weighted_average_rate(movements, fs, fe, days, borrowings, gajib_jeoksu_before,
+                           gajib_jeoksu_after, gupum_jeoksu):
     """가중평균차입이자율 계산(규칙 제43조①). movements의 증가(+) 하나하나를 대여 건으로 보고(날짜순), 감소(-)는 선입선출로 회수
     — 개시일 전 회수도 대여 건 잔액을 줄인다. 대여 건의 이자율 = 대여일 현재 잔액이 있는 차입금(borrowed_on ≤ 대여일 < repaid_on) 중
     related·unclear_creditor가 아닌 것의 Σ(금액×rate) ÷ Σ금액(규칙 제43조①·⑥). 그런 차입금이 없으면 당좌 4.6%(③1·2호).
@@ -972,8 +972,8 @@ def deemed_interest(movements: Annotated[list[Movement], Field(description="가�
             overdraft_split = (j_before, j - j_before)
             note += "; 2016.3.6.까지 발생분은 6.9%, 2016.3.7.부터 4.6%(시행규칙 제43조②, 2016.3.7. 개정 부칙 제4조). 2016.3.7. 전에 약정한 기간부 대여금은 약정 만료일까지 6.9%(부칙 제11조) — 해당하면 rate_mode='입력'으로 따로 계산"
     elif rate_mode == "가중평균":
-        market, loan_tranches = _weighted_average_rate(mv, fy_movements, fs, y_end, days,
-                                                          borrowings or [], j, net_jeoksu, gupum_jeoksu, offset_blocked_jeoksu)
+        market, loan_tranches = _weighted_average_rate(mv, fs, y_end, days,
+                                                          borrowings or [], j, net_jeoksu, gupum_jeoksu)
         note = None
     else:
         rate_used = Fraction(market_rate).limit_denominator(10**7)
@@ -9695,7 +9695,7 @@ def asset_grant_reserve(
 입력: 사업연도 → year, 재원 구분 → kind, 수령액 → received, 자산별 내역 → assets(취득·개량가액·사용액·상각·처분·충당금 등).
 결과: 손금산입 한도·충당금 설정금액·상계액·처분 익금·사용계획·미사용·기말 잔액·소득금액 순영향·세무조정·근거. 일시상각충당금·압축기장충당금 계산."""
     return C.asset_grant_reserve(
-        year=year, kind=kind, received=received, assets=assets,
+        kind=kind, received=received, assets=assets,
         lost_book_value=lost_book_value, receipt_year=receipt_year,
         planned_use=planned_use, expired_unused=expired_unused, claim_by_return=claim_by_return,
     )
@@ -11338,7 +11338,7 @@ def overseas_subsidiary_statement(
     범위 밖: 해외영업소 설치현황표·해외부동산 명세서, 과태료 계산, 구 소득세법 시행규칙 별지 제93호·제94호서식 엑셀 틀."""
     from .engine import calc_overseas_sub as OS
     r = OS.statement(year, filer, fy_end, subsidiary, ownership_direct, ownership_indirect, equity_investment,
-                     loan_investment, related_party, loss_single_year, loss_cumulative_5y, financials, provisional)
+                     loan_investment, related_party, loss_single_year, loss_cumulative_5y, financials)
     if "error" in r:
         return r
     sub = subsidiary or {}

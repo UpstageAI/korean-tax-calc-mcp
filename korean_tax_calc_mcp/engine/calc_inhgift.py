@@ -32,7 +32,7 @@ def _parse_legal_share(s):
     return f.numerator, f.denominator
 
 
-def _rate_table(year):
+def _rate_table():
     """상속세·증여세 공통 세율표(법 제26조 준용). 2016.9.1. 현재 시행본과 2026.1.2. 시행본의 표가 같아 year로 나누지 않는다(법제처 대조 2026-11-15)."""
     return [(100 * M, 0.10), (500 * M, 0.20), (1_000 * M, 0.30), (3_000 * M, 0.40), (None, 0.50)]
 
@@ -43,7 +43,7 @@ def _tier(amount, tiers):
 
 
 def _calc_tax(amount, year):
-    return _tier(amount, _rate_table(year))
+    return _tier(amount, _rate_table())
 
 
 def _장례비용(funeral_cost, enshrinement_cost):
@@ -53,7 +53,7 @@ def _장례비용(funeral_cost, enshrinement_cost):
     return _won(max(lower, min(funeral_cost, upper))) + _won(min(enshrinement_cost, enshr))
 
 
-def _인적공제(year, children, minors, seniors, disabled, spouse, sole_spouse_heir, filed):
+def _인적공제(year, children, minors, seniors, disabled, sole_spouse_heir, filed):
     """기초공제 + 그밖의인적공제 + 일괄공제 선택. filed = 제21조제1항 단서의 '신고'가 있는지(기한내 신고, 2020.1.1. 이후 기한후신고 포함)."""
     voc = vocab.rule("상속세_인적공제", year)
     기초 = voc["기초공제"]  # 2억
@@ -311,7 +311,7 @@ def inheritance_tax(
 
     # 6. 인적공제
     if resident:
-        인적적용액, 일괄적용 = _인적공제(year, children, minors, seniors, disabled, spouse, sole_spouse_heir, 신고있음)
+        인적적용액, 일괄적용 = _인적공제(year, children, minors, seniors, disabled, sole_spouse_heir, 신고있음)
     else:   # 비거주자: 기초공제만(제18조), 제20조·제21조는 '거주자의 사망'
         인적적용액, 일괄적용 = vocab.rule("상속세_인적공제", year)["기초공제"], False
 

@@ -448,7 +448,8 @@ def _labels_as_text(wb, sources) -> int:
         for row in ws.iter_rows():
             for c in row:
                 v = c.value
-                if c.data_type == "f" and isinstance(v, str) and (v in texts or v.startswith("= ")):
+                # quotePrefix가 켜진 칸은 앞서 글로 적은 칸 — 값을 다시 적으며(영문 표기 등) 수식으로 바뀌었으면 글로 되돌린다
+                if c.data_type == "f" and isinstance(v, str) and (v in texts or v.startswith("= ") or c.quotePrefix):
                     c.data_type = "s"
                     c.quotePrefix = True
                     n += 1
@@ -543,8 +544,9 @@ def _summary_sheet(wb, title, company, period, calls, 결과들, review_notes, b
     ws = wb.create_sheet("요약")
     wb.move_sheet(ws, offset=-(len(wb.sheetnames) - 1))
     wrap = Alignment(wrap_text=True, vertical="top")
-    ws.cell(1, 1, f"{title} — 요약").font = Font(bold=True, size=14)
-    ws.cell(2, 1, " | ".join(x for x in (company, period, "단위: 원") if x))
+    from .workbook_blend import as_text       # 제목·회사명이 '='로 시작해도 수식으로 저장되지 않게
+    as_text(ws.cell(1, 1, f"{title} — 요약")).font = Font(bold=True, size=14)
+    as_text(ws.cell(2, 1, " | ".join(x for x in (company, period, "단위: 원") if x)))
     r = 4
     def head(cols):
         nonlocal r
@@ -1124,7 +1126,18 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
                              "원천21": 16.5, "원천23의5": 18, "원천23의5법인": 18,
                              "별지4": 1.5, "별지8갑": 1.6,
                              "국조30갑": 20, "국조31갑": 20.1, "국조31을": 20.2, "국조31병": 20.3, "국조32갑": 20.4, "국조32을": 20.5,
-                             "국조47": 21, "국조48": 21.1}
+                             "국조47": 21, "국조48": 21.1,
+                             # 2016~2020 사업연도의 구 서식 판 — 현행 서식과 같은 자리
+                             "국조16갑": 19, "국조20": 19.5,
+                             "국조신고서_2015": 19.5, "국조신고서_2020": 19.5, "국조신고서_2021": 19.5,
+                             "국조47_2021": 21, "법인81": 21, "국조48_2021": 21.1, "법인82": 21.1}
+        # 부가가치세 신고서 연도 판(2016~2024, 2025년 제1기 예정)은 현행 신고서 자리(부속 서식 앞)
+        for _y in ("2016", "2017", "2018", "2019", "2020", "2021", "2022", "2023", "2025a"):
+            _tpl_render_order[f"부가21_{_y}"] = 7.5
+        # 국제거래명세서 구 서식(국외특수관계인별 한 장, 5장까지)은 장 번호 순
+        for _y in ("2016", "2017", "2018", "2021"):
+            for _n in range(1, 6):
+                _tpl_render_order[f"국조명세서_{_y}_{_n}"] = 19 + _n / 100
 
         def _tpl_sort_key(t):
             return (_tpl_render_order.get(t["key"], 99), not t.get("main", True), t["call_idx"])
@@ -2306,6 +2319,9 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
         else:
             시트이름들 = list(wb.sheetnames)
         _경고 += _통합["warnings"]
+    # ── 호출자가 준 글(제목·회사·기간·검토 의견·label·시나리오·출처·쟁점)이 '='로 시작해도 수식으로 저장되지 않게 — 영문 표기·통합 시트까지 그린 뒤 한 번 더 ──
+    _labels_as_text(wb, [title, company, period, biz_no, review_notes, calls, scenarios, sources, issues, _blend,
+                         [cd.get("data") or cd.get("result") for cd in 결과들]])
     # ── 저장 ──
     base = filename if filename else title
     fpath = _unique_path(output_dir, base)

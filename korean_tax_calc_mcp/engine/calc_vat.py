@@ -316,7 +316,7 @@ _VALID_EVIDENCE = {"세금계산서", "신용카드", "현금영수증", "영수
 _VALID_SUPPLIER = {"일반과세자", "간이과세자_세금계산서", "간이과세자_영수증"}
 
 
-def _is_late_invoice_deduction(supply_date, issue_date, period, filing, 발급특례=True):
+def _is_late_invoice_deduction(supply_date, issue_date, 발급특례=True):
     """발급일 기준 공제 여부 판정(영 제75조3호·7호).
     supply_date·issue_date는 'YYYY-MM-DD'. period='YYYY-1'|'YYYY-2', filing='예정'|'확정'.
     발급특례=True면 발급기한=공급시기 다음 달 10일(법 제34조③), False면 공급시기 당일.
@@ -475,7 +475,7 @@ def vat_input_tax_deduction(period, filing, items):
 
         # 4. 세금계산서 + 공급시기·발급일 있는 경우
         if not 불공제사유 and 증빙 == "세금계산서" and 공급시기 and 발급일:
-            공제, msg, 지연수취 = _is_late_invoice_deduction(공급시기, 발급일, period, filing, 발급특례)
+            공제, msg, 지연수취 = _is_late_invoice_deduction(공급시기, 발급일, 발급특례)
             if not 공제:
                 불공제사유 = msg
             elif msg:
@@ -546,7 +546,7 @@ def 계산_항목별(items):
 _VALID_TRADE = {"판매", "면세전용", "비영업용승용차전용", "타사업장반출", "개인적공급", "사업상증여", "폐업시잔존"}
 
 
-def _deemed_market_value(자산, period):
+def _deemed_market_value(자산):
     """감가상각 간주시가 = 취득가액 × (1 − 체감률 × 경과과세기간수), 0 미만 0.
     자산: {구분:'건물'|'구축물'|'기타', 취득가액, 취득일, 공급일}. period: 'YYYY-1'|'YYYY-2'."""
     체감률 = 0.05 if 자산["구분"] in ("건물", "구축물") else 0.25
@@ -670,7 +670,7 @@ def vat_deemed_supply_items(period, items):
                 제외사유 = "매입세액 공제받지 않은 재화 — 간주공급 아님 (법 제10조 괄호)"
             else:
                 if 감가상각:
-                    과세표준 = _deemed_market_value(감가상각, period)
+                    과세표준 = _deemed_market_value(감가상각)
                 else:
                     과세표준 = 시가
                 구분 = it.get("사용인_구분")

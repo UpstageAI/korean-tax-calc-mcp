@@ -74,7 +74,7 @@ def _month_end_plus(d: date, months: int) -> date:
 
 def statement(year, filer="법인", fy_end=None, subsidiary=None, ownership_direct=0.0, ownership_indirect=0.0,
               equity_investment=0, loan_investment=0, related_party=False, loss_single_year=None,
-              loss_cumulative_5y=None, financials=None, provisional=False) -> dict:
+              loss_cumulative_5y=None, financials=None) -> dict:
     num = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)
     문제: list[str] = []
     if not (isinstance(year, int) and not isinstance(year, bool) and 2016 <= year <= 2026):

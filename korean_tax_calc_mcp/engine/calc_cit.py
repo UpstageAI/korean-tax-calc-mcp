@@ -2787,7 +2787,6 @@ def dividend_received_deduction(
 # ── 일시상각충당금·압축기장충당금 ──────────────────────────────────
 
 def asset_grant_reserve(
-    year: int,
     kind: str,
     received: int,
     assets: list,
@@ -2796,7 +2795,6 @@ def asset_grant_reserve(
     planned_use: int = 0,
     expired_unused: int = 0,
     claim_by_return: bool = True,
-    kwargs: dict = None,
 ) -> dict:
     """국고보조금·공사부담금·보험차익 일시상각충당금·압축기장충당금 세무조정."""
     # 입력 검증: 알 수 없는 키는 모델 검증에서 처리됨 (extra='forbid')

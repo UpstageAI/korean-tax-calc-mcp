@@ -142,7 +142,7 @@ def _basis(tested_year):
             "분석절차는 구 시행규칙 제2조의2①(2019.3.20.부터 ②))")
 
 
-def _parse(rows, years):
+def _parse(rows):
     문제, companies = [], {}
     seen = set()
     for i, r in enumerate(rows):
@@ -188,7 +188,7 @@ def _parse(rows, years):
     return 문제, companies
 
 
-def _screen_company(c, years, sc, tested, pli):
+def _screen_company(c, years, sc, tested):
     """회사 하나를 모든 스크린으로 평가 → {스크린: (상태, 사유)}. 상태: 통과·탈락·표시·검토 필요·건너뜀."""
     m, yd = c["meta"], c["years"]
     out = {}
@@ -279,7 +279,7 @@ def _manual(c, decisions):
 def _run(companies, tested, years, tested_years, pli, averaging, sc, decisions, qmethod, wca, use_outlier_exclusion=False):
     rows = {}
     for cid, c in companies.items():
-        res = _screen_company(c, years, sc, tested, pli)
+        res = _screen_company(c, years, sc, tested)
         d = _manual(c, decisions)
         if d:
             dec = str(d.get("decision", "")).lower()
@@ -370,7 +370,7 @@ def comparable_screen(rows=None, file_path=None, column_map=None, tested_party=N
         raw = load_rows(file_path, rows, column_map)
     except (OSError, ValueError, StopIteration) as e:
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"후보 목록을 읽지 못함: {e}"]}
-    p2, companies = _parse(raw, analysis_years)
+    p2, companies = _parse(raw)
     for cid, c in companies.items():
         md = c["meta"].get("manual_decision")
         if md and cid not in decisions and md.lower() not in ("accept", "reject"):

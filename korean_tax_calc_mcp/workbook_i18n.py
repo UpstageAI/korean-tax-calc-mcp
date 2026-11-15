@@ -260,10 +260,13 @@ def _summary_cells(ws, T: Translator, title: str, layout: str) -> None:
                     _wide(ws, c.row)
     if layout != "steps":
         a1, a2 = ws.cell(1, 1), ws.cell(2, 1)
-        if isinstance(a1.value, str) and a1.value.endswith(" — 요약"):
+        from .workbook_blend import as_text       # 제목·회사명이 '='로 시작해도 글 그대로(수식으로 저장하지 않음)
+        if isinstance(a1.value, str) and (a1.data_type != "f" or a1.quotePrefix) and a1.value.endswith(" — 요약"):
             a1.value = a1.value[: -len("요약")] + "Summary (요약)"
-        if isinstance(a2.value, str):
+            as_text(a1)
+        if isinstance(a2.value, str) and (a2.data_type != "f" or a2.quotePrefix):
             a2.value = a2.value.replace("단위: 원", "Unit: KRW (단위: 원)")
+            as_text(a2)
         for key, en in (("(+) 익금산입·손금불산입", "(+) "), ("(−) 손금산입·익금불산입", "(−) ")):
             for row in ws.iter_rows(min_col=1, max_col=1):
                 if row[0].value == key:

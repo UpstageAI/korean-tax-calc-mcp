@@ -71,10 +71,10 @@ _DOCS = ["사업계획서(자금조달·운용계획)", "신용정보 채무불�
 _SMALL_EVENTS = {"신설출자", "증액출자", "지분양수", "금전대여", "지점설치"}
 
 
-def _reporting_deadline(event: str, event_date: date, paid_in: bool,
+def _reporting_deadline(event: str, event_date: date,
                         ownership_ratio_after: float, loan_term_months: int | None,
                         counterparty_resident: bool, cumulative_usd: float,
-                        fiscal_year_end: date, main_bank_type: str, largest_shareholder: bool | None = None) -> dict:
+                        main_bank_type: str, largest_shareholder: bool | None = None) -> dict:
     """신고 구분·기한·서류(규정 제9-5조·제9-6조·제9-9조) — 이벤트 날짜의 규정(fx_rule)으로."""
     fdi, _ = _is_fdi(event, ownership_ratio_after, loan_term_months, False)
     if not fdi:
@@ -112,7 +112,7 @@ def _reporting_deadline(event: str, event_date: date, paid_in: bool,
 def _aftercare_schedule(event: str, event_date: date, paid_in: bool,
                         cumulative_usd: float, ownership_ratio_after: float,
                         loan_term_months: int | None,
-                        counterparty_resident: bool, recovered_usd: float | None,
+                        counterparty_resident: bool,
                         fiscal_year_end: date) -> list[dict]:
     """사후관리 보고서 일정(규정 제9-9조①)."""
     sched = []
@@ -186,8 +186,7 @@ def _aftercare_schedule(event: str, event_date: date, paid_in: bool,
     return sched
 
 
-def _tax_connection(event: str, fdi: bool, ownership_ratio_after: float,
-                    event_date: date, fiscal_year_end: date,
+def _tax_connection(event: str, fdi: bool, fiscal_year_end: date,
                     loan_term_months: int | None) -> dict:
     """세무 연결(국조법 제58조, 법인46012-3838, 법인46012-1986)."""
     안내 = []
@@ -254,18 +253,17 @@ def foreign_exchange_reporting(
     fdi, 사유 = _is_fdi(event, ownership_ratio_after, loan_term_months, financial_business)
 
     # 신고
-    신고 = _reporting_deadline(event, ed, paid_in, ownership_ratio_after,
-                                loan_term_months, counterparty_resident, cumulative_usd, fy,
+    신고 = _reporting_deadline(event, ed, ownership_ratio_after,
+                                loan_term_months, counterparty_resident, cumulative_usd,
                                 main_bank_type, largest_shareholder)
 
     # 사후관리 일정
     사후관리 = _aftercare_schedule(event, ed, paid_in, cumulative_usd,
                                     ownership_ratio_after, loan_term_months,
-                                    counterparty_resident,
-                                    recovered_usd, fy)
+                                    counterparty_resident, fy)
 
     # 세무 연결
-    세무 = _tax_connection(event, fdi and event != "청산", ownership_ratio_after, ed, fy, loan_term_months)
+    세무 = _tax_connection(event, fdi and event != "청산", fy, loan_term_months)
     if event == "청산":
         # 청산은 새 신고가 아니라 사후관리(청산보고서) — 지분·금액으로 만든 신고 안내를 붙이지 않는다
         신고 = {"구분": "해당없음", "기관": "", "기한": "", "서류": [], "비고": "청산은 새 신고가 아니라 사후관리(청산보고서, 제9-6조) 대상"}

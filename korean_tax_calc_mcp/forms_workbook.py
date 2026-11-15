@@ -1016,14 +1016,29 @@ def export_form_inputs(tool: str, args: dict | None, data: dict | None) -> dict 
             out += [_inp(f"일수{i}", n, f"기간 {i} 일수"), _inp(f"이율{i}_분자", num), _inp(f"이율{i}_분모", den, f"1일 이율 {num}/{den}")]
             terms.append(f"미납세액*일수{i}*이율{i}_분자/이율{i}_분모")
         daily = "+".join(terms) or "0"
+        try:        # 납부일이 법정납부기한 이내면 1호(3%)도 없음 — 도구와 같게
+            late = _dt.date.fromisoformat(str(a.get("until"))) > d0 or bool(a.get("notice_due"))
+        except ValueError:
+            late = True
+        fixed = "미납세액*3/100" if late else "0"
         steps = [
-            {"이름": "기본가산세", "식": "ROUNDDOWN(미납세액*3/100,0)", "값": res.get("3%분"), "설명": "1호: 미납세액 × 3%"},
+            {"이름": "기본가산세", "식": f"ROUNDDOWN({fixed},0)", "값": res.get("3%분"), "설명": "1호: 미납세액 × 3%"},
             {"이름": "일수분", "식": f"ROUNDDOWN({daily},0)", "값": res.get("일수분"),
              "설명": "2호: 미납세액 × 일수 × 1일 이율(국세기본법 시행령 제27조의4, 이율 변경일로 기간 안분)"},
             {"이름": "한도", "식": "ROUNDDOWN(미납세액/10,0)", "값": res.get("한도_10%"), "설명": "납부고지 전 기간 한도 — 미납세액 × 10%"},
-            {"이름": "가산세", "식": f"ROUNDDOWN(MIN(미납세액*3/100+{daily},미납세액/10),0)", "값": res.get("가산세"),
+            {"이름": "가산세", "식": f"ROUNDDOWN(MIN({fixed}+{daily},미납세액/10),0)", "값": res.get("가산세"),
              "설명": "min(1호 + 2호, 10% 한도), 원 미만 절사(국세기본법 제47조의5①)"},
         ]
+        # 납부고지 후분·전체 50% 한도가 있으면 위 식은 '납부고지 전' 금액이다 — 가산세 합계라고 적지 않는다(합계는 결과의 가산세).
+        from fractions import Fraction as _Fr
+        try:
+            u = _Fr(int(a.get("unpaid_tax", 0)))
+            pre = int(min((u * 3 / 100 if late else 0) + sum(u * n * _Fr(*_rate_fraction(r)) for n, r in segs), u / 10))
+        except (TypeError, ValueError):
+            pre = None
+        if pre is not None and res.get("가산세") != pre:
+            steps[-1] = {"이름": "납부고지_전_가산세", "식": steps[-1]["식"], "값": pre,
+                         "설명": "납부고지 전 — min(1호 + 2호, 10% 한도), 원 미만 절사(국세기본법 제47조의5①). 납부고지 후분·전체 50% 한도를 더한 가산세는 결과의 '가산세'(도구 값)"}
     elif tool == "donation_limit":
         from .engine.calc_cit import loss_limit_ratio, YEAR
         y = a.get("year")
@@ -1168,6 +1183,11 @@ def export_form_inputs(tool: str, args: dict | None, data: dict | None) -> dict 
         ]
     if not out:
         return data
+    for st in steps:        # 식이 엑셀 수식이 아니면(값이 없어 "None", 이름 없는 "결과.…") 값을 그대로 적는다 — 수식 칸에 #NAME?이 나지 않게
+        f = str(st.get("식"))
+        if f == "None" or f.startswith("결과."):
+            v = st.get("값")
+            st["식"] = str(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else "0"
     new_data = dict(data)
     new_data["계산식_입력"] = out
     if steps:
