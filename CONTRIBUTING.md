@@ -38,6 +38,17 @@ Run the full suite locally before opening a pull request.
 - **No secrets.** Never commit API keys (`LAW_OC` or `UPSTAGE_API_KEY`), tokens, or personal data, including in tests and fixtures.
 - Docs-only changes do not need a version bump; maintainers handle releases and `CHANGELOG.md`.
 
+## Keeping the law.go.kr key out of the repo (법제처 OC 키 유출 방지)
+
+The 법제처 Open API puts the key in the request URL (`…?OC=<key>&…`) and echoes that URL back inside response links, so a saved response or a copied source link carries the key with it. Four guards:
+
+- **Masked on receipt.** `korean_tax_calc_mcp.audit.agents.law._get` (the only code here that calls law.go.kr) returns responses with every `OC=<value>` replaced by `OC=***`; the key exists only in the outgoing request URL.
+- **Repository scan.** `tests/test_oc_key_guard.py` runs `scripts/check_no_oc_key.sh --all` over every tracked file in CI. Placeholders such as `OC=***`, `OC={oc}`, `OC=test`, `YOUR_KEY` pass.
+- **Pre-commit hook.** Install once per clone (covers every worktree): `bash scripts/check_no_oc_key.sh --install`. A commit whose staged files contain a key-shaped value is refused; the hook prints file and line only, never the value.
+- **Saving raw responses (원자료 저장).** Pass anything fetched from law.go.kr through the masking helper before it touches disk: `curl -s "$URL" | python scripts/redact_oc.py > raw/law_xxx.json`, or in Python `from korean_tax_calc_mcp.audit.agents.law import scrub_oc` and `json.dump(scrub_oc(data), f)`. Already-saved files: `python scripts/redact_oc.py raw/*.json`. Do not `echo` a URL that contains the key and do not run such commands under `set -x`; keep the URL in a variable.
+
+If a key was pushed, masking the file is not enough (it stays in history): reissue the key at open.law.go.kr.
+
 ## Review
 
 Every pull request runs the test workflow and an automated CodeSolar review. Address its comments or reply with the reason you disagree; a maintainer merges after both pass.
