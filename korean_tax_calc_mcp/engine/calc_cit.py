@@ -3928,7 +3928,9 @@ def corporate_filing_obligations(args: dict):
       tax_incentive(bool), reserve_balance(원 기본0), assessed(bool),
       merger_within_3y(bool), foreign_direct_investment(bool),
       related_goods·related_services·related_intangibles(국외특수관계인 거래 합계, 원 기본0),
-      party_max_goods·party_max_services·party_max_intangibles(국외특수관계인별 최대, 기본0).
+      party_max_goods·party_max_services·party_max_intangibles(국외특수관계인별 최대, 기본0),
+      third_party_goods·third_party_services·third_party_intangibles(국외특수관계 없는 자와의 국제거래 금액, 기본0 —
+        정상가격 산출방법 신고서 면제 가목의 '국제거래' 전체 금액에만 더함: 사전-2022-법규국조-0527).
     반환: {"결과": {외부감사:{대상,충족조건:...}, 외부세무조정:{대상,사유:[...]},
                      국제거래명세서, 요약손익계산서, 정상가격산출방법신고서,
                      국제거래정보통합보고서, 해외직접투자명세:{대상,기한}},
@@ -3960,6 +3962,9 @@ def corporate_filing_obligations(args: dict):
     상대최대물품 = args.get("party_max_goods", 0) or 0
     상대최대용역 = args.get("party_max_services", 0) or 0
     상대최대무형 = args.get("party_max_intangibles", 0) or 0
+    제3자물품 = args.get("third_party_goods", 0) or 0
+    제3자용역 = args.get("third_party_services", 0) or 0
+    제3자무형 = args.get("third_party_intangibles", 0) or 0
 
     if not isinstance(year, int) or year < 2016 or year > 2026:
         return {"error": "입력 오류: year은 2016~2026"}
@@ -3998,6 +4003,9 @@ def corporate_filing_obligations(args: dict):
         return {"error": "입력 오류: party_max_services는 원 int≥0"}
     if not isinstance(상대최대무형, int) or 상대최대무형 < 0:
         return {"error": "입력 오류: party_max_intangibles는 원 int≥0"}
+    for _nm, _v in (("third_party_goods", 제3자물품), ("third_party_services", 제3자용역), ("third_party_intangibles", 제3자무형)):
+        if isinstance(_v, bool) or not isinstance(_v, int) or _v < 0:
+            return {"error": f"입력 오류: {_nm}는 원 int≥0"}
 
     # ── 외부감사 ───────────────────────────────────────────────────────────
     # 판정 값은 모두 '직전 사업연도' 기준(자산·부채·종업원은 직전 사업연도 말, 매출액은 직전 사업연도) — assets·liabilities·employees·revenue_prev.
@@ -4088,7 +4096,12 @@ def corporate_filing_obligations(args: dict):
     else:
         국제거래명세서 = 국제거래합계 > 0
     요약손익 = (관련물품 > 1_000_000_000 or 관련용역 > 200_000_000 or (무형포함 and 관련무형 > 200_000_000))
-    전체모두이하 = (관련물품 <= 5_000_000_000 and 관련용역 <= 1_000_000_000 and (not 무형포함 or 관련무형 <= 1_000_000_000))
+    # 정상가격 산출방법 신고서 면제 가목(전체 50억·10억, 2023년부터 무형 10억)은 '해당 사업연도의 국제거래' 전체 금액 —
+    #   국외특수관계 없는 자와의 국제거래도 들어감(사전-2022-법규국조-0527, 2022.5.27. — 2021·2022년 영 제36조제2호가목에 대한 회신).
+    #   문언: 구 영 제7조①1호(2016.2.5.·2020.2.11. 시행본) "전체 재화거래 금액의 합계", 영 제36조2호가목(2021.2.17.), 제3호가목(2023.2.28.~) "해당 사업연도의 국제거래".
+    #   나목(국외특수관계인별)·요약손익계산서·국제거래명세서 면제는 '국외특수관계인과의' 거래라 더하지 않음.
+    전체물품, 전체용역, 전체무형 = 관련물품 + 제3자물품, 관련용역 + 제3자용역, 관련무형 + 제3자무형
+    전체모두이하 = (전체물품 <= 5_000_000_000 and 전체용역 <= 1_000_000_000 and (not 무형포함 or 전체무형 <= 1_000_000_000))
     상대모두이하 = (상대최대물품 <= 1_000_000_000 and 상대최대용역 <= 200_000_000 and (not 무형포함 or 상대최대무형 <= 200_000_000))
     정상가격신고서 = 국제거래합계 > 0 and not 전체모두이하 and not 상대모두이하
     if year >= 2021:
@@ -4175,6 +4188,13 @@ def corporate_filing_obligations(args: dict):
         판단.append({"항목": "정상가격산출방법신고서", "결론": ("정상가격 산출방법 신고서 제출 대상 — 전체 재화 50억·용역 10억" + ("·무형자산 10억" if 무형포함 else "")
                                                         + " 이하도 아니고 국외특수관계인별 재화 10억·용역 2억" + ("·무형자산 2억" if 무형포함 else "") + " 이하도 아님"),
                      "근거": 국조근거})
+    if 제3자물품 or 제3자용역 or 제3자무형:
+        결과["정상가격신고서_가목_전체금액"] = {"재화": 전체물품, "용역": 전체용역, **({"무형자산": 전체무형} if 무형포함 else {})}
+        판단.append({"항목": "정상가격산출방법신고서 가목 금액",
+                   "결론": (f"국제거래 전체 금액(국외특수관계인 + 국외특수관계 없는 자) 재화 {전체물품:,}원·용역 {전체용역:,}원" + (f"·무형자산 {전체무형:,}원" if 무형포함 else "")
+                          + " — 재화 50억·용역 10억" + ("·무형자산 10억" if 무형포함 else "") + (" 모두 이하" if 전체모두이하 else " 중 하나 초과")
+                          + ("" if 무형포함 or not 제3자무형 else ". 2022년까지는 무형자산 금액 기준이 없어 third_party_intangibles는 쓰지 않음")),
+                   "근거": "사전-2022-법규국조-0527(2022.5.27. — 영 제36조제2호가목의 '국제거래'에는 국외특수관계 없는 자와의 국제거래도 포함), " + 국조근거})
     if not 무형포함 and 관련무형 > 0:
         판단.append({"항목": "무형자산 거래", "결론": "2022년까지는 요약손익계산서·정상가격 산출방법 신고서 면제 요건에 무형자산 금액 기준이 없음 — 재화·용역 금액만으로 판정",
                      "근거": 국조근거})

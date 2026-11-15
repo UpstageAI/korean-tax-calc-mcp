@@ -24,6 +24,7 @@ from .engine import calc_foreign as F
 from .engine import calc_branch_exit as BX
 from .engine import calc_provision as PV
 from .engine import calc_tp as ALR
+from .engine import tp_era as TPE
 from .engine import calc_tp_screen as TPS
 from .engine import calc_multiyear as MY
 from .engine import calc_incentive as INC
@@ -540,10 +541,14 @@ def _ok(r, basis, **extra):
 
 # 국제거래 정상가격 조정의 소득처분(0.41.0): 반환 여부 확인 전까지 임시유보(국조령 제24조①). 별지 제15호서식 작성방법의 처분 이름을 그대로 쓴다.
 _TP_DISP = "임시유보"
-_TP_DISP_BASIS = "국제조세조정에 관한 법률 제13조①, 시행령 제24조①(반환 여부 확인 전 임시유보)"
-_TP_DISP_NOTE = ("세무조정의 임시유보(국조법 제13조①): 신고한 날부터 90일 안에 이전소득금액 반환 확인서를 내지 않으면 상대방이 내국법인이 출자한 법인이면 출자의 증가, "
-                 "내국법인의 주주이거나 그 밖의 자이면 배당으로 처분(시행령 제22조·제23조). 신고할 때 바로 그 처분을 원하면 임시유보 없이 처분할 수 있음(시행령 제25조①4호 — 2023.2.28. 신설·시행, 부칙에 이 호의 적용례 없음) — "
-                 "그때는 세무조정 항목의 소득처분을 '출자의 증가' 또는 '이전소득 배당'으로 바꿔 income_adjustment_total에 넣는다")
+_TP_DISP_BASIS = TPE.DISP[TPE.ERA_NEW]["근거"]
+_TP_DISP_NOTE = TPE.DISP[TPE.ERA_NEW]["주의"]
+
+
+def _tp_disp(year):
+    """사업연도 개시연도 → (소득처분 근거, 주의). 2020년까지는 구 국조법 제9조·구 시행령 제15조~제16조(tp_era)."""
+    d = TPE.disposition(year)
+    return d["근거"], d["주의"]
 
 
 def _adj(구분, 조정, 금액, 소득처분, 근거):
@@ -828,7 +833,7 @@ def deemed_interest(movements: Annotated[list[Movement], Field(description="가�
                     deposits: Annotated[list[Deposit] | None, Field(description="동일인 가수금 [{date, amount(원, 입금 +, 반환 -), offset_blocked(상계 불가 여부), 이름?}]")] = None,
                     rate_mode: Annotated[Literal["입력", "가중평균", "당좌선택"], Field(description="이자율 계산 방식: '입력'(기본, market_rate 사용) | '가중평균'(borrowings로 가중평균차입이자율) | '당좌선택'(당좌대출이자율 4.6%, 2016.3.6.까지 발생분은 6.9%로 기간 안분, 이후 2개 사업연도 적용)")] = "입력",
                     borrowings: Annotated[list[Borrowing] | None, Field(description="차입금 [{borrowed_on, amount, rate, repaid_on?, related?, unclear_creditor?}] (rate_mode='가중평균'일 때)")] = None,
-                    foreign_related: Annotated[bool, Field(description="대여 상대가 국외특수관계인(해외 자회사 등)인지 — True면 법인세법 제52조가 아니라 국제조세조정에 관한 법률 제7조 정상가격 조정으로 계산(3억·5% 기준 없이 정상이자와의 차액 전부 익금산입). 2021 사업연도부터 지원")] = False) -> dict:
+                    foreign_related: Annotated[bool, Field(description="대여 상대가 국외특수관계인(해외 자회사 등)인지 — True면 법인세법 제52조가 아니라 국제조세조정에 관한 법률 제7조 정상가격 조정으로 계산(3억·5% 기준 없이 정상이자와의 차액 전부 익금산입). 2020년까지 개시한 사업연도는 구 국조법 제4조·구 시행령 제6조제7항으로 계산")] = False) -> dict:
     """Deemed interest on provisional payments to related parties and wrongful calculation check (가지급금 인정이자).
     가지급금 인정이자(적수 × 시가 이자율)와 부당행위계산 여부. 언제: 특수관계인 가지급금 이자와 부당행위 3억·5% 판정을 함께 구할 때.
     입력: 가지급금 증감 [{date, amount(원, 대여 +, 회수 -)}] → movements, 사업연도 종료일(YYYY-MM-DD) → year_end, 시가 이자율(소수) → market_rate(rate_mode='입력'일 때), 실제 이자율(소수) → charged_rate, 실제 받은 이자 금액(원) → received_interest, 사업연도 개시일(YYYY-MM-DD, 생략 시 year_end 기준 자동 계산) → fiscal_start, 동일인 가수금 [{date, amount(원, 입금 +, 반환 -), offset_blocked(상계 불가 여부), 이름?}] → deposits, 이자율 계산 방식('입력'|'가중평균'|'당좌선택') → rate_mode, 차입금 [{borrowed_on, amount, rate, repaid_on?, related?, unclear_creditor?}] → borrowings(rate_mode='가중평균'일 때).
@@ -836,7 +841,8 @@ def deemed_interest(movements: Annotated[list[Movement], Field(description="가�
     국외특수관계인 대여(foreign_related=True): 국제거래에는 법인세법 제52조를 적용하지 않고(국조법 제4조제2항) 정상이자율과의 차액을 익금산입(국조법 제7조) — 3억·5% 기준 없음.
       원칙은 채무액·만기·보증·신용을 고려해 산출한 정상이자율(rate_mode='입력', 시행령 제11조제1항). rate_mode='당좌선택'은 시행규칙 제3조제1호의 간주 정상이자율(당좌대출이자율)로,
       법 제8조제1항제6호의 방법이라 제1호~제5호로 산출할 수 없는 경우에만 쓴다(법 제8조제1항 단서). 입력한 이자율이 정상이자율인지는 판정하지 않음. '가중평균'은 쓰지 않음.
-      2020 사업연도까지(구 국조령 제6조제7항)는 지원하지 않음."""
+      2020년까지 개시한 사업연도: 구 국조법 제3조제2항·제4조, 구 시행령 제6조제7항. 간주 정상이자율(당좌대출이자율, 구 시행규칙 제2조의2)은 2017.2.7. 이후 자금거래분부터(대통령령 제27837호 부칙 제2조)라
+      그 전에 대여한 금액이 있으면 '당좌선택'을 받지 않고 '입력'으로 계산. 구법에서는 간주 이자율이 제1호 이자율과 나란한 선택지(구 시행령 제6조제7항 각 호의 어느 하나)."""
     from datetime import date as _date, timedelta
     from fractions import Fraction
     if received_interest is not None and charged_rate != 0.0:
@@ -847,8 +853,6 @@ def deemed_interest(movements: Annotated[list[Movement], Field(description="가�
     _chk.supported_year("year_end", year_end)
     if foreign_related:
         문제 = []
-        if y_end.year <= 2020:
-            문제.append(f"year_end={year_end} — 국외특수관계인 대여는 2021 사업연도부터 지원(2020년까지는 구 국조령 제6조제7항 적용, 간주 정상이자율 조문을 대조하지 않음)")
         if rate_mode == "가중평균":
             문제.append("rate_mode='가중평균' — 가중평균차입이자율은 법인세법 방식. 국외특수관계인 대여는 rate_mode='당좌선택'(국조칙 제3조제1호 간주 정상이자율) 또는 '입력'(직접 산출한 정상이자율)")
         if 문제:
@@ -865,6 +869,17 @@ def deemed_interest(movements: Annotated[list[Movement], Field(description="가�
         fiscal_start = fs_dt.isoformat()
     fs = _date.fromisoformat(fiscal_start)
     _chk.need(fs <= y_end, f"fiscal_start={fiscal_start}가 year_end={year_end}보다 뒤")
+    _tp_era = TPE.era(fs.year) if foreign_related else None      # 국조법령은 과세연도 개시일 기준(대통령령 제31448호 부칙 제3조, 제30405호 부칙 제2조)
+    _deemed_gap = False
+    if foreign_related and rate_mode == "당좌선택":      # 2021년 이후 개시분도 2017.2.7. 전 자금거래분은 구 시행령 제6조⑦(대통령령 제31448호 부칙 제17조)
+        _from, _rule = _date(*TPE.DEEMED_RATE_FROM), _date(*TPE.DEEMED_RULE_FROM)
+        _lent = [_date.fromisoformat(d_) for d_, a_ in mv if a_ > 0]
+        if any(d_ < _from for d_ in _lent):
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"rate_mode='당좌선택' — 2017.2.7. 전에 대여한 금액({min(_lent).isoformat()})이 있음. 간주 정상이자율(구 국조령 제6조제7항제2호)은 2017.2.7. 이후 자금거래분부터라"
+                           "(대통령령 제27837호 부칙 제2조, 제31448호 부칙 제17조) 그 전 대여분은 채무액·만기·보증·신용을 고려해 산출한 정상이자율을 rate_mode='입력'으로 넣는다. "
+                           "2017.2.7. 이후 대여분만 따로 나눠 호출하면 '당좌선택' 가능"]}
+        _deemed_gap = any(_from <= d_ < _rule for d_ in _lent)
     days = (y_end - fs).days + 1
     # 개시일 전 증감은 모두 개시일 잔액으로 합산
     opening = 0
@@ -1007,15 +1022,25 @@ def deemed_interest(movements: Annotated[list[Movement], Field(description="가�
         result["정상가격_조정"] = diff > 0
         result["익금산입"] = diff if diff > 0 else 0
         all_notes = [n for n in all_notes if "이후 2개 사업연도" not in n]
-        all_notes.insert(0, (F.related_party_law(True, "일반", y_end.year)["결론"] + " 정상이자율은 "
-                             + ("시행규칙 제3조제1호 간주 이자율(당좌대출이자율) — 법 제8조①6호의 방법이라 비교가능 제3자 가격방법 등 제1호~제5호로 정상이자율을 산출할 수 없는 경우에만 적용(법 제8조① 단서). 산출할 수 있으면 rate_mode='입력'"
-                                if rate_mode == "당좌선택" else f"입력한 이자율 {market_rate:.2%}(채무액·만기·보증·신용을 고려해 법 제8조①의 방법으로 산출했는지 확인 — 이 도구는 정상이자율인지 판정하지 않음)")
-                             + ". 대여금 면제(채무 면제)나 자회사 증자 참여는 국제거래라도 법인세법 제52조 대상(국조령 제4조) — unfair_transaction의 transaction_type으로 판정"))
+        _old = _tp_era != TPE.ERA_NEW
+        if _old:
+            _rate_txt = ("구 시행규칙 제2조의2의 간주 정상이자율(당좌대출이자율) — 구 시행령 제6조⑦은 제1호(채무액·만기·보증·신용을 고려한 이자율)와 제2호(간주 이자율) 중 어느 하나로 정함"
+                         if rate_mode == "당좌선택" else f"입력한 이자율 {market_rate:.2%}(구 시행령 제6조⑦1호 — 채무액·만기·보증·신용을 고려해 산출했는지 확인. 이 도구는 정상이자율인지 판정하지 않음)")
+            _exc = "대여금 면제(채무 면제)나 자회사 증자 참여는 국제거래라도 법인세법 제52조 대상(" + ("구 국조령 제3조의3" if _tp_era == TPE.ERA_2020 else "구 국조령 제3조의2") + ") — unfair_transaction의 transaction_type으로 판정"
+        else:
+            _rate_txt = ("시행규칙 제3조제1호 간주 이자율(당좌대출이자율) — 법 제8조①6호의 방법이라 비교가능 제3자 가격방법 등 제1호~제5호로 정상이자율을 산출할 수 없는 경우에만 적용(법 제8조① 단서). 산출할 수 있으면 rate_mode='입력'"
+                         if rate_mode == "당좌선택" else f"입력한 이자율 {market_rate:.2%}(채무액·만기·보증·신용을 고려해 법 제8조①의 방법으로 산출했는지 확인 — 이 도구는 정상이자율인지 판정하지 않음)")
+            _exc = "대여금 면제(채무 면제)나 자회사 증자 참여는 국제거래라도 법인세법 제52조 대상(국조령 제4조) — unfair_transaction의 transaction_type으로 판정"
+        all_notes.insert(0, F.related_party_law(True, "일반", fs.year)["결론"] + " 정상이자율은 " + _rate_txt + ". " + _exc)
         result["판단"] = "; ".join(all_notes)
-        return _ok(result, "국제조세조정에 관한 법률 제4조②(법인세법 제52조 적용 배제)·제7조(정상가격에 의한 과세조정), 시행령 제11조, 시행규칙 제3조 1호(법인세법 시행규칙 제43조② 당좌대출이자율)",
-                   세무조정=([_adj("대여금 정상이자(국외특수관계인)", "익금산입", result["익금산입"], _TP_DISP, "국제조세조정에 관한 법률 제7조, " + _TP_DISP_BASIS)] if result["익금산입"] else []),
-                   주의=[_TP_DISP_NOTE,
-                         "외화 대여, 해외 자회사에서 빌리는 경우(차입)는 이 도구 범위 밖(차입은 통화별 지표금리 + 1.5%)"])
+        _db, _dn = _tp_disp(fs.year)
+        _주의 = [_dn, "외화 대여, 해외 자회사에서 빌리는 경우(차입)는 이 도구 범위 밖(차입은 통화별 지표금리 + 1.5%" + (", 2020년까지는 통화별 12개월 LIBOR + 1.5% — 구 시행규칙 제2조의2" if _old else "") + ")"]
+        if _deemed_gap:
+            _주의.append("2017.2.7.~2017.3.16. 대여분: 간주 정상이자율을 둔 구 시행령 제6조⑦2호는 2017.2.7. 시행됐지만 그 이자율을 정한 구 시행규칙 제2조의2②는 2017.3.17. 공포·시행이고 부칙(기획재정부령 제613호)에 이 항의 적용례가 없음 — "
+                       "근거 없음(구 국조령·국조칙 시행본과 부칙 대조, 2026-11-15), 서면질의 필요. 이 결과는 당좌대출이자율을 적용한 값이고, 적용되지 않는다고 보면 rate_mode='입력'으로 산출한 정상이자율을 넣는다")
+        return _ok(result, TPE.loan_basis(fs.year),
+                   세무조정=([_adj("대여금 정상이자(국외특수관계인)", "익금산입", result["익금산입"], _TP_DISP, ("국제조세조정에 관한 법률 제7조, " if not _old else "구 국제조세조정에 관한 법률 제4조, ") + _db)] if result["익금산입"] else []),
+                   주의=_주의)
     if all_notes:
         result["판단"] = "; ".join(all_notes)
     return _ok(result, "법인세법 제52조, 시행령 제88조③·제89조③, 시행규칙 제43조(이자율)")
@@ -1032,13 +1057,14 @@ def arm_length_range(comparables: Annotated[list, Field(description="비교대�
                      tested_is_resident: Annotated[bool | None, Field(description="필수 — 분석대상 당사자가 국내 법인(거주자)이면 True, 국외특수관계인(해외 자회사·모회사 등)이면 False. 조정 방향이 반대가 되므로 비우면 계산하지 않음. 회사 이름으로 추측하지 말고 소재지 자료로 정할 것")] = None,
                      higher_is_more_income: Annotated[bool, Field(description="지표가 높을수록 분석대상 당사자의 소득이 큰 지표인지(이익률은 True). 분석대상이 지급하는 가격·수수료율처럼 높을수록 소득이 줄면 False")] = True,
                      quartile_method: Annotated[Literal["inclusive", "exclusive"], Field(description="사분위 계산법 — inclusive(엑셀 QUARTILE.INC, 기본) / exclusive(엑셀 QUARTILE.EXC, 비교대상 셋 이상)")] = "inclusive",
-                     year: Annotated[int | None, Field(description="사업연도 개시연도(2021~2026, 선택 — 종료연도가 아님) — 국조령 전부개정(대통령령 제31448호) 부칙 제3조: 2021.1.1. 이후 개시하는 과세연도분부터. 2020년 이전 개시(예: 2020.7.1.~2021.6.30.)는 구 시행령을 대조하지 않아 지원하지 않음")] = None) -> dict:
+                     year: Annotated[int | None, Field(description="사업연도 개시연도(2016~2026, 선택 — 종료연도가 아님). 생략하면 현행 조문. 2021.1.1. 이후 개시분은 시행령 제15조(대통령령 제31448호 부칙 제3조), 2020년까지 개시분(예: 2020.7.1.~2021.6.30.)은 구 시행령 제6조제4항·제5항으로 근거를 냄")] = None) -> dict:
     """Transfer pricing arm's length range: interquartile range, median and adjustment amount (정상가격 범위).
     정상가격 범위와 조정액 — 비교대상 이익률 등으로 사분위·전체 범위, 중위값·평균값을 구하고 분석대상 당사자의 값이 범위 안인지, 벗어나면 기준점까지의 차이와 조정액(국제조세조정에 관한 법률 시행령 제15조제5항·제6항). 언제: 국외특수관계인 거래의 이익률이 정상가격 범위 안인지 확인하고 범위를 벗어난 경우 조정액을 구할 때.
     입력: 비교대상 값 → comparables, 분석대상 값 → tested_value, 지표 분모 금액 → base_amount, 범위 종류 → range_type, 기준점 → point·point_value, 분석대상이 거주자인지 → tested_is_resident, 지표 방향 → higher_is_more_income, 사분위 계산법 → quartile_method, 사업연도 → year.
     계산: 범위 안이면 조정 없음. 벗어나면 기준점(중위값·평균값·직접입력)과의 차이 × base_amount = 조정액(원 미만 절사). 분석대상이 거주자가 아니면 방향을 뒤집어 거주자 소득이 과소인지 과다인지 표시하고, '방향'에 한 문장으로 적음. tested_is_resident를 비우면 계산하지 않고 되물음.
     결과: 비교대상 수·최솟값·제1사분위·중위값·제3사분위·최댓값·평균값, 범위, 범위 안 여부, 조정 필요 여부, 기준점, 차이, 거주자 소득(과소·과다), 방향, 조정액, 판단·근거·주의.
     결과의 '비교대상_확인'은 비교가능 거래의 뜻(시행령 제14조제1항제1호), 분석요소(시행규칙 제6조제1항), 내부 비교가능 거래를 먼저 볼 것(시행규칙 제7조제1항제4호), 이익률 자료만으로는 타당성을 확인할 수 없다는 점을 알려 줌.
+    2016~2020년 개시 사업연도는 구 시행령 제6조제4항·제5항, 구 법 제4조(2020년 개시분부터 제4조의2)와 구 법 제9조·구 시행령 제15조의 임시유보로 근거를 냄.
     범위 밖: 비교대상이 적절한지(비교가능성·차이 조정·손실 기업 처리)는 판단하지 않음. 사분위 계산법과 기준점 선택은 국조법령이 특정하지 않음(조문에는 없고, 2022.3.18. 시행규칙부터 거래가격 조정신고서 작성방법이 정상사분위범위 기재를 전제 — OECD 이전가격지침 3.57의 통계적 도구) — 선택 이유는 보고서에 밝혀야 함. 데이터베이스 후보 목록을 거르는 일은 tp_comparable_screen."""
     r = ALR.arm_length_range(comparables, tested_value, base_amount, range_type, point, point_value, tested_is_resident, higher_is_more_income, quartile_method, year)
     if "error" in r:
@@ -1046,8 +1072,9 @@ def arm_length_range(comparables: Annotated[list, Field(description="비교대�
     res, 주의 = r["결과"], list(r["주의"])
     세무조정 = []
     if res.get("조정_필요") and res.get("조정액") and res.get("거주자_소득") == "과소":
-        세무조정.append(_adj("정상가격 조정(국외특수관계인 거래)", "익금산입", res["조정액"], _TP_DISP, "국제조세조정에 관한 법률 제6조·제7조, " + _TP_DISP_BASIS))
-        주의.append(_TP_DISP_NOTE)
+        _db, _dn = _tp_disp(year)
+        세무조정.append(_adj("정상가격 조정(국외특수관계인 거래)", "익금산입", res["조정액"], _TP_DISP, TPE.RANGE[TPE.era(year)]["법"] + ", " + _db))
+        주의.append(_dn)
     elif res.get("조정_필요") and res.get("거주자_소득") == "과다":
         주의.append("거주자 소득이 정상가격보다 많은 경우(감액)는 세무조정 항목을 내지 않음 — 감액은 요건·절차(경정청구, 상호합의 등)를 따로 확인")
     return _ok(res, r["근거"], 계산=r["계산"], 판단=r["판단"], 비교대상_확인=r["비교대상_확인"], 세무조정=세무조정, 주의=주의)
@@ -1092,7 +1119,7 @@ def tp_comparable_screen(tested_party: Annotated[dict, Field(description="분석
 @mcp.tool(annotations=CALC)
 @_guard
 def international_transaction_statement(
-        year: Annotated[int, Field(description="사업연도 — 개시일이 속하는 해(2016~2026). 엑셀 서식 틀은 2021 사업연도부터(2020년까지 구 서식 번호 미확인)")],
+        year: Annotated[int, Field(description="사업연도 — 개시일이 속하는 해(2016~2026). 2020년까지는 제출기한 날 시행 중인 서식 판(구 시행규칙 별지 제8호서식(갑) 2016·2017·2018판, 2021.3.16. 전부개정 별지 제16호서식(갑))으로 국외특수관계인별 한 장씩 엑셀 틀을 만듦")],
         parties: Annotated[list[dict], Field(description="국외특수관계인별 거래 [{name(법인명·상호, 필수), country, local_id(현지기업 고유번호), tax_id(현지 납세자번호), fiscal_year(상대방 사업연도 문구), "
                                                          "industry_code(주업종코드), established(설립일 'YYYY-MM'), relationship('지배'|'피지배'|'자매'|'실질 지배'|'본점ㆍ지점' — 서식 작성방법 4), "
                                                          "sales: 매출거래, purchases: 매입거래, transfer_pricing: {transaction(대상 거래), method(정상가격 산출방법), reason(선택 이유)}, "
@@ -1102,21 +1129,26 @@ def international_transaction_statement(
         fy_start: Annotated[str | None, Field(description="사업연도 개시일 YYYY-MM-DD(생략하면 year-01-01)")] = None,
         fy_end: Annotated[str | None, Field(description="사업연도 종료일 YYYY-MM-DD(생략하면 year-12-31) — 평균 대여금·차입금 분모 일수와 제출기한 계산")] = None,
         revenue: Annotated[int, Field(description="당기 매출액(원, 선택) — 국제거래정보통합보고서 대상 여부(통합·개별기업보고서 제출자의 국제거래명세서 제출 관계) 판정용", ge=0)] = 0,
-        filer: Annotated[dict | None, Field(description="정상가격 산출방법 신고서 신고인 칸(선택) {representative(대표자), industry(업종), phone(전화번호), address(소재지)}")] = None) -> dict:
+        filer: Annotated[dict | None, Field(description="정상가격 산출방법 신고서 신고인 칸(선택) {representative(대표자), industry(업종), phone(전화번호), address(소재지)}")] = None,
+        third_party: Annotated[dict | None, Field(description="국외특수관계 없는 자와의 국제거래 금액(선택, 원) {goods(재화거래), services(용역거래), intangibles(무형자산거래 — 2023년 이후 개시 과세연도만 씀)} — "
+                                                              "정상가격 산출방법 신고서 면제 가목(국제거래 전체 재화 50억·용역 10억·무형자산 10억)에만 더함. 생략하면 국외특수관계인 거래만으로 판정")] = None) -> dict:
     """Transfer pricing statement of international transactions with foreign related parties and filing duty (국제거래명세서).
     국제거래명세서 칸 집계와 제출 의무 — 국외특수관계인별 거래를 국조칙 별지 제16호서식(갑) 칸 번호대로 모아 매출·매입 계, 대여금·차입금 적수(금액×일수 합계), 평균 대여금·차입금(적수 ÷ 사업연도 일수)을 내고,
     국제거래명세서·요약손익계산서·정상가격 산출방법 신고서 제출 의무(국조법 제16조제2항, 시행령 제36조 — corporate_filing_obligations와 같은 연도표)와 제출기한, 함께 낼 서식(별지 제16호서식(을)·제17호·제18호·제19호·제20호)을 판정.
     언제: 국외특수관계인(해외 자회사·모회사 등)과 거래가 있는 법인이 국제거래명세서를 작성하거나 제출 대상인지, 어떤 서식을 함께 내야 하는지 확인할 때.
-    엑셀: export_workbook(layout='forms')에 넣으면 별지 제16호서식(갑)과 정상가격 산출방법 신고서(별지 제20호) 시트를 채움.
-    입력: 사업연도 → year(·fy_start·fy_end), 국외특수관계인별 매출·매입 거래 → parties[].sales·purchases(재화는 inventory·other_tangible, 무형자산은 royalty·intangible_sale, 용역은 guarantee·other_services·tangible_rental, 금전대차는 loans 건별 금액·일수와 interest, 가상자산·기타는 virtual_assets·other), 정상가격 산출방법 → parties[].transfer_pricing, 매출액 → revenue.
+    엑셀: export_workbook(layout='forms')에 넣으면 별지 제16호서식(갑)과 정상가격 산출방법 신고서(별지 제20호) 시트를 채움. 2016~2020 사업연도는 그 해 서식 판 — 구 별지 제8호서식(갑)(2016·2017·2018판)·별지 제16호서식(갑) 2021판을
+      국외특수관계인별 한 장씩(5명까지), 정상가격 산출방법 신고서는 구 별지 제1호의3서식(2015·2020판)·별지 제20호서식 2021판. 그 해 서식에 없는 칸에 금액이 있거나 2022.3.18. 이후에 내는 분이면 구 서식 시트 대신 목록에 사유.
+    입력: 사업연도 → year(·fy_start·fy_end), 국외특수관계인별 매출·매입 거래 → parties[].sales·purchases(재화는 inventory·other_tangible, 무형자산은 royalty·intangible_sale, 용역은 guarantee·other_services·tangible_rental, 금전대차는 loans 건별 금액·일수와 interest, 가상자산·기타는 virtual_assets·other), 정상가격 산출방법 → parties[].transfer_pricing, 매출액 → revenue, 국외특수관계 없는 자와의 국제거래 금액 → third_party(선택).
     계산(서식 작성방법 5·9·10): 매출 계 = 재고자산~가상자산 외 칸 합계(대여금 적수 칸 제외, 평균 대여금·수입이자 포함), 매입 계도 같은 방식. 적수 = 합계(금액 × 일수) — 서식 예시 100원×60일 + 200원×180일 = 42,000원.
       평균 = 적수 ÷ 사업연도 일수(365·366), 원 미만 절사 — 서식 예시 42,000 ÷ 365 = 115원.
     판정: 2023.1.1. 이후 개시 사업연도는 재화 5억·용역 1억·무형자산 1억 모두 이하면 국제거래명세서 면제, 2022년까지는 국외특수관계인과 거래가 있으면 제출. 기한은 사업연도 종료일이 속하는 달의 말일부터 6개월(2020 사업연도분부터).
       면제 금액은 매출·매입 합계로 재화(재고자산·기타 유형자산), 용역(지급보증·기타 용역·유형자산 사용료), 무형자산(사용료·매매 등)만 셈.
+      정상가격 산출방법 신고서 면제 가목(국제거래 전체 재화 50억·용역 10억, 2023년부터 무형자산 10억)에는 third_party 금액을 더함(사전-2022-법규국조-0527) — 넣지 않으면 국외특수관계인 거래만으로 판정.
     결과: 매출·매입 계·적수·평균·이자 합계, 거래 유형별 합계와 국외특수관계인별 최대, 서식별 제출 여부·제출기한, 함께_낼_서식, 계산(국외특수관계인별 칸 값), 서식_표·계산식_입력(엑셀 서식 틀용), 판단·근거·주의·한계.
     범위 밖: 정상가격 자체의 산출(arm_length_range·tp_comparable_screen), 주식 등 취득·양도와 가상자산 거래 명세(서식 제2쪽), 지급보증 정상가격(별지 제16호서식(을) 칸 계산)."""
     from .engine import calc_intl_statement as ITS
-    r = ITS.statement({"year": year, "parties": parties, "fy_start": fy_start, "fy_end": fy_end, "revenue": revenue, "filer": filer})
+    r = ITS.statement({"year": year, "parties": parties, "fy_start": fy_start, "fy_end": fy_end, "revenue": revenue, "filer": filer,
+                       "third_party": third_party})
     if "error" in r:
         return r
     extra = {k: v for k, v in r.items() if k not in ("결과", "근거")}
@@ -10806,12 +10838,11 @@ def expat_cost_recharge(
             처분 = str(it.get("소득처분") or "")
             세무조정.append(_adj(f"{it.get('이름', '')} 인건비(현지법인 귀속분)", "손금불산입", it["본사_손금불산입"], 처분.split("(")[0].strip() or "기타소득",
                                "법인세법 제19조, 시행령 제106조①1호 라목"))
-        if it.get("정상가격_조정_익금산입") and year <= 2020:
-            주의.append(f"{it.get('이름', '')} 정상가격 조정 {it['정상가격_조정_익금산입']:,}원 — 2020 사업연도까지는 구 시행령의 소득처분 규정을 대조하지 않아 세무조정 항목으로 내지 않음")
-        elif it.get("정상가격_조정_익금산입"):
-            세무조정.append(_adj(f"{it.get('이름', '')} 인건비 청구 정상가격 조정", "익금산입", it["정상가격_조정_익금산입"], _TP_DISP, "국제조세조정에 관한 법률 제7조, " + _TP_DISP_BASIS))
+        if it.get("정상가격_조정_익금산입"):
+            세무조정.append(_adj(f"{it.get('이름', '')} 인건비 청구 정상가격 조정", "익금산입", it["정상가격_조정_익금산입"], _TP_DISP,
+                               ("국제조세조정에 관한 법률 제7조, " if year >= 2021 else "구 국제조세조정에 관한 법률 제4조, ") + _tp_disp(year)[0]))
     if any(a["소득처분"] == _TP_DISP for a in 세무조정):
-        주의.append(_TP_DISP_NOTE)
+        주의.append(_tp_disp(year)[1])
     return _ok(r["결과"], r["근거"], 판단=r.get("판단", []), 세무조정=세무조정, **({"주의": 주의} if 주의 else {}))
 
 
@@ -10848,6 +10879,9 @@ def corporate_filing_obligations(
     party_max_intangibles: Annotated[int, Field(description="국외특수관계인별 무형재산 최대 거래(원, 기본 0)")] = 0,
     fy_start: Annotated[str | None, Field(description="사업연도 개시일 YYYY-MM-DD(선택, 생략하면 year-01-01) — 외부감사 신기준(2019.11.1. 이후 시작 사업연도) 판정")] = None,
     fy_end: Annotated[str | None, Field(description="사업연도 종료일 YYYY-MM-DD(선택, 생략하면 year-12-31) — 국제거래명세서·해외현지법인 자료 제출기한 계산")] = None,
+    third_party_goods: Annotated[int, Field(description="국외특수관계 없는 자와의 국제거래 중 재화거래 금액(원, 기본 0) — 정상가격 산출방법 신고서 면제 가목(전체 50억)에만 더함", ge=0)] = 0,
+    third_party_services: Annotated[int, Field(description="국외특수관계 없는 자와의 국제거래 중 용역거래 금액(원, 기본 0) — 같은 가목(전체 10억)에만 더함", ge=0)] = 0,
+    third_party_intangibles: Annotated[int, Field(description="국외특수관계 없는 자와의 국제거래 중 무형자산거래 금액(원, 기본 0) — 2023년 이후 개시 과세연도의 같은 가목(전체 10억)에만 더함", ge=0)] = 0,
 ) -> dict:
     """External audit and external tax adjustment obligations plus transfer pricing filing duties (외부감사·외부세무조정 의무).
     외부감사(외감법 제4조)·외부세무조정(법인세법 제60조제9항)·국제거래 자료 제출 의무(국조법 제16조·제34조·제36조·제58조) 판정.
@@ -10859,6 +10893,7 @@ def corporate_filing_obligations(
       유한회사 사원 수 → members(선택). 설립일 → established_on(선택).
       외국자회사·국외사업장·특례·준비금·결정경정·합병분할·해외직접투자 → 각 bool.
       국외특수관계인 거래 합계·상대방별 최대 → related_goods/services/intangibles, party_max_goods/services/intangibles.
+      국외특수관계 없는 자와의 국제거래 금액 → third_party_goods/services/intangibles(선택 — 정상가격 산출방법 신고서 면제 가목의 전체 금액에만 더함, 사전-2022-법규국조-0527).
     결과: 외부감사는 대상 여부·충족조건, 외부세무조정은 대상 여부·사유(제1~7호) 목록,
       국제거래명세서·요약손익계산서·정상가격산출방법신고서·국제거래정보통합보고서 각각 대상 여부,
       해외직접투자명세는 대상 여부·기한. 판단·근거.
@@ -10883,6 +10918,8 @@ def corporate_filing_obligations(
         "party_max_goods": party_max_goods, "party_max_services": party_max_services,
         "party_max_intangibles": party_max_intangibles,
         "fy_start": fy_start, "fy_end": fy_end,
+        "third_party_goods": third_party_goods, "third_party_services": third_party_services,
+        "third_party_intangibles": third_party_intangibles,
     })
     if "error" in r:
         return r
@@ -11015,7 +11052,7 @@ def overseas_account_reporting(
     reported_amount_krw: Annotated[int, Field(description="기한 내 신고한 금액(과소신고 계산용, 기본 0 = 미신고)")] = 0,
     corrected_on: Annotated[str | None, Field(description="수정신고일(YYYY-MM-DD — 기한 후 감경표 적용)")] = None,
     unexplained_amount_krw: Annotated[int | None, Field(description="소명 불이행 과태료 계산용 금액(원, 선택)")] = None,
-    assessed_on: Annotated[str | None, Field(description="과태료 부과일(YYYY-MM-DD, 선택). 생략하면 지금 부과하는 것으로 보아 2025.2.28. 개정 기준(10%, 10억원 한도, 소명 불이행 10%). 2025.2.28. 전이면 종전 누진표와 소명 불이행 20%")] = None,
+    assessed_on: Annotated[str | None, Field(description="과태료 부과일(YYYY-MM-DD, 선택). 생략하면 지금 부과하는 것으로 보아 2025.2.28. 개정 기준(10%, 10억원 한도, 소명 불이행 10%). 2025.2.28. 전이면 종전 누진표와 소명 불이행 20%, 2021.2.17. 전이면 구 시행령 제51조 누진표(20억원 한도 없음). 2016.1.1. 이후")] = None,
 ) -> dict:
     """Overseas financial account reporting duty and administrative fine (해외금융계좌 신고).
     해외금융계좌 신고의무·과태료 판정(국조법 제53조(1항·2항)·제54조·제90조(1항·2항), 시행령 제92조(3항)·제93조(1항)·제94조·제147조(1항·2항·4항).
@@ -11033,7 +11070,7 @@ def overseas_account_reporting(
       reported_amount_krw — 기한 내 신고한 금액(기본 0 = 미신고).
       corrected_on — 수정신고일(YYYY-MM-DD).
       unexplained_amount_krw — 소명 불이행 과태료 계산용 금액(원, 선택).
-      assessed_on — 과태료 부과일(선택). 과태료 기준은 보유연도가 아니라 부과일로 갈린다: 2025.2.28. 이후 부과분은 10%·10억원 한도·소명 불이행 10%, 그 전은 누진표·소명 불이행 20%.
+      assessed_on — 과태료 부과일(선택). 과태료 기준은 보유연도가 아니라 부과일로 갈린다: 2025.2.28. 이후 부과분은 10%·10억원 한도·소명 불이행 10%, 그 전은 누진표·소명 불이행 20%(2021.2.17. 전 부과분은 구 시행령 제51조 — 20억원 한도 없음).
     결과: 신고의무·최고잔액·최고잔액_월·신고기한·위반금액·과태료·과태료_범위·감경비율·감경후_과태료·소명불이행_과태료·면제사유.
     판단: 실질적 소유자 안내 — 명의와 무관하게 사실상 관리하는 자가 보유자(영 제94조(1항)),
     내국인이 의결권 100% 직·간접 보유한 외국법인 계좌는 비조약국이면 실질적 소유자(영 제94조(2항)),
@@ -11180,7 +11217,7 @@ def cfc_deemed_dividend(
         _cfc_b = ("구 국제조세조정에 관한 법률 제17조①·제19조①" if year <= 2019 else "구 국제조세조정에 관한 법률 제18조①·제19조" if year == 2020
                   else "국제조세조정에 관한 법률 제27조①·제31조")
         세무조정.append(_adj("특정외국법인 배당간주금액", "익금산입", res["배당간주금액"], "유보", _cfc_b + ", 법인세법 시행령 제106조①2호"))
-        주의.append("세무조정의 유보: 배당간주금액은 사외로 나간 금액이 아니어서 법인세법 시행령 제106조①2호(사외에 유출되지 않은 금액)에 따라 유보로 둠 — 이 처분을 직접 다룬 해석례는 찾지 못함. "
+        주의.append("세무조정의 유보: 배당간주금액은 사외로 나간 금액이 아니어서 법인세법 시행령 제106조①2호(사외에 유출되지 않은 금액)에 따라 유보로 둠 — 이 처분을 직접 다룬 해석례는 근거 없음(국세법령정보시스템 해석·판례 검색 '특정외국법인 배당간주 유보 소득처분' 등, 2026-11-14·11-15), 서면질의 필요. 가까운 회신: 국업46017-76(2000.2.10., 요지 — 실제 배당 전 주식을 매각해도 이미 과세된 간주배당분은 세무조정 없이 비망계정으로 관리). "
                   "실제 배당을 받는 해에 그 금액을 익금불산입(국조법 제32조① — cfc_actual_dividend). 익금에 넣는 사업연도는 특정외국법인 사업연도 종료일의 다음 날부터 60일이 되는 날이 속하는 사업연도(제31조)")
     extra = {"계산식_입력": r["계산식_입력"]} if r.get("계산식_입력") else {}
     return _ok(res, r["근거"], 세무조정=세무조정, 주의=주의, 단계별_계산=r.get("단계별_계산", []), **extra)
@@ -11231,7 +11268,7 @@ def cfc_share_disposal(year: Annotated[int, Field(description="특정외국법�
 @mcp.tool(annotations=CALC)
 @_guard
 def overseas_subsidiary_statement(
-    year: Annotated[int, Field(description="거주자 과세기간 또는 모법인 사업연도 개시연도(2021~2026)")],
+    year: Annotated[int, Field(description="거주자 과세기간 또는 모법인 사업연도 개시연도(2016~2026). 2020년까지 개시분은 종전 제출기한이 2021.1.1. 전에 지났으면 구 법인세법 제121조의2·구 소득세법 제165조의2로 판정")],
     filer: Annotated[Literal["법인", "개인"], Field(description="제출인 — 법인(내국법인) 또는 개인(거주자). 손실거래명세서 금액 기준이 다름")] = "법인",
     fy_end: Annotated[str | None, Field(description="모법인 사업연도(거주자 과세기간) 종료일 YYYY-MM-DD — 없으면 year-12-31. 제출기한 계산용")] = None,
     subsidiary: Annotated[dict | None, Field(description="해외현지법인 기본사항(서식 문구용, 선택): name(영문 전체 이름)·country(거주지국)·industry(업종)·industry_code(기준경비율 코드)·investment_date(투자일 YYYY-MM-DD)·local_id(해외현지기업 고유번호)·tin(현지납세자번호)·address(소재지)·fiscal_year(현지법인 사업연도 표기)·fx_bs(재무상태표 적용환율 표기)·fx_pl(손익 적용환율 표기)·shares(주식 수)·dividend_income(배당금수입)·loan_interest(대부수입이자)")] = None,
@@ -11254,10 +11291,13 @@ def overseas_subsidiary_statement(
       재무상황표 코드별 금액 → financials, 가결산 → provisional.
     판정: 재무상황표 — 직접 10% 이상이고 투자금액(출자+대여) 1억원 이상(영 제98조제1항제2호가목), 또는 직접·간접 10% 이상이고 특수관계(나목).
       손실거래명세서 — 나목 해당자 중 손실거래금액이 법인 단일 50억원·5년 누적 100억원(개인 10억원·20억원) 이상(제3호). 2021~2026년 시행본 문언 같음.
+      2016~2020년 개시분: 종전 제출기한(법인 — 사업연도 종료일이 속하는 달의 말일부터 3개월, 개인 — 다음 연도 5.31.)이 2021.1.1. 전에 지났으면 구 법인세법 제121조의2제1항·구 시행령 제164조의2
+      (개인은 구 소득세법 제165조의2·구 시행령 제217조의2)와 구 법인세법 시행규칙 별지 제81호·제82호·제82호의2서식(개인은 구 소득세법 시행규칙 별지 제93호~제95호서식)으로 판정하고, 지나지 않았으면 현행 규정(법률 제17651호 부칙 제28조). 결과의 '적용_규정'에 표시.
+      엑셀 서식 틀: 종전 규정 적용 법인은 구 법인세법 시행규칙 별지 제81호·제82호서식(2014.3.14. 개정본), 2020년까지 개시분 중 현행 규정 적용분은 국조칙 별지 제47호·제48호서식 2021.3.16. 전부개정본(재무상황표는 제출기한이 2022.3.18. 이후면 2022판). 개인의 종전 규정 적용분은 틀 없음.
       기한 — 종료일이 속하는 달의 말일부터 6개월(법 제58조제1항, 2021.1.1. 시행 법률 제17651호부터).
     확인: 01 = 14 + 21, 56 = 27 − 30, 57 = 56 − 31, 58 = 57 + 38 − 42, 48 = 58 − 47, 82 = 71 + 76 − 77과 하위 과목 합계(08·14·21·23·27·31·38·42·77) — 식의 코드가 모두 있을 때만, 다르면 '확인 필요'.
     결과: 명세서_제출대상·재무상황표_제출대상·재무상황표_사유·손실거래명세서_제출대상·제출기한·지분율·투자금액·항등식_확인·항등식_불일치, 판단·주의.
-    범위 밖: 2020 사업연도 이전(구 법인세법 제121조의2 시기), 해외영업소 설치현황표·해외부동산 명세서, 과태료 계산."""
+    범위 밖: 해외영업소 설치현황표·해외부동산 명세서, 과태료 계산, 구 소득세법 시행규칙 별지 제93호·제94호서식 엑셀 틀."""
     from .engine import calc_overseas_sub as OS
     r = OS.statement(year, filer, fy_end, subsidiary, ownership_direct, ownership_indirect, equity_investment,
                      loan_investment, related_party, loss_single_year, loss_cumulative_5y, financials, provisional)
@@ -11267,7 +11307,8 @@ def overseas_subsidiary_statement(
     _txt = (("현지법인명", "name"), ("거주지국", "country"), ("업종", "industry"), ("업종코드", "industry_code"),
             ("투자일", "investment_date"), ("고유번호", "local_id"), ("납세자번호", "tin"), ("소재지", "address"),
             ("현지사업연도", "fiscal_year"), ("환율_재무", "fx_bs"), ("환율_손익", "fx_pl"))
-    입력 = [("사업연도", year), ("가결산", 1 if provisional else 0), ("직접지분율", r["결과"]["직접지분율"]),
+    입력 = [("사업연도", year), ("종전규정", 1 if r["종전"] else 0), ("개인", 1 if filer == "개인" else 0), ("재무상황표_서식판", r["서식판"]),
+            ("가결산", 1 if provisional else 0), ("직접지분율", r["결과"]["직접지분율"]),
             ("간접지분율", r["결과"]["간접지분율"]), ("출자금액", int(equity_investment)), ("대여금", int(loan_investment))]
     입력 += [(n, str(sub[k])) for n, k in _txt if sub.get(k) not in (None, "")]
     입력 += [(n, sub[k]) for n, k in (("주식수", "shares"), ("배당금수입", "dividend_income"), ("대부수입이자", "loan_interest"))

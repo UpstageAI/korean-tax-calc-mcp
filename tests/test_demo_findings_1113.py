@@ -27,7 +27,7 @@ def test_schedule_accepts_provisional_reserve():
     d = _fn(S.tax_adjustment_schedule)(years=[{"year": 2025, "book_income": 0, "adjustments": [{"name": "x", "amount": 5, "kind": "익금산입", "disposition": "이전소득 배당"}]}])
     assert d["계산"]["연도별"][0]["소득처분_사외유출"] == {"이전소득 배당": 5}
     old = _fn(S.tax_adjustment_schedule)(years=[{"year": 2020, "book_income": 0, "adjustments": [{"name": "x", "amount": 5, "kind": "익금산입", "disposition": "임시유보"}]}])
-    assert "error" in old and "2021 사업연도부터" in old["문제"][0]
+    assert "error" not in old and old["계산"]["연도별"][0]["임시유보"] == [{"항목": "x", "당기": 5}]      # 2020년까지도 구 시행령 제15조로 받음(2026-11-15)
     bad = _fn(S.tax_adjustment_schedule)(years=[{"year": 2025, "book_income": 0, "adjustments": [{"name": "x", "amount": 5, "kind": "손금산입", "disposition": "임시유보"}]}])
     assert "error" in bad
 

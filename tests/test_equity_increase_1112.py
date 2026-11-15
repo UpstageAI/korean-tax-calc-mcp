@@ -31,7 +31,7 @@ def test_equity_increase_tracked_apart_from_reserve_and_outflow():
     assert r["결과"]["기말_출자의_증가_누계"] == 894_564_383 and r["결과"]["기말_유보"] == 50 * M
     notes = [p for p in r["판단"] if "출자의 증가" in p["항목"]]
     assert len(notes) == 3 and all("제13조" in p["근거"] and "제23조" in p["근거"] for p in notes)
-    assert any("해석 확인 필요" in s for s in r["주의"])
+    assert any("취득가액에 더하는지는 근거 없음" in s and "서면질의 필요" in s for s in r["주의"])
 
 
 def test_equity_increase_basis_by_year_and_only_for_additions():

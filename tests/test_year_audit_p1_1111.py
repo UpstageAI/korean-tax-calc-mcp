@@ -113,7 +113,7 @@ def test_main_penalty_progressive_table_before_20250228():
     assert cap_old["과태료"] == 2_000 * M and cap_new["과태료"] == 1_000 * M      # 종전 20억 한도, 개정 10억 한도
 
 def test_assessed_on_validation():
-    assert "error" in _oar(2022, assessed_on="2020-12-31") and "error" in _oar(2022, assessed_on="2025/03/01")
+    assert "error" in _oar(2022, assessed_on="2015-12-31") and "error" in _oar(2022, assessed_on="2025/03/01")      # 2016~2021.2.16. 부과분은 구 시행령 제51조(2026-11-15)
 
 
 # ── 6. 무상증자 의제배당: 상환주식 주식발행초과금은 2024.2.29. 이후 전입분만 과세(법인령 제12조①5호, 부칙 제4조) ──

@@ -20,7 +20,7 @@ def test_branch_helper():
     old = F.related_party_law(True, "일반", 2018)
     assert "구 국제조세조정에 관한 법률 제3조②" in old["근거"] and "제4조" in old["근거"] and "주의" not in old
     assert "제3조의2" in F.related_party_law(True, "자본거래", 2018)["근거"]
-    assert "주의" in F.related_party_law(True, "자본거래", 2020)
+    assert "제3조의3" in F.related_party_law(True, "자본거래", 2020)["근거"]      # 대통령령 제30405호로 조 이동(2026-11-15 대조)
     assert "주의" not in F.related_party_law(True, "자본거래", 2021)
     with pytest.raises(ValueError):
         F.related_party_law(True, "기타")
