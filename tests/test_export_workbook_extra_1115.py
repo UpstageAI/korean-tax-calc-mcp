@@ -238,19 +238,24 @@ def test_cached_values_match_libreoffice(blend, tmp_path):
     assert n > 40 and bad == []
 
 
-# ── 설명·안내: 두 길(만들기 / 직접 짠 뒤 대조) ────────────────────────────────
-def test_description_and_guidance_point_to_both_ways():
+# ── 설명·안내(0.57.0): 계산 근거 엑셀은 직접 짜고 대조, export_workbook은 법정서식 — 선택 입력은 설명 뒤쪽 한 단락 ──
+def test_description_and_guidance_put_build_then_verify_first():
     doc = S.mcp._tool_manager._tools["export_workbook"].description
     lines = doc.splitlines()
-    assert "verify_workbook" in lines[0] and "extra_sheets" in lines[0] and "as-filed vs correct" in lines[0]
-    assert "신고한 대로 vs 맞는 금액" in doc[:1200] and "extra_sheets" in doc[:1200] and "시나리오마다 한 번씩" in doc[:1200]
-    assert "예(지어낸 값)" in doc and "from_call" in doc and "less:6000000" in doc.replace(" ", "")
-    for name in ("extra_sheets —", "actions —", "key_figures —"):
-        assert name in doc
+    assert "verify_workbook" in lines[0] and "extra_sheets" not in lines[0] and "scenarios" not in lines[0]
+    assert "한국 법정서식(별지 서식) 엑셀을 만든다 — 칸 번호·문구가 정해진 신고 서식. 일반 계산 근거 통합 문서에는 쓰지 않아도 된다" in lines[1]
+    opt = next(k for k, ln in enumerate(lines) if "선택: 표준 틀의 계산 근거가 필요할 때" in ln)
+    assert opt > next(k for k, ln in enumerate(lines) if ln.startswith("입력:"))                      # 뒤로 내림
+    for name in ("scenarios", "sources", "issues", "actions", "key_figures", "extra_sheets", "labels", "detail"):
+        assert name in " ".join(lines[opt:opt + 4]) and name not in " ".join(lines[:opt]).replace("labels에", ""), name
+    assert len(doc) < 4000                                                                            # 0.56.1에서는 9,000자 남짓
     tail = S.corporate_tax(base=123_000_000, year=2024)["엑셀"]
-    assert "사용자가 엑셀(Excel)을 요청했다면" in tail and "verify_workbook" in tail and "시나리오마다 한 번씩" in tail
+    assert "계산 근거·보고용 Excel은 직접 짠다" in tail and "verify_workbook" in tail and "대조하지 않은 금액은 사용자에게 밝힌다" in tail
     hint = S.find_tool(query="excel workings")["결과"]["엑셀 문서"]
-    assert "export_workbook" in hint and "verify_workbook" in hint and "extra_sheets" in hint
+    assert "직접 짠다" in hint and "verify_workbook" in hint and "법정서식(별지 서식) 엑셀은 export_workbook" in hint
+    for text in (doc, tail, hint, S.mcp.instructions, S.mcp._tool_manager._tools["verify_workbook"].description):
+        for gone in ("길은 둘", "두 길", "two ways", "Two ways", "either pass this call"):
+            assert gone not in text, gone
     for text in (doc, tail, hint, S.mcp.instructions, S.mcp._tool_manager._tools["verify_workbook"].description):
         for gone in ("직접 만들지", "do not write your own", "instead of writing", "do not build"):
             assert gone not in text, gone

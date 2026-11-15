@@ -77,7 +77,7 @@ def made(tmp_path_factory):
 def test_matches_and_scope(made):
     _, path, before, r = made
     res = r["결과"]
-    assert res["요약"] == {"대조": 5, "일치": 5, "불일치": 0, "읽지_못함": 0, "도구_오류": 0, "대조_안_한_금액": 2}
+    assert res["요약"] == {"대조": 5, "일치": 5, "불일치": 0, "읽지_못함": 0, "도구_오류": 0, "자동_일치": 0, "자동_불일치": 0, "대조_안_한_금액": 2}
     assert _sha(path) == before                                                               # 원본은 고치지 않음
     rows = {x["칸"]: x for x in res["대조"]}
     tool = c(NW, DIV)["결과"]
@@ -111,13 +111,14 @@ def test_mismatch_gives_both_values_and_the_difference(tmp_path):
     assert res["요약"]["불일치"] == 2 and res["요약"]["일치"] == 3                                    # 틀린 칸과 그 칸에 딸린 가산세
     bad = {x["칸"]: x for x in res["불일치"]}
     assert (bad["배당!B6"]["통합_문서_값"], bad["배당!B6"]["도구_값"], bad["배당!B6"]["차이"]) == (8_000_070, 8_000_000, 70)
-    assert set(bad["배당!B6"]) == {"칸", "항목", "도구", "키", "통합_문서_값", "도구_값", "차이", "판정", "근거"}   # 원인 추측 없음 — 두 값과 차이, 근거만
+    assert set(bad["배당!B6"]) == {"칸", "항목", "방식", "도구", "호출", "키", "통합_문서_값", "도구_값", "차이", "판정", "근거"}   # 원인 추측 없음 — 두 값과 차이, 근거만
     assert "불일치 칸을 고쳐" in res["다음"]
     ok = c("verify_workbook", {"path": path, "checks": [{**CHECKS[0], "tolerance": 100}], "annotate": False})["결과"]["요약"]
     assert ok["일치"] == 1
     ws = openpyxl.load_workbook(res["사본"])["Tool check"]
-    verdicts = [ws.cell(k, 6).value for k in range(6, 11)]
-    assert verdicts == ["Mismatch", "Match", "Match", "Mismatch", "Match"] and ws["E6"].value == 70 and ws["F6"].fill.fgColor.rgb == "00F8CBAD"
+    assert ws["E4"].value == "Difference"                                                           # 차이 열은 불일치가 있을 때만
+    verdicts = [ws.cell(k, 6).value for k in range(5, 10)]
+    assert verdicts == ["Mismatch", "Match", "Match", "Mismatch", "Match"] and ws["E5"].value == 70 and ws["F5"].fill.fgColor.rgb == "00F8CBAD"
 
 
 def test_copy_has_check_sheet_and_values_in_every_formula_cell(made):
@@ -135,12 +136,12 @@ def test_copy_has_check_sheet_and_values_in_every_formula_cell(made):
     assert len(formulas) == 18 and not [k for k in formulas if wv[k[0]][k[1]].value is None]          # 모든 수식 칸에 값
     assert r["결과"]["부가_점검"]["저장된_값_없는_수식_칸"] == 18                                       # 원본에는 값이 없었음
     ws = wb["검산"]
-    assert [ws.cell(5, j).value for j in range(1, 9)] == ["칸", "항목", "통합 문서 값", "도구 값", "차이", "판정", "도구 · 결과 키", "근거(도구가 돌려준 글)"]
-    assert [ws.cell(6, j).value for j in range(1, 8)] == ["배당!B6", "법인세", 8_000_000, 8_000_000, 0, "일치", "nonresident_withholding · 원천징수세액"]
+    assert [ws.cell(4, j).value for j in range(1, 8)] == ["칸", "항목", "통합 문서 값", "도구 값", "판정", "근거 번호 · 결과 키", None]      # 불일치가 없어 차이 열 없음
+    assert [ws.cell(5, j).value for j in range(1, 7)] == ["배당!B6", "법인세", 8_000_000, 8_000_000, "일치", "[1] 원천징수세액"]
     assert not [x.coordinate for row in ws.iter_rows() for x in row if x.data_type == "f"]
     texts = [ws.cell(k, 1).value for k in range(1, ws.max_row + 1)]
-    assert "대조 5건 — 일치 5 / 불일치 0 / 읽지 못함 0 / 도구 오류 0. 계산 도구 대조를 거치지 않은 금액 2칸." in texts
-    assert "검증 범위" in texts and "계산 도구 대조를 거치지 않은 금액 — 2" in texts and "배당!B12" in texts and "부가 점검" in texts
+    assert texts[1] == "대조 5 · 일치 5 · 불일치 0 · 대조 안 한 금액 2칸"                              # 맨 위 한 줄 요약
+    assert "계산 도구 대조를 거치지 않은 금액 — 2" in texts and "배당" in texts and "부가 점검" in texts and "검증 범위" not in texts
     again = c("verify_workbook", {"path": copy, "checks": CHECKS, "annotate": False})["결과"]      # 사본을 다시 대조하면 저장된 값을 읽음
     assert again["요약"]["일치"] == 5 and again["부가_점검"]["저장된_값_없는_수식_칸"] == 0
 
@@ -198,7 +199,7 @@ def test_stored_values_from_the_original_are_kept(tmp_path):
 
 @pytest.mark.parametrize("kw, phrase", [
     (dict(path="/없는/파일.xlsx"), "xlsx 파일이 아님"), (dict(checks=[]), "비어 있음"), (dict(checks="{"), "JSON"),
-    (dict(checks=[{"cell": "배당!B6", "tool": NW}]), "{cell, tool, args, key}"), (dict(checks=[{"cell": "없는시트!B6", "tool": NW, "args": DIV, "key": "합계"}]), "시트: 입력, 배당, 요약"),
+    (dict(checks=[{"tool": NW, "args": DIV}]), "{cell, call 또는 tool+args, key}"), (dict(checks=[{"cell": "없는시트!B6", "tool": NW, "args": DIV, "key": "합계"}]), "시트: 입력, 배당, 요약"),
     (dict(checks=[{"cell": "배당!B6:B7", "tool": NW, "args": DIV, "key": "합계"}]), "찾지 못함"),
     (dict(checks=[{"cell": "배당!B6", "tool": "export_workbook", "args": {}, "key": "파일"}]), "대조에 쓸 수 없음"),
     (dict(checks=[{"cell": "배당!B6", "tool": NW, "args": DIV, "key": "합계", "tolerance": -1}]), "tolerance"), (dict(output_dir="/없는/폴더"), "output_dir")])
@@ -238,14 +239,15 @@ def test_description_and_registration():
     assert len(tools) == 140
     d = tools["verify_workbook"].description
     first = d.splitlines()[0]
-    assert first.startswith("Checks a workbook you built yourself against the calculation tools (직접 만든 엑셀 검산)") and "언제:" in d and "입력:" in d
+    assert first.startswith("After saving an Excel workbook (.xlsx file or spreadsheet — workings or a report) you built yourself, call this tool (직접 만든 엑셀 검산)") and "언제:" in d and "입력:" in d
+    assert d.splitlines()[1].strip().startswith("직접 만든 Excel을 저장한 뒤 이 도구를 부른다 — 금액 칸을 계산 도구 결과와 대조해 검산 시트 한 장을 붙인다.")
     for p in tools["verify_workbook"].parameters["properties"]:
         assert p in d, p
     assert "엑셀" not in c("verify_workbook", {"path": "x", "checks": []})                           # 공통 꼬리는 붙지 않음
     assert S.find_tool(query="직접 만든 엑셀 검산")["결과"]["후보"][0]["도구"] == "verify_workbook"
     assert S.find_tool(query="verify my workbook against the calculators")["결과"]["후보"][0]["도구"] == "verify_workbook"
     ins = S.mcp.instructions
-    assert "저장한 뒤 반드시 verify_workbook" in ins and "대조하지 않은 금액은 사용자에게 밝힌다" in ins
+    assert "저장한 뒤 verify_workbook으로 금액 칸을 대조한다" in ins and "대조하지 않은 금액은 사용자에게 밝힌다" in ins
 
 
 @pytest.mark.skipif(not shutil.which("soffice"), reason="LibreOffice 없음")

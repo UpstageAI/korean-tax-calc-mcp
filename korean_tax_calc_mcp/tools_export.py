@@ -725,7 +725,8 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
             raw = r.content[0].text if hasattr(r, "content") else r[0][0].text
             data = _json.loads(raw)
             if isinstance(data, dict):
-                data.pop("엑셀", None)   # 공통 꼬리(export_workbook 안내)는 엑셀에 싣지 않음
+                data.pop("엑셀", None)   # 공통 꼬리(호출자에게 하는 안내)와 호출 번호는 엑셀에 싣지 않음
+                data.pop("호출_id", None)
         except Exception as e:
             오류_call.append(label)
             결과들.append({"label": label, "tool": tool,
@@ -2428,6 +2429,7 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
     if _통합 is not None:   # 선택 입력이 없으면 결과 키도 그대로
         out["결과"]["통합_시트"] = _통합["시트"]
         out["결과"]["detail"] = _detail
+        out["결과"]["시트_안내"] = _통합["시트_안내"]      # 뒤 시트 구성 — 시트에는 찍지 않고 여기로만(호출자에게 하는 말)
         if _detail == "compact" and _통합["서식_수"]:
             out["결과"]["서식_안내"] = f"신고 서식 {_통합['서식_수']}장은 detail='forms'로 받을 수 있음(call별 개별 시트까지는 detail='full')"
         if _T is not None:

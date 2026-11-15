@@ -357,11 +357,11 @@ def test_changing_an_input_cell_recalculates_like_the_tool(tmp_path):
 
 
 # ── 쓰이게 만들기: 설명 첫 문장·서버 안내문·공통 꼬리·검색어 ─────────────────────
-def test_description_first_sentence_says_finished_xlsx_and_where():
+def test_description_first_sentence_says_statutory_forms_and_where():
     tool = next(t for t in S.mcp._tool_manager.list_tools() if t.name == "export_workbook")
     first = tool.description.splitlines()[0]
-    assert first.startswith("Produces a finished Excel (.xlsx) workings file with live formulas")
-    for phrase in ("output_dir", "absolute path", "verify_workbook", "extra_sheets"):      # 0.56.0: 금지 문구 대신 두 길(만들기·직접 짠 뒤 대조)
+    assert first.startswith("Builds Korean statutory return forms (법정서식 · 별지 서식) as an Excel (.xlsx) file")      # 0.57.0: 법정서식 전용
+    for phrase in ("output_dir", "absolute path", "verify_workbook", "Not needed for a general workings workbook"):
         assert phrase in first, phrase
     assert "언제:" in tool.description and "입력:" in tool.description
     for name in ("scenarios", "sources", "issues", "extra_sheets", "actions", "key_figures"):
@@ -369,17 +369,17 @@ def test_description_first_sentence_says_finished_xlsx_and_where():
     assert len(S.mcp._tool_manager.list_tools()) == 140
 
 
-def test_instructions_tell_to_use_export_workbook_for_workings():
+def test_instructions_tell_to_build_then_verify_for_workings():
     ins = S.mcp.instructions
-    assert "엑셀·스프레드시트·계산 근거·workings를 원하면" in ins and "verify_workbook" in ins and "extra_sheets" in ins
-    assert "저장한 뒤 반드시 verify_workbook" in ins and "always run verify_workbook" in ins
+    assert "엑셀·스프레드시트·계산 근거·workings를 원하면" in ins and "verify_workbook" in ins and "extra_sheets" not in ins
+    assert "저장한 뒤 verify_workbook으로 금액 칸을 대조한다" in ins and "then run verify_workbook" in ins      # 0.57.0: 직접 짜고 대조가 기본 길
     for gone in ("직접 만들지", "do not write your own", "instead of writing"):      # 0.56.0: 금지 문구는 지움 — 직접 짜도 되고 대조로 받침
         assert gone not in ins, gone
 
 
 def test_calc_results_carry_excel_tail_but_not_export_or_find():
     r = S.corporate_tax(base=123_000_000, year=2024)
-    assert list(r)[-1] == "엑셀" and "export_workbook(완성된 .xlsx 생성)" in r["엑셀"]
+    assert list(r)[-2:] == ["호출_id", "엑셀"] and f'call: "{r["호출_id"]}"' in r["엑셀"] and "법정서식(별지 서식) 엑셀이 필요할 때만 export_workbook" in r["엑셀"]
     assert "엑셀" not in S.find_tool(query="법인세") and "엑셀" not in S.corporate_tax(base=1, year=1990)
 
 
@@ -389,14 +389,20 @@ def test_export_result_has_no_tail(tmp_path):
 
 
 @pytest.mark.parametrize("query", ["Excel workings", "xlsx", "spreadsheet", "workings file", "엑셀", "계산 근거", "엑셀로 계산 근거 정리"])
-def test_find_tool_reaches_export_workbook(query):
+def test_find_tool_reaches_the_workbook_tools(query):
+    got = [x["도구"] for x in S.find_tool(query=query)["결과"]["후보"]]
+    assert got[0] == "verify_workbook" and "export_workbook" in got[:2]      # 0.57.0: 계산 근거 엑셀은 직접 짠 뒤 대조가 먼저
+
+
+@pytest.mark.parametrize("query", ["법정서식 엑셀", "별지 서식", "신고 서식 엑셀로", "statutory form workbook"])
+def test_find_tool_reaches_export_workbook_for_statutory_forms(query):
     assert S.find_tool(query=query)["결과"]["후보"][0]["도구"] == "export_workbook"
 
 
 def test_llms_txt_has_search_words():
     from pathlib import Path
     text = (Path(__file__).resolve().parents[1] / "llms.txt").read_text(encoding="utf-8")
-    line = next(ln for ln in text.splitlines() if "xlsx" in ln and "export_workbook" in ln)
+    line = next(ln for ln in text.splitlines() if "xlsx" in ln and "verify_workbook" in ln)
     for w in ("Excel", "xlsx", "spreadsheet", "workings", "엑셀", "계산 근거"):
         assert w in line, w
 
@@ -444,9 +450,10 @@ def test_default_is_compact_one_detail_sheet(tmp_path):
     text = " ".join(str(cell.value) for row in ws.iter_rows() for cell in row if cell.value is not None)
     assert "결론" in text and "korean-tax-mcp" in text                    # 판단·근거가 call 아래에 실림
     assert any(isinstance(cell.value, str) and cell.value.startswith("=") for row in ws.iter_rows() for cell in row)   # 계산식 단계의 수식·대조 칸이 살아 있음
-    # 요약 끝: 뒤 시트 안내와 서식 안내 한 줄
-    summ = [wb["요약"].cell(k, 1).value for k in range(1, wb["요약"].max_row + 1)]
-    assert any("'계산 상세' 한 장" in str(x) for x in summ) and "detail='forms'" in str(summ[-1]) and "신고 서식" in str(summ[-1])
+    # 0.57.0: 뒤 시트 안내와 서식 안내는 호출자에게 하는 말 — 요약 시트에는 찍지 않고 결과로만 돌려준다
+    summ = [str(wb["요약"].cell(k, 1).value) for k in range(1, wb["요약"].max_row + 1)]
+    assert not any("detail=" in x or x.startswith("뒤 시트") for x in summ) and any(x.startswith("색 규칙") for x in summ)
+    assert "'계산 상세' 한 장" in r["결과"]["시트_안내"] and "신고 서식" in r["결과"]["서식_안내"]
     # scenarios에 넣지 않은 call 둘은 한 시트에 차례로
     rest = [wb["그 밖의 계산"].cell(k, 1).value for k in range(1, wb["그 밖의 계산"].max_row + 1)]
     assert "기업업무추진비" in rest and "간주임대료" in rest
