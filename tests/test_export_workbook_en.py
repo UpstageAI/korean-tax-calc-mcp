@@ -163,13 +163,26 @@ def test_en_untranslated_labels_are_kept_and_listed(tmp_path):
 
 
 def test_uncertain_glossary_rows_are_not_used():
+    """'공식 영문 없음'(영문법령의 해당 조문에 그 용어가 없음을 확인한 행)은 번역에 쓰지 않는다. 영문법령에서 표현을 받은 행은 쓴다(2026-11-15 대조)."""
     rows = json.loads((ROOT / "korean_tax_calc_mcp/data/glossary_ko_en.json").read_text(encoding="utf-8"))["terms"]
-    uncertain = [r["ko"] for r in rows if "확인 필요" in r["note"]]
-    assert "유보" in uncertain and "결정세액" in uncertain and "지점세" in uncertain
+    assert rows == i18n.parse_glossary_md((ROOT / "docs/glossary_ko_en.md").read_text(encoding="utf-8"))   # 패키지 사본 = 문서 표
+    assert not [r["ko"] for r in rows if "확인 필요" in r["note"]]                 # '확인 필요'로 남은 행 없음
+    no_official = [r["ko"] for r in rows if "공식 영문 없음" in r["note"]]
+    assert set(no_official) == {"간주임대료", "차가감소득금액", "해외현지법인 명세서", "지점세", "결정세액", "직접외국납부세액", "간접외국납부세액", "간주외국납부세액", "단일세율"}
+    for r in rows:
+        if r["ko"] in no_official:
+            assert "2026-11-1" in r["note"], r                                     # 찾아본 날짜를 적음
     t = i18n.Translator()
-    for ko in uncertain:
-        assert t.label(ko) == ko, ko                                       # '확인 필요' 행은 번역하지 않고 국문 그대로
-    assert set(uncertain) <= set(t.missing)
+    for ko in no_official:
+        assert t.label(ko) == ko, ko                                       # 번역하지 않고 국문 그대로
+    assert set(no_official) <= set(t.missing)
+    # 법제처 영문법령에서 받은 표기 — 법인세법 시행령 제106조·제64조·제134조, 소득세법 시행령 제185조, 국조법 제16조, 부동산 가격공시에 관한 법률 제10조 영문
+    got = {r["ko"]: r for r in rows}
+    for ko, en in (("유보", "internal reserves (yubo)"), ("자본금상당액", "amount equivalent to capital"), ("국제거래명세서", "statement of international transactions"),
+                   ("원천징수이행상황신고서", "report on the status of withholding"), ("공시가격", "officially announced price"),
+                   ("일시상각충당금·압축기장충당금", "lump sum depreciation reserve funds and compressed account reserve funds")):
+        assert got[ko]["en"] == en and "법제처 영문법령 확인(2026-11-15)" in got[ko]["note"], ko
+        assert i18n.load_glossary()[i18n._norm(ko)] == en
     assert t.label("과세표준") == "Tax base (과세표준)"
     assert t.label("익금산입_손금불산입") == "Inclusion in gross income / non-deductible (익금산입_손금불산입)"
     assert t.label("한도 초과액") == "Excess over limit (한도 초과액)"          # 띄어쓰기 차이는 같은 용어

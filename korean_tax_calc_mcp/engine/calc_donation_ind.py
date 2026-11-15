@@ -20,7 +20,7 @@ def volunteer_per_day(year: int, served_on: str | None = None) -> int:
     return 50_000 if served_on < "2024-02-29" else PER_DAY
 
 
-def volunteer_value(hours: float, fuel: int = 0, transport_fuel: int = 0, materials: int = 0, own_hours_only: bool = True, per_day: int = PER_DAY) -> dict:
+def volunteer_value(hours: float, fuel: int = 0, transport_fuel: int = 0, materials: int = 0, per_day: int = PER_DAY) -> dict:
     days = math.ceil(hours / 8) if hours > 0 else 0
     labor = days * per_day
     direct = max(0, fuel - transport_fuel) + materials
