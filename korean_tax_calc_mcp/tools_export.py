@@ -2326,6 +2326,13 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
     base = filename if filename else title
     fpath = _unique_path(output_dir, base)
     wb.save(fpath)
+    # ── 수식 칸에 계산 값(캐시 값)을 써 넣음 — 휴대폰 뷰어·미리보기는 수식을 다시 계산하지 않아 값이 없으면 0·빈칸으로 보임 ──
+    from .workbook_cache import fill_cached_values, uncached_warning
+    try:
+        _캐시_경고 = uncached_warning(fill_cached_values(wb, fpath), "en" if _T is not None else "ko")
+    except Exception as e:      # 값 쓰기가 실패해도 파일(수식)은 그대로 — Excel에서는 열 때 계산됨
+        _캐시_경고 = (f"Stored values could not be written ({type(e).__name__}) — formula cells may show blank or 0 in phone viewers and previews"
+                   if _T is not None else f"수식 칸의 계산 값을 써 넣지 못함({type(e).__name__}) — 휴대폰 뷰어·미리보기에서 값이 안 보일 수 있음")
     out = {
         "결과": {
             "파일": os.path.abspath(fpath),
@@ -2350,4 +2357,6 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
             out["결과"]["번역_없음"] = list(_T.missing)
         if _경고:
             out["warnings"] = _경고
+    if _캐시_경고:
+        out["warnings"] = list(out.get("warnings") or []) + [_캐시_경고]
     return out

@@ -77,7 +77,7 @@ If you do not know which tool to use, ask `find_tool` in plain words.
 
 [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp) is the companion server for statutes, addenda, rulings and cases. With both installed, "find the basis → compute → fill the form" runs in one conversation, and this server's `find_tool` returns ready-to-call statute lookups for questions it has no calculator for (rent tax credit, pension-account credit, stock gains …).
 
-To pick up a new release right away: `uvx --refresh korean-tax-calc-mcp` (uvx caches the downloaded version). Pin with `uvx korean-tax-calc-mcp@0.55.0`.
+To pick up a new release right away: `uvx --refresh korean-tax-calc-mcp` (uvx caches the downloaded version). Pin with `uvx korean-tax-calc-mcp@0.55.1`.
 
 Optional keys: `LAW_OC` (law.go.kr lookups in two audit tools), `UPSTAGE_API_KEY` (PDF table extraction), `VWORLD_KEY` (official property price lookup).
 
@@ -183,6 +183,8 @@ The example questions in "Try asking" above (royalty to a US parent, secondee re
 
 <details>
 <summary><b>What the review workbook contains (sheets and statutory forms)</b></summary>
+
+Formula cells also carry their calculated values, so the numbers show in phone viewers and chat or mail previews that do not recalculate formulas (Excel recalculates from the formulas on open).
 
 | Sheet | Content |
 |---|---|
