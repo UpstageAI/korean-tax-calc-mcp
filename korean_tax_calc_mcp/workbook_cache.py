@@ -1209,11 +1209,17 @@ def _sheet_parts(zf) -> dict:
     return parts
 
 
-def fill_cached_values(wb, path: str) -> dict:
+def fill_cached_values(wb, path: str, prefer: dict | None = None) -> dict:
     """`wb`를 `path`에 저장한 뒤 부른다 — 수식 칸의 계산 값을 파일에 써 넣는다(수식은 그대로).
 
+    prefer — {시트 이름: {칸 주소: 값}}: 그 칸은 계산한 값 대신 이 값을 쓴다(다른 프로그램이 저장해 둔 값을 보존할 때 — verify_workbook).
     돌려주는 값: {"수식_칸": n, "값_쓴_칸": n, "못_쓴_칸": [(시트, 칸, 이유)…]}. 파일은 임시 파일에 쓴 뒤 바꿔치기한다."""
     values, skipped = evaluate_workbook(wb)
+    if prefer:
+        for name, cells in prefer.items():
+            if name in values:
+                values[name].update(cells)
+        skipped = [x for x in skipped if x[1] not in (prefer.get(x[0]) or {})]
     total = sum(len(v) for v in values.values()) + len(skipped)
     if not total:
         return {"수식_칸": 0, "값_쓴_칸": 0, "못_쓴_칸": []}

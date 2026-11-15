@@ -209,11 +209,11 @@ mcp = MCPServer(
                  "입력 오류나 도구가 틀렸다는 조문 근거를 찾지 못하면 도구 값을 최종 답으로 쓴다. 도구 값과 다른 값을 쓸 때는 그 이유(입력 오류 내용 또는 조문 번호)를 한 줄 밝힌다. "
                  "같은 항목에 값이 둘 나오면(안분 전후, 전체와 과세분 등) 질문이 묻는 금액 하나만 최종 답으로 쓰고 다른 값은 과정에만 둔다. "
                  "연도표가 없는 해는 오류로 멈추므로 추정하지 않는다. 계산 근거 원문·해석은 korean-tax-mcp로 확인한다. "
-                 "계산 결과를 엑셀이나 법정서식으로 달라고 하면 엑셀 파일을 직접 만들지 말고 export_workbook(calls=이미 부른 도구 호출 목록)을 쓴다 — 법정서식 틀(금액 칸은 수식), 계산 근거, 입력·가정, 판단·근거 시트가 함께 나온다. "
-                 "사용자가 엑셀·스프레드시트·계산 근거·workings를 원하면 계산 도구를 부른 뒤 그 호출 목록을 export_workbook에 넘겨 완성된 .xlsx 파일을 받는다(결과.파일 = 저장 경로). 파이썬 등으로 xlsx를 직접 만들지 않는다 — 여러 계산·시나리오는 scenarios, 입력 출처는 sources, 쟁점 표는 issues에 넣으면 요약·입력·출처·시나리오·쟁점 목록 시트가 수식으로 연결되어 나온다(뒤에는 '계산 상세' 한 장 — 신고 서식까지 받으려면 detail='forms'). "
-                 "When the user asks for Excel, a spreadsheet or workings, pass the calculation tool calls to export_workbook, which writes the finished .xlsx file and returns its path; do not write your own spreadsheet script. "
-                 "export_workbook이 만든 파일을 openpyxl 등으로 열어 다시 저장하지 않는다 — 저장된 계산값이 지워져 휴대폰·미리보기에서 0으로 보인다. 글·라벨·쟁점·출처를 바꾸려면 입력(labels·scenarios·sources·issues·review_notes)을 고쳐 다시 호출한다(영문 문서에 국문으로 남은 라벨은 결과의 번역_없음을 labels에 넣는다). "
-                 "Do not re-save a file made by export_workbook with openpyxl or similar (stored values are lost and phone viewers show 0); change its inputs (labels, scenarios, sources, issues, review_notes) and call it again. "
+                 "사용자가 엑셀·스프레드시트·계산 근거·workings를 원하면 Excel 결과물을 만드는 길은 둘이다. (1) export_workbook — 계산 도구 호출 목록을 calls로 넘기면 수식·출처·검산이 든 통합 문서를 만든다(결과.파일 = 저장 경로). 법정서식 틀(금액 칸은 수식), 계산 근거, 입력·가정, 판단·근거 시트가 함께 나오고, 시나리오 비교(신고한 대로 vs 맞는 금액 포함)는 scenarios, 호출 사이 부족분·차액 연결과 입력 출처는 sources(from_call·less), 발견 사항은 issues, 조치·기한은 actions, 요약 시트의 핵심 숫자는 key_figures, 도구 계산이 아닌 표(자체 재검산·추정)는 extra_sheets에 넣는다(뒤에는 '계산 상세' 한 장 — 신고 서식까지 받으려면 detail='forms'). "
+                 "(2) 통합 문서를 직접 짠다 — 그 경우 저장한 뒤 반드시 verify_workbook(path, checks)으로 금액 칸을 계산 도구 결과와 대조하고, 대조하지 않은 금액은 사용자에게 밝힌다. 어느 길이든 금액은 계산 도구 호출을 거친다(시나리오마다 한 번씩 호출). "
+                 "There are two ways to deliver Excel workings: (1) export_workbook — pass the calculation tool calls and it builds the workbook with formulas, sources and tool checks; (2) lay the workbook out yourself — then, after saving it, always run verify_workbook to compare the amount cells with calculation tool results and tell the user which amounts were not checked. Either way every amount goes through a calculation tool (one call per scenario). "
+                 "export_workbook이 만든 파일을 openpyxl 등으로 다시 저장하면 저장된 계산값이 지워져 휴대폰·미리보기에서 0으로 보인다. 글·라벨·쟁점·출처는 입력(labels·scenarios·sources·issues·review_notes)을 고쳐 다시 호출해 바꾸고(영문 문서에 국문으로 남은 라벨은 결과의 번역_없음을 labels에 넣는다), 다시 저장했다면 verify_workbook을 거치면 계산값이 다시 채워진다. "
+                 "Re-saving a file made by export_workbook with openpyxl or similar drops the stored values (phone viewers show 0): change its inputs (labels, scenarios, sources, issues, review_notes) and call it again, or run verify_workbook on the re-saved file to fill the values back in. "
                  "자료 불일치·가정·확인할 서류·판단이 갈리는 쟁점은 export_workbook의 review_notes에 넣어 '요약' 시트에 싣는다. 서식 틀이 없는 항목은 따로 정리해 덧붙여도 된다. "
                  "도구 결과는 한국어로 나오지만, 답변은 사용자가 질문한 언어로 작성한다(국문 용어는 괄호로 병기). Tool results are in Korean; always answer in the language the user asked in, keeping key Korean terms in parentheses. "
                  + AUDIT_INSTRUCTIONS)
@@ -584,10 +584,13 @@ def _call_key(fn_name: str, args: tuple, kwargs: dict) -> str:
     return _json.dumps({"args": args, "kwargs": kwargs}, sort_keys=True, ensure_ascii=False, default=str)
 
 
-# 계산 도구 결과의 공통 꼬리 — 엑셀을 직접 만들지 않고 export_workbook을 쓰게(모델이 계산 도구만 불러 놓고 xlsx를 따로 만든 사례)
-_EXCEL_TAIL = ("엑셀 결과물이 필요하면 export_workbook(완성된 .xlsx 생성)에 이 호출을 calls로 넘김 — 직접 xlsx를 만들지 않음. "
-               "For Excel workings, pass this call to export_workbook (it writes the finished .xlsx).")
-_NO_EXCEL_TAIL = frozenset({"export_workbook", "find_tool"})
+# 계산 도구 결과의 공통 꼬리 — 엑셀 결과물의 금액이 계산 도구를 거치게(export_workbook으로 만들거나, 직접 짠 파일을 verify_workbook으로 대조)
+_EXCEL_TAIL = ("사용자가 엑셀(Excel)을 요청했다면 길은 둘 — (1) export_workbook(완성된 .xlsx 생성): 이 호출을 calls로 넘기면 수식·출처·검산이 든 통합 문서가 나온다. "
+               "(2) 통합 문서를 직접 짠다: 저장한 뒤 반드시 verify_workbook으로 금액 칸을 계산 도구 결과와 대조하고, 대조하지 않은 금액은 사용자에게 밝힌다. "
+               "어느 길이든 금액은 계산 도구 호출을 거친다(시나리오마다 한 번씩). "
+               "For Excel: either pass this call to export_workbook, or build the workbook yourself and then run verify_workbook on the saved file; "
+               "every amount goes through a calculation tool (one call per scenario).")
+_NO_EXCEL_TAIL = frozenset({"export_workbook", "verify_workbook", "find_tool"})
 
 
 def _guard(fn):
@@ -10405,12 +10408,27 @@ def export_workbook(
     issues: Annotated[list | str | None, Field(description="쟁점 목록(선택) — [{no, issue, finding, risk, action}](국문 키 번호·쟁점·발견·위험도·조치도 됨). 적은 글을 그대로 '쟁점 목록(Issues Log)' 시트에 표로 싣는다 — 도구는 쟁점을 판단하지 않음")] = None,
     detail: Annotated[Literal["compact", "forms", "full"] | None, Field(description="뒤에 붙는 시트(선택, scenarios·sources·issues를 줄 때만 적용) — 'compact'(기본): 앞 시트 + '계산 상세(Calc detail)' 한 장, 'forms': compact + 신고 서식 시트, 'full': 서식·call별 '계산 N'·입력·가정·판단·근거 전부")] = None,
     labels: Annotated[dict | str | None, Field(description="라벨 치환 표(선택) — {시트에 찍힌 원래 키·라벨: 표시할 글}(JSON 문자열도 됨). 예: {\"약정_순액\": \"Agreed net amount\"}. lang='en'이면 '표시할 글 (원래 국문)'으로, 'ko'이면 표시할 글로 찍는다. 결과의 번역_없음에 나온 라벨에 영문을 붙일 때 쓴다 — 저장된 파일을 열어 고치지 않는다")] = None,
+    extra_sheets: Annotated[list | str | None, Field(description="자유 형식 시트(선택) — 계산 도구 결과가 아닌 표(자체 재검산·추정·세금 밖 계산)를 그대로 시트로 붙인다: [{sheet, title, note, headers: [머리글…], rows: [[칸…]…], total, formats, source}]. 칸은 숫자·글·날짜(YYYY-MM-DD)·'='로 시작하는 수식·{from_call, from_row}(계산 도구 결과 링크). 틀은 고정 — 머리 행 4행, 첫 행 5행, 첫 열 A — 이라 수식은 같은 시트의 표 안 칸만 A1 꼴로 가리킨다(예: 둘째 행 셋째 열 = C6). 시트 머리와 요약 범례에 '계산 도구의 검증을 거치지 않음'이 찍힌다")] = None,
+    actions: Annotated[list | str | None, Field(description="조치·기한 목록(선택) — [{action, due, owner, basis}](국문 키 조치·기한·담당·근거도 됨). 적은 글을 그대로 요약(Summary) 시트의 '조치·기한' 표에 싣는다 — 도구는 조치나 기한을 만들지 않음")] = None,
+    key_figures: Annotated[list | str | None, Field(description="요약(Summary) 시트 핵심 숫자 표의 줄(선택) — [{label, call, row, highlight, note}] 또는 [{label, sheet, cell, highlight, note}]. call(label 또는 순번)·row(결과 줄 이름, 예: 합계)는 계산 도구 결과, sheet·cell은 extra_sheets의 칸(예: B12). highlight=true면 굵게 + 노랑. 안 주면 시나리오 블록마다 권고 열(columns의 recommended=true, 없으면 첫 열)의 결과 줄을 한 줄씩 올린다")] = None,
 ) -> dict:
-    """Produces a finished Excel (.xlsx) workings file with live formulas from calculation tool results, saves it in output_dir and returns its absolute path in result '파일'; use this instead of writing your own spreadsheet script whenever the user asks for Excel, a spreadsheet, workings or a calculation schedule (계산 근거 엑셀).
-    완성된 엑셀(.xlsx) 파일을 만들어 output_dir 폴더에 저장하고 절대경로(결과.파일)를 돌려준다 — 엑셀·스프레드시트·계산 근거(workings)를 달라고 하면 파이썬 등으로 xlsx를 직접 만들지 말고 이 도구를 쓴다. 각 call은 서버가 직접 다시 실행하며, 결과·계산·세무조정·판단·산식을 탭으로 펼치고 금액 칸은 도구 값과 대조되는 수식으로 둔다.
-    Do not open the saved file with openpyxl or similar and save it again: the stored formula values are lost and phone viewers and previews show 0. To change wording, labels, issues or sources, change the inputs (labels, scenarios, sources, issues, review_notes) and call this tool again.
-    만든 파일을 openpyxl 등으로 열어 다시 저장하지 말 것 — 저장된 계산값이 지워져 휴대폰·미리보기에서 0으로 보인다. 글·라벨·쟁점·출처를 바꾸려면 입력(labels·scenarios·sources·issues·review_notes)을 고쳐 다시 호출한다.
-언제: 계산 결과(세무조정·소득처분·판단·산식)를 실무자가 검토할 수 있는 엑셀 파일로 남길 때, 사용자가 엑셀·스프레드시트·계산 근거 파일을 원할 때, 여러 계산(지급 건별·시나리오별)을 한 통합 문서로 묶을 때.
+    """Produces a finished Excel (.xlsx) workings file with live formulas (계산 근거 엑셀), saved in output_dir with its absolute path in result '파일' — one of two ways to deliver the Excel a user asked for: pass the calculation tool calls here and get a workbook with formulas, sources and tool checks built in, or lay the workbook out yourself and then run verify_workbook on the saved file. Either way every amount goes through a calculation tool (one call per scenario). One call holds: scenarios side by side, including as-filed vs correct (scenarios); formula links between calls for shortfalls and differences (sources with from_call/less); findings, actions and deadlines (issues, actions); key figures on the summary (key_figures); and tables that are not tool calculations (extra_sheets).
+    계산 도구 호출을 넘기면 수식·출처·검산이 든 완성된 .xlsx를 output_dir에 저장하고 절대경로(결과.파일)를 돌려준다 — 사용자가 요청한 엑셀·스프레드시트·계산 근거(workings)를 만드는 두 길 가운데 하나(다른 길: 통합 문서를 직접 짠 뒤 verify_workbook으로 대조). 어느 길이든 금액은 계산 도구 호출을 거친다(시나리오마다 한 번씩 호출). 한 번 호출에 담기는 것:
+    - 시나리오 비교(신고한 대로 vs 맞는 금액 포함) → scenarios
+    - 호출 사이 수식 연결(부족분·차액) → sources의 from_call·less
+    - 발견 사항·조치·기한 → issues·actions(요약 시트의 핵심 숫자는 key_figures)
+    - 도구 계산이 아닌 표(자체 재검산·추정) → extra_sheets — 담을 곳이 없어 보이는 표도 여기에 넣으면 한 파일에 담긴다
+    Re-saving the file with openpyxl or similar drops the stored formula values (phone viewers and previews show 0): change the inputs and call this tool again, or run verify_workbook on the re-saved file to fill the values back in.
+    만든 파일을 openpyxl 등으로 다시 저장하면 저장된 계산값이 지워져 휴대폰·미리보기에서 0으로 보인다 — 글·라벨·쟁점·출처는 입력(labels·scenarios·sources·issues·review_notes)을 고쳐 다시 호출해 바꾸고, 다시 저장했다면 verify_workbook을 거치면 계산값이 다시 채워진다.
+    예(지어낸 값) — 배당을 15%로 신고했는데 맞는 세율이 20%일 때 '신고한 대로 vs 맞는 금액'과 부족분 가산세:
+      calls=[{label:"신고 15%", tool:"nonresident_withholding", args:{income_kind:"배당", recipient_type:"법인", residence_country:"프랑스", year:2025, amount:40000000, treaty_rate:0.15}},
+             {label:"맞는 20%", tool:"nonresident_withholding", args:{income_kind:"배당", recipient_type:"법인", residence_country:"프랑스", year:2025, amount:40000000}},
+             {label:"부족분 가산세", tool:"withholding_late_payment_penalty", args:{unpaid_tax:2000000, due:"2025-04-10", until:"2025-09-30"}}]
+      scenarios=[{sheet:"배당", heading:"신고한 대로 vs 맞는 금액", columns:[{call:"신고 15%", heading:"신고한 대로"}, {call:"맞는 20%", heading:"맞는 금액", recommended:true}]},
+                 {sheet:"가산세", heading:"부족분", columns:["부족분 가산세"]}]
+      sources=[{call:"부족분 가산세", arg:"unpaid_tax", from_call:"맞는 20%", from_row:"원천징수세액", less:6000000, source:"맞는 세액 − 이미 낸 세액"}]
+      → '입력·출처' 시트의 미납세액 칸이 "맞는 세액 칸 − 6,000,000" 수식이 된다(도구에 넣은 값과 같을 때).
+언제: 계산 결과(세무조정·소득처분·판단·산식)를 실무자가 검토할 수 있는 엑셀 파일로 남길 때, 사용자가 엑셀·스프레드시트·계산 근거 파일을 원할 때, 여러 계산(지급 건별·시나리오별)을 한 통합 문서로 묶을 때. 통합 문서를 직접 짰다면 verify_workbook.
 입력:
   title — 문서 제목(파일명 기본값).
   calls — [{label, tool, args}] 목록(1~30개). tool 이름이 없거나 'export_workbook'이면 오류(재귀 금지).
@@ -10427,14 +10445,28 @@ def export_workbook(
     warnings에 모은다(번역을 지어내지 않음). 법정서식 틀 시트는 한국어 신고 서식이라 그대로 두고 요약 시트에 시트마다 한 줄 영문 안내를 붙인다.
     도구가 돌려준 문장(판단 근거·주의·한계)은 번역하지 않고 'Notes (Korean original)' 칸에 한국어로 둔다. 숫자·수식·파일명 기본값은 같다.
     With lang='en', write review_notes in English.
-  scenarios·sources·issues — 통합 문서(선택). 셋 다 없으면 기존 출력 그대로. 하나라도 주면 맨 앞에 다음 시트를 두고, 뒤 시트는 detail로 고른다(기본 compact — 앞 시트 + '계산 상세' 한 장):
-    요약(Summary) — 시나리오 시트의 핵심 숫자를 링크하고 블록마다 summary_note 한 줄(예: 납부기한), 색 규칙 범례.
+  scenarios·sources·issues·actions·key_figures — 통합 문서(선택). 다 없으면 기존 출력 그대로. 하나라도 주면 맨 앞에 다음 시트를 두고, 뒤 시트는 detail로 고른다(기본 compact — 앞 시트 + '계산 상세' 한 장):
+    요약(Summary) — 한 화면: 핵심 숫자 표(항목 / 금액 — 시나리오 시트 칸을 가리키는 수식 / 계산 위치 — 그 칸으로 가는 링크 / 메모), 조치·기한 표(actions), 쟁점 수 한 줄, 색 규칙 범례.
+      핵심 숫자는 key_figures로 고른다. 안 주면 시나리오 블록마다 권고 열(columns의 recommended=true, 없으면 첫 열)의 결과 줄을 한 줄씩, 그 아래 나머지 열의 합계 줄. 합계 줄은 굵게 + 노랑, summary_note는 블록 첫 줄의 메모 칸.
     입력·출처(Inputs) — 입력값과 법정 세율·이율을 한곳에 모으고 값마다 출처 열(sources의 source, 세율은 근거 조문). 계산 시트는 이 칸을 가리키는 수식.
       sources에 from_call·from_row(·less)를 적으면 그 입력 칸을 '다른 call의 결과 줄 − less' 수식으로 잇는다 — 도구에 넣은 값과 같을 때만 잇고, 다르면 값 그대로 두고 warnings에 적는다.
     시나리오 시트 — scenarios의 columns에 적은 call을 열로 나란히(예: A 계약대로 / B 대안), 오른쪽 '근거 · 메모' 열(도구 근거 조문 + notes), 블록 끝에 도구 값 대조 한 줄.
       scenarios에 넣지 않은 call은 '그 밖의 계산(Other workings)' 한 시트에 차례로(detail='full'이면 call마다 한 시트). nonresident_withholding(총액·순액 역산·지방소득세 부담)과 withholding_late_payment_penalty(납부고지 전 자진납부, 납부고지 후 종전 일수분·개정 3호·4호와 50% 한도)는
       입력에서 결과까지 수식, 결과에 계산식이 있는 도구는 그 단계를 수식으로, 그 밖의 도구는 결과 값을 옮긴다(회색 — 수식 아님).
     쟁점 목록(Issues Log) — issues의 행(번호·쟁점·발견·위험도·조치)을 그대로 표로. 도구가 쟁점이나 위험도를 만들지 않는다.
+      쟁점에 amount(금액 — 숫자·글 또는 {from_call, from_row})를 주면 '금액' 열이 붙는다.
+  actions — 조치·기한 [{action, due, owner, basis}](선택). 요약 시트의 '조치·기한' 표에 받은 글 그대로. 쟁점(issues)과 따로 — 기한이 있는 할 일 목록.
+  key_figures — 요약 시트 핵심 숫자 표의 줄(선택) [{label, call, row, highlight, note}] 또는 [{label, sheet, cell, highlight, note}]. 순서·글·강조를 호출자가 정한다.
+    가리키는 곳이 없으면 오류로 쓸 수 있는 줄 이름을 알려 준다. label을 비우면 줄 이름과 열 제목으로 적는다.
+  extra_sheets — 자유 형식 시트(선택) [{sheet, title, note, headers, rows, total, formats, source}]. 계산 도구 결과가 아닌 표를 받은 그대로 시트로 붙인다
+    (통합 문서에서는 시나리오 시트 뒤, 기존 출력에서는 요약 시트 뒤). compact의 시트 수에는 넣지 않는다. scenarios 없이 써도 된다.
+    틀: 1행 title, 2행 note, 3행 '호출자가 넣은 표 — 계산 도구의 검증을 거치지 않음', 4행 headers, 5행부터 rows, 끝에 합계 행(total). 첫 열은 A.
+    rows의 칸: 숫자, 글, 날짜(YYYY-MM-DD), 수식('='로 시작), {from_call, from_row}(그 call 결과 줄을 가리키는 링크 — 초록). 글 한 줄만 주면 구분 띠.
+    수식: 같은 시트의 표 안 칸만(예: =B5-B6, =SUM(B5:B9), =ROUNDDOWN(C5*0.03,-3)) — 사칙·거듭제곱·%·비교·&와 함수 ABS·AND·AVERAGE·COUNT·COUNTA·COUNTIF·
+      DATE·DATEDIF·IF·IFERROR·INT·ISBLANK·ISERROR·ISLOGICAL·ISNUMBER·ISTEXT·LEFT·LEN·MAX·MID·MIN·MOD·N·NOT·OR·RIGHT·ROUND·ROUNDDOWN·ROUNDUP·SUM·SUMIF·SUMIFS·TRUNC·VALUE.
+      다른 시트·파일 참조, 이름, 그 밖의 함수, 표 밖 칸, 계산되지 않거나 오류 값이 나오는 수식은 입력 오류(파일을 만들지 않음). 다른 시트의 도구 계산 값은 {from_call, from_row} 칸으로 받아 온 뒤 그 칸을 가리킨다.
+    total: true(금액·숫자 열마다 SUM), "합계 이름", 또는 {label, columns: [머리글 또는 열 번호]}. formats: headers 순서의 목록 또는 {머리글: 서식} —
+      amount(금액)·number(소수)·percent(비율)·date(날짜)·text(글)·source(출처 열 — 작은 기울임). 안 주면 숫자는 금액 서식. source: 표 아래 출처 한 줄.
     색 규칙: 파랑 = 입력, 초록 = 다른 시트 링크, 검정 = 수식, 노랑 = 핵심 결과·가정.
   detail — 통합 문서의 뒤 시트(scenarios·sources·issues를 줄 때만 적용, 기본 'compact'):
     compact — 앞 시트 뒤에 '계산 상세(Calc detail)' 한 장만: call 순서대로 도구 결과와 판단·근거를 위아래로 쌓는다. 신고 서식이 있으면 요약 끝과 결과.서식_안내에 한 줄.
@@ -10453,17 +10485,52 @@ def export_workbook(
 
 결과:
   결과.파일 — 저장한 .xlsx 파일의 절대경로(output_dir 안, 같은 이름이 있으면 ' (2)'를 붙임). 수식 칸에 계산 값도 함께 저장해 휴대폰·미리보기에서도 값이 보임
-    (Excel은 열 때 수식으로 다시 계산). 파일을 openpyxl 등으로 다시 저장하면 그 값이 지워지므로 고칠 것은 입력으로 넘겨 이 도구로 다시 만든다.
+    (Excel은 열 때 수식으로 다시 계산). 파일을 openpyxl 등으로 다시 저장하면 그 값이 지워지므로 고칠 것은 입력으로 넘겨 이 도구로 다시 만들거나 verify_workbook으로 값을 다시 채운다.
     계산 값을 쓰지 못한 칸이 있으면 warnings에 "미리보기에서 값이 안 보일 수 있는 칸 n개".
   결과.시트 — 시트 이름 목록.
   결과.call_수 — calls 길이.
   결과.오류_call — 오류 발생한 call의 label 목록.
-  결과.파일_안내 — 파일을 다시 저장하지 말고 입력을 고쳐 다시 호출하라는 한 줄. labels를 줬을 때: 결과.labels_적용(쓰인 키), 시트에 없는 키는 warnings.
-  scenarios·sources·issues를 줬을 때만: 결과.통합_시트(맨 앞에 더한 시트 이름), 결과.detail, 결과.서식_안내(compact에서 서식이 있을 때), warnings(맞는 줄을 찾지 못한 notes·sources).
+  결과.파일_안내 — 다시 저장하면 계산값이 지워진다는 것과 바꾸는 길(입력을 고쳐 다시 호출, 다시 저장했다면 verify_workbook) 한 줄. labels를 줬을 때: 결과.labels_적용(쓰인 키), 시트에 없는 키는 warnings.
+  extra_sheets를 줬을 때만: 결과.자유_시트([{시트, 머리_행, 첫_행, 끝_행, 열, 합계_행}]), 결과.자유_시트_안내.
+  scenarios·sources·issues·actions·key_figures를 줬을 때만: 결과.통합_시트(맨 앞에 더한 시트 이름), 결과.detail, 결과.서식_안내(compact에서 서식이 있을 때), warnings(맞는 줄을 찾지 못한 notes·sources).
   lang='en'일 때만: 결과.lang, 결과.번역_라벨_수, 결과.번역_없음(용어집에 없는 국문 라벨 목록 — detail과 무관하게 돌려줌), 결과.번역_없음_안내(labels에 넣어 다시 호출), warnings(같은 내용을 한 줄로).
   근거 — '계산 도구 결과 정리(세무 자문 아님)'."""
     return _export_workbook_impl(title, calls, output_dir, filename, layout, company, period, biz_no, review_notes, lang,
-                                 scenarios, sources, issues, detail, labels)
+                                 scenarios, sources, issues, detail, labels, extra_sheets, actions, key_figures)
+
+
+# ── verify_workbook: 직접 만든 통합 문서의 금액 칸을 계산 도구 결과와 대조(본문은 workbook_verify.py) ────────
+@mcp.tool(annotations=CALC)
+@_guard
+def verify_workbook(
+    path: Annotated[str, Field(description="대조할 통합 문서(.xlsx)의 절대 경로 — 원본은 고치지 않음")],
+    checks: Annotated[list | str, Field(description="대조 목록 [{cell, tool, args, key, tolerance, label}] 1~200개(JSON 문자열도 됨). cell은 \"시트!칸\"(예: \"Q3!B9\", \"'Tax calc'!C12\") 또는 정의된 이름, tool·args는 그 금액을 계산하는 계산 도구와 입력, key는 결과에서 대조할 키(예: 원천징수세액, 점 경로 역산.과세표준), tolerance는 허용 차이(원, 기본 0), label은 표에 적을 항목 이름(선택 — 없으면 칸 왼쪽 글)")],
+    annotate: Annotated[bool, Field(description="true(기본)면 대조 결과 시트('검산', lang='en'이면 'Tool check')를 붙인 사본을 저장. false면 대조 결과만 돌려줌")] = True,
+    output_dir: Annotated[str | None, Field(description="사본을 저장할 폴더(기본: path와 같은 폴더)")] = None,
+    filename: Annotated[str | None, Field(description="사본 파일명(기본: 원본 이름 + '_verified', 확장자 .xlsx 자동). 같은 이름이 있으면 ' (2)'를 붙임")] = None,
+    lang: Annotated[Literal["ko", "en"], Field(description="대조 결과 시트의 표기 언어 — 'ko'(기본) 또는 'en'")] = "ko",
+) -> dict:
+    """Checks a workbook you built yourself against the calculation tools (직접 만든 엑셀 검산): reads the amount cells of an .xlsx, calls the calculation tool for each check, reports match or mismatch with the difference, lists the amounts no check covers, and saves a copy with a 'Tool check' sheet and stored values in every formula cell. Run it after saving any workbook you laid out yourself.
+    직접 짠 통합 문서(.xlsx)의 금액 칸을 계산 도구 결과와 대조한다 — 틀은 직접 짜도 되고, 이 도구가 맞는 숫자인지 받쳐 준다. 칸 값을 읽어(저장된 값, 없으면 다시 계산) checks마다 계산 도구를 실제로 호출해 비교하고, 일치·불일치(두 값과 차이)·읽지 못함·도구 오류를 돌려준다. 어떤 대조에도 걸리지 않고 대조된 칸과 수식으로 이어지지도 않는 금액 칸을 '대조 안 한 금액'으로 모은다. 원인을 판단하지 않는다.
+언제: 통합 문서를 export_workbook 없이 직접 만들어 저장한 뒤 반드시, export_workbook이 만든 파일을 다른 프로그램으로 다시 저장해 계산값이 지워졌을 때, 받은 엑셀의 세액이 계산 도구 결과와 맞는지 볼 때.
+입력:
+  path — 통합 문서(.xlsx) 절대 경로. 원본은 고치지 않는다.
+  checks — [{cell, tool, args, key, tolerance, label}]. 같은 tool + args는 한 번만 계산한다. 금액 칸마다 하나씩 — 시나리오마다 그 시나리오의 args로.
+    예(지어낸 값): {cell: "배당!C9", tool: "nonresident_withholding", args: {income_kind: "배당", recipient_type: "법인", residence_country: "프랑스", year: 2025, amount: 40000000}, key: "원천징수세액"}
+  annotate — true(기본): 사본에 '검산'(Tool check) 시트를 붙인다 — 칸·항목·통합 문서 값·도구 값·차이·판정·근거(도구가 돌려준 글), 검증 범위, 대조 안 한 금액 목록, 부가 점검.
+    원래 시트의 값·수식·서식은 그대로이고, 사본의 모든 수식 칸에 값을 채운다(원본에 저장된 값은 보존, 없던 칸은 다시 계산) — 휴대폰·미리보기에서도 값이 보인다.
+  output_dir·filename — 사본 위치(기본: 원본 폴더, '<원본 이름>_verified.xlsx'). lang — 'ko'(기본)·'en'.
+결과:
+  결과.요약 — {대조, 일치, 불일치, 읽지_못함, 도구_오류, 대조_안_한_금액}.
+  결과.불일치 — [{칸, 항목, 통합_문서_값, 도구_값, 차이, 도구, 키, 근거}]. 결과.대조 — 전체 대조 줄.
+  결과.대조_안_한_금액 — [{시트, 칸, 항목, 값}]: 계산 도구 대조를 거치지 않은 금액. 대조를 거친 것으로 보는 칸은 일치한 칸, 그 칸의 수식이 가리키는 칸, 입력 숫자,
+    그런 칸들의 링크·합·차. 그 밖의 수식 칸 가운데 값이 1,000 이상인 칸(날짜·비율 서식 제외)이 여기에 온다.
+  결과.부가_점검 — 저장된 값이 없는 수식 칸 수, 저장된 값과 다시 계산한 값이 다른 칸, 원 미만 소수가 남은 금액 칸, 오류 칸, 수식 열에 직접 적은 숫자, 값을 계산하지 못한 수식 칸.
+  결과.사본 — 대조 결과 시트를 붙인 사본의 절대경로(annotate=true). 결과.다음 — 다음에 할 일 한 줄(불일치 칸을 고쳐 다시 호출 / 대조 안 한 금액은 계산 도구를 호출해 checks에 더하거나 사용자에게 밝힘).
+  한계 — 금액 판정 기준(1,000 이상), 수식 모양으로 정하는 범위, 입력 숫자는 원자료와 대조하지 않음, 사본의 차트·그림.
+  근거 — '통합 문서의 칸 값과 계산 도구 결과 대조(세무 자문 아님)'."""
+    from .workbook_verify import verify_workbook_impl
+    return verify_workbook_impl(path, checks, annotate, output_dir, filename, lang)
 
 
 # ── 국세 우선권에 따른 매각대금 배분(국세기본법 제35조·제36조) ──────────────────────
@@ -11546,7 +11613,8 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "기한 특례": ["refund_claim_deadline", "assessment_limitation"], "신고기한 공휴일": ["refund_claim_deadline"],
     "수입배당금": ["dividend_received_deduction"], "엑셀": ["export_workbook"], "서식": ["export_workbook"],
     "excel": ["export_workbook"], "xlsx": ["export_workbook"], "workings": ["export_workbook"], "spreadsheet": ["export_workbook"],
-    "workbook": ["export_workbook"], "계산 근거": ["export_workbook"], "스프레드시트": ["export_workbook"], "워크북": ["export_workbook"], "신고서 검토": ["return_precheck", "precheck_schema"],
+    "workbook": ["export_workbook", "verify_workbook"], "검산": ["verify_workbook"], "엑셀 검증": ["verify_workbook", "export_workbook"], "엑셀 대조": ["verify_workbook", "export_workbook"],
+    "verify": ["verify_workbook"], "tool check": ["verify_workbook"], "계산 근거": ["export_workbook"], "스프레드시트": ["export_workbook"], "워크북": ["export_workbook"], "신고서 검토": ["return_precheck", "precheck_schema"],
     "국세 우선": ["tax_priority_distribution"], "국세우선권": ["tax_priority_distribution"], "당해세": ["tax_priority_distribution"],
     "법정기일": ["tax_priority_distribution"], "배당표": ["tax_priority_distribution"], "배당 순위": ["tax_priority_distribution"], "매각대금 배분": ["tax_priority_distribution"],
     "경매": ["tax_priority_distribution"], "공매": ["tax_priority_distribution"], "매각대금": ["tax_priority_distribution"],
@@ -11699,16 +11767,24 @@ def find_tool(query: Annotated[str, Field(description="찾는 계산을 평소 �
     언제: 계산 문제를 받았는데 맞는 도구 이름이 바로 떠오르지 않을 때, 또는 '이 계산 도구는 없다'고 판단하기 전에 반드시.
     입력: 찾는 계산 → query(평소 말, 세목·쟁점·조문 무엇이든), 개수 → n.
     결과: 후보 도구 목록(이름·한 줄 설명·언제 쓰는지·일치 이유). 후보가 없으면 계산 도구가 없는 것이니 korean-tax-mcp로 조문을 찾는다.
+    엑셀·스프레드시트·계산 근거(excel·xlsx·workings)를 찾는 말이면 결과에 '엑셀 문서' 한 줄 — export_workbook으로 만들거나, 직접 짠 뒤 verify_workbook으로 대조.
     메모·의견서·Word(docx) 문서를 찾는 말이면 결과에 '메모 문서' 한 줄 — korean-tax-mcp tax_memo_guide → build_tax_memo(이 서버는 메모를 만들지 않음)."""
     q = (query or keyword).strip()
     if not q:
         return {"error": "입력 확인 필요 — query(찾는 계산)를 넣으세요"}
     out = _find_tool(q, n)
+    if _EXCEL_QUERY.search(q) and isinstance(out.get("결과"), dict):      # 엑셀을 찾는 말 — 담을 곳이 없어 보이는 표도 이 도구로
+        out["결과"]["엑셀 문서"] = _EXCEL_HINT
     if _MEMO_QUERY.search(q) and isinstance(out.get("결과"), dict):      # 메모·의견서·Word 문서는 이 서버가 만들지 않음 — 한 줄 안내만
         out["결과"]["메모 문서"] = _MEMO_HINT
     return out
 
 
+_EXCEL_QUERY = re.compile(r"엑셀|스프레드시트|계산 근거|워크북|\b(?:excel|xlsx|workings?|spreadsheets?|workbooks?)\b", re.I)
+_EXCEL_HINT = ("엑셀 결과물을 만드는 길은 둘 — (1) export_workbook: 계산 도구 호출을 넘기면 수식·출처·검산이 든 통합 문서(시나리오 비교는 scenarios, 호출 사이 부족분·차액은 "
+               "sources의 from_call·less, 발견 사항·조치·기한은 issues·actions, 도구 계산이 아닌 표는 extra_sheets). (2) 직접 짠다: 저장한 뒤 반드시 verify_workbook으로 금액 칸을 "
+               "계산 도구 결과와 대조하고, 대조하지 않은 금액은 사용자에게 밝힌다. 어느 길이든 금액은 계산 도구 호출을 거친다(시나리오마다 한 번씩). "
+               "Two ways to deliver Excel: export_workbook builds it from the calculation calls; or build it yourself and then run verify_workbook on the saved file.")
 _MEMO_QUERY = re.compile(r"메모|의견서|\b(?:memo|memorandum|word|docx)\b", re.I)
 _MEMO_HINT = ("세무 메모·의견서(Word .docx)는 이 서버가 만들지 않음 — korean-tax-mcp의 tax_memo_guide로 구성을 받은 뒤 build_tax_memo로 작성(계산 값은 이 서버 도구 결과를 넣음). "
               "Tax memos (Word .docx) are built by korean-tax-mcp: tax_memo_guide, then build_tax_memo.")

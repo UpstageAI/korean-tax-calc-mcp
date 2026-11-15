@@ -89,7 +89,7 @@ def test_notice_penalty_outside_layout_copies_tool_values(tmp_path):
     assert notes["가산세"] == "도구 값(수식 틀 없음)"
     assert any(v == "이 도구는 수식 틀이 없어 결과 값을 옮김" for v in col(ws, 1))
     summary = wb[r["결과"]["통합_시트"][0]]
-    link = next(summary.cell(k, 2).value for k in range(1, summary.max_row + 1) if summary.cell(k, 1).value == "가산세")
+    link = next(summary.cell(k, 2).value for k in range(1, summary.max_row + 1) if str(summary.cell(k, 1).value).endswith("— 가산세"))
     assert link == f"='{ws.title}'!$B${rows['가산세'].row}"                       # 요약은 그 값 칸을 가리킴
     en = export(tmp_path, [{"label": "5y", "tool": "withholding_late_payment_penalty", "args": FIVE_YEARS}], "en", issues=[{"issue": "x"}], lang="en")
     w2 = openpyxl.load_workbook(en["결과"]["파일"])[en["결과"]["통합_시트"][2]]
@@ -168,7 +168,7 @@ def test_step_formula_rules():
 
 SAMPLES = json.loads((pathlib.Path(__file__).parent / "data" / "blend_sweep_calls.json").read_text(encoding="utf-8"))
 # 표본 호출이 없는 도구: 결과가 표 모양이 아니거나(안내·검색·PDF·시세 조회·관계 판정) export_workbook 자신
-NO_SAMPLE = {"dominant_shareholder", "export_workbook", "extract_relations", "kinship_check", "official_property_price", "ownership_ratio",
+NO_SAMPLE = {"dominant_shareholder", "export_workbook", "verify_workbook", "extract_relations", "kinship_check", "official_property_price", "ownership_ratio",
              "precheck_schema", "related_judge", "related_provision_at", "return_precheck", "return_precheck_pdf", "stock_price_lookup",
              "tunnelling_from_pdf", "tunnelling_gift", "tunnelling_gift_nts"}
 
@@ -345,9 +345,11 @@ def test_mixed_old_and_new_notice_columns_keep_their_own_row_names(tmp_path):
     assert row["납부고지서별·세목별 세액"] == [False, True, False, True]                                    # 입력한 고지세액은 입력 줄에
     assert row["납부고지서별·세목별 세액(미납세액 + 납부고지 전 가산세로 봄)"] == [True, False, True, False]
     summary = wb[r["결과"]["통합_시트"][0]]
-    srow = {summary.cell(k, 1).value: [summary.cell(k, j).value is not None for j in range(2, 6)] for k in range(1, summary.max_row + 1) if summary.cell(k, 1).value}
-    assert srow["납부고지 후분(종전 2호 일수분)"] == [True, True, False, False] and srow["납부고지 후분(3호)"] == [False, False, True, True]
-    assert srow["가산세"] == [True] * 4 and lint(wb, wb.sheetnames) == []
+    names = [str(summary.cell(k, 1).value) for k in range(5, summary.max_row + 1) if str(summary.cell(k, 2).value).startswith("=")]
+    # 0.56.0: 요약은 첫 열(n1)의 결과 줄 + 나머지 열의 합계(가산세) 줄 — 첫 열에 없는 줄 이름(3호)은 올리지 않음
+    assert any("납부고지 후분(종전 2호 일수분) (n1)" in t for t in names) and not any("납부고지 후분(3호)" in t for t in names)
+    assert [t.rsplit(" — ", 1)[1] for t in names if " — 가산세 (" in t] == [f"가산세 ({n})" for n in ("n1", "n2", "n3", "n4")]
+    assert lint(wb, wb.sheetnames) == []
 
 
 @HAS_LO

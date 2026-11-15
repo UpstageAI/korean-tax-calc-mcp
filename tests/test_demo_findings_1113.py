@@ -60,7 +60,7 @@ def test_nonbusiness_advance_to_affiliate_warns():
 def test_server_instructions_point_to_export_workbook():
     # 0.41.2: 같은 요청에서 모델이 서식 엑셀을 직접 그린 경우가 있어 서버 안내문에 export_workbook 사용을 적음
     ins = S.mcp.instructions
-    assert "export_workbook" in ins and "직접 만들지 말고" in ins and "review_notes" in ins
+    assert "export_workbook" in ins and "verify_workbook" in ins and "review_notes" in ins      # 0.56.0: 직접 짰다면 verify_workbook으로 대조
 
 
 def test_summary_sheet(tmp_path):

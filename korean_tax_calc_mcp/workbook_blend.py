@@ -20,6 +20,8 @@ import re as _re
 from datetime import date as _date, timedelta as _timedelta
 from typing import Any
 
+from openpyxl.utils import get_column_letter as _L
+
 NAVY, BAND, BLUE, GREEN, GREY, YELLOW = "1F3864", "D9E1F2", "0000FF", "008000", "555555", "FFFF00"
 NUM = '#,##0;(#,##0);"-"'
 PCT = "0.0###%"
@@ -29,7 +31,7 @@ _RISK_FILL = {"high": "F8CBAD", "높음": "F8CBAD", "상": "F8CBAD", "medium": "
               "none": "EDEDED", "없음": "EDEDED"}
 _BAD_SHEET = _re.compile(r"[\[\]:*?/\\]")
 _ISSUE_KEYS = {"no": ("no", "번호", "#", "No"), "issue": ("issue", "쟁점", "Issue", "항목"), "finding": ("finding", "발견", "Finding", "내용"),
-               "risk": ("risk", "위험도", "Risk"), "action": ("action", "조치", "Action")}
+               "risk": ("risk", "위험도", "Risk"), "action": ("action", "조치", "Action"), "amount": ("amount", "금액", "Amount")}
 
 _TXT = {
     "summary": ("요약", "Summary"), "inputs": ("입력·출처", "Inputs"), "issues": ("쟁점 목록", "Issues Log"),
@@ -70,6 +72,15 @@ _TXT = {
     "issues_sub": ("작성자가 넣은 내용을 그대로 실음 — 계산 도구는 쟁점을 판단하지 않음.", "Entered by the preparer and shown as provided — the calculation tool does not assess issues."),
     "issues_hdr": (("#", "쟁점", "발견", "위험도", "조치"), ("#", "Issue", "Finding", "Risk", "Action")),
     "issues_line": ("쟁점 {n}건 — '{s}' 시트", "{n} issue(s) — see the '{s}' tab"),
+    "issues_amount": ("금액", "Amount"),
+    "figs_hdr": (("핵심 숫자", "금액(원)", "계산 위치"), ("Key figure", "KRW", "Where it is worked out")),
+    "figs_note": ("메모", "Note"),
+    "actions_line": ("조치·기한 {n}건", "Actions and deadlines ({n})"),
+    "actions_sub": ("작성자가 넣은 내용을 그대로 실음.", "Entered by the preparer and shown as provided."),
+    "actions_hdr": (("조치", "기한", "담당", "근거"), ("Action", "By", "Owner", "Basis")),
+    "extra_key": ("호출자가 넣은 표(계산 도구의 검증을 거치지 않음): {s}. 그 밖의 시트는 계산 도구 결과.",
+                  "Preparer's own tables (not verified by the calculation tools): {s}. All other tabs come from calculation tool results."),
+    "g_extra": (None, "Sheet '{s}' — table supplied by the preparer, not verified by the calculation tools"),
     "less": ("차감: 이미 납부한 금액 등", "Less: amount already paid or deducted"),
     "tool_value": ("도구 값(수식 아님)", "Tool value (not a formula)"),
     "tool_value_no_layout": ("도구 값(수식 틀 없음)", "Tool value (no formula layout)"),
@@ -113,8 +124,10 @@ def _call_ref(ref: Any, calls: list) -> int | None:
     return None
 
 
-def normalize(scenarios: Any, sources: Any, issues: Any, calls: list) -> tuple[dict | None, dict | None]:
-    """선택 입력을 정리한다. 돌려주는 값: (cfg 또는 None, 오류 dict 또는 None). 셋 다 비면 (None, None) — 기존 출력."""
+def normalize(scenarios: Any, sources: Any, issues: Any, calls: list, actions: list | None = None,
+              key_figures: list | None = None) -> tuple[dict | None, dict | None]:
+    """선택 입력을 정리한다. 돌려주는 값: (cfg 또는 None, 오류 dict 또는 None). 넷 다 비면 (None, None) — 기존 출력.
+    actions는 workbook_extra.normalize_actions가 정리한 목록(또는 None)."""
     err = lambda msg: (None, {"error": "입력 확인 필요 — " + msg, "안내": "scenarios=[{sheet, title, heading, columns:[{call, heading}], notes, summary_note}], "
                               "sources=[{call, arg, source, assumption, from_call, from_row, less}], issues=[{no, issue, finding, risk, action}]"})
     sc, e1 = _as_list(scenarios, "scenarios")
@@ -123,7 +136,7 @@ def normalize(scenarios: Any, sources: Any, issues: Any, calls: list) -> tuple[d
     for e in (e1, e2, e3):
         if e:
             return err(e)
-    if sc is None and so is None and iss is None:
+    if sc is None and so is None and iss is None and not actions and not key_figures:
         return None, None
     blocks: list[dict] = []
     used: set[int] = set()
@@ -137,13 +150,14 @@ def normalize(scenarios: Any, sources: Any, issues: Any, calls: list) -> tuple[d
         cols = []
         for c in cols_in:
             ref, heading = (c.get("call"), c.get("heading")) if isinstance(c, dict) else (c, None)
+            rec = isinstance(c, dict) and bool(c.get("recommended"))
             idx = _call_ref(ref, calls)
             if idx is None:
                 return err(f"scenarios[{n}].columns의 call '{ref}'를 calls에서 찾지 못함(label 또는 1부터 세는 순번)")
             if idx in used:
                 return err(f"scenarios[{n}].columns의 call '{ref}'가 두 번 쓰임 — call 하나는 한 열에만")
             used.add(idx)
-            cols.append({"idx": idx, "heading": str(heading) if heading else str(calls[idx].get("label") or f"call {idx + 1}")})
+            cols.append({"idx": idx, "heading": str(heading) if heading else str(calls[idx].get("label") or f"call {idx + 1}"), "recommended": rec})
         if len({calls[c["idx"]].get("tool") for c in cols}) > 1:
             return err(f"scenarios[{n}].columns는 같은 도구의 call이어야 함 — 다른 도구는 블록을 나눔(sheet 이름이 같으면 한 시트에 차례로 놓임)")
         b_notes = b.get("notes") or {}
@@ -191,8 +205,11 @@ def normalize(scenarios: Any, sources: Any, issues: Any, calls: list) -> tuple[d
             return err(f"issues[{n}]가 객체가 아님 — {{no, issue, finding, risk, action}}")
         row = {k: next((x[a] for a in al if x.get(a) not in (None, "")), "") for k, al in _ISSUE_KEYS.items()}
         row["no"] = row["no"] if row["no"] != "" else n
+        if isinstance(row["amount"], dict) and (row["amount"].get("from_call") is None or not row["amount"].get("from_row")):
+            return err(f"issues[{n}].amount는 숫자·글 또는 {{from_call: 호출 label 또는 순번, from_row: 결과 줄 이름}}")
         rows.append(row)
-    return {"blocks": blocks, "sources": src, "issues": rows, "used": used, "warnings": notes}, None
+    return {"blocks": blocks, "sources": src, "issues": rows, "used": used, "warnings": notes, "actions": list(actions or []),
+            "key_figures": list(key_figures or [])}, None
 
 
 # ── 도구별 수식 틀 ─────────────────────────────────────────────────────────
@@ -591,6 +608,61 @@ def _spec(tool: str, args: dict, data: dict, label) -> dict:
     return _spec_generic(args, data, label)
 
 
+def _extra_cell(cfg: dict, cell: str) -> tuple[str | None, str]:
+    """자유 형식 시트 설정에서 칸 주소(A1 꼴)가 숫자·수식·링크 칸인지 본다. → (오류 글 또는 None, 표시 형식)."""
+    from openpyxl.utils import column_index_from_string
+    from .workbook_extra import FIRST_ROW, FORMATS
+    m = _re.fullmatch(r"([A-Z]{1,3})(\d{1,7})", cell)
+    col, row = (column_index_from_string(m.group(1)), int(m.group(2))) if m else (0, 0)
+    ncols, last = len(cfg["headers"]), cfg["last_row"]
+    where = f"'{cfg['sheet']}' 시트의 표는 A{FIRST_ROW}:{_L(ncols)}{last}(머리 행 4행, 첫 행 5행)"
+    if not m or not (FIRST_ROW <= row <= last and col <= ncols):
+        return f"cell '{cell}'가 표 밖 — {where}", ""
+    fmt = cfg["formats"][col - 1]
+    fmt = FORMATS[fmt] if fmt and fmt not in ("text", "source") else NUM
+    i = row - FIRST_ROW
+    if i == len(cfg["rows"]):      # 합계 행
+        return (None, fmt) if cfg["total"] and col - 1 in cfg["total"]["cols"] else (f"cell '{cell}'는 합계가 없는 칸 — {where}", "")
+    r = cfg["rows"][i]
+    kind = r["cells"][col - 1][0] if "cells" in r and col - 1 < len(r["cells"]) else "blank"
+    if kind not in ("num", "formula", "link"):
+        return f"cell '{cell}'는 숫자·수식 칸이 아님 — {where}", ""
+    return None, fmt
+
+
+def make_resolver(calls: list, results: list[dict], spec_of, cell_of: dict | None, cell_label: dict | None = None):
+    """{from_call, from_row} → 그 call의 결과 줄(또는 입력)이 놓인 칸. 자유 형식 시트·쟁점 금액이 계산 도구 결과를 가리킬 때 쓴다.
+
+    spec_of(순번) → 그 call의 수식 틀(없으면 None), cell_of → {(순번, 줄 id): "'시트'!$B$9"}(기존 출력에는 없음 — 그러면 ref 없이 도구 값만).
+    돌려주는 함수: resolve(link) → {"ref": 칸 주소 또는 None, "value": 도구 값, "fmt": 표시 형식}. 찾지 못하면 ValueError(글)."""
+    def resolve(link: dict) -> dict:
+        idx = _call_ref(link.get("from_call"), calls)
+        if idx is None:
+            raise ValueError(f"from_call '{link.get('from_call')}'를 calls에서 찾지 못함(label 또는 1부터 세는 순번)")
+        cd = results[idx] if idx < len(results) else {}
+        spec = None if cd.get("error") or not cd.get("result") else spec_of(idx)
+        if not spec:
+            raise ValueError(f"from_call '{link.get('from_call')}'는 오류가 난 call이라 가리킬 수 없음")
+        name = str(link.get("from_row"))
+        y = next((y for y in spec.get("rows", []) if name in (y["id"], y["ko"], y["en"], *y.get("alias", ()))), None)
+        is_row = y is not None
+        if y is None:
+            y = next((i for i in spec.get("inputs", []) if name in (i["id"], i["ko"], i["en"], i.get("arg"))), None)
+        if y is None:
+            have = [x["ko"] for x in spec.get("rows", [])] + [i["arg"] for i in spec.get("inputs", []) if i.get("arg")]
+            raise ValueError(f"from_row '{name}'를 call {idx + 1}에서 찾지 못함 — 쓸 수 있는 줄: {', '.join(str(h) for h in have)}")
+        value = (y.get("check") if y["f"] is not None else y["value"]) if is_row else y["value"]
+        if isinstance(value, tuple):
+            value = value[0]
+        ref = (cell_of or {}).get((idx, y["id"]))
+        if ref and cell_label is not None and cell_label.get((idx, y["id"])) != y["ko"]:
+            ref = None
+        if value is None and not (ref and is_row and y["f"] is not None):      # 도구 값 없이 수식으로만 있는 줄(예: 송금액)은 칸이 있을 때만
+            raise ValueError(f"from_row '{name}'(call {idx + 1})에는 도구 값이 없어 가리킬 수 없음")
+        return {"ref": ref, "value": value, "fmt": y["fmt"], "idx": idx, "item": y}
+    return resolve
+
+
 # ── 시트 그리기 ────────────────────────────────────────────────────────────
 def as_text(cell):
     """글을 적은 칸이 수식으로 저장되지 않게 한다 — openpyxl은 '='로 시작하는 문자열을 수식으로 저장하므로 문자열 칸(앞 따옴표)으로 바꾼다.
@@ -708,9 +780,13 @@ def _sheet_of_name(dn) -> str | None:
 
 def add_sheets(wb, cfg: dict, *, lang: str, title: str, company: str, period: str, calls: list, results: list[dict],
                label=None, detail: str = "full", roles: dict | None = None, judgement_counts: dict[int, int] | None = None,
-               labels=None) -> dict:
+               labels=None, extra: list[dict] | None = None) -> dict:
     """통합 문서 시트를 워크북 맨 앞에 넣는다. 돌려주는 값: {"시트": 새 시트 이름(순서대로), "이름_바꿈": {옛: 새}, "warnings": [...],
-    "서식_수": 신고 서식 시트 수, "안내": {앞 시트 이름: 영문 한 줄}}.
+    "서식_수": 신고 서식 시트 수, "안내": {앞 시트 이름: 영문 한 줄}, "자유_시트": 자유 형식 시트에 쓸 이름, "자유_위치": 그 시트가 들어갈 자리,
+    "resolve": {from_call, from_row} → 칸}.
+
+    extra — 자유 형식 시트 설정(workbook_extra.normalize_extra). 여기서는 이름을 정하고 요약 범례에 적기만 한다(그리기는 호출자 — 글을 문자열 칸으로
+    바꾸는 마지막 정리 뒤에 그려야 호출자가 준 수식이 글로 바뀌지 않는다).
 
     detail — 뒤 시트: 'full'(기존 시트 전부), 'forms'('계산 상세' + 신고 서식), 'compact'('계산 상세' 한 장).
     roles — 기존 시트의 구실({"calc": {call 순번: 시트}, "jud": 시트, "inputs": 시트, "list": 시트, "summary": 시트, "forms": [시트]}), compact·forms에서 필요.
@@ -776,6 +852,7 @@ def add_sheets(wb, cfg: dict, *, lang: str, title: str, company: str, period: st
         if b["sheet"] not in sheet_of:
             sheet_of[b["sheet"]] = _sheet_name(wb, b["sheet"], taken)
     n_iss = _sheet_name(wb, _t("issues", en), taken) if cfg["issues"] else None
+    n_extra = [_sheet_name(wb, x["sheet"], taken) for x in extra or []]
     n_forms = len((roles or {}).get("forms") or [])
     n_det = _sheet_name(wb, _t("detail", en), taken) if detail != "full" else None
 
@@ -958,8 +1035,8 @@ def add_sheets(wb, cfg: dict, *, lang: str, title: str, company: str, period: st
                 cell_of[(c["idx"], x["id"])] = f"{_q(name)}!${L(j)}${rr}"
                 cell_label[(c["idx"], x["id"])] = x["ko"]
             note = x["note_en" if en else "note_ko"] if not is_input else ""
-            extra = next((notes.pop(k) for k in (x["id"], x["ko"], x["en"], *x.get("alias", ())) if k in notes), "")
-            text = " — ".join(t for t in (extra, note) if t)
+            more = next((notes.pop(k) for k in (x["id"], x["ko"], x["en"], *x.get("alias", ())) if k in notes), "")
+            text = " — ".join(t for t in (more, note) if t)
             nc = as_text(ws.cell(rr, last, text))
             nc.font, nc.alignment = f_sub, wrap
             ws.row_dimensions[rr].height = 14 * max(lines(ws.cell(rr, 1).value, 58), lines(text, 70, True),
@@ -1029,33 +1106,101 @@ def add_sheets(wb, cfg: dict, *, lang: str, title: str, company: str, period: st
                 cell.value = "=" + target
                 cell.font = Font(color=GREEN)
 
-    # ── 요약 ──
+    resolve = make_resolver(calls, results, lambda i: next((c["spec"] for _, c in cols_all if c["idx"] == i), None), cell_of, cell_label)
+
+    # ── 요약 — 한 화면에 "얼마를, 언제까지, 어디서 계산했나": 핵심 숫자 표 → 조치·기한 → 쟁점 한 줄 → 범례 ──
+    # 시나리오 블록을 되풀이하지 않는다(시나리오 시트가 그 표다). 금액 칸은 시나리오 시트의 칸을 가리키는 수식.
+    from openpyxl.worksheet.hyperlink import Hyperlink
     ws_s = wb.create_sheet(n_sum)
     as_text(ws_s.cell(1, 1, _t("summary_title", en, t=title))).font = f_title
     as_text(ws_s.cell(2, 1, " | ".join(str(x) for x in (company, period, _t("summary_sub", en, i=n_inp)) if x))).font = f_sub
+    figs: list[dict] = []        # {label, ref, fmt, hl, note}
+    if cfg.get("key_figures"):   # 호출자가 고른 줄 — 순서·글·강조 그대로
+        for n, k in enumerate(cfg["key_figures"], 1):
+            if k.get("cell"):
+                ex = next((i for i, x in enumerate(extra or []) if x["sheet"].casefold() == str(k["sheet"]).casefold()), None)
+                if ex is None:
+                    raise ValueError(f"key_figures[{n}].sheet '{k['sheet']}'는 extra_sheets에 없는 시트 — 쓸 수 있는 이름: "
+                                     + (", ".join(x["sheet"] for x in extra or []) or "(extra_sheets 없음)"))
+                why, fmt = _extra_cell(extra[ex], k["cell"])
+                if why:
+                    raise ValueError(f"key_figures[{n}] — {why}")
+                col, row = _re.fullmatch(r"([A-Z]+)(\d+)", k["cell"]).groups()
+                figs.append({"label": k["label"] or f"{n_extra[ex]} {k['cell']}", "ref": f"{_q(n_extra[ex])}!${col}${row}", "fmt": fmt, "hl": k["highlight"], "note": k["note"]})
+            else:
+                try:
+                    got = resolve({"from_call": k["call"], "from_row": k["row"]})
+                except ValueError as e:
+                    raise ValueError(f"key_figures[{n}] — {str(e).replace('from_call', 'call').replace('from_row', 'row')}") from None
+                if not got["ref"] or (got["value"] is not None and not _is_num(got["value"])):
+                    raise ValueError(f"key_figures[{n}] — call '{k['call']}'의 '{k['row']}'는 숫자 칸이 아니라 핵심 숫자로 올릴 수 없음")
+                head = next((c["heading"] for _, c in cols_all if c["idx"] == got["idx"]), "")
+                figs.append({"label": k["label"] or f"{shown(got['item'])} ({head})", "ref": got["ref"], "fmt": got["fmt"], "hl": k["highlight"], "note": k["note"]})
+    else:                        # 기본: 블록마다 권고 열(없으면 첫 열)의 결과 줄을 한 줄씩, 그 아래 나머지 열의 강조 줄(합계·가산세)
+        for b, cols in summary_rows:
+            name = sheet_of[b["sheet"]]
+            block = b["heading"] if b["heading"] == name else f"{name} — {b['heading']}"
+            main = next((c for _, c in cols if c.get("recommended")), cols[0][1])
+            rows_b = [x for x in b["_rows"] if cell_of.get((main["idx"], x["id"])) and cell_label.get((main["idx"], x["id"])) == x["ko"]
+                      and not isinstance(x.get("value"), (str, tuple))]
+            top = next((x for x in reversed(rows_b) if x.get("key")), rows_b[-1] if rows_b else None)
+            first = len(figs)
+            for x in rows_b:
+                figs.append({"label": f"{block} — {shown(x)}" + (f" ({main['heading']})" if len(cols) > 1 else ""), "ref": cell_of[(main["idx"], x["id"])],
+                             "fmt": x["fmt"], "hl": x is top, "note": ""})
+            for _, c in cols:
+                if c is main or top is None:
+                    continue
+                y = next((y for y in (c["spec"] or {}).get("rows", []) + (c["spec"] or {}).get("inputs", []) if y["id"] == top["id"]), None)
+                ref = cell_of.get((c["idx"], top["id"]))
+                if y is not None and ref and cell_label.get((c["idx"], top["id"])) == y["ko"]:
+                    figs.append({"label": f"{block} — {shown(y)} ({c['heading']})", "ref": ref, "fmt": y["fmt"], "hl": False, "note": ""})
+            if b["summary_note"] and len(figs) > first:
+                figs[first]["note"] = b["summary_note"]
+    with_note = any(f["note"] for f in figs)
     r = 4
-    max_cols = max([len(b["columns"]) for b in blocks] or [1])
-    for b, cols in summary_rows:
-        name = sheet_of[b["sheet"]]
-        band(ws_s, r, b["heading"] if b["heading"] == name else f"{name} — {b['heading']}", max_cols + 2)
+    if figs:
+        heads(ws_s, r, list(_t("figs_hdr", en)) + ([_t("figs_note", en)] if with_note else []))
         r += 1
-        heads(ws_s, r, [h for h, _ in cols], 2)
-        ws_s.row_dimensions[r].height = 15 * max(lines(h, 16) for h, _ in cols)
-        r += 1
-        for x in b["_rows"]:
-            as_text(ws_s.cell(r, 1, shown(x))).font = F(bold=x["key"] and x["id"] in ("total", "penalty"))
-            for j, (_, c) in enumerate(cols, 2):
-                ref = cell_of.get((c["idx"], x["id"]))
-                if ref and cell_label.get((c["idx"], x["id"])) == x["ko"]:
-                    cc = ws_s.cell(r, j, "=" + ref)
-                    cc.font, cc.number_format = F(color=GREEN), x["fmt"]
+        for f in figs:
+            a = as_text(ws_s.cell(r, 1, f["label"]))
+            a.font, a.alignment = F(bold=bool(f["hl"])), wrap
+            v = ws_s.cell(r, 2, "=" + f["ref"])
+            v.font, v.number_format, v.alignment = F(color=GREEN, bold=bool(f["hl"])), f["fmt"], Alignment(vertical="top")
+            m = _re.fullmatch(r"'((?:[^']|'')+)'!\$?([A-Z]+)\$?(\d+)", f["ref"])
+            w = as_text(ws_s.cell(r, 3, m.group(1).replace("''", "'")))
+            w.font, w.alignment = F(size=9, color=GREY, underline="single"), Alignment(vertical="top")
+            w.hyperlink = Hyperlink(ref=w.coordinate, location=f"{_q(m.group(1).replace(chr(39) * 2, chr(39)))}!{m.group(2)}{m.group(3)}")
+            if f["hl"]:
+                a.fill = v.fill = fill(YELLOW)
+            if f["note"]:
+                nc = as_text(ws_s.cell(r, 4, f["note"]))
+                nc.font, nc.alignment = f_sub, wrap
+            ws_s.row_dimensions[r].height = 14 * max(lines(f["label"], 62), lines(f["note"], 56, True))
             r += 1
-        if b["summary_note"]:
-            as_text(ws_s.cell(r, 1, b["summary_note"])).font = f_sub
+        r += 1
+    acts = cfg.get("actions") or []
+    if acts:      # 조치·기한 — 받은 글 그대로(도구가 조치나 기한을 만들지 않음)
+        band(ws_s, r, _t("actions_line", en, n=len(acts)), 4)
+        r += 1
+        hdr = list(_t("actions_hdr", en))
+        owner = any(str(a["owner"]).strip() for a in acts)      # 담당을 아무도 안 적었으면 그 열 없이 근거를 넓게(C:D)
+        heads(ws_s, r, hdr if owner else [hdr[0], hdr[1], hdr[3], ""])
+        if not owner:
+            ws_s.merge_cells(start_row=r, start_column=3, end_row=r, end_column=4)
+        r += 1
+        for a in acts:
+            for j, key in enumerate(("action", "due", "owner", "basis") if owner else ("action", "due", "basis"), 1):
+                c = as_text(ws_s.cell(r, j, a[key] if _is_num(a[key]) else str(a[key])))
+                c.font, c.alignment = F(), wrap
+            if not owner:
+                ws_s.merge_cells(start_row=r, start_column=3, end_row=r, end_column=4)
+            ws_s.row_dimensions[r].height = 14 * max(lines(a["action"], 62), lines(a["due"], 26), lines(a["owner"], 24) if owner else 1,
+                                                     lines(a["basis"], 56 if owner else 82))
             r += 1
         r += 1
     if n_iss:
-        band(ws_s, r, _t("issues_line", en, n=len(cfg["issues"]), s=n_iss), max_cols + 2)
+        band(ws_s, r, _t("issues_line", en, n=len(cfg["issues"]), s=n_iss), 4)
         r += 1
         counts: dict[str, int] = {}
         for x in cfg["issues"]:
@@ -1068,20 +1213,36 @@ def add_sheets(wb, cfg: dict, *, lang: str, title: str, company: str, period: st
     support = (_t("support", en) if detail == "full" else _t("support_forms", en, d=n_det, n=n_forms) if detail == "forms" and n_forms
                else _t("support_compact", en, d=n_det))
     tail = [_t("key", en), support, _t("disclaimer", en)]
+    if n_extra:
+        tail.insert(1, _t("extra_key", en, s=", ".join(f"'{n}'" for n in n_extra)))
     if detail == "compact" and n_forms:
         tail.append(_t("forms_hint", en, n=n_forms))
     for text in tail:
         ws_s.cell(r, 1, text).font = f_sub
         r += 1
-    page(ws_s, [64] + [22] * max_cols + [50])
+    page(ws_s, [64, 26, 26, 58], "A5" if figs else "A4")
+    ws_s.page_setup.fitToHeight = 1          # A4 가로 한 쪽
+    ws_s.print_area = f"A1:D{r - 1}"
 
     # ── 쟁점 목록 ──
     if n_iss:
         ws_x = wb.create_sheet(n_iss)
         ws_x.cell(1, 1, _t("issues_title", en)).font = f_title
         ws_x.cell(2, 1, _t("issues_sub", en)).font = f_sub
-        heads(ws_x, 4, list(_t("issues_hdr", en)))
+        with_amount = any(x.get("amount") not in (None, "") for x in cfg["issues"])      # 금액 열 — 준 쟁점이 있을 때만(없으면 기존 표 그대로)
+        heads(ws_x, 4, list(_t("issues_hdr", en)) + ([_t("issues_amount", en)] if with_amount else []))
         for k, x in enumerate(cfg["issues"], 5):
+            amt = x.get("amount")
+            if isinstance(amt, dict):
+                try:
+                    got = resolve(amt)
+                except ValueError as e:
+                    raise ValueError(f"issues[{k - 4}].amount — {e}") from None
+                c = ws_x.cell(k, 6, "=" + got["ref"] if got["ref"] else got["value"])
+                c.font, c.number_format, c.alignment = F(color=GREEN if got["ref"] else GREY), got["fmt"], Alignment(vertical="top")
+            elif amt not in (None, ""):
+                c = as_text(ws_x.cell(k, 6, amt if _is_num(amt) else str(amt)))
+                c.font, c.number_format, c.alignment = F(), NUM if _is_num(amt) else "General", Alignment(vertical="top", horizontal="right")
             for j, key in enumerate(("no", "issue", "finding", "risk", "action"), 1):
                 v = x[key]
                 c = as_text(ws_x.cell(k, j, v if _is_num(v) else str(v)))      # '='로 시작하는 글이 수식으로 저장되지 않게
@@ -1090,7 +1251,7 @@ def add_sheets(wb, cfg: dict, *, lang: str, title: str, company: str, period: st
             if rk in _RISK_FILL:
                 ws_x.cell(k, 4).fill = fill(_RISK_FILL[rk])
             ws_x.row_dimensions[k].height = 14 * max(lines(x["issue"], 34), lines(x["finding"], 66), lines(x["action"], 60))
-        page(ws_x, [5, 34, 66, 12, 60], "A5")
+        page(ws_x, [5, 34, 66, 12, 60] + ([20] if with_amount else []), "A5")
 
     # ── 순서: 요약 → 입력·출처 → 시나리오 시트 → 쟁점 목록 → 기존 시트 ──
     scen = list(dict.fromkeys(sheet_of[b["sheet"]] for b in blocks))
@@ -1098,6 +1259,7 @@ def add_sheets(wb, cfg: dict, *, lang: str, title: str, company: str, period: st
     guide = {n_sum: _t("g_summary", True, s=n_sum), n_inp: _t("g_inputs", True, s=n_inp), **{n: _t("g_scenario", True, s=n) for n in scen}}
     if n_iss:
         guide[n_iss] = _t("g_issues", True, s=n_iss)
+    guide.update({n: _t("g_extra", True, s=n) for n in n_extra})
 
     # ── 뒤 시트 줄이기: 계산 N·판단·근거 → '계산 상세' 한 장, 서식은 detail='forms'일 때만 ──
     if n_det:
@@ -1183,4 +1345,5 @@ def add_sheets(wb, cfg: dict, *, lang: str, title: str, company: str, period: st
     else:
         wb._sheets = [wb[n] for n in front] + [s for s in wb._sheets if s.title not in front]
     wb.active = 0
-    return {"시트": front, "이름_바꿈": ren, "warnings": warnings, "서식_수": n_forms, "안내": guide, "상세": n_det}
+    return {"시트": front, "이름_바꿈": ren, "warnings": warnings, "서식_수": n_forms, "안내": guide, "상세": n_det,
+            "자유_시트": n_extra, "자유_위치": len(front) - (1 if n_iss else 0), "resolve": resolve}

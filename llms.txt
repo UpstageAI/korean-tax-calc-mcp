@@ -1,6 +1,6 @@
 # korean-tax-calc-mcp
 
-> MCP server that computes Korean (South Korea) tax amounts with statutory citations: corporate and income tax, VAT, withholding (incl. payments to non-residents and foreign corporations), VAT reverse charge, expat cost recharges, dividends from foreign subsidiaries, foreign tax credits, CFC rules, transfer pricing ranges, penalties, deadlines, inheritance and gift tax, and tax-audit checks. 139 tools, tax years 2016–2026, deterministic code (no generative AI except 3 optional PDF tools).
+> MCP server that computes Korean (South Korea) tax amounts with statutory citations: corporate and income tax, VAT, withholding (incl. payments to non-residents and foreign corporations), VAT reverse charge, expat cost recharges, dividends from foreign subsidiaries, foreign tax credits, CFC rules, transfer pricing ranges, penalties, deadlines, inheritance and gift tax, and tax-audit checks. 140 tools, tax years 2016–2026, deterministic code (no generative AI except 3 optional PDF tools).
 
 Install: `uvx korean-tax-calc-mcp` (Claude Code: `claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp`). No key needed. Optional: `LAW_OC` (law.go.kr, two audit tools), `UPSTAGE_API_KEY` (PDF table extraction), `VWORLD_KEY` (official property price lookup).
 
@@ -44,14 +44,31 @@ If you build an agent with Anthropic's BM25 tool search (`tool_search_tool_bm25`
 | Inheritance and gift tax, valuation | `inheritance_tax`, `gift_tax`, `inheritance_gift_valuation`, `unlisted_stock_valuation` |
 | Penalties, assessment period, refund claim deadline | `underreporting_penalty`, `late_payment_penalty`, `withholding_late_payment_penalty`, `invoice_penalty`, `assessment_limitation`, `refund_claim_deadline` |
 | Tax-audit checks (return precheck, tunnelling gift) | `return_precheck`, `tunnelling_gift`, `tunnelling_gift_nts` |
-| Excel / xlsx / spreadsheet / workings (엑셀, 계산 근거): a finished .xlsx file with live formulas (values also stored, so they show in phone viewers and previews), saved to `output_dir` — use this instead of writing a spreadsheet script | `export_workbook` |
-| Several calculations in one workbook: Summary, Inputs with sources, side-by-side scenarios, Issues Log, one Calc detail sheet (default `detail="compact"`) | `export_workbook` with `scenarios`, `sources`, `issues` |
+| Excel / xlsx / spreadsheet / workings (엑셀, 계산 근거): a finished .xlsx file with live formulas (values also stored, so they show in phone viewers and previews), saved to `output_dir`, built from the calculation calls — or lay the workbook out yourself and check it with `verify_workbook` | `export_workbook` |
+| Check a workbook you built yourself: compare its amount cells with calculation tool results, list amounts not checked, save a copy with a Tool check sheet and stored values | `verify_workbook` with `path`, `checks=[{cell, tool, args, key}]` |
+| Several calculations in one workbook: one-screen Summary (key figures, actions and deadlines), Inputs with sources, side-by-side scenarios (incl. as-filed vs correct), Issues Log, one Calc detail sheet (default `detail="compact"`) | `export_workbook` with `scenarios`, `sources`, `issues`, `actions`, `key_figures` |
+| Shortfall or difference between two calls as a live formula (e.g. correct tax less tax already paid feeds the penalty) | `export_workbook` with `sources=[{call, arg, from_call, from_row, less}]` |
+| A table that is not a tool calculation (own re-check, estimate) as a sheet in the same workbook, marked "not verified by the calculation tools" | `export_workbook` with `extra_sheets=[{sheet, headers, rows, total, formats}]` |
 | Statutory form sheets in that workbook (`detail="forms"`), or every per-call sheet (`detail="full"`) | `export_workbook` with `detail` |
 | Tax memo or opinion as a Word document (.docx) — not built here | korean-tax-mcp `tax_memo_guide`, then `build_tax_memo` |
 | Excel workings in English for foreign readers (labels as "English (Korean)") | `export_workbook` with `lang="en"` |
-| Give English (or other wording) to labels left in Korean — do not open and re-save the file, stored values would be lost and phones show 0 | `export_workbook` with `labels={"원래 라벨": "text"}` |
+| Give English (or other wording) to labels left in Korean — re-saving the file drops the stored values (phones show 0); if it was re-saved, `verify_workbook` fills them back in | `export_workbook` with `labels={"원래 라벨": "text"}` |
 
-The table lists the main tools; `find_tool` searches all 139.
+The table lists the main tools; `find_tool` searches all 140.
+
+Example (invented figures) — a dividend reported at 15% where 20% applies: as-filed vs correct side by side, and the shortfall feeding the penalty by formula.
+
+```
+export_workbook(title="Dividend withholding review", output_dir=".", lang="en",
+  calls=[{"label": "filed 15%", "tool": "nonresident_withholding", "args": {"income_kind": "배당", "recipient_type": "법인", "residence_country": "프랑스", "year": 2025, "amount": 40000000, "treaty_rate": 0.15}},
+         {"label": "correct 20%", "tool": "nonresident_withholding", "args": {"income_kind": "배당", "recipient_type": "법인", "residence_country": "프랑스", "year": 2025, "amount": 40000000}},
+         {"label": "penalty", "tool": "withholding_late_payment_penalty", "args": {"unpaid_tax": 2000000, "due": "2025-04-10", "until": "2025-09-30"}}],
+  scenarios=[{"sheet": "Dividend", "heading": "As filed vs correct", "columns": [{"call": "filed 15%", "heading": "As filed"}, {"call": "correct 20%", "heading": "Correct", "recommended": true}]},
+             {"sheet": "Penalty", "heading": "Shortfall", "columns": ["penalty"]}],
+  sources=[{"call": "penalty", "arg": "unpaid_tax", "from_call": "correct 20%", "from_row": "원천징수세액", "less": 6000000, "source": "correct tax less tax already paid"}],
+  actions=[{"action": "File the amended withholding return", "due": "2025-10-10", "basis": "Framework Act on National Taxes Art. 45"}],
+  extra_sheets=[{"sheet": "Own estimate", "headers": ["Year", "Amount"], "rows": [[2023, 5000000], [2024, 7000000]], "total": true}])
+```
 
 ## For foreign companies, expats and Korean subsidiaries
 

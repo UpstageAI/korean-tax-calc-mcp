@@ -55,7 +55,7 @@ def test_english_labels_keep_the_original_key_in_parentheses(made):
     assert "약정_순액" not in detail and "지방소득세_근거" not in detail
     scenario = _column_a(path, "배당")
     assert "CIT withheld (원천징수세액(법인세))" in scenario and "Base amount (과세표준)" in scenario
-    assert "CIT withheld (원천징수세액(법인세))" in _column_a(path, "Summary")
+    assert any("CIT withheld (원천징수세액(법인세))" in t for t in _column_a(path, "Summary"))
     before, after = made["en", "plain"]["결과"]["번역_없음"], r["결과"]["번역_없음"]
     assert {"약정_순액", "지방소득세_근거"} <= set(before) and not {"약정_순액", "지방소득세_근거", "역산", "세율_구성"} & set(after)
     assert set(r["결과"]["labels_적용"]) == set(LABELS) - {"시트에_없는_키"}
@@ -66,7 +66,7 @@ def test_korean_labels_show_the_given_text(made):
     path = r["결과"]["파일"]
     detail = _column_a(path, "계산 상세")
     assert "Agreed net amount" in detail and "Gross-up.Rate components" in detail and "약정_순액" not in detail
-    assert "CIT withheld" in _column_a(path, "배당") and "CIT withheld" in _column_a(path, "요약")
+    assert "CIT withheld" in _column_a(path, "배당") and any("— CIT withheld (" in t for t in _column_a(path, "요약"))
     assert set(r["결과"]["labels_적용"]) == set(LABELS) - {"시트에_없는_키"}
 
 
@@ -134,13 +134,14 @@ def test_bad_labels_are_rejected(tmp_path, bad):
 def test_result_and_description_say_not_to_resave(made):
     en, ko = made["en", "plain"]["결과"], made["ko", "plain"]["결과"]
     for r in (en, ko):
-        assert "다시 저장하지 말 것" in r["파일_안내"] and "labels" in r["파일_안내"] and "Do not re-save" in r["파일_안내"]
+        assert "다시 저장하면" in r["파일_안내"] and "labels" in r["파일_안내"] and "Re-saving this file" in r["파일_안내"] and "verify_workbook" in r["파일_안내"]
     assert en["번역_없음"] and "labels" in en["번역_없음_안내"] and "번역_없음_안내" not in ko
     assert "`labels`" in next(w for w in made["en", "plain"]["warnings"] if w.startswith("Untranslated labels"))
     doc = S.mcp._tool_manager._tools["export_workbook"].description
     head = doc[:1500]
-    assert "다시 저장하지 말 것" in head and "Do not open the saved file" in head and "언제:" in doc and "입력:" in doc and "labels —" in doc
-    assert "다시 저장하지 않는다" in S.mcp.instructions and "Do not re-save a file made by export_workbook" in S.mcp.instructions
+    head = doc[:2200]      # 0.56.0: 사실 안내(다시 저장하면 계산값이 지워짐) + 다시 채우는 길(verify_workbook)
+    assert "다시 저장하면" in head and "Re-saving the file" in head and "verify_workbook" in head and "언제:" in doc and "입력:" in doc and "labels —" in doc
+    assert "다시 저장하면" in S.mcp.instructions and "Re-saving a file made by export_workbook" in S.mcp.instructions
 
 
 @pytest.mark.skipif(not shutil.which("soffice"), reason="LibreOffice 없음")
