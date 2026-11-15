@@ -50,7 +50,7 @@ def test_industry_gates():
     r = ST(founded_on="2021-03-02", industry="위탁제조", oem=dict(OEM, domestic_maker=False), **base)      # 해외 제조업체 위탁
     assert r["결과"]["적용"] == "대상 아님" and any("위탁제조 요건 미충족" in p for p in r["판단"])
     assert "error" in ST(founded_on="2021-03-02", industry="위탁제조", **base)                             # 요건 미입력
-    assert "error" in ST(founded_on="2018-03-01", industry="제조업", **base)                               # 대조 못 한 기간
+    assert ST(founded_on="2018-03-01", industry="제조업", **base)["결과"]["감면세액"] == 66 * M              # 2018.1.1. 시행 제6조제1항: 과밀억제권역 밖 50%
 
 
 def test_period_and_five_year_rule():

@@ -55,6 +55,6 @@ def test_independence_and_assets():
 
 
 def test_input_errors():
-    assert "error" in F(year=2017, industry_code="C20", revenue=1, total_assets=1)
+    assert "error" in F(year=2015, industry_code="C20", revenue=1, total_assets=1)
     assert "error" in F(year=2025, industry_code="화장품", revenue=1, total_assets=1)
     assert F(year=2025, industry_code="n76", revenue=30 * E, total_assets=10 * E)["결과"]["구분"] == "소기업"      # 별표 3은 N 30억
