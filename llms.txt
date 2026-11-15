@@ -51,7 +51,7 @@ If you build an agent with Anthropic's BM25 tool search (`tool_search_tool_bm25`
 | A table that is not a tool calculation (own re-check, estimate) as a sheet in the same workbook, marked "not verified by the calculation tools" | `export_workbook` with `extra_sheets=[{sheet, headers, rows, total, formats}]` |
 | Statutory form sheets in that workbook (`detail="forms"`), or every per-call sheet (`detail="full"`) | `export_workbook` with `detail` |
 | Tax memo or opinion as a Word document (.docx) — not built here | korean-tax-mcp `tax_memo_guide`, then `build_tax_memo` |
-| Excel workings in English for foreign readers (labels as "English (Korean)") | `export_workbook` with `lang="en"` |
+| Excel workings in English for foreign readers (labels as "English (Korean)", statutory basis as English citations such as "Corporate Tax Act (법인세법) Art. 98(1)6") | `export_workbook` with `lang="en"`; for a workbook you built yourself, `verify_workbook` with `lang="en"` |
 | Give English (or other wording) to labels left in Korean — re-saving the file drops the stored values (phones show 0); if it was re-saved, `verify_workbook` fills them back in | `export_workbook` with `labels={"원래 라벨": "text"}` |
 
 The table lists the main tools; `find_tool` searches all 140.

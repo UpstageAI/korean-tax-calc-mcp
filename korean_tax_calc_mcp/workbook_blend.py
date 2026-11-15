@@ -58,7 +58,7 @@ _TXT = {
     "rest": ("그 밖의 계산", "Other workings"), "rest_only": ("계산", "Workings"),
     "detail_title": ("계산 상세 — call별 도구 결과와 판단·근거", "Calculation detail — tool results and basis per call"),
     "detail_sub": ("계산 도구가 돌려준 값 그대로(앞 시트 수식의 대조 기준). call 순서대로 위에서 아래로.",
-                   "Values as returned by the calculation tools (the reference for the formulas on the front tabs), one call after another. Free-text notes from the tools stay in Korean."),
+                   "Values as returned by the calculation tools (the reference for the formulas on the front tabs), one call after another. Free-text notes from the tools stay in Korean; the statutory basis is shown as English citations."),
     "detail_band": ("{n}. {label} — {tool}", "{n}. {label} — {tool}"),
     "detail_at": ("수식: '{s}' 시트", "Formulas: '{s}' tab"),
     "detail_links": ("서식 연결 칸 — 서식 시트의 수식이 가리키는 호출 입력", "Cells the form sheets refer to — call inputs"),
@@ -269,9 +269,35 @@ _KIND_EN = {"이자": "interest", "배당": "dividends", "사용료": "royalties
 
 
 def _with_ko(en: str, ko: Any) -> str:
-    """영문 설명 뒤에 국문 원문(근거 조문)을 괄호로 붙인다."""
+    """영문 설명 뒤에 국문 원문을 괄호로 붙인다(근거 조문이 아닌 글 — 근거는 _basis)."""
     ko = str(ko or "").strip()
     return f"{en} ({ko})" if ko else en
+
+
+class _Basis(str):
+    """영문 설명 + 도구가 돌려준 근거(국문). 글 자체는 '영문 (국문)'이고, 영문 통합 문서에 적을 때 _shown_basis가
+    근거를 영문 인용 표기(citation_en)로 바꿔 '영문: Corporate Tax Act (법인세법) Art. 98(1)6' 꼴로 적는다."""
+    en: str
+    ko: str
+
+    def __new__(cls, en: str, ko: Any):
+        ko = str(ko or "").strip()
+        self = super().__new__(cls, (f"{en} ({ko})" if en else ko) if ko else en)
+        self.en, self.ko = en, ko
+        return self
+
+
+def _basis(en: str, ko: Any) -> str:
+    """영문 설명과 도구가 돌려준 근거 문자열(영문 모드에서 근거를 영문 인용으로)."""
+    return _Basis(en, ko)
+
+
+def _shown_basis(text: Any, cite) -> Any:
+    """_Basis면 근거를 cite(영문 인용 변환)로 바꿔 '영문 설명: 영문 인용'. cite가 없거나 다른 글이면 그대로."""
+    if cite is None or not isinstance(text, _Basis) or not text.ko:
+        return text
+    body = cite(text.ko)
+    return f"{text.en}: {body}" if text.en else body
 
 
 def _spec_nonresident(args: dict, data: dict) -> dict:
@@ -290,17 +316,17 @@ def _spec_nonresident(args: dict, data: dict) -> dict:
     inputs = [
         _inp("amount", "지급액(순액 약정이면 약정 순액)", "Payment amount (agreed net amount under a net-of-tax clause)", args.get("amount", 0), arg="amount"),
         _inp("domestic_rate", f"국내 원천징수세율 — {kind}", f"Domestic withholding rate — {_KIND_EN.get(kind, kind)}", res.get("국내세율"),
-             fmt=PCT, kind="rate", src_ko=law, src_en=_with_ko("Statutory rate", law)),
+             fmt=PCT, kind="rate", src_ko=law, src_en=_basis("Statutory rate", law)),
     ]
     if treaty is not None:
         inputs.append(_inp("treaty_rate", "조세조약 제한세율", "Treaty limited rate", treaty, fmt=PCT, arg="treaty_rate",
                            src_ko="입력값 — 조약 조문은 korean-tax-mcp treaty_withholding_rates·tax_treaty로 확인",
                            src_en="As entered — confirm the treaty article with korean-tax-mcp treaty_withholding_rates / tax_treaty"))
     inputs.append(_inp("local_ratio", "지방소득세 비율(원천징수세액 대비)", "Local income tax as % of tax withheld", 0.1, fmt=PCT, kind="rate",
-                       src_ko=local_basis, src_en=_with_ko("Special collection of local income tax", local_basis)))
+                       src_ko=local_basis, src_en=_basis("Special collection of local income tax", local_basis)))
     if covered:
         inputs.append(_inp("local_factor", "조약 대상조세에 지방소득세 포함 — 국세분 = 합계 상한 ÷ 1.1", "Treaty covers local income tax — national portion = cap ÷ 1.1",
-                           1.1, fmt="0.0", kind="rate", src_ko=local_basis, src_en=_with_ko("Treaty cap applies to national + local tax", local_basis)))
+                           1.1, fmt="0.0", kind="rate", src_ko=local_basis, src_en=_basis("Treaty cap applies to national + local tax", local_basis)))
     bearing = (("지급자 부담 — 순액 약정(법인세·소득세와 지방소득세까지 역산)", "Payer bears the tax — net-of-tax clause, gross-up including local income tax") if local_bears else
                ("지급자 부담 — 순액 약정(국세분만 역산)", "Payer bears the national tax — net-of-tax clause, gross-up on national tax only") if net else
                ("수취인 부담 — 지급액에서 원천징수", "Recipient bears the tax — withheld from the payment"))
@@ -312,7 +338,7 @@ def _spec_nonresident(args: dict, data: dict) -> dict:
     else:
         f_app = "=MIN({domestic_rate},{treaty_rate})"
     rows.append(_row("applicable", "적용세율", "Rate applied (lower of domestic and treaty rate)", f_app, fmt=PCT, check=res.get("적용세율"),
-                     note_ko=basis, note_en=_with_ko("Basis returned by the tool", basis), alias=("적용세율",)))
+                     note_ko=basis, note_en=_basis("Basis returned by the tool", basis), alias=("적용세율",)))
     nat = "applicable"
     if covered:
         nat = "national"
@@ -326,13 +352,13 @@ def _spec_nonresident(args: dict, data: dict) -> dict:
                          alias=("역산에_쓴_세율",)))
         rows.append(_row("base", "과세표준", "Withholding tax base", "=ROUNDDOWN(ROUND({amount}/(1-{gross_rate}),4),0)", check=res.get("과세표준"), summary=True,
                          note_ko=f"순액 약정이면 약정 순액 ÷ (1 − 역산 세율), 아니면 지급액 — {gross_basis}",
-                         note_en=_with_ko("Agreed net amount ÷ (1 − gross-up rate) under a net-of-tax clause; otherwise the payment amount", gross_basis),
+                         note_en=_basis("Agreed net amount ÷ (1 − gross-up rate) under a net-of-tax clause; otherwise the payment amount", gross_basis),
                          alias=("과세표준",)))
         f_tax = "=ROUNDDOWN(ROUND({amount}/(1-{gross_rate})*{" + nat + "},4),-1)"
     else:
         rows.append(_row("base", "과세표준", "Withholding tax base", "={amount}", summary=True,
                          note_ko=f"순액 약정이면 약정 순액 ÷ (1 − 역산 세율), 아니면 지급액 — {gross_basis}",
-                         note_en=_with_ko("Agreed net amount ÷ (1 − gross-up rate) under a net-of-tax clause; otherwise the payment amount", gross_basis),
+                         note_en=_basis("Agreed net amount ÷ (1 − gross-up rate) under a net-of-tax clause; otherwise the payment amount", gross_basis),
                          alias=("과세표준",)))
         f_tax = "=ROUNDDOWN(ROUND({amount}*{" + nat + "},4),-1)"
     rows += [
@@ -340,7 +366,7 @@ def _spec_nonresident(args: dict, data: dict) -> dict:
              note_ko="과세표준 × 국세분 세율, 10원 미만 절사(도구 방식 — 역산은 절사 전 과세표준으로 계산)",
              note_en="Tax base × national rate, truncated to KRW 10 (tool convention; computed on the tax base before rounding)", alias=("원천징수세액",)),
         _row("local", "지방소득세(특별징수)", "Local income tax to withhold", "=ROUNDDOWN(ROUND({tax}*{local_ratio},4),-1)", check=res.get("지방소득세"),
-             key=True, summary=True, note_ko=local_basis, note_en=_with_ko("Local income tax on the tax withheld", local_basis), alias=("지방소득세",)),
+             key=True, summary=True, note_ko=local_basis, note_en=_basis("Local income tax on the tax withheld", local_basis), alias=("지방소득세",)),
         _row("total", "합계", "Total Korean tax", "={tax}+{local}", check=res.get("합계"), key=True, summary=True, alias=("합계",)),
         _row("net_paid", "수취인 송금액(과세표준 − 합계)", "Net amount remitted (tax base − total tax)", "={base}-{total}", summary=True),
     ]
@@ -369,17 +395,17 @@ def _spec_wh_penalty(args: dict, data: dict) -> dict | None:
         _inp("due", "법정납부기한", "Statutory due date", d0, fmt=DATE, kind="date", arg="due"),
         _inp("until", "납부일", "Payment date", d1, fmt=DATE, kind="date", arg="until"),
         _inp("rate3", "원천징수 납부지연가산세 — 미납세액의 3%", "Withholding late-payment penalty — fixed portion", 0.03, fmt=PCT, kind="rate",
-             src_ko="국세기본법 제47조의5제1항제1호", src_en="Framework Act on National Taxes (국세기본법) Art. 47-5(1)(i)"),
+             src_ko="국세기본법 제47조의5제1항제1호", src_en=_basis("", "국세기본법 제47조의5제1항제1호")),
     ]
     rows: list[dict] = []
     end_ko, end_en = (("납부일의 전날까지", "the day before payment") if off else ("납부일까지", "the payment date"))
     if len(segs) == 1:
         inputs.append(_inp("daily", "원천징수 납부지연가산세 — 1일 이율", "Withholding late-payment penalty — daily rate", segs[0][1], fmt=PCT, kind="rate",
-                           src_ko="국세기본법 시행령 제27조의4", src_en="Enforcement Decree of the Framework Act on National Taxes (국세기본법 시행령) Art. 27-4"))
+                           src_ko="국세기본법 시행령 제27조의4", src_en=_basis("", "국세기본법 시행령 제27조의4")))
         days_id = "days_prev" if off else "days"      # 끝날 규정이 다르면 다른 줄(같은 블록에 종전·개정이 섞여도 줄 이름이 맞게)
         rows.append(_row(days_id, f"일수(법정납부기한 다음 날부터 {end_ko})", f"Days (day after the statutory due date to {end_en})",
                          "=MAX(0,{until}-{due}" + ("-1)" if off else ")"), fmt="0", check=days, summary=True, note_ko=j_ko,
-                         note_en=_with_ko("Period counted under Art. 47-5(1)(ii)", j_ko), alias=("일수",)))
+                         note_en=_basis("Period counted under Art. 47-5(1)2", j_ko), alias=("일수",)))
         daily_expr = "{unpaid}*{" + days_id + "}*{daily}"
     else:
         terms = []
@@ -388,16 +414,16 @@ def _spec_wh_penalty(args: dict, data: dict) -> dict | None:
                                fmt=PCT, kind="rate", src_ko="국세기본법 시행령 제27조의4(이율 변경일 기준 기간 안분)",
                                src_en="Enforcement Decree of the Framework Act on National Taxes Art. 27-4 (period split at the rate change date)"))
             rows.append(_row(f"days{i}", f"일수 — 기간 {i}(이율 변경일 기준, 도구 값)", f"Days — period {i} (split at the rate change date, tool value)",
-                             value=n, fmt="0", note_ko=j_ko, note_en=_with_ko("Period counted under Art. 47-5(1)(ii)", j_ko)))
+                             value=n, fmt="0", note_ko=j_ko, note_en=_basis("Period counted under Art. 47-5(1)2", j_ko)))
             terms.append(f"{{days{i}}}*{{daily{i}}}")
         daily_expr = "{unpaid}*(" + "+".join(terms) + ")"
     inputs.append(_inp("cap10", "납부고지 전 한도(1호 + 2호)", "Cap before a payment notice (fixed + daily portions)", 0.10, fmt=PCT, kind="rate",
                        src_ko="국세기본법 제47조의5제1항 각 호 외의 부분 괄호", src_en="Framework Act on National Taxes Art. 47-5(1), parenthetical"))
     rows += [
         _row("fixed", "1호 — 미납세액의 3%", "Fixed 3% portion", "=IF({until}>{due},ROUNDDOWN(ROUND({unpaid}*{rate3},4),0),0)", check=res.get("3%분"),
-             note_ko="국세기본법 제47조의5제1항제1호", note_en="Art. 47-5(1)(i)", alias=("3%분",)),
+             note_ko="국세기본법 제47조의5제1항제1호", note_en="Art. 47-5(1)1", alias=("3%분",)),
         _row("daily_amt", "2호 — 일수분", "Daily portion", f"=ROUNDDOWN(ROUND({daily_expr},4),0)", check=res.get("일수분"),
-             note_ko="미납세액 × 일수 × 1일 이율 — 국세기본법 제47조의5제1항제2호", note_en="Unpaid tax × days × daily rate — Art. 47-5(1)(ii)", alias=("일수분",)),
+             note_ko="미납세액 × 일수 × 1일 이율 — 국세기본법 제47조의5제1항제2호", note_en="Unpaid tax × days × daily rate — Art. 47-5(1)2", alias=("일수분",)),
         _row("cap", "한도(미납세액의 10%)", "Cap (10% of the unpaid tax)", "=ROUNDDOWN(ROUND({unpaid}*{cap10},4),0)", check=res.get("한도_10%"), alias=("한도_10%",)),
         _row("penalty", "가산세", "Penalty", "=IF({until}>{due},ROUNDDOWN(ROUND(MIN({unpaid}*{rate3}+" + daily_expr + ",{unpaid}*{cap10}),4),0),0)",
              check=res.get("가산세"), key=True, summary=True, note_ko="min(1호 + 2호, 10% 한도), 원 미만 절사",
@@ -433,7 +459,7 @@ def _spec_wh_penalty_notice(args: dict, data: dict) -> dict | None:
     start = (d0 + _timedelta(days=1)).isoformat()
     segs = late_payment_rate_segments(start, days) or late_payment_rate_segments(start, 1)
     decree = "국세기본법 시행령 제27조의4"
-    decree_en = "Enforcement Decree of the Framework Act on National Taxes (국세기본법 시행령) Art. 27-4"
+    decree_en = _basis("", decree)
     inputs = [
         _inp("unpaid", "미납·과소납부 세액", "Tax not paid or underpaid", args.get("unpaid_tax", 0), arg="unpaid_tax", summary=True),
         _inp("due", "법정납부기한", "Statutory due date", d0, fmt=DATE, kind="date", arg="due"),
@@ -441,7 +467,7 @@ def _spec_wh_penalty_notice(args: dict, data: dict) -> dict | None:
         _inp("notice_due", "지정납부기한(납부고지서에 따른 납부기한)", "Due date stated in the payment notice", nd, fmt=DATE, kind="date", arg="notice_due"),
         _inp("paid_on", "납부고지 후 실제 납부일", "Date actually paid after the notice", pd, fmt=DATE, kind="date", arg="paid_on"),
         _inp("rate3", "원천징수 납부지연가산세 — 미납세액의 3%", "Withholding late-payment penalty — fixed portion", 0.03, fmt=PCT, kind="rate",
-             src_ko="국세기본법 제47조의5제1항제1호", src_en="Framework Act on National Taxes (국세기본법) Art. 47-5(1)(i)"),
+             src_ko="국세기본법 제47조의5제1항제1호", src_en=_basis("", "국세기본법 제47조의5제1항제1호")),
     ]
     rows: list[dict] = []
     if len(segs) == 1:
@@ -449,15 +475,15 @@ def _spec_wh_penalty_notice(args: dict, data: dict) -> dict | None:
                            src_ko=decree, src_en=decree_en))
         rows.append(_row("days_notice", "일수(법정납부기한 다음 날부터 납부고지일의 전날까지)", "Days (day after the statutory due date to the day before the notice)",
                          "=MAX(0,{notice_date}-{due}-1)", fmt="0", check=days, summary=True, note_ko=jt("고지 전 일수"),
-                         note_en=_with_ko("Period counted under Art. 47-5(1)(ii)", jt("고지 전 일수")), alias=("일수",)))
+                         note_en=_basis("Period counted under Art. 47-5(1)2", jt("고지 전 일수")), alias=("일수",)))
         daily_expr = "{unpaid}*{days_notice}*{daily}"
     else:
         terms = []
         for i, (n, r) in enumerate(segs, 1):
             inputs.append(_inp(f"daily{i}", f"원천징수 납부지연가산세 — 1일 이율(기간 {i})", f"Withholding late-payment penalty — daily rate (period {i})", r,
-                               fmt=PCT, kind="rate", src_ko=decree + "(이율 변경일 기준 기간 안분)", src_en=decree_en + " (period split at the rate change date)"))
+                               fmt=PCT, kind="rate", src_ko=decree + "(이율 변경일 기준 기간 안분)", src_en="Enforcement Decree of the Framework Act on National Taxes (국세기본법 시행령) Art. 27-4 (period split at the rate change date)"))
             rows.append(_row(f"days{i}", f"일수 — 기간 {i}(이율 변경일 기준, 도구 값)", f"Days — period {i} (split at the rate change date, tool value)",
-                             value=n, fmt="0", note_ko=jt("고지 전 일수"), note_en=_with_ko("Period counted under Art. 47-5(1)(ii)", jt("고지 전 일수"))))
+                             value=n, fmt="0", note_ko=jt("고지 전 일수"), note_en=_basis("Period counted under Art. 47-5(1)2", jt("고지 전 일수"))))
             terms.append(f"{{days{i}}}*{{daily{i}}}")
         daily_expr = "{unpaid}*(" + "+".join(terms) + ")"
     inputs.append(_inp("cap10", "납부고지 전 한도(1호 + 2호)", "Cap before a payment notice (fixed + daily portions)", 0.10, fmt=PCT, kind="rate",
@@ -465,9 +491,9 @@ def _spec_wh_penalty_notice(args: dict, data: dict) -> dict | None:
     pre_expr = "MIN({unpaid}*{rate3}+" + daily_expr + ",{unpaid}*{cap10})"
     rows += [
         _row("fixed", "1호 — 미납세액의 3%", "Fixed 3% portion", "=ROUNDDOWN(ROUND({unpaid}*{rate3},4),0)", check=res.get("3%분"),
-             note_ko="국세기본법 제47조의5제1항제1호", note_en="Art. 47-5(1)(i)", alias=("3%분",)),
+             note_ko="국세기본법 제47조의5제1항제1호", note_en="Art. 47-5(1)1", alias=("3%분",)),
         _row("daily_amt", "2호 — 일수분", "Daily portion", f"=ROUNDDOWN(ROUND({daily_expr},4),0)", check=res.get("일수분"),
-             note_ko="미납세액 × 일수 × 1일 이율 — 국세기본법 제47조의5제1항제2호", note_en="Unpaid tax × days × daily rate — Art. 47-5(1)(ii)", alias=("일수분",)),
+             note_ko="미납세액 × 일수 × 1일 이율 — 국세기본법 제47조의5제1항제2호", note_en="Unpaid tax × days × daily rate — Art. 47-5(1)2", alias=("일수분",)),
         _row("cap", "한도(미납세액의 10%)", "Cap (10% of the unpaid tax)", "=ROUNDDOWN(ROUND({unpaid}*{cap10},4),0)", check=res.get("한도_10%"), alias=("한도_10%",)),
         _row("pre_amt", "납부고지 전 가산세 — min(1호 + 2호, 10% 한도)", "Penalty before the notice — lower of (fixed + daily) and the 10% cap",
              f"=ROUNDDOWN(ROUND({pre_expr},4),0)"),
@@ -486,7 +512,7 @@ def _spec_wh_penalty_notice(args: dict, data: dict) -> dict | None:
             na = "notice_amt"
             rows.append(_row("notice_amt", "납부고지서별·세목별 세액(미납세액 + 납부고지 전 가산세로 봄)", "Tax per notice and tax item (taken as unpaid tax + penalty before the notice)",
                              "={unpaid}+{pre_amt}", note_ko=jt("⑤ 소액 체납") or "다르면 도구의 notice_amount에 넣는다 — 국세기본법 제47조의5제5항",
-                             note_en=_with_ko("Art. 47-5(5); enter notice_amount in the tool if different", jt("⑤ 소액 체납"))))
+                             note_en=_basis("Art. 47-5(5); enter notice_amount in the tool if different", jt("⑤ 소액 체납"))))
         plus = ""
         if post_rule == "종전":
             span = (pd - nd).days
@@ -498,7 +524,7 @@ def _spec_wh_penalty_notice(args: dict, data: dict) -> dict | None:
                                    segs2[0][1], fmt=PCT, kind="rate", src_ko=decree, src_en=decree_en))
                 rows.append(_row("post_days", "납부고지 후 일수(지정납부기한 다음 날부터 납부일까지)", "Days after the notice (day after the notice due date to the payment date)",
                                  "=MAX(0,{paid_on}-{notice_due})", fmt="0", check=None if excluded else res.get("고지후_일수"), summary=True,
-                                 note_ko=jt("고지 후"), note_en=_with_ko("Daily portion after the notice (rule before 2026-07-01); five-year limit under Art. 47-5(4)", jt("고지 후")),
+                                 note_ko=jt("고지 후"), note_en=_basis("Daily portion after the notice (rule before 2026-07-01); five-year limit under Art. 47-5(4)", jt("고지 후")),
                                  alias=("고지후_일수",)))
                 post_expr = "{unpaid}*{post_days}*{daily_post}"
             else:
@@ -506,28 +532,28 @@ def _spec_wh_penalty_notice(args: dict, data: dict) -> dict | None:
                 for i, (n, r) in enumerate(segs2, 1):
                     inputs.append(_inp(f"daily_post{i}", f"원천징수 납부지연가산세 — 1일 이율(납부고지 후, 기간 {i})",
                                        f"Withholding late-payment penalty — daily rate after the notice (period {i})", r, fmt=PCT, kind="rate",
-                                       src_ko=decree + "(이율 변경일 기준 기간 안분)", src_en=decree_en + " (period split at the rate change date)"))
+                                       src_ko=decree + "(이율 변경일 기준 기간 안분)", src_en="Enforcement Decree of the Framework Act on National Taxes (국세기본법 시행령) Art. 27-4 (period split at the rate change date)"))
                     rows.append(_row(f"post_days{i}", f"납부고지 후 일수 — 기간 {i}(이율 변경일 기준, 도구 값)", f"Days after the notice — period {i} (split at the rate change date, tool value)",
-                                     value=n, fmt="0", note_ko=jt("고지 후"), note_en=_with_ko("Daily portion after the notice", jt("고지 후"))))
+                                     value=n, fmt="0", note_ko=jt("고지 후"), note_en=_basis("Daily portion after the notice", jt("고지 후"))))
                     terms.append(f"{{post_days{i}}}*{{daily_post{i}}}")
                 post_expr = "{unpaid}*(" + "+".join(terms) + ")"
         else:
             inputs.append(_inp("monthly", "납부고지 후 — 경과 개월마다의 이율(월 1만분의 67)", "After the notice — rate per month elapsed", 0.0067, fmt=PCT, kind="rate",
-                               src_ko="국세기본법 제47조의5제1항제3호 · 시행령 제27조의4제2항", src_en="Framework Act on National Taxes Art. 47-5(1)(iii); Enforcement Decree Art. 27-4(2)"))
+                               src_ko="국세기본법 제47조의5제1항제3호 · 시행령 제27조의4제2항", src_en="Framework Act on National Taxes Art. 47-5(1)3; Enforcement Decree Art. 27-4(2)"))
             m_note = "지정납부기한 다음 날부터 납부일 전날까지 경과 개월 수, 60개월 한도(제47조의5제4항)"
             if (nd + _timedelta(days=1)).day <= 28:
                 rows.append(_row("months", "경과 개월 수(지정납부기한 다음 날부터 납부일 전날까지)", "Months elapsed (day after the notice due date to the day before payment)",
                                  '=MIN(60,DATEDIF({notice_due}+1,{paid_on},"m"))', fmt="0", check=None if excluded else res.get("경과_개월"), summary=True,
                                  note_ko=" — ".join(x for x in (jt("고지 후"), m_note) if x),
-                                 note_en=_with_ko("Whole months elapsed, capped at 60 months under Art. 47-5(4)", jt("고지 후")), alias=("경과_개월",)))
+                                 note_en=_basis("Whole months elapsed, capped at 60 months under Art. 47-5(4)", jt("고지 후")), alias=("경과_개월",)))
             else:           # 기산일이 29~31일이면 말일 만료 규칙(도구의 개월 계산)이 엑셀 DATEDIF와 달라질 수 있어 도구 값을 둠
                 rows.append(_row("months", "경과 개월 수(지정납부기한 다음 날부터 납부일 전날까지, 도구 값)", "Months elapsed (day after the notice due date to the day before payment, tool value)",
                                  value=int(res.get("경과_개월") or 0), fmt="0", summary=True, note_ko=" — ".join(x for x in (jt("고지 후"), m_note) if x),
-                                 note_en=_with_ko("Whole months elapsed, capped at 60 months under Art. 47-5(4)", jt("고지 후")), alias=("경과_개월",)))
+                                 note_en=_basis("Whole months elapsed, capped at 60 months under Art. 47-5(4)", jt("고지 후")), alias=("경과_개월",)))
             post_expr = "{unpaid}*{months}*{monthly}"
             if args.get("dunning_fee"):
                 inputs.append(_inp("dunning", "독촉비용(4호)", "Cost of the demand notice", args["dunning_fee"], arg="dunning_fee",
-                                   src_ko="국세기본법 제47조의5제1항제4호 · 시행령 제27조의4제3항", src_en="Framework Act on National Taxes Art. 47-5(1)(iv); Enforcement Decree Art. 27-4(3)"))
+                                   src_ko="국세기본법 제47조의5제1항제4호 · 시행령 제27조의4제3항", src_en="Framework Act on National Taxes Art. 47-5(1)4; Enforcement Decree Art. 27-4(3)"))
                 plus = "+{dunning}"
         rows.append(_row("post_amt", "납부고지 후분" + ("(종전 2호 일수분)" if post_rule == "종전" else "(3호)"),
                          "Portion after the notice" + (" (daily portion, rule before 2026-07-01)" if post_rule == "종전" else " (monthly portion)"),
@@ -779,7 +805,7 @@ def _sheet_of_name(dn) -> str | None:
 
 
 def add_sheets(wb, cfg: dict, *, lang: str, title: str, company: str, period: str, calls: list, results: list[dict],
-               label=None, detail: str = "full", roles: dict | None = None, judgement_counts: dict[int, int] | None = None,
+               label=None, cite=None, detail: str = "full", roles: dict | None = None, judgement_counts: dict[int, int] | None = None,
                labels=None, extra: list[dict] | None = None) -> dict:
     """통합 문서 시트를 워크북 맨 앞에 넣는다. 돌려주는 값: {"시트": 새 시트 이름(순서대로), "이름_바꿈": {옛: 새}, "warnings": [...],
     "서식_수": 신고 서식 시트 수, "안내": {앞 시트 이름: 영문 한 줄}, "자유_시트": 자유 형식 시트에 쓸 이름, "자유_위치": 그 시트가 들어갈 자리,
@@ -900,7 +926,7 @@ def add_sheets(wb, cfg: dict, *, lang: str, title: str, company: str, period: st
         c.alignment = Alignment(horizontal="right" if isinstance(inp["value"], str) else None, vertical="top")
         if assumption:
             c.fill = fill(YELLOW)
-        s = as_text(ws_i.cell(ri, 3, src))
+        s = as_text(ws_i.cell(ri, 3, _shown_basis(src, cite) if en else src))     # 도구가 만든 근거는 영문 인용으로(호출자가 준 출처는 그대로)
         s.font, s.alignment = f_sub, wrap
         ws_i.row_dimensions[ri].height = 14 * max(lines(text, 52), lines(src, 80, True))
         ri += 1
@@ -1034,7 +1060,7 @@ def add_sheets(wb, cfg: dict, *, lang: str, title: str, company: str, period: st
                         cell.fill = fill(YELLOW)
                 cell_of[(c["idx"], x["id"])] = f"{_q(name)}!${L(j)}${rr}"
                 cell_label[(c["idx"], x["id"])] = x["ko"]
-            note = x["note_en" if en else "note_ko"] if not is_input else ""
+            note = (_shown_basis(x["note_en"], cite) if en else x["note_ko"]) if not is_input else ""
             more = next((notes.pop(k) for k in (x["id"], x["ko"], x["en"], *x.get("alias", ())) if k in notes), "")
             text = " — ".join(t for t in (more, note) if t)
             nc = as_text(ws.cell(rr, last, text))

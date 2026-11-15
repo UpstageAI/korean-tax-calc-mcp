@@ -1,0 +1,471 @@
+{
+ "source": "법제처 영문법령 목록 검색(law.go.kr DRF lawSearch.do target=elaw) 2026-11-15 — 법령명영문을 제목 표기(대소문자)로만 바꿈. elaw_effective는 그 영문본의 시행일자.",
+ "laws": [
+  {
+   "ko": "법인세법",
+   "en": "Corporate Tax Act",
+   "abbr": [
+    "법법"
+   ],
+   "elaw_effective": "20250314",
+   "elaw_mst": "269881"
+  },
+  {
+   "ko": "법인세법 시행령",
+   "en": "Enforcement Decree of the Corporate Tax Act",
+   "abbr": [
+    "법인령",
+    "법인세령"
+   ],
+   "elaw_effective": "20260227",
+   "elaw_mst": "283635"
+  },
+  {
+   "ko": "소득세법",
+   "en": "Income Tax Act",
+   "abbr": [
+    "소법"
+   ],
+   "elaw_effective": "20240517",
+   "elaw_mst": "253463"
+  },
+  {
+   "ko": "소득세법 시행령",
+   "en": "Enforcement Decree of the Income Tax Act",
+   "abbr": [
+    "소득령",
+    "소령"
+   ],
+   "elaw_effective": "20260227",
+   "elaw_mst": "283631"
+  },
+  {
+   "ko": "부가가치세법",
+   "en": "Value-Added Tax Act",
+   "abbr": [
+    "부가법"
+   ],
+   "elaw_effective": "20240101",
+   "elaw_mst": "257973"
+  },
+  {
+   "ko": "부가가치세법 시행령",
+   "en": "Enforcement Decree of the Value-Added Tax Act",
+   "abbr": [
+    "부가령"
+   ],
+   "elaw_effective": "20241112",
+   "elaw_mst": "266375"
+  },
+  {
+   "ko": "국세기본법",
+   "en": "Framework Act on National Taxes",
+   "abbr": [
+    "국기법"
+   ],
+   "elaw_effective": "20240101",
+   "elaw_mst": "257977"
+  },
+  {
+   "ko": "국세기본법 시행령",
+   "en": "Enforcement Decree of the Framework Act on National Taxes",
+   "abbr": [
+    "국기령"
+   ],
+   "elaw_effective": "20260102",
+   "elaw_mst": "280815"
+  },
+  {
+   "ko": "국세징수법",
+   "en": "National Tax Collection Act",
+   "abbr": [],
+   "elaw_effective": "20260101",
+   "elaw_mst": "280377"
+  },
+  {
+   "ko": "국세징수법 시행령",
+   "en": "Enforcement Decree of the National Tax Collection Act",
+   "abbr": [],
+   "elaw_effective": "20260227",
+   "elaw_mst": "283487"
+  },
+  {
+   "ko": "조세특례제한법",
+   "en": "Act on Restriction on Special Cases Concerning Taxation",
+   "abbr": [
+    "조특법"
+   ],
+   "elaw_effective": "20260602",
+   "elaw_mst": "286597"
+  },
+  {
+   "ko": "조세특례제한법 시행령",
+   "en": "Enforcement Decree of the Act on Restriction on Special Cases Concerning Taxation",
+   "abbr": [
+    "조특령"
+   ],
+   "elaw_effective": "20240328",
+   "elaw_mst": "261557"
+  },
+  {
+   "ko": "조세특례제한법 시행규칙",
+   "en": "Enforcement Rule on the Act on Restriction of Special Taxation",
+   "abbr": [
+    "조특칙"
+   ],
+   "elaw_effective": "20220318",
+   "elaw_mst": "241479"
+  },
+  {
+   "ko": "국제조세조정에 관한 법률",
+   "en": "Adjustment of International Taxes Act",
+   "abbr": [
+    "국조법"
+   ],
+   "elaw_effective": "20260101",
+   "elaw_mst": "280389"
+  },
+  {
+   "ko": "국제조세조정에 관한 법률 시행령",
+   "en": "Enforcement Decree of the Adjustment of International Taxes Act",
+   "abbr": [
+    "국조령"
+   ],
+   "elaw_effective": "20250228",
+   "elaw_mst": "269475"
+  },
+  {
+   "ko": "국제조세조정에 관한 법률 시행규칙",
+   "en": "Enforcement Rule of the Adjustment of International Taxes Act",
+   "abbr": [
+    "국조칙"
+   ],
+   "elaw_effective": "20180319",
+   "elaw_mst": "202840"
+  },
+  {
+   "ko": "상속세 및 증여세법",
+   "en": "Inheritance Tax and Gift Tax Act",
+   "abbr": [
+    "상증법"
+   ],
+   "elaw_effective": "20260101",
+   "elaw_mst": "280353"
+  },
+  {
+   "ko": "상속세 및 증여세법 시행령",
+   "en": "Enforcement Decree of the Inheritance Tax and Gift Tax Act",
+   "abbr": [
+    "상증령",
+    "상증법 시행령"
+   ],
+   "elaw_effective": "20260227",
+   "elaw_mst": "283637"
+  },
+  {
+   "ko": "지방세법",
+   "en": "Local Tax Act",
+   "abbr": [],
+   "elaw_effective": "20260101",
+   "elaw_mst": "282559"
+  },
+  {
+   "ko": "지방세법 시행령",
+   "en": "Enforcement Decree of the Local Tax Act",
+   "abbr": [],
+   "elaw_effective": "20260701",
+   "elaw_mst": "287223"
+  },
+  {
+   "ko": "지방세기본법",
+   "en": "Framework Act on Local Taxes",
+   "abbr": [],
+   "elaw_effective": "20260205",
+   "elaw_mst": "283257"
+  },
+  {
+   "ko": "지방세징수법",
+   "en": "Local Tax Collection Act",
+   "abbr": [],
+   "elaw_effective": "20250101",
+   "elaw_mst": "268021"
+  },
+  {
+   "ko": "지방세특례제한법",
+   "en": "Act on Restriction on Special Cases Concerning Local Taxation",
+   "abbr": [
+    "지특법"
+   ],
+   "elaw_effective": "20240217",
+   "elaw_mst": "254023"
+  },
+  {
+   "ko": "농어촌특별세법",
+   "en": "Act on Special Rural Development Tax",
+   "abbr": [],
+   "elaw_effective": "20250101",
+   "elaw_mst": "267585"
+  },
+  {
+   "ko": "농어촌특별세법 시행령",
+   "en": "Enforcement Decree of the Act on Special Rural Development Tax",
+   "abbr": [],
+   "elaw_effective": "20250228",
+   "elaw_mst": "269551"
+  },
+  {
+   "ko": "종합부동산세법",
+   "en": "Comprehensive Real Estate Holding Tax Act",
+   "abbr": [],
+   "elaw_effective": "20260101",
+   "elaw_mst": "280417"
+  },
+  {
+   "ko": "조세범 처벌법",
+   "en": "Punishment of Tax Offenses Act",
+   "abbr": [],
+   "elaw_effective": "20210101",
+   "elaw_mst": "224875"
+  },
+  {
+   "ko": "조세범 처벌절차법",
+   "en": "Procedure for the Punishment of Tax Offenses Act",
+   "abbr": [],
+   "elaw_effective": "20230117",
+   "elaw_mst": "247789"
+  },
+  {
+   "ko": "조세범 처벌절차법 시행령",
+   "en": "Enforcement Decree of the Procedure for the Punishment of Tax Offenses Act",
+   "abbr": [],
+   "elaw_effective": "20260227",
+   "elaw_mst": "283663"
+  },
+  {
+   "ko": "국고금 관리법",
+   "en": "Management of the National Funds Act",
+   "abbr": [],
+   "elaw_effective": "20200609",
+   "elaw_mst": "218677"
+  },
+  {
+   "ko": "국고금 관리법 시행령",
+   "en": "Enforcement Decree of the Management of the National Funds Act",
+   "abbr": [],
+   "elaw_effective": "20260102",
+   "elaw_mst": "280813"
+  },
+  {
+   "ko": "관세법",
+   "en": "Customs Act",
+   "abbr": [],
+   "elaw_effective": "20230605",
+   "elaw_mst": "248479"
+  },
+  {
+   "ko": "관세법 시행령",
+   "en": "Enforcement Decree of the Customs Act",
+   "abbr": [],
+   "elaw_effective": "20260403",
+   "elaw_mst": "285309"
+  },
+  {
+   "ko": "민법",
+   "en": "Civil Act",
+   "abbr": [],
+   "elaw_effective": "20260317",
+   "elaw_mst": "284415"
+  },
+  {
+   "ko": "민사집행법",
+   "en": "Civil Execution Act",
+   "abbr": [],
+   "elaw_effective": "20260201",
+   "elaw_mst": "268837"
+  },
+  {
+   "ko": "근로기준법",
+   "en": "Labor Standards Act",
+   "abbr": [],
+   "elaw_effective": "20260820",
+   "elaw_mst": "283457"
+  },
+  {
+   "ko": "근로자퇴직급여 보장법",
+   "en": "Act on the Guarantee of Employees' Retirement Benefits",
+   "abbr": [],
+   "elaw_effective": "20220712",
+   "elaw_mst": "239311"
+  },
+  {
+   "ko": "주택임대차보호법",
+   "en": "Housing Lease Protection Act",
+   "abbr": [],
+   "elaw_effective": "20260102",
+   "elaw_mst": "276291"
+  },
+  {
+   "ko": "주택임대차보호법 시행령",
+   "en": "Enforcement Decree of the Housing Lease Protection Act",
+   "abbr": [],
+   "elaw_effective": "20260701",
+   "elaw_mst": "287183"
+  },
+  {
+   "ko": "상가건물 임대차보호법",
+   "en": "Commercial Building Lease Protection Act",
+   "abbr": [],
+   "elaw_effective": "20260512",
+   "elaw_mst": "279651"
+  },
+  {
+   "ko": "상가건물 임대차보호법 시행령",
+   "en": "Enforcement Decree of the Commercial Building Lease Protection Act",
+   "abbr": [],
+   "elaw_effective": "20260701",
+   "elaw_mst": "287139"
+  },
+  {
+   "ko": "중소기업기본법",
+   "en": "Framework Act on Small and Medium Enterprises",
+   "abbr": [
+    "중기법"
+   ],
+   "elaw_effective": "20240828",
+   "elaw_mst": "260843"
+  },
+  {
+   "ko": "중소기업기본법 시행령",
+   "en": "Enforcement Decree of the Framework Act on Small and Medium Enterprises",
+   "abbr": [
+    "중기령"
+   ],
+   "elaw_effective": "20260102",
+   "elaw_mst": "281337"
+  },
+  {
+   "ko": "외국환거래법",
+   "en": "Foreign Exchange Transactions Act",
+   "abbr": [],
+   "elaw_effective": "20210916",
+   "elaw_mst": "232855"
+  },
+  {
+   "ko": "외국환거래법 시행령",
+   "en": "Enforcement Decree of the Foreign Exchange Transactions Act",
+   "abbr": [],
+   "elaw_effective": "20260324",
+   "elaw_mst": "284817"
+  },
+  {
+   "ko": "지방회계법",
+   "en": "Local Accounting Act",
+   "abbr": [],
+   "elaw_effective": "20240217",
+   "elaw_mst": "254017"
+  },
+  {
+   "ko": "지방재정법",
+   "en": "Local Finance Act",
+   "abbr": [],
+   "elaw_effective": "20250401",
+   "elaw_mst": "270377"
+  },
+  {
+   "ko": "주택법",
+   "en": "Housing Act",
+   "abbr": [],
+   "elaw_effective": "20240319",
+   "elaw_mst": "261199"
+  },
+  {
+   "ko": "자산재평가법",
+   "en": "Assets Revaluation Act",
+   "abbr": [],
+   "elaw_effective": "20160901",
+   "elaw_mst": "179933"
+  },
+  {
+   "ko": "금융실명거래 및 비밀보장에 관한 법률",
+   "en": "Act on Real Name Financial Transactions and Confidentiality",
+   "abbr": [
+    "금융실명법"
+   ],
+   "elaw_effective": "20250401",
+   "elaw_mst": "270423"
+  },
+  {
+   "ko": "독점규제 및 공정거래에 관한 법률",
+   "en": "Monopoly Regulation and Fair Trade Act",
+   "abbr": [
+    "공정거래법"
+   ],
+   "elaw_effective": "20260512",
+   "elaw_mst": "285951"
+  },
+  {
+   "ko": "자본시장과 금융투자업에 관한 법률",
+   "en": "Financial Investment Services and Capital Markets Act",
+   "abbr": [
+    "자본시장법"
+   ],
+   "elaw_effective": "20260317",
+   "elaw_mst": "273695"
+  },
+  {
+   "ko": "주식회사 등의 외부감사에 관한 법률",
+   "en": "Act on External Audit of Stock Companies",
+   "abbr": [
+    "외감법"
+   ],
+   "elaw_effective": "20250401",
+   "elaw_mst": "270309"
+  },
+  {
+   "ko": "학원의 설립ㆍ운영 및 과외교습에 관한 법률",
+   "en": "Act on the Establishment and Operation of Private Teaching Institutes and Extracurricular Lessons",
+   "abbr": [
+    "학원법"
+   ],
+   "elaw_effective": "20231019",
+   "elaw_mst": "249991"
+  },
+  {
+   "ko": "학원의 설립ㆍ운영 및 과외교습에 관한 법률 시행령",
+   "en": "Enforcement Decree of the Act on the Establishment and Operation of Private Teaching Institutes and Extracurricular Lessons",
+   "abbr": [
+    "학원법 시행령"
+   ],
+   "elaw_effective": "20240101",
+   "elaw_mst": "255989"
+  },
+  {
+   "ko": "고향사랑 기부금에 관한 법률",
+   "en": "Hometown Love Donation Act",
+   "abbr": [],
+   "elaw_effective": "20240220",
+   "elaw_mst": "260449"
+  },
+  {
+   "ko": "개별소비세법",
+   "en": "Individual Consumption Tax Act",
+   "abbr": [],
+   "elaw_effective": "20230101",
+   "elaw_mst": "247457"
+  }
+ ],
+ "no_official_english": [
+  "법인세법 시행규칙",
+  "소득세법 시행규칙",
+  "부가가치세법 시행규칙",
+  "상속세 및 증여세법 시행규칙",
+  "국세기본법 시행규칙",
+  "지방세기본법 시행령",
+  "지방세특례제한법 시행령",
+  "종합부동산세법 시행령",
+  "조세범 처벌법 시행령",
+  "농어촌특별세법 시행규칙",
+  "외국환거래규정"
+ ],
+ "no_official_english_note": "2026-11-15 같은 검색에서 영문본이 나오지 않은 법령 — 영문 명칭을 지어내지 않고 국문 그대로 둔다."
+}

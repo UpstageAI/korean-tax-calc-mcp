@@ -223,7 +223,8 @@ def test_en_free_text_stays_korean_under_notes_column(tmp_path):
     assert all(calc.cell(r, 2).value is None for r in range(2, calc.max_row + 1) if calc.cell(r, 3).value)
     jud = wb["Judgements (판단·근거)"]
     heads = [cell.value for cell in jud[1]]
-    assert sum(1 for h in heads if h.startswith(i18n.NOTES_HEADER)) == 3
+    assert sum(1 for h in heads if h.startswith(i18n.NOTES_HEADER)) == 2      # 결론·이유는 국문 그대로
+    assert "Basis (근거)" in heads                                            # 근거 열은 영문 인용 표기(0.56.1)
     assert HANGUL.search(jud["C2"].value)
     texts = [v for v in _cells(wb["Summary (요약)"]).values() if isinstance(v, str)]
     assert "Confirm the treaty article before filing." in texts           # review_notes는 적은 그대로

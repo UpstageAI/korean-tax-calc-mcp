@@ -4,6 +4,7 @@
 - 출처: 법제처 영문법령(law.go.kr, 한국법제연구원 번역) 명칭 우선. '법제처 영문법령 확인(2026-11-14)'은 그날 받은 영문법령(소득세법·법인세법·각 시행령, 조특법, 국세기본법, 부가가치세법·시행령, 상증법, 국조법, 조세범 처벌절차법)에서 표현을 찾은 행이다.
 - 'KLRI'만 적힌 행은 영문법령 관행에 따른 표기이며 행별 원문 대조는 하지 않았다. '공식 영문 없음'은 법제처 영문법령의 해당 조문 영문에 그 용어가 없음을 확인한 행이다(2026-11-15 — 조문·번역본은 행마다 적음. 국세청 영문 누리집 검색에서도 이 용어들의 표기를 받지 못함). 영문은 설명용으로만 둔다.
 - 아래쪽 '결과 라벨' 행(지방소득세부터)은 엑셀 내보내기 영문 표기(export_workbook lang='en')의 번역표로 쓰는 결과 키·표 머리글이다. 법제처 영문법령에서 표현을 찾은 것과 일반 회계·통계 용어만 넣었고, '공식 영문 없음' 행(과 '확인 필요'라고 적은 행)은 엑셀에서 번역하지 않고 국문 그대로 둔다. 표를 고치면 `python -m korean_tax_calc_mcp.workbook_i18n docs/glossary_ko_en.md`로 패키지 사본(korean_tax_calc_mcp/data/glossary_ko_en.json)을 다시 만든다.
+- 맨 아래 '근거 구절' 행(비고가 '근거 구절'로 시작)은 영문 엑셀(export_workbook·verify_workbook lang='en')에서 도구가 돌려준 근거 문자열의 서술 구절을 바꾸는 표다(`korean_tax_calc_mcp/citation_en.py`). 구절이 통째로 같을 때만 바꾸고 `{n}`은 숫자, `{d}`는 날짜(2026.7.1.), `{t}`는 도구 이름 자리다. 결과 키·라벨 번역에는 쓰지 않는다. 법령명·조문 번호는 이 표가 아니라 규칙(법제처 영문법령 제명 표 `data/law_names_ko_en.json` + 조문 번호 변환)으로 바꾼다. 영문은 법제처 영문법령에 있는 표현과 이 서버의 통합 문서 영문 줄 이름에 이미 쓰는 표현을 조합했고, 문장을 새로 옮겨야 하는 구절은 넣지 않았다.
 - 검색어로 더 흔한 영문(penalty tax, loss, capital gains, CFC, entertainment expense)을 고른 행은 비고에 법제처 영문 표현을 함께 적는다.
 
 | 국문 용어 | English | 근거/비고 |
@@ -228,3 +229,37 @@
 | 간접외국납부세액 | indirect foreign tax paid | 공식 영문 없음 — 법인세법 제57조제4항 영문은 'shall be deemed the amount of foreign corporate tax'로 쓰고 용어로 두지 않음(2025.3.14. 시행본 번역, 2026-11-15) |
 | 간주외국납부세액 | deemed foreign tax paid | 공식 영문 없음 — 법인세법 제57조제3항 영문은 'shall be deemed the amount of foreign corporate tax'로 쓰고 용어로 두지 않음(2025.3.14. 시행본 번역, 2026-11-15) |
 | 단일세율 | flat tax rate | 공식 영문 없음 — 조세특례제한법 제18조의2 영문은 'multiplying the relevant earned income by 19/100'이고 용어로 쓴 표현이 없음(법제처 영문법령 확인, 2026-11-14) |
+| 조세조약 제한세율 {n}% | limited tax rate under the tax treaty {n}% | 근거 구절 — 법인세법 영문 'limited tax rate pursuant to a tax treaty' |
+| 제한세율 {n}% | limited tax rate {n}% | 근거 구절 — 법인세법 영문 'limited tax rate' |
+| 지방소득세 {n}% 별도 | plus local income tax of {n}% | 근거 구절 — 법인세법 영문 'local income tax' |
+| 조약 대상조세에 지방소득세 없음 | local income tax is not a tax covered by the tax treaty | 근거 구절 — 'local income tax'·'tax treaty'(법인세법 영문) 조합 |
+| 조약 대상조세에 지방소득세 포함 | local income tax is a tax covered by the tax treaty | 근거 구절 — 'local income tax'·'tax treaty'(법인세법 영문) 조합 |
+| 대상조세 | taxes covered | 근거 구절 — 조세조약 대상조세 조문의 표제로 쓰는 표현 |
+| 한미 조세조약 | Korea-U.S. tax treaty | 근거 구절 — 'tax treaty'(법인세법 영문) + 나라 이름 |
+| 순액 약정 역산 | gross-up under a net-of-tax clause | 근거 구절 — 통합 문서 영문 줄 이름('net-of-tax clause', 'gross-up rate')과 같은 실무 표기 |
+| 외국법인 특별징수 | special collection from foreign corporations | 근거 구절 — 법제처 영문법령 'special collection'·'foreign corporation' |
+| 원천징수하는 법인세의 {n}% | {n}% of the corporate tax withheld | 근거 구절 — 법인세법 영문 'tax withheld' |
+| 일수분 | daily portion | 통합 문서 영문 줄 이름 'Daily portion'과 같은 표기 |
+| {n}% 한도 | {n}% limit | 근거 구절 — 용어집 '한도 = limit' |
+| 전체 {n}% 한도 | overall {n}% limit | 근거 구절 — 용어집 '한도 = limit' |
+| 이율 변경일 기준 기간 안분 | period split at the rate change date | 근거 구절 — 통합 문서 영문 출처 글과 같은 표기 |
+| 이율 변경일로 기간 안분 | period split at the rate change date | 근거 구절 — 통합 문서 영문 출처 글과 같은 표기 |
+| 법정납부기한 다음 날부터 납부일의 전날까지 | from the day after the statutory due date to the day before the payment date | 근거 구절 — 통합 문서 영문 줄 이름과 같은 표기 |
+| 법정납부기한 다음 날부터 납부일까지 | from the day after the statutory due date to the payment date | 근거 구절 — 통합 문서 영문 줄 이름과 같은 표기 |
+| {d} 시행 | in force from {d} | 근거 구절 — 법제처 영문법령 부칙 'enter into force' |
+| {d} 개정 | amended on {d} | 근거 구절 — 법제처 영문법령 조문 꼬리표 'Amended on' |
+| {d} 신설 | newly inserted on {d} | 근거 구절 — 법제처 영문법령 조문 꼬리표 'Newly Inserted on' |
+| {d} 이후 양도분 | transfers on or after {d} | 근거 구절 — 법제처 영문법령 부칙 'transferred on or after' |
+| 부칙 | Addenda | 근거 구절 — 법제처 영문법령 'ADDENDA' |
+| 준용 | applied mutatis mutandis | 근거 구절 — 법제처 영문법령 'shall apply mutatis mutandis' |
+| 포함 | included | 근거 구절 — 법제처 영문법령 'including' |
+| 제외 | excluded | 근거 구절 — 법제처 영문법령 'excluding' |
+| 기본세율 | basic tax rates | 근거 구절 — 소득세법 영문 'basic tax rates' |
+| 누진세율 | progressive tax rates | 근거 구절 — 법제처 영문법령 'progressive tax rate' |
+| 세율 {n}% | tax rate {n}% | 근거 구절 — 용어집 '세율 = tax rate' |
+| 지급액 | amount paid | 근거 구절 — 법제처 영문법령 'amount paid' |
+| 국세분 | national tax portion | 근거 구절 — 통합 문서 영문 줄 이름 'National tax portion'과 같은 표기 |
+| {t} 도구 | {t} tool | 근거 구절 — 도구 이름 뒤의 '도구' |
+| 1년 미만 | less than one year | 근거 구절 — 법인세법 영문 'business year is less than one year' |
+| 사용료로 봄 | deemed royalties | 근거 구절 — 법인세법 영문 'royalties' + 'deemed' |
+| 사업소득으로 봄 | deemed business income | 근거 구절 — 소득세법 영문 'business income' + 'deemed' |

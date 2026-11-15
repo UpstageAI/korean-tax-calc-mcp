@@ -277,12 +277,31 @@ def _basis_text(data: dict) -> str:
     return "" if v is None else str(v)
 
 
-def verify_workbook_impl(path: str, checks, annotate: bool = True, output_dir: str | None = None, filename: str | None = None, lang: str = "ko") -> dict:
+def verify_workbook_impl(path: str, checks, annotate: bool = True, output_dir: str | None = None, filename: str | None = None, lang: str = "ko",
+                         labels=None) -> dict:
     from .server import mcp
     from .tools_export import _sanitize_name, _unique_path
     guide = "checks=[{cell: \"시트!칸\" 또는 정의된 이름, tool: 계산 도구 이름, args: {…}, key: 결과에서 대조할 키(점 경로), tolerance: 0, label}]"
     err = lambda msg: {"error": "입력 확인 필요 — " + msg, "안내": guide}
     en = lang == "en"
+    # ── labels: 대조 결과 시트의 결과 키·근거 구절 표기를 바꾸는 표 {원래 키·구절: 표시할 글} — export_workbook의 labels와 같은 꼴 ──
+    own = None
+    if labels not in (None, "", {}, []):
+        if isinstance(labels, str):
+            try:
+                labels = _json.loads(labels)
+            except Exception:
+                return {"error": "입력 확인 필요 — labels가 올바른 JSON 객체가 아님", "안내": "labels={원래 키·근거 구절: 표시할 글}"}
+        if not isinstance(labels, dict) or not all(isinstance(k, str) and isinstance(v, str) and k.strip() and v.strip() for k, v in labels.items()):
+            return {"error": "입력 확인 필요 — labels는 {원래 키·근거 구절: 표시할 글} 꼴의 객체(글자 → 글자)", "안내": "예: {\"약정_순액\": \"Agreed net amount\"}"}
+        if any(v.strip().startswith("=") for v in labels.values()):
+            return {"error": "입력 확인 필요 — labels의 표시할 글은 '='로 시작할 수 없음", "안내": "수식이 아니라 글만 받음"}
+        from .workbook_i18n import Labels
+        own = Labels(labels, en=en)
+    tr = None
+    if en:      # 영문 시트: 결과 키는 용어집으로 'Tax base (과세표준)', 근거는 영문 인용 표기. 없는 것은 국문 그대로 + 번역_없음
+        from .workbook_i18n import Translator
+        tr = Translator(own)
     if isinstance(checks, str):
         try:
             checks = _json.loads(checks)
@@ -406,7 +425,7 @@ def verify_workbook_impl(path: str, checks, annotate: bool = True, output_dir: s
     if annotate:
         try:
             result["사본"] = _annotate(book, rows, unchecked, summary, extra, out_dir, filename or (os.path.splitext(os.path.basename(path))[0] + "_verified"),
-                                      en, _sanitize_name, _unique_path)
+                                      en, _sanitize_name, _unique_path, tr=tr, own=own)
             result["사본_안내"] = ("원본은 그대로 두고 사본에 대조 결과 시트를 붙임. 사본의 수식 칸에는 값을 채움(원본에 저장된 값은 그대로) — 휴대폰·미리보기에서도 보임. "
                                "The original file is unchanged; the copy carries the check sheet and stored values for every formula cell.")
         except Exception as e:
@@ -419,13 +438,25 @@ def verify_workbook_impl(path: str, checks, annotate: bool = True, output_dir: s
     if unchecked:
         steps.append("대조 안 한 금액은 해당 계산 도구를 호출해 checks에 더하거나, 사용자에게 '계산 도구 검증 없음'으로 밝힘")
     result["다음"] = " / ".join(steps) if steps else "대조한 칸은 모두 일치, 대조를 거치지 않은 금액 없음"
+    if tr is not None and annotate and "사본" in result:      # lang='ko' 결과는 그대로(키를 더하지 않음)
+        result["lang"] = "en"
+        result["번역_없음"] = list(tr.missing)
+        if tr.missing:
+            result["번역_없음_안내"] = ("대조 결과 시트에 국문으로 남은 결과 키·근거 구절 — 영문 표기가 필요하면 labels={원래 키·근거 구절: 영문}에 넣어 다시 호출. "
+                                 "Result keys and basis phrases left in Korean on the check sheet: to show them in English, pass labels={Korean key or phrase: English text} and call again.")
+    if own is not None and annotate and "사본" in result:
+        result["labels_적용"] = sorted(own.used)
+        left = own.unused()
+        if left:
+            warnings.append(("labels: no result key or basis phrase with this name on the check sheet (not applied) — " if en
+                             else "labels: 대조 결과 시트에서 이 이름의 결과 키를 찾지 못해 적용하지 않음 — ") + "; ".join(left))
     out = {"결과": result, "근거": "통합 문서의 칸 값과 계산 도구 결과 대조(세무 자문 아님)", "한계": LIMITS}
     if warnings:
         out["warnings"] = warnings
     return out
 
 
-def _annotate(book: _Book, rows, unchecked, summary, extra, out_dir, base, en, sanitize, unique_path) -> str:
+def _annotate(book: _Book, rows, unchecked, summary, extra, out_dir, base, en, sanitize, unique_path, tr=None, own=None) -> str:
     from openpyxl.styles import Alignment, Font, PatternFill
     from .workbook_blend import BAND, GREY, NAVY, NUM, _sheet_name, as_text
     from .workbook_cache import XlError, fill_cached_values
@@ -452,10 +483,13 @@ def _annotate(book: _Book, rows, unchecked, summary, extra, out_dir, base, en, s
 
     heads(5, _t("hdr", en))
     verdict = {"일치": ("match", "E2EFDA"), "불일치": ("diff", "F8CBAD"), "읽지 못함": ("unread", "FFE699"), "도구 오류": ("tool_err", "FFE699")}
+    # 결과 키: 영문은 용어집·labels로 'Tax base (과세표준)'(없으면 국문 그대로), 국문은 labels가 있을 때만 그 글. 근거: 영문은 영문 인용 표기
+    key_of = tr.label if tr is not None else (own.label if own is not None else (lambda k: k))
+    basis_of = tr.basis if tr is not None else (lambda b: b)
     r = 6
     for x in rows:
         vals = [x["칸"], x["항목"], x.get("통합_문서_값"), x.get("도구_값"), x.get("차이"), _t(verdict[x["판정"]][0], en),
-                f"{x['도구']} · {x['키']}", x.get("도구_오류") or x.get("근거") or ""]
+                f"{x['도구']} · {key_of(x['키'])}", x.get("도구_오류") or basis_of(x.get("근거") or "")]
         for j, v in enumerate(vals, 1):
             c = ws.cell(r, j, v if _num(v) or v is None else str(v))
             if isinstance(c.value, str):

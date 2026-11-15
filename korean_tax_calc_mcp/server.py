@@ -10402,7 +10402,7 @@ def export_workbook(
     period: Annotated[str, Field(description="사업연도 표기(예 '2025.01.01 ~ 2025.12.31', 기본 빈 문자열)")] = "",
     biz_no: Annotated[str, Field(description="사업자등록번호(서식 머리에 표시, 기본 빈 문자열)")] = "",
     review_notes: Annotated[list | str | None, Field(description="검토·확인 필요 사항 [{항목, 내용}] 또는 문장 목록(선택) — 자료 불일치, 가정, 확인할 서류, 판단이 갈리는 쟁점을 적으면 맨 앞 '요약' 시트에 실림. lang='en'이면 영문으로 적는다")] = None,
-    lang: Annotated[Literal["ko", "en"], Field(description="표기 언어 — 'ko'(기본, 기존과 같음) 또는 'en'(English labels with the Korean original in parentheses, for foreign readers)")] = "ko",
+    lang: Annotated[Literal["ko", "en"], Field(description="표기 언어 — 'ko'(기본, 기존과 같음) 또는 'en'(English labels with the Korean original in parentheses and the statutory basis as English citations, for foreign readers)")] = "ko",
     scenarios: Annotated[list | str | None, Field(description="시나리오 시트(선택) — [{sheet, title, subtitle, heading, columns: [{call, heading}], notes: {줄 이름: 메모}, summary_note}]. columns의 call(label 또는 1부터 세는 순번)을 열로 나란히 놓고 오른쪽에 '근거 · 메모' 열을 둔다. 한 블록의 call은 같은 도구, sheet 이름이 같은 블록은 한 시트에 차례로. 주면 맨 앞에 요약(Summary)·입력·출처(Inputs) 시트가 함께 생김")] = None,
     sources: Annotated[list | str | None, Field(description="입력값 출처(선택) — [{call, arg, source, assumption, from_call, from_row, less}]. arg는 그 call의 입력 이름(예: amount), source는 문서명·조문, assumption=true면 가정으로 노랑 표시. 입력이 다른 call의 결과에서 온 값이면 from_call(그 call)·from_row(결과 줄 이름, 예: 원천징수세액)·less(차감할 금액, 선택)를 적어 수식으로 잇는다(값이 맞을 때만). '입력·출처(Inputs)' 시트의 출처 열에 실림")] = None,
     issues: Annotated[list | str | None, Field(description="쟁점 목록(선택) — [{no, issue, finding, risk, action}](국문 키 번호·쟁점·발견·위험도·조치도 됨). 적은 글을 그대로 '쟁점 목록(Issues Log)' 시트에 표로 싣는다 — 도구는 쟁점을 판단하지 않음")] = None,
@@ -10493,7 +10493,8 @@ def export_workbook(
   결과.파일_안내 — 다시 저장하면 계산값이 지워진다는 것과 바꾸는 길(입력을 고쳐 다시 호출, 다시 저장했다면 verify_workbook) 한 줄. labels를 줬을 때: 결과.labels_적용(쓰인 키), 시트에 없는 키는 warnings.
   extra_sheets를 줬을 때만: 결과.자유_시트([{시트, 머리_행, 첫_행, 끝_행, 열, 합계_행}]), 결과.자유_시트_안내.
   scenarios·sources·issues·actions·key_figures를 줬을 때만: 결과.통합_시트(맨 앞에 더한 시트 이름), 결과.detail, 결과.서식_안내(compact에서 서식이 있을 때), warnings(맞는 줄을 찾지 못한 notes·sources).
-  lang='en'일 때만: 결과.lang, 결과.번역_라벨_수, 결과.번역_없음(용어집에 없는 국문 라벨 목록 — detail과 무관하게 돌려줌), 결과.번역_없음_안내(labels에 넣어 다시 호출), warnings(같은 내용을 한 줄로).
+  lang='en'일 때만: 결과.lang, 결과.번역_라벨_수, 결과.번역_없음(용어집에 없는 국문 라벨과 근거 구절·영문 제명이 없는 법령명 목록 — detail과 무관하게 돌려줌), 결과.번역_없음_안내(labels에 넣어 다시 호출), warnings(같은 내용을 한 줄로).
+    도구가 돌려준 근거 조문은 규칙으로 영문 인용으로 적음('Corporate Tax Act (법인세법) Art. 98(1)6' — 법령명은 법제처 영문법령 제명, 처음 나올 때 국문 병기). 근거의 서술 구절은 용어집에 통째로 있는 것만 영문.
   근거 — '계산 도구 결과 정리(세무 자문 아님)'."""
     return _export_workbook_impl(title, calls, output_dir, filename, layout, company, period, biz_no, review_notes, lang,
                                  scenarios, sources, issues, detail, labels, extra_sheets, actions, key_figures)
@@ -10508,7 +10509,8 @@ def verify_workbook(
     annotate: Annotated[bool, Field(description="true(기본)면 대조 결과 시트('검산', lang='en'이면 'Tool check')를 붙인 사본을 저장. false면 대조 결과만 돌려줌")] = True,
     output_dir: Annotated[str | None, Field(description="사본을 저장할 폴더(기본: path와 같은 폴더)")] = None,
     filename: Annotated[str | None, Field(description="사본 파일명(기본: 원본 이름 + '_verified', 확장자 .xlsx 자동). 같은 이름이 있으면 ' (2)'를 붙임")] = None,
-    lang: Annotated[Literal["ko", "en"], Field(description="대조 결과 시트의 표기 언어 — 'ko'(기본) 또는 'en'")] = "ko",
+    lang: Annotated[Literal["ko", "en"], Field(description="대조 결과 시트의 표기 언어 — 'ko'(기본) 또는 'en'. 'en'이면 결과 키는 용어집으로 'Tax base (과세표준)', 근거 조문은 영문 인용('Corporate Tax Act (법인세법) Art. 98(1)6')으로 적고, 용어집에 없는 키·구절은 국문 그대로 두고 결과.번역_없음에 올림")] = "ko",
+    labels: Annotated[dict | str | None, Field(description="대조 결과 시트의 결과 키·근거 구절 표기를 바꾸는 표 {원래 키 또는 근거 구절: 표시할 글}(JSON 문자열도 됨). lang='en'에서 결과.번역_없음에 나온 것을 영문으로 넣어 다시 호출. 도구는 글을 지어내지 않고 표에 있는 글만 씀")] = None,
 ) -> dict:
     """Checks a workbook you built yourself against the calculation tools (직접 만든 엑셀 검산): reads the amount cells of an .xlsx, calls the calculation tool for each check, reports match or mismatch with the difference, lists the amounts no check covers, and saves a copy with a 'Tool check' sheet and stored values in every formula cell. Run it after saving any workbook you laid out yourself.
     직접 짠 통합 문서(.xlsx)의 금액 칸을 계산 도구 결과와 대조한다 — 틀은 직접 짜도 되고, 이 도구가 맞는 숫자인지 받쳐 준다. 칸 값을 읽어(저장된 값, 없으면 다시 계산) checks마다 계산 도구를 실제로 호출해 비교하고, 일치·불일치(두 값과 차이)·읽지 못함·도구 오류를 돌려준다. 어떤 대조에도 걸리지 않고 대조된 칸과 수식으로 이어지지도 않는 금액 칸을 '대조 안 한 금액'으로 모은다. 원인을 판단하지 않는다.
@@ -10520,6 +10522,9 @@ def verify_workbook(
   annotate — true(기본): 사본에 '검산'(Tool check) 시트를 붙인다 — 칸·항목·통합 문서 값·도구 값·차이·판정·근거(도구가 돌려준 글), 검증 범위, 대조 안 한 금액 목록, 부가 점검.
     원래 시트의 값·수식·서식은 그대로이고, 사본의 모든 수식 칸에 값을 채운다(원본에 저장된 값은 보존, 없던 칸은 다시 계산) — 휴대폰·미리보기에서도 값이 보인다.
   output_dir·filename — 사본 위치(기본: 원본 폴더, '<원본 이름>_verified.xlsx'). lang — 'ko'(기본)·'en'.
+  lang='en'의 대조 결과 시트: 결과 키는 용어집으로 'Tax base (과세표준)', 근거는 법령명·조문 번호를 규칙으로 바꾼 영문 인용('Corporate Tax Act (법인세법) Art. 98(1)6' —
+    법령명은 법제처 영문법령 제명, 처음 나올 때 국문 병기). 용어집에 없는 키·구절은 국문 그대로(지어내지 않음).
+  labels — {원래 키 또는 근거 구절: 표시할 글}. 결과.번역_없음에 나온 것을 영문으로 넣어 다시 호출하면 그 글로 적는다.
 결과:
   결과.요약 — {대조, 일치, 불일치, 읽지_못함, 도구_오류, 대조_안_한_금액}.
   결과.불일치 — [{칸, 항목, 통합_문서_값, 도구_값, 차이, 도구, 키, 근거}]. 결과.대조 — 전체 대조 줄.
@@ -10528,9 +10533,11 @@ def verify_workbook(
   결과.부가_점검 — 저장된 값이 없는 수식 칸 수, 저장된 값과 다시 계산한 값이 다른 칸, 원 미만 소수가 남은 금액 칸, 오류 칸, 수식 열에 직접 적은 숫자, 값을 계산하지 못한 수식 칸.
   결과.사본 — 대조 결과 시트를 붙인 사본의 절대경로(annotate=true). 결과.다음 — 다음에 할 일 한 줄(불일치 칸을 고쳐 다시 호출 / 대조 안 한 금액은 계산 도구를 호출해 checks에 더하거나 사용자에게 밝힘).
   한계 — 금액 판정 기준(1,000 이상), 수식 모양으로 정하는 범위, 입력 숫자는 원자료와 대조하지 않음, 사본의 차트·그림.
+  lang='en'일 때만(사본을 만들었을 때): 결과.lang, 결과.번역_없음(대조 결과 시트에 국문으로 남은 결과 키·근거 구절), 결과.번역_없음_안내(labels에 넣어 다시 호출).
+    labels를 줬을 때: 결과.labels_적용(쓰인 키), 시트에 없는 키는 warnings.
   근거 — '통합 문서의 칸 값과 계산 도구 결과 대조(세무 자문 아님)'."""
     from .workbook_verify import verify_workbook_impl
-    return verify_workbook_impl(path, checks, annotate, output_dir, filename, lang)
+    return verify_workbook_impl(path, checks, annotate, output_dir, filename, lang, labels)
 
 
 # ── 국세 우선권에 따른 매각대금 배분(국세기본법 제35조·제36조) ──────────────────────
