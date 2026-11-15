@@ -368,8 +368,24 @@ def _spec_nonresident(args: dict, data: dict) -> dict:
         _row("local", "지방소득세(특별징수)", "Local income tax to withhold", "=ROUNDDOWN(ROUND({tax}*{local_ratio},4),-1)", check=res.get("지방소득세"),
              key=True, summary=True, note_ko=local_basis, note_en=_basis("Local income tax on the tax withheld", local_basis), alias=("지방소득세",)),
         _row("total", "합계", "Total Korean tax", "={tax}+{local}", check=res.get("합계"), key=True, summary=True, alias=("합계",)),
-        _row("net_paid", "수취인 송금액(과세표준 − 합계)", "Net amount remitted (tax base − total tax)", "={base}-{total}", summary=True),
     ]
+    # 수취인 송금액 — 순액 약정 열은 약정 순액(입력 칸)을 가리킨다. 과세표준 − 합계는 끝수(과세표준 원 미만·세액 10원 미만 버림) 때문에
+    # 약정 순액과 몇 원 다르므로 송금액으로 쓰지 않고, 그 차이는 '끝수 차이' 줄에 따로 둔다. 줄 이름은 모든 열이 같아 한 줄에 나란히 놓인다.
+    old_names = ("수취인_송금액", "수취인 송금액(과세표준 − 합계)", "Net amount remitted (tax base − total tax)")
+    remit_ko = ("수취인 부담이면 지급액 − 합계, 순액 약정이면 약정 순액(지방소득세를 수취인이 부담하면 약정 순액 − 지방소득세) — "
+                "순액 약정에서 과세표준 − 합계는 끝수만큼 달라 '끝수 차이' 줄에 따로 둠")
+    remit_en = ("Payment − total tax when the recipient bears the tax; the agreed net amount under a net-of-tax clause "
+                "(less local income tax when the recipient bears it) — tax base − total tax differs by the fractional amounts shown on the next line")
+    f_remit = "={amount}" if local_bears else "={amount}-{local}" if net else "={base}-{total}"
+    rows.append(_row("net_paid", "수취인 송금액", "Net amount remitted to the recipient", f_remit, check=res.get("수취인_송금액"), summary=True,
+                     note_ko=remit_ko, note_en=remit_en, alias=old_names))
+    if net:
+        rows.append(_row("round_gap", "끝수 차이(과세표준 − 합계 − 송금액)", "Difference from fractional numbers (tax base − total tax − net amount remitted)",
+                         "={base}-{total}-{net_paid}", check=res.get("끝수_차이"),
+                         note_ko="과세표준은 원 미만, 세액은 10원 미만을 버려 생기는 끝수 — 송금하지도 납부하지도 않음(국고금 관리법 제47조)",
+                         note_en=_basis("Fractional numbers dropped from the tax base (below KRW 1) and from the taxes (below KRW 10) — neither remitted nor paid",
+                                        "국고금 관리법 제47조"),
+                         alias=("끝수_차이",)))
     return {"inputs": inputs, "rows": rows, "links": {"지급액": "base", "적용세율": "applicable"}}
 
 

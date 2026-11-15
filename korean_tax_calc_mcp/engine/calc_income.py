@@ -735,19 +735,37 @@ def nonresident_withholding(income_kind, amount, recipient_type, residence_count
     else:
         issues += NI.common_issues(side, income_kind, treaty_rate is not None, net_of_tax, payer_bears_local_tax)
 
+    # 수취인 송금액 — 순액 약정이면 약정한 금액(통칙 98-0…2 "제세를 공제한 금액을 지급하도록" 약정한 그 금액)이지 과세표준 − 세액이 아니다.
+    # 과세표준(원 미만 버림)과 세액(10원 미만 버림)의 끝수 때문에 과세표준 − 세액은 약정 순액과 몇 원 다르다 → '끝수_차이'로 따로 낸다.
+    total_tax = wh_amount + local_income_tax
+    if not net_of_tax:
+        remit = amount - total_tax                                  # 수취인 부담: 지급액 − 세액
+    elif payer_bears_local_tax:
+        remit = amount                                              # 지방소득세까지 지급자 부담: 약정 순액 그대로
+    else:
+        remit = amount - local_income_tax                           # 국세분만 지급자 부담: 지방소득세는 수취인 몫에서 차감
     ret = {
         "국내세율": domestic,
         "조약세율": treaty_rate,
         "적용세율": applicable,
         "원천징수세액": wh_amount,
         "지방소득세": local_income_tax,
-        "합계": wh_amount + local_income_tax,
+        "합계": total_tax,
+        "수취인_송금액": remit,
         "근거": basis + (f" · 조세조약 제한세율 {treaty_rate*100:.0f}%" if treaty_rate else "") + note
               + (" · 순액 약정 역산(법인세법 기본통칙 98-0…2)" if net_of_tax else ""),
         "쟁점": issues,
     }
     if net_of_tax:
+        gap = base - total_tax - remit                              # 0 이상(과세표준에서 버린 1원 미만 < 세액에서 버린 끝수 + 1)
         ret = {"약정_순액": amount, "과세표준": base} | ret | {"역산": 역산}
+        ret["끝수_차이"] = gap
+        ret["끝수_설명"] = (
+            ("수취인 송금액은 약정 순액 " if payer_bears_local_tax else "수취인 송금액은 약정 순액 − 지방소득세(수취인 부담) = ") + f"{remit:,}원. "
+            + (f"과세표준은 원 미만(국고금 관리법 제47조제2항), 세액은 10원 미만(같은 조 제1항, 지방소득세는 지방세기본법 제59조 준용)을 버려 과세표준 − 세액 합계({base - total_tax:,}원)가 "
+               f"송금액과 {gap:,}원 다르다 — 그 {gap:,}원은 송금하지도 납부하지도 않는 끝수이고, 지급자가 실제로 내는 돈은 송금액 + 세액 합계 = {remit + total_tax:,}원"
+               if gap else
+               f"과세표준 − 세액 합계({base - total_tax:,}원)와 같다(끝수 없음). 지급자가 실제로 내는 돈은 송금액 + 세액 합계 = {remit + total_tax:,}원"))
         판단_목록.append(f"순액 약정: 약정 순액 {amount:,}원 → 과세표준 {base:,}원(÷ (1 − {float(den_rate)*100:g}%)). "
                      + ("지방소득세까지 지급자 부담 — 유추" if payer_bears_local_tax else "법인세(소득세)만 지급자 부담, 지방소득세는 수취인 몫에서 차감")
                      + ". 서식(export_workbook)에 넣을 때는 amount에 과세표준을 넣어 net_of_tax 없이 계산한 결과를 쓴다")
