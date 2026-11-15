@@ -42,7 +42,7 @@ def loss_carryforward_ledger(years, sme=True, opening_losses=None):
     for i, o in enumerate(opening_losses or []):
         yr, amt = (o or {}).get("year"), (o or {}).get("amount")
         if not isinstance(yr, int) or not 2009 <= yr < (ok_years[0] if ok_years else YEAR_MAX):
-            문제.append(f"opening_losses[{i}].year={yr!r} — 2009년부터 첫 사업연도 전까지(2008년 이전 발생분은 당시 공제기간 부칙을 대조하지 않아 지원하지 않음)")
+            문제.append(f"opening_losses[{i}].year={yr!r} — 2009년부터 첫 사업연도 전까지(2008.12.31. 이전 개시 사업연도 발생분은 공제기간 5년이라 2016년 이후 사업연도에 남는 잔액이 없음 — 구 법인세법 제13조제1호(2008.12.26. 시행본 '개시일전 5년이내'), 법률 제9267호 부칙 제3조: 10년은 2009.1.1. 이후 최초로 개시하는 사업연도 발생분부터)")
         if isinstance(amt, bool) or not isinstance(amt, int) or amt <= 0:
             문제.append(f"opening_losses[{i}].amount — 미공제 결손금 잔액(원, 양의 정수)")
     if 문제:

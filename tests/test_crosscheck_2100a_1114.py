@@ -90,8 +90,12 @@ def test_other_intangible_effective_fiscal_year():
     # 2024.1.1.~12.31.은 차목 없음 — 범위 밖
     r = call("depreciation_adjustment", {**_D, "year": 2024, "method": "무신고", "booked_depreciation": 20 * M})
     assert "error" in r and "부칙 제6조" in r["문제"][0]
-    # 무신고 사업연도 중 사용개시분의 월할은 원문으로 확정하지 못함 — 계산하지 않음
-    assert "error" in call("depreciation_adjustment", {**_D, "method": "무신고", "booked_depreciation": 0, "in_service_date": "2025-07-01"})
+    # 무신고 사업연도 중 사용개시분: 영 제26조⑨(사용한 날부터 사업연도 종료일까지 월수) — 1억 ÷ 5 × 6/12 = 10,000,000, 기초부터 쓰면 20,000,000
+    r = call("depreciation_adjustment", {**_D, "method": "무신고", "booked_depreciation": 20 * M, "in_service_date": "2025-07-01"})
+    assert r["결과"]["상각범위액"] == 10 * M and r["결과"]["상각부인액"] == 10 * M
+    assert any("제26조⑨" in j["근거"] for j in r["판단"])
+    r = call("depreciation_adjustment", {**_D, "method": "무신고", "booked_depreciation": 20 * M, "in_service_date": "2025-01-01"})
+    assert r["결과"]["상각범위액"] == 20 * M
     assert "error" in call("depreciation_adjustment", {**_D, "method": "정률법", "useful_life": 4, "booked_depreciation": 0})
 
 
@@ -126,6 +130,6 @@ def test_high_dividend_not_before_2026():
 def test_late_filing_shows_both():
     base = {"year": 2024, "sme": True, "general_revenue": 5_000 * M, "expensed": 80 * M, "market": 20 * M, "fy_end": "2024-12-31"}
     r = call("entertainment_limit", {**base, "filing_date": "2026-02-10"})     # 신고기한 2025.3.31.(10%) → 수정신고 2026.2.(20%)
-    assert r["해석_미확인_신고기한기준"]["전통시장등_비율"] == 0.1 and any("해석 미확인" in n for n in r["주의"])
-    assert r["해석_미확인_신고기한기준"]["한도"] < r["결과"]["한도"]
-    assert "해석_미확인_신고기한기준" not in call("entertainment_limit", {**base, "filing_date": "2025-03-20"})
+    assert r["신고기한기준_결과"]["전통시장등_비율"] == 0.1 and any("근거 없음" in n and "서면질의 필요" in n for n in r["주의"])
+    assert r["신고기한기준_결과"]["한도"] < r["결과"]["한도"]
+    assert "신고기한기준_결과" not in call("entertainment_limit", {**base, "filing_date": "2025-03-20"})
