@@ -49,6 +49,7 @@ If you build an agent with Anthropic's BM25 tool search (`tool_search_tool_bm25`
 | Statutory form sheets in that workbook (`detail="forms"`), or every per-call sheet (`detail="full"`) | `export_workbook` with `detail` |
 | Tax memo or opinion as a Word document (.docx) — not built here | korean-tax-mcp `tax_memo_guide`, then `build_tax_memo` |
 | Excel workings in English for foreign readers (labels as "English (Korean)") | `export_workbook` with `lang="en"` |
+| Give English (or other wording) to labels left in Korean — do not open and re-save the file, stored values would be lost and phones show 0 | `export_workbook` with `labels={"원래 라벨": "text"}` |
 
 The table lists the main tools; `find_tool` searches all 139.
 

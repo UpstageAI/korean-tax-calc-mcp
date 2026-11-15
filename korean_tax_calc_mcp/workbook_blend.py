@@ -707,7 +707,8 @@ def _sheet_of_name(dn) -> str | None:
 
 
 def add_sheets(wb, cfg: dict, *, lang: str, title: str, company: str, period: str, calls: list, results: list[dict],
-               label=None, detail: str = "full", roles: dict | None = None, judgement_counts: dict[int, int] | None = None) -> dict:
+               label=None, detail: str = "full", roles: dict | None = None, judgement_counts: dict[int, int] | None = None,
+               labels=None) -> dict:
     """통합 문서 시트를 워크북 맨 앞에 넣는다. 돌려주는 값: {"시트": 새 시트 이름(순서대로), "이름_바꿈": {옛: 새}, "warnings": [...],
     "서식_수": 신고 서식 시트 수, "안내": {앞 시트 이름: 영문 한 줄}}.
 
@@ -717,7 +718,23 @@ def add_sheets(wb, cfg: dict, *, lang: str, title: str, company: str, period: st
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter as L
     en = lang == "en"
-    label = label or (lambda s: s)
+    label = label or (labels.label if labels is not None else (lambda s: s))
+
+    def shown(x: dict) -> str:
+        """줄·입력 이름 — 호출자가 준 라벨 표(labels)에 그 줄의 이름(찍히는 글 또는 국문 줄 이름)이 있으면 그 글.
+        결과 키 별칭으로는 바꾸지 않는다(시나리오 줄에는 이미 제 이름이 있음 — 결과 키는 '계산 상세'·'계산 N'에서 바뀜)."""
+        text = x["en"] if en else x["ko"]
+        if labels is None:
+            return text
+        if en and x["ko"] and f"({x['ko']})" in text:      # 이미 '표시 글 (원래 키)' 꼴(결과 키를 옮긴 줄)
+            return text
+        for k in (text, x["ko"]):
+            if isinstance(k, str) and k.strip() in labels.table:
+                own = labels.table[k.strip()]
+                labels.used.add(k.strip())
+                return f"{own} ({k.strip()})" if en and k != x["en"] and k != text and own != k else own
+        return text
+
     face = "Calibri" if en else "맑은 고딕"
     F = lambda **k: Font(name=face, **{"size": 10, **k})
     f_title, f_sub = F(bold=True, size=14), F(italic=True, size=9, color=GREY)
@@ -824,7 +841,7 @@ def add_sheets(wb, cfg: dict, *, lang: str, title: str, company: str, period: st
                     continue
                 k = (inp["ko"], inp["value"])
                 if k not in rate_rows:
-                    rate_rows[k] = put_input(inp, inp["en"] if en else inp["ko"], inp["src_en"] if en else inp["src_ko"], False)
+                    rate_rows[k] = put_input(inp, shown(inp), inp["src_en"] if en else inp["src_ko"], False)
                 in_ref[(c["idx"], inp["id"])] = rate_rows[k]
         ri += 1
     for b in blocks:
@@ -846,7 +863,7 @@ def add_sheets(wb, cfg: dict, *, lang: str, title: str, company: str, period: st
                 if not many and done:
                     in_ref[(c["idx"], id_)] = next(iter(done.values()))
                     continue
-                text = str(s.get("label") or (inp["en"] if en else inp["ko"])) + (f" — {c['heading']}" if many and len(have) > 1 else "")
+                text = str(s.get("label") or shown(inp)) + (f" — {c['heading']}" if many and len(have) > 1 else "")
                 less_ref = ""
                 if s.get("less") is not None:
                     less_ref = put_input(_inp("less", "", "", s["less"]), str(s.get("less_label") or _t("less", en)), s.get("less_source", ""), False)
@@ -914,7 +931,7 @@ def add_sheets(wb, cfg: dict, *, lang: str, title: str, company: str, period: st
         for kind, x in [("inputs", x) for x in in_rows] + [("rows", x) for x in calc_rows]:
             rr = row_at[(kind, rk(x))]
             is_input = kind == "inputs"
-            as_text(ws.cell(rr, 1, x["en"] if en else x["ko"])).font = F()
+            as_text(ws.cell(rr, 1, shown(x))).font = F()
             ws.cell(rr, 1).alignment = wrap
             for j, c in enumerate(b["columns"], 2):
                 sp = c["spec"]
@@ -1026,7 +1043,7 @@ def add_sheets(wb, cfg: dict, *, lang: str, title: str, company: str, period: st
         ws_s.row_dimensions[r].height = 15 * max(lines(h, 16) for h, _ in cols)
         r += 1
         for x in b["_rows"]:
-            as_text(ws_s.cell(r, 1, x["en"] if en else x["ko"])).font = F(bold=x["key"] and x["id"] in ("total", "penalty"))
+            as_text(ws_s.cell(r, 1, shown(x))).font = F(bold=x["key"] and x["id"] in ("total", "penalty"))
             for j, (_, c) in enumerate(cols, 2):
                 ref = cell_of.get((c["idx"], x["id"]))
                 if ref and cell_label.get((c["idx"], x["id"])) == x["ko"]:

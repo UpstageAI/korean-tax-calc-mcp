@@ -115,13 +115,52 @@ def _cap(s: str) -> str:
     return s[:1].upper() + s[1:] if s[:1].islower() else s
 
 
-class Translator:
-    """국문 라벨 → 'English (국문)'. 찾지 못한 라벨은 그대로 돌려주고 missing에 모은다."""
+class Labels:
+    """호출자가 준 라벨 치환 표 {원래 키·라벨: 표시할 글}. 쓰인 키를 적어 두었다가 안 쓰인 키를 warnings로 알린다.
+    도구는 글을 지어내지 않는다 — 표에 있는 글만 쓴다."""
 
-    def __init__(self) -> None:
+    def __init__(self, table: dict[str, str], *, en: bool) -> None:
+        self.table = {str(k).strip(): str(v).strip() for k, v in table.items()}
+        self.en = en
+        self.used: set[str] = set()
+
+    def get(self, key: Any) -> str | None:
+        """표시할 글(영문 모드는 '표시 글 (원래 키)' — 원래 키를 잃지 않게). 표에 없으면 None."""
+        if not isinstance(key, str):
+            return None
+        k = key.strip()
+        text = self.table.get(k)
+        if text is None:
+            return None
+        self.used.add(k)
+        return f"{text} ({k})" if self.en and text != k else text
+
+    def label(self, s: Any) -> Any:
+        """국문 모드의 라벨 칸: 전체가 표에 있으면 그 글, 'a.b' 경로는 마디마다."""
+        if not isinstance(s, str) or s.startswith("="):
+            return s
+        hit = self.get(s)
+        if hit is not None:
+            return hit
+        s0 = s.strip()
+        if "." in s0 and not re.search(r"\d\.\d|\. ", s0):
+            parts = [self.get(p) or p for p in s0.split(".")]
+            return ".".join(parts)
+        return s
+
+    def unused(self) -> list[str]:
+        return [k for k in self.table if k not in self.used]
+
+
+class Translator:
+    """국문 라벨 → 'English (국문)'. 찾지 못한 라벨은 그대로 돌려주고 missing에 모은다.
+    custom(호출자가 준 라벨 표)이 있으면 용어집보다 먼저 본다."""
+
+    def __init__(self, custom: "Labels | None" = None) -> None:
         self.terms = load_glossary()
         self.missing: list[str] = []
         self.translated: list[str] = []
+        self.custom = custom
 
     def _lookup(self, s: str) -> str | None:
         if s in _UI:
@@ -139,6 +178,10 @@ class Translator:
 
     def _one(self, s: str) -> str:
         """한 라벨(경로 한 마디)."""
+        own = self.custom.get(s) if self.custom else None
+        if own is not None:
+            self._hit(s)
+            return own
         if not _HANGUL.search(s):
             return s
         hit = self._lookup(s)
@@ -157,7 +200,11 @@ class Translator:
 
     def label(self, s: Any) -> Any:
         """라벨·결과 키·표 머리글. 'a.b' 경로는 마디마다, '확인 (키)'는 키만 옮긴다."""
-        if not isinstance(s, str) or not _HANGUL.search(s) or s.startswith("="):
+        if not isinstance(s, str) or s.startswith("="):
+            return s
+        if self.custom is not None and s.strip() in self.custom.table:
+            return self._one(s.strip())
+        if not _HANGUL.search(s):
             return s
         s0 = s.strip()
         if s0 in _UI or _norm(s0) in self.terms:
@@ -241,6 +288,24 @@ def _calc_sheet(ws, T: Translator) -> None:
                 moved = True
     if moved:
         ws.column_dimensions["C"].width = 70
+
+
+def apply_labels_ko(wb, labels: Labels) -> None:
+    """국문 통합 문서의 '계산 N' 시트: 머리글 줄과 A열 항목 이름을 호출자가 준 글로 바꾼다(값·수식·정의된 이름은 그대로)."""
+    for ws in wb.worksheets:
+        if not _CALC_RE.match(ws.title):
+            continue
+        value_rows = getattr(ws, "_ktc_value_rows", set())
+        for r in range(1, ws.max_row + 1):
+            if r in value_rows:
+                continue
+            a = ws.cell(r, 1)
+            if _is_header(a):
+                for c in ws[r]:
+                    if _is_text(c) and _is_header(c):
+                        c.value = labels.label(c.value)
+            elif _is_text(a) and not a.quotePrefix:
+                a.value = labels.label(a.value)
 
 
 def _summary_cells(ws, T: Translator, title: str, layout: str) -> None:

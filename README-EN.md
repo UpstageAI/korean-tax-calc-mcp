@@ -184,7 +184,7 @@ The example questions in "Try asking" above (royalty to a US parent, secondee re
 <details>
 <summary><b>What the review workbook contains (sheets and statutory forms)</b></summary>
 
-Formula cells also carry their calculated values, so the numbers show in phone viewers and chat or mail previews that do not recalculate formulas (Excel recalculates from the formulas on open).
+Formula cells also carry their calculated values, so the numbers show in phone viewers and chat or mail previews that do not recalculate formulas (Excel recalculates from the formulas on open). Re-saving the file with openpyxl or similar drops those values, so to change wording do not edit the file: change the inputs (`labels`, `scenarios`, `sources`, `issues`, `review_notes`) and call the tool again. `labels` is a table {original label: text to show}; with `lang="en"` it prints "text (Korean original)" and is the way to give English to labels the glossary does not cover (listed in the result under `번역_없음`).
 
 | Sheet | Content |
 |---|---|

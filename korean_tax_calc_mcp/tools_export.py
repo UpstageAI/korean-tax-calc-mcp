@@ -629,7 +629,7 @@ def _summary_sheet(wb, title, company, period, calls, 결과들, review_notes, b
 
 def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str | None = None, layout: str = "forms",
                         company: str = "", period: str = "", biz_no: str = "", review_notes=None, lang: str = "ko",
-                        scenarios=None, sources=None, issues=None, detail: str | None = None) -> dict:
+                        scenarios=None, sources=None, issues=None, detail: str | None = None, labels=None) -> dict:
     """server.export_workbook의 본문(서명·설명은 그쪽 참조). mcp는 순환 import를 피해 호출 시점에 가져온다."""
     from .server import mcp
     # ── calls가 문자열이면 JSON으로 풀기 ──
@@ -661,6 +661,22 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
         return {"error": "입력 확인 필요 — detail은 'compact'·'forms'·'full' 가운데 하나",
                 "안내": "compact = 앞 시트 + '계산 상세' 한 장(scenarios·sources·issues를 줄 때 기본), forms = compact + 신고 서식 시트, full = 서식·계산 N·입력·가정·판단·근거 전부"}
     _detail = detail or "compact"     # 통합 문서일 때만 쓰임 — 선택 입력이 없으면 기존 출력 그대로
+    # ── labels: 호출자가 주는 라벨 치환 표 {원래 키·라벨: 표시할 글} — 파일을 열어 고치지 않고 표기를 바꾸는 길 ──
+    _labels = None
+    if labels not in (None, "", {}, []):
+        _표 = labels
+        if isinstance(_표, str):
+            try:
+                _표 = _json.loads(_표)
+            except Exception:
+                _표 = None
+        if not isinstance(_표, dict) or not all(isinstance(k, str) and k.strip() and isinstance(v, str) and v.strip() for k, v in _표.items()):
+            return {"error": "입력 확인 필요 — labels는 {원래 키·라벨: 표시할 글} 꼴의 객체(글자 → 글자)",
+                    "안내": "예: {\"약정_순액\": \"Agreed net amount\"} — 키는 시트에 찍힌 원래 이름(결과 키, 경로는 마디마다), 값은 표시할 글"}
+        if any(v.lstrip().startswith("=") for v in _표.values()):
+            return {"error": "입력 확인 필요 — labels의 표시할 글은 '='로 시작할 수 없음", "안내": "수식이 아니라 글만 받음"}
+        from .workbook_i18n import Labels
+        _labels = Labels(_표, en=lang == "en")
 
     오류_call: list[str] = []
     결과들: list[dict] = []  # 각 call의 (label, tool, result_or_error, basis)
@@ -747,7 +763,7 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
     _T = None
     if lang == "en":
         from .workbook_i18n import Translator
-        _T = Translator()
+        _T = Translator(_labels)
 
     if layout == "steps":
         # ── 1. 요약 시트 (steps 모드, 기존 동작) ──
@@ -2302,14 +2318,18 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
         _ren = apply_english(wb, _T, layout=layout, title=title, form_info=_서식_표기, results=결과들, guide=_blend is None)
         시트이름들 = [_ren.get(n, n) for n in 시트이름들]
         if _T.missing:
-            _경고.append(f"{UNTRANSLATED_TITLE}: {len(_T.missing)} label(s) have no glossary entry and are kept in Korean — "
+            _경고.append(f"{UNTRANSLATED_TITLE}: {len(_T.missing)} label(s) have no glossary entry and are kept in Korean "
+                        f"(to show them in English pass them in `labels` and call again — do not edit the saved file) — "
                         + "; ".join(_T.missing))
+    elif _labels is not None:      # 국문: '계산 N' 시트의 항목 이름을 호출자가 준 글로
+        from .workbook_i18n import apply_labels_ko
+        apply_labels_ko(wb, _labels)
     # ── 통합 문서: 요약·입력·출처·시나리오 시트·쟁점 목록을 맨 앞에(선택 입력이 있을 때만) ──
     _통합 = None
     if _blend is not None:
         from .workbook_blend import add_sheets as _blend_add
         _통합 = _blend_add(wb, _blend, lang=lang, title=title, company=company, period=period, calls=calls, results=결과들,
-                         label=_T.label if _T else None, detail=_detail, roles=_구실, judgement_counts=_판단_줄수)
+                         label=_T.label if _T else None, detail=_detail, roles=_구실, judgement_counts=_판단_줄수, labels=_labels)
         if _detail == "full":
             시트이름들 = _통합["시트"] + [_통합["이름_바꿈"].get(n, n) for n in 시트이름들]
             if _T is not None and _구실["summary"] is not None:      # 영문 시트 안내 표 — 앞에 더한 시트까지 나열
@@ -2359,4 +2379,17 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
             out["warnings"] = _경고
     if _캐시_경고:
         out["warnings"] = list(out.get("warnings") or []) + [_캐시_경고]
+    if _labels is not None:
+        out["결과"]["labels_적용"] = sorted(_labels.used)
+        _안쓴 = _labels.unused()
+        if _안쓴:
+            out["warnings"] = list(out.get("warnings") or []) + [
+                ("labels: no label with this name on the sheets (not applied) — " if _T is not None else "labels: 시트에서 이 이름의 라벨을 찾지 못해 적용하지 않음 — ")
+                + "; ".join(_안쓴)]
+    if _T is not None and _T.missing:
+        out["결과"]["번역_없음_안내"] = ("영문 표기가 필요하면 파일을 열어 고치지 말고 labels={원래 라벨: 영문}에 넣어 다시 호출 — "
+                                 "To show these in English, pass labels={Korean label: English text} and call again; do not edit the saved file.")
+    out["결과"]["파일_안내"] = ("이 파일을 openpyxl 등으로 열어 다시 저장하지 말 것 — 저장된 계산값이 지워져 휴대폰·미리보기에서 0으로 보임. "
+                          "글·라벨·쟁점·출처를 바꾸려면 입력(labels·scenarios·sources·issues·review_notes)을 고쳐 다시 호출. "
+                          "Do not re-save this file with openpyxl or similar (stored values are lost and phone viewers show 0) — change the inputs and call again.")
     return out
