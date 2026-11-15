@@ -61,7 +61,7 @@ def _col_a(ws):
 def test_ko_is_unchanged(tmp_path, tool):
     base, ko = _export(tmp_path, tool), _export(tmp_path, tool, "ko")
     assert set(base) == set(ko) == {"결과", "근거"}                       # 결과에 lang·warnings 같은 키를 더하지 않음
-    assert set(ko["결과"]) == {"파일", "시트", "call_수", "오류_call"}
+    assert set(ko["결과"]) == {"파일", "시트", "call_수", "오류_call", "파일_안내"}      # 파일_안내: 다시 저장하지 말라는 한 줄(0.55.1)
     assert base["결과"]["시트"] == ko["결과"]["시트"]
     assert {"요약", "목록", "입력·가정", "계산 1", "판단·근거"} <= set(ko["결과"]["시트"])
     wa, wb = openpyxl.load_workbook(base["결과"]["파일"]), openpyxl.load_workbook(ko["결과"]["파일"])

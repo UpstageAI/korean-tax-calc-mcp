@@ -212,6 +212,8 @@ mcp = MCPServer(
                  "계산 결과를 엑셀이나 법정서식으로 달라고 하면 엑셀 파일을 직접 만들지 말고 export_workbook(calls=이미 부른 도구 호출 목록)을 쓴다 — 법정서식 틀(금액 칸은 수식), 계산 근거, 입력·가정, 판단·근거 시트가 함께 나온다. "
                  "사용자가 엑셀·스프레드시트·계산 근거·workings를 원하면 계산 도구를 부른 뒤 그 호출 목록을 export_workbook에 넘겨 완성된 .xlsx 파일을 받는다(결과.파일 = 저장 경로). 파이썬 등으로 xlsx를 직접 만들지 않는다 — 여러 계산·시나리오는 scenarios, 입력 출처는 sources, 쟁점 표는 issues에 넣으면 요약·입력·출처·시나리오·쟁점 목록 시트가 수식으로 연결되어 나온다(뒤에는 '계산 상세' 한 장 — 신고 서식까지 받으려면 detail='forms'). "
                  "When the user asks for Excel, a spreadsheet or workings, pass the calculation tool calls to export_workbook, which writes the finished .xlsx file and returns its path; do not write your own spreadsheet script. "
+                 "export_workbook이 만든 파일을 openpyxl 등으로 열어 다시 저장하지 않는다 — 저장된 계산값이 지워져 휴대폰·미리보기에서 0으로 보인다. 글·라벨·쟁점·출처를 바꾸려면 입력(labels·scenarios·sources·issues·review_notes)을 고쳐 다시 호출한다(영문 문서에 국문으로 남은 라벨은 결과의 번역_없음을 labels에 넣는다). "
+                 "Do not re-save a file made by export_workbook with openpyxl or similar (stored values are lost and phone viewers show 0); change its inputs (labels, scenarios, sources, issues, review_notes) and call it again. "
                  "자료 불일치·가정·확인할 서류·판단이 갈리는 쟁점은 export_workbook의 review_notes에 넣어 '요약' 시트에 싣는다. 서식 틀이 없는 항목은 따로 정리해 덧붙여도 된다. "
                  "도구 결과는 한국어로 나오지만, 답변은 사용자가 질문한 언어로 작성한다(국문 용어는 괄호로 병기). Tool results are in Korean; always answer in the language the user asked in, keeping key Korean terms in parentheses. "
                  + AUDIT_INSTRUCTIONS)
@@ -10402,9 +10404,12 @@ def export_workbook(
     sources: Annotated[list | str | None, Field(description="입력값 출처(선택) — [{call, arg, source, assumption, from_call, from_row, less}]. arg는 그 call의 입력 이름(예: amount), source는 문서명·조문, assumption=true면 가정으로 노랑 표시. 입력이 다른 call의 결과에서 온 값이면 from_call(그 call)·from_row(결과 줄 이름, 예: 원천징수세액)·less(차감할 금액, 선택)를 적어 수식으로 잇는다(값이 맞을 때만). '입력·출처(Inputs)' 시트의 출처 열에 실림")] = None,
     issues: Annotated[list | str | None, Field(description="쟁점 목록(선택) — [{no, issue, finding, risk, action}](국문 키 번호·쟁점·발견·위험도·조치도 됨). 적은 글을 그대로 '쟁점 목록(Issues Log)' 시트에 표로 싣는다 — 도구는 쟁점을 판단하지 않음")] = None,
     detail: Annotated[Literal["compact", "forms", "full"] | None, Field(description="뒤에 붙는 시트(선택, scenarios·sources·issues를 줄 때만 적용) — 'compact'(기본): 앞 시트 + '계산 상세(Calc detail)' 한 장, 'forms': compact + 신고 서식 시트, 'full': 서식·call별 '계산 N'·입력·가정·판단·근거 전부")] = None,
+    labels: Annotated[dict | str | None, Field(description="라벨 치환 표(선택) — {시트에 찍힌 원래 키·라벨: 표시할 글}(JSON 문자열도 됨). 예: {\"약정_순액\": \"Agreed net amount\"}. lang='en'이면 '표시할 글 (원래 국문)'으로, 'ko'이면 표시할 글로 찍는다. 결과의 번역_없음에 나온 라벨에 영문을 붙일 때 쓴다 — 저장된 파일을 열어 고치지 않는다")] = None,
 ) -> dict:
     """Produces a finished Excel (.xlsx) workings file with live formulas from calculation tool results, saves it in output_dir and returns its absolute path in result '파일'; use this instead of writing your own spreadsheet script whenever the user asks for Excel, a spreadsheet, workings or a calculation schedule (계산 근거 엑셀).
     완성된 엑셀(.xlsx) 파일을 만들어 output_dir 폴더에 저장하고 절대경로(결과.파일)를 돌려준다 — 엑셀·스프레드시트·계산 근거(workings)를 달라고 하면 파이썬 등으로 xlsx를 직접 만들지 말고 이 도구를 쓴다. 각 call은 서버가 직접 다시 실행하며, 결과·계산·세무조정·판단·산식을 탭으로 펼치고 금액 칸은 도구 값과 대조되는 수식으로 둔다.
+    Do not open the saved file with openpyxl or similar and save it again: the stored formula values are lost and phone viewers and previews show 0. To change wording, labels, issues or sources, change the inputs (labels, scenarios, sources, issues, review_notes) and call this tool again.
+    만든 파일을 openpyxl 등으로 열어 다시 저장하지 말 것 — 저장된 계산값이 지워져 휴대폰·미리보기에서 0으로 보인다. 글·라벨·쟁점·출처를 바꾸려면 입력(labels·scenarios·sources·issues·review_notes)을 고쳐 다시 호출한다.
 언제: 계산 결과(세무조정·소득처분·판단·산식)를 실무자가 검토할 수 있는 엑셀 파일로 남길 때, 사용자가 엑셀·스프레드시트·계산 근거 파일을 원할 때, 여러 계산(지급 건별·시나리오별)을 한 통합 문서로 묶을 때.
 입력:
   title — 문서 제목(파일명 기본값).
@@ -10436,6 +10441,10 @@ def export_workbook(
     forms — compact + 신고 서식 시트. 서식 칸이 가리키는 호출 입력은 '계산 상세' 아래 '서식 연결 칸'에 둔다.
     full — 서식 틀, call별 '계산 N', 입력·가정, 판단·근거, 목록까지 전부. 기존 '요약'·'입력·가정'은 '호출 요약'(lang='en'이면 'Call summary'·'Call inputs')으로 이름이 바뀐다.
     lang='en'이면 scenarios·sources·issues의 글도 영문으로 적는다(적은 글은 번역하지 않고 그대로 싣는다).
+  labels — 라벨 치환 표(선택) {원래 키·라벨: 표시할 글}. 통합 문서의 요약·입력·출처·시나리오·'계산 상세'·'그 밖의 계산' 시트와 '계산 N' 시트의 항목 이름 칸에 적용한다.
+    키는 시트에 찍힌 원래 이름(도구 결과 키 — '역산.세율_구성' 같은 경로는 마디마다 '역산', '세율_구성'; 시나리오 시트의 줄은 시트에 찍힌 줄 이름 또는 국문 줄 이름). lang='en'이면 '표시할 글 (원래 국문)',
+    lang='ko'이면 표시할 글만 찍는다. 도구는 번역을 지어내지 않고 준 글만 쓴다. 수식·정의된 이름·대조 칸·법정서식 틀 시트는 그대로. 시트에 없는 키는 warnings에 나열, 쓰인 키는 결과.labels_적용.
+    lang='en' 결과의 번역_없음(용어집에 없어 국문 그대로 찍힌 라벨)에 영문을 붙이려면 그 라벨을 labels에 넣어 다시 호출한다.
   '요약' 시트(layout='forms'): 세액 요약(소득금액 집계·산출세액 call이 있을 때), 세무조정 항목별 근거와 계산 시트, call별 주요 값, 검토·확인 필요 사항.
   시트 규칙: '계산 N'은 N번째 call(오류 call 포함, call마다 한 장). 같은 도구를 여러 번 부르면 신고서 한 부에 한 장인
     서식(별지3·15·34, 부가 별지19 등)은 마지막 call이 본 시트, 앞선 call은 '<시트> (호출 N)' 시트. 자산·거래·소득자마다 한 장인
@@ -10443,15 +10452,18 @@ def export_workbook(
     모으는 줄(부가 신고서 (4) 간주공급·(8) 대손세액 가감·(29) 가산세액, 별지25 부동산임대)은 한 장. 서식 칸은 그 값을 만든 call에서 채운다.
 
 결과:
-  결과.파일 — 저장한 .xlsx 파일의 절대경로(output_dir 안, 같은 이름이 있으면 ' (2)'를 붙임).
+  결과.파일 — 저장한 .xlsx 파일의 절대경로(output_dir 안, 같은 이름이 있으면 ' (2)'를 붙임). 수식 칸에 계산 값도 함께 저장해 휴대폰·미리보기에서도 값이 보임
+    (Excel은 열 때 수식으로 다시 계산). 파일을 openpyxl 등으로 다시 저장하면 그 값이 지워지므로 고칠 것은 입력으로 넘겨 이 도구로 다시 만든다.
+    계산 값을 쓰지 못한 칸이 있으면 warnings에 "미리보기에서 값이 안 보일 수 있는 칸 n개".
   결과.시트 — 시트 이름 목록.
   결과.call_수 — calls 길이.
   결과.오류_call — 오류 발생한 call의 label 목록.
+  결과.파일_안내 — 파일을 다시 저장하지 말고 입력을 고쳐 다시 호출하라는 한 줄. labels를 줬을 때: 결과.labels_적용(쓰인 키), 시트에 없는 키는 warnings.
   scenarios·sources·issues를 줬을 때만: 결과.통합_시트(맨 앞에 더한 시트 이름), 결과.detail, 결과.서식_안내(compact에서 서식이 있을 때), warnings(맞는 줄을 찾지 못한 notes·sources).
-  lang='en'일 때만: 결과.lang, 결과.번역_라벨_수, 결과.번역_없음(용어집에 없는 국문 라벨 목록), warnings(같은 내용을 한 줄로).
+  lang='en'일 때만: 결과.lang, 결과.번역_라벨_수, 결과.번역_없음(용어집에 없는 국문 라벨 목록 — detail과 무관하게 돌려줌), 결과.번역_없음_안내(labels에 넣어 다시 호출), warnings(같은 내용을 한 줄로).
   근거 — '계산 도구 결과 정리(세무 자문 아님)'."""
     return _export_workbook_impl(title, calls, output_dir, filename, layout, company, period, biz_no, review_notes, lang,
-                                 scenarios, sources, issues, detail)
+                                 scenarios, sources, issues, detail, labels)
 
 
 # ── 국세 우선권에 따른 매각대금 배분(국세기본법 제35조·제36조) ──────────────────────
