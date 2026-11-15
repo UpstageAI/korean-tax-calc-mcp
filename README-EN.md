@@ -77,7 +77,7 @@ If you do not know which tool to use, ask `find_tool` in plain words.
 
 [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp) is the companion server for statutes, addenda, rulings and cases. With both installed, "find the basis → compute → fill the form" runs in one conversation, and this server's `find_tool` returns ready-to-call statute lookups for questions it has no calculator for (rent tax credit, pension-account credit, stock gains …).
 
-To pick up a new release right away: `uvx --refresh korean-tax-calc-mcp` (uvx caches the downloaded version). Pin with `uvx korean-tax-calc-mcp@0.56.1`.
+To pick up a new release right away: `uvx --refresh korean-tax-calc-mcp` (uvx caches the downloaded version). Pin with `uvx korean-tax-calc-mcp@0.57.0`.
 
 Optional keys: `LAW_OC` (law.go.kr lookups in two audit tools), `UPSTAGE_API_KEY` (PDF table extraction), `VWORLD_KEY` (official property price lookup).
 
@@ -125,7 +125,7 @@ flowchart TD
   T --> B["Tax base<br/>loss carryforward limit"]
   B --> C["Tax<br/>corporate_tax"]
   C --> G["Credits, reductions, minimum tax<br/>employment, investment, R and D, startup"]
-  G --> X["Review workbook<br/>export_workbook"]
+  G --> X["Statutory-form workbook<br/>export_workbook"]
   V1["VAT parts<br/>tax base, deemed supply, input tax, FX, reverse charge"] --> V2["VAT return<br/>vat_return_general"] --> X
   W1["Withholding<br/>residents, non-residents, wages, daily workers"] --> W2["Withholding return<br/>withholding_return"] --> X
   P["Foreign workers and foreign companies<br/>flat tax, foreign expert reduction<br/>non-resident gains withholding, inheritance and gift<br/>branch profits tax, exit tax"] -->|calculation sheet| X
@@ -175,24 +175,25 @@ Ask in English, get Korean statute-backed answers. Every tool description starts
 | Nonresident selling Korean real estate or shares — withholding; inheritance/gift tax for nonresidents | `nonresident_capital_gains_withholding` · `nonresident_inheritance_gift` |
 | Foreign company with a Korean branch — branch profits tax; Korean PE test | `branch_profits_tax` · `permanent_establishment_guide` (korean-tax-mcp) |
 | Resident major shareholder emigrating — departure (exit) tax | `emigration_exit_tax` |
-| Workings in English for a head-office tax team or a foreign accountant — labels as "English (Korean)" | `export_workbook` with `lang="en"` |
-| Check that the tax figures in a workbook you laid out yourself agree with the calculation tools, and list the amounts not checked | `verify_workbook` |
+| Statutory-form workbook or check sheet in English for a head-office tax team or a foreign accountant — labels as "English (Korean)" | `export_workbook` / `verify_workbook` with `lang="en"` |
+| Check the amount cells of a workings or report workbook you built yourself against the calculation tools, and list the amounts not checked | `verify_workbook` |
 
 The example questions in "Try asking" above (royalty to a US parent, secondee recharge, Singapore dividend, flat tax) all use these tools.
 
 </details>
 
 <details>
-<summary><b>What the review workbook contains (sheets and statutory forms)</b></summary>
+<summary><b>Excel — checking a workbook you built, and the statutory-form workbook (sheets and forms)</b></summary>
 
 Formula cells also carry their calculated values, so the numbers show in phone viewers and chat or mail previews that do not recalculate formulas (Excel recalculates from the formulas on open). Re-saving the file with openpyxl or similar drops those values, so to change wording change the inputs (`labels`, `scenarios`, `sources`, `issues`, `review_notes`) and call the tool again; if the file was re-saved, running `verify_workbook` on it fills the values back in. `labels` is a table {original label: text to show}; with `lang="en"` it prints "text (Korean original)" and is the way to give English to labels the glossary does not cover (listed in the result under `번역_없음`).
 
-There are two ways to deliver Excel workings. Either way every amount goes through a calculation tool (one call per scenario).
+Workings and report workbooks are **built by the AI itself** — layout, sheets and names are free, organised around the reader's questions with only the lines that matter. Every amount comes from a calculation tool call, and after saving, `verify_workbook` checks the amount cells. Amounts that were not checked are disclosed to the user.
 
-1. **`export_workbook`** — pass the calculation calls and it builds the workbook with formulas, sources and tool checks. Side-by-side scenarios (including as-filed vs correct) go in `scenarios`, formula links between calls for shortfalls and differences in `sources` (`from_call`, `less`), findings in `issues`, actions and deadlines in `actions`, the key figures of the summary in `key_figures`, and tables that are not tool calculations (your own re-checks and estimates) in `extra_sheets`. A table in `extra_sheets` becomes a sheet as given (same-sheet arithmetic, `SUM` and `ROUND`-family formulas stay live; references to other sheets or files are an input error) and is marked "not verified by the calculation tools" on the sheet and in the summary legend.
-2. **Build it yourself** — the layout is yours. After saving, run `verify_workbook(path, checks)` to compare the amount cells with calculation tool results. It returns match / mismatch (both values and the difference), the amounts no check covers and the number of formula cells without a stored value, and saves a copy with a 'Tool check' sheet (the original is untouched; formula cells in the copy carry values).
+- **`verify_workbook(path, checks, auto)`** — every calculation result carries a short `호출_id` (call id, e.g. `c7`). A check of `{cell: "Sheet!B9", call: "c7"}` compares the cell with that call's result (without `key` it finds the result key holding the same value; if none, it reports the nearest key and the difference). A check with only `cell`, or `auto=true`, looks for the same value across all recorded calls — shown and counted separately as "auto (same value)" because equal numbers can coincide. Call ids live only while the server process runs (the latest 300 calls); without a record, check with `{cell, tool, args}`.
+- It returns match / mismatch (both values and the difference), the amounts no check covers and a few side checks. The copy gets one 'Tool check' sheet: a one-line summary, the check table (basis shown as a number, each basis text once below the table) and the unchecked amounts as one line per sheet. The original is untouched; formula cells in the copy carry values.
+- **`export_workbook`** builds Korean statutory return forms (별지 서식) in Excel — filing forms with fixed box numbers and wording. It is not needed for a general workings workbook. Its optional inputs (`scenarios`, `sources`, `issues`, `actions`, `key_figures`, `extra_sheets`, `labels`, `detail`) remain for when a standard-layout workings file is wanted.
 
-In the combined workbook (any of `scenarios`, `sources`, `issues`, `actions`, `key_figures`) the Summary sheet fits one screen: a key-figure table (item / amount / link to where it is worked out / note, totals in bold on yellow), the actions and deadlines table, one line counting the issues and the colour key. This replaces the repeated scenario blocks of 0.55.x (row positions changed). The table below lists the sheets made without those optional inputs.
+With the optional inputs (any of `scenarios`, `sources`, `issues`, `actions`, `key_figures`) the Summary sheet fits one screen: a key-figure table (item / amount / link to where it is worked out / note, totals in bold on yellow), the actions and deadlines table, one line counting the issues and the colour key. Notes about the supporting tabs and `detail` are not printed on the sheet; they come back in the result (`시트_안내`, `서식_안내`). The table below lists the sheets made without those optional inputs.
 
 | Sheet | Content |
 |---|---|
@@ -460,8 +461,8 @@ Click a group to expand its tools.
 
 | Tool | What it does |
 |---|---|
-| `export_workbook` | calculation workbook |
-| `verify_workbook` | checks the amount cells of a workbook you built yourself against the calculation tools |
+| `export_workbook` | Korean statutory return forms (별지 서식) in Excel |
+| `verify_workbook` | after you save a workbook you built yourself, checks its amount cells against the calculation tools (by call id) |
 
 </details>
 <details>
@@ -473,7 +474,7 @@ Click a group to expand its tools.
 
 </details>
 
-- **Excel export**: see 'What the review workbook contains' above for the sheets and forms. `entertainment_limit` also produces Form 23(a) and (b).
+- **Statutory-form Excel**: see 'Excel — checking a workbook you built, and the statutory-form workbook' above for the sheets and forms. `entertainment_limit` also produces Form 23(a) and (b).
 - **Cross-border adjustments chain on**: the arm's-length range, outbound loan interest, secondee cost, foreign subsidiary dividend, CFC and provision tools return adjustment items (type, amount, disposition, basis) with their results, so they go straight into `income_adjustment_total` and on to the statement of adjustments (Form 15). Arm's-length adjustments are recorded as provisional reserve (code 700) until repatriation is confirmed.
 - **Ledger input**: adjustment tools take ledger lines as written (name, amount, receipt, nature) and return item judgments, adjustments and income dispositions.
 - **Issue flags**: non-resident withholding and thin capitalization results list points that may be disputed and what to check (no conclusion).

@@ -1238,11 +1238,11 @@ def add_sheets(wb, cfg: dict, *, lang: str, title: str, company: str, period: st
         r += 1
     support = (_t("support", en) if detail == "full" else _t("support_forms", en, d=n_det, n=n_forms) if detail == "forms" and n_forms
                else _t("support_compact", en, d=n_det))
-    tail = [_t("key", en), support, _t("disclaimer", en)]
+    # 읽는 사람에게 하는 말만 시트에 둔다(색 범례, 작성자가 넣은 표 표시, 참고 자료 문구). 뒤 시트 구성과 detail 안내는 호출자에게 하는 말이라
+    # 시트에 찍지 않고 결과의 시트_안내·서식_안내로만 돌려준다(0.57.0).
+    tail = [_t("key", en), _t("disclaimer", en)]
     if n_extra:
         tail.insert(1, _t("extra_key", en, s=", ".join(f"'{n}'" for n in n_extra)))
-    if detail == "compact" and n_forms:
-        tail.append(_t("forms_hint", en, n=n_forms))
     for text in tail:
         ws_s.cell(r, 1, text).font = f_sub
         r += 1
@@ -1371,5 +1371,5 @@ def add_sheets(wb, cfg: dict, *, lang: str, title: str, company: str, period: st
     else:
         wb._sheets = [wb[n] for n in front] + [s for s in wb._sheets if s.title not in front]
     wb.active = 0
-    return {"시트": front, "이름_바꿈": ren, "warnings": warnings, "서식_수": n_forms, "안내": guide, "상세": n_det,
+    return {"시트": front, "이름_바꿈": ren, "warnings": warnings, "서식_수": n_forms, "안내": guide, "상세": n_det, "시트_안내": support,
             "자유_시트": n_extra, "자유_위치": len(front) - (1 if n_iss else 0), "resolve": resolve}

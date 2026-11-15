@@ -27,12 +27,23 @@ def _outside_gloss(s: str) -> str:
         s = t
 
 
-def _rows(ws, first=6):
+def _rows(ws, first=5):
+    """대조 표의 줄 — 0.57.0 틀: 머리 행 4행, 칸 / 항목 / 통합 문서 값 / 도구 값 / (차이) / 판정 / 근거 번호 · 결과 키."""
     out = []
     for r in range(first, ws.max_row + 1):
         if ws.cell(r, 1).value is None:
             break
-        out.append([ws.cell(r, j).value for j in range(1, 9)])
+        out.append([ws.cell(r, j).value for j in range(1, 8)])
+    return out
+
+
+def _notes(ws):
+    """표 아래 근거 줄 — {번호: 글}."""
+    out = {}
+    for r in range(1, ws.max_row + 1):
+        m = re.match(r"\[(\d+)\] (.*)$", str(ws.cell(r, 1).value or ""), re.S)
+        if m:
+            out[int(m.group(1))] = m.group(2)
     return out
 
 
@@ -49,23 +60,25 @@ def pair(tmp_path_factory):
 def test_verify_en_result_keys_use_the_glossary(pair):
     _, _, _, en = pair
     rows = _rows(openpyxl.load_workbook(en["결과"]["사본"])["Tool check"])
-    keys = [r[6] for r in rows]
-    assert keys[0] == f"{NW} · Withholding tax amount (원천징수세액)"
-    assert keys[1] == f"{NW} · Local income tax (지방소득세)"
-    assert keys[3] == f"{PEN} · Penalty tax (가산세)"
+    keys = [r[5] for r in rows]
+    assert keys[0] == "[1] Withholding tax amount (원천징수세액)"
+    assert keys[1] == "[1] Local income tax (지방소득세)"
+    assert keys[3].endswith("] Penalty tax (가산세)") and keys[3] != keys[0][:3] + " Penalty tax (가산세)"      # 다른 도구 — 다른 근거 번호
     assert all(not HANGUL.search(_outside_gloss(k)) for k in keys)
 
 
 def test_verify_en_basis_is_an_english_citation(pair):
     _, _, ko, en = pair
-    rows = _rows(openpyxl.load_workbook(en["결과"]["사본"])["Tool check"])
+    ws = openpyxl.load_workbook(en["결과"]["사본"])["Tool check"]
+    rows, notes = _rows(ws), _notes(ws)
     raw = ko["결과"]["대조"][0]["근거"]
     assert raw.startswith("법인세법 제98조")                                  # 도구가 돌려준 글(국문)
-    assert rows[0][7].startswith("Corporate Tax Act (법인세법) Art. 98(1)")
-    assert "제98조" not in rows[0][7] and "①" not in rows[0][7]
-    pen = rows[3][7]
-    assert pen.startswith("Framework Act on National Taxes (국세기본법) Art. 47-5(1)") and "Enforcement Decree Art. 27-4" in pen
-    assert all(not re.search(r"제\d+조|[①-⑳]|\d호", r[7]) for r in rows)        # 조문 번호가 국문 꼴로 남지 않음
+    first = notes[int(rows[0][5][1:rows[0][5].index("]")])]
+    assert first.startswith(f"{NW} (") and "— Corporate Tax Act (법인세법) Art. 98(1)" in first
+    assert "제98조" not in first and "①" not in first
+    pen = notes[int(rows[3][5][1:rows[3][5].index("]")])]
+    assert "— Framework Act on National Taxes (국세기본법) Art. 47-5(1)" in pen and "Enforcement Decree Art. 27-4" in pen
+    assert all(not re.search(r"제\d+조|[①-⑳]|\d호", t) for t in notes.values())        # 조문 번호가 국문 꼴로 남지 않음
     # 결과 JSON의 대조 줄은 도구가 돌려준 글 그대로(기계가 읽는 값)
     assert en["결과"]["대조"][0]["근거"] == raw and en["결과"]["대조"][0]["키"] == "원천징수세액"
 
@@ -73,15 +86,17 @@ def test_verify_en_basis_is_an_english_citation(pair):
 def test_verify_en_reports_untranslated_and_ko_is_unchanged(pair):
     _, _, ko, en = pair
     assert en["결과"]["lang"] == "en" and isinstance(en["결과"]["번역_없음"], list)
-    sheet_text = " ".join(str(v) for r in _rows(openpyxl.load_workbook(en["결과"]["사본"])["Tool check"]) for v in (r[6], r[7]))
+    ws_en = openpyxl.load_workbook(en["결과"]["사본"])["Tool check"]
+    sheet_text = " ".join([str(r[5]) for r in _rows(ws_en)] + list(_notes(ws_en).values()))
     for miss in en["결과"]["번역_없음"]:
         assert miss in sheet_text                                              # 국문 그대로 시트에 남은 것만 올린다
     if en["결과"]["번역_없음"]:
         assert "labels" in en["결과"]["번역_없음_안내"]
     # 국문 모드: 결과 키도 시트도 그대로
     assert not {"lang", "번역_없음", "번역_없음_안내", "labels_적용"} & set(ko["결과"])
-    rows = _rows(openpyxl.load_workbook(ko["결과"]["사본"])["검산"])
-    assert rows[0][6] == f"{NW} · 원천징수세액" and rows[0][7] == ko["결과"]["대조"][0]["근거"]
+    ws_ko = openpyxl.load_workbook(ko["결과"]["사본"])["검산"]
+    rows = _rows(ws_ko)
+    assert rows[0][5] == "[1] 원천징수세액" and _notes(ws_ko)[1].endswith("— " + ko["결과"]["대조"][0]["근거"])
     # 대조 결과·숫자는 언어와 무관
     assert en["결과"]["요약"] == ko["결과"]["요약"]
     strip = lambda rs: [{k: v for k, v in r.items()} for r in rs]
@@ -97,7 +112,7 @@ def test_verify_values_and_formulas_same_in_both_languages(pair):
             for cell in row:
                 assert b[name][cell.coordinate].value == cell.value                       # 수식·글
                 assert bv[name][cell.coordinate].value == av[name][cell.coordinate].value  # 저장된 값
-    num = lambda ws: [[v for v in r[2:5]] for r in _rows(ws)]
+    num = lambda ws: [[v for v in r[2:4]] for r in _rows(ws)]
     assert num(a["검산"]) == num(b["Tool check"])
 
 
@@ -110,13 +125,13 @@ def test_verify_labels_apply_to_keys_and_phrases(tmp_path):
     again = c("verify_workbook", {"path": path, "checks": checks, "lang": "en", "filename": "b",
                                   "labels": {"역산": "Gross-up", "역산에_쓴_세율": "Gross-up rate", "없는_키": "Nothing"}})
     row = _rows(openpyxl.load_workbook(again["결과"]["사본"])["Tool check"])[0]
-    assert row[6] == f"{NW} · Gross-up (역산).Gross-up rate (역산에_쓴_세율)"
+    assert row[6] == "[1] Gross-up (역산).Gross-up rate (역산에_쓴_세율)"      # 세율 칸이 아니라 불일치 — 차이 열이 있어 한 칸 뒤
     assert again["결과"]["labels_적용"] == ["역산", "역산에_쓴_세율"]
     assert "역산" not in again["결과"]["번역_없음"]
     assert any("없는_키" in w for w in again["warnings"])
     # 국문 모드에서도 labels는 표에 있는 글을 그대로 적는다
     ko = c("verify_workbook", {"path": path, "checks": checks, "filename": "c", "labels": '{"역산에_쓴_세율": "역산 세율"}'})
-    assert _rows(openpyxl.load_workbook(ko["결과"]["사본"])["검산"])[0][6] == f"{NW} · 역산.역산 세율"
+    assert _rows(openpyxl.load_workbook(ko["결과"]["사본"])["검산"])[0][6] == "[1] 역산.역산 세율"
     bad = c("verify_workbook", {"path": path, "checks": checks, "labels": {"역산": "=1+1"}})
     assert "error" in bad and "labels" in bad["error"]
 

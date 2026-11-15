@@ -138,9 +138,8 @@ def test_result_and_description_say_not_to_resave(made):
     assert en["번역_없음"] and "labels" in en["번역_없음_안내"] and "번역_없음_안내" not in ko
     assert "`labels`" in next(w for w in made["en", "plain"]["warnings"] if w.startswith("Untranslated labels"))
     doc = S.mcp._tool_manager._tools["export_workbook"].description
-    head = doc[:1500]
-    head = doc[:2200]      # 0.56.0: 사실 안내(다시 저장하면 계산값이 지워짐) + 다시 채우는 길(verify_workbook)
-    assert "다시 저장하면" in head and "Re-saving the file" in head and "verify_workbook" in head and "언제:" in doc and "입력:" in doc and "labels —" in doc
+    # 0.57.0: 설명을 줄이면서 결과 절로 옮김 — 사실 안내(다시 저장하면 계산값이 지워짐) + 다시 채우는 길(verify_workbook)
+    assert "다시 저장하면" in doc and "Re-saving the file" in doc and "verify_workbook" in doc and "언제:" in doc and "입력:" in doc and "labels(" in doc
     assert "다시 저장하면" in S.mcp.instructions and "Re-saving a file made by export_workbook" in S.mcp.instructions
 
 
