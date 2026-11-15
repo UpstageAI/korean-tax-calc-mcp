@@ -143,8 +143,8 @@ def _amount(key, n, base, vat, prop, liquor, prof):
     raise ValueError(key)
 
 
-def _cap(key, base, vat, liquor, act_date, prof=False):
-    """처벌법 벌금 상한(자목) — 행위일 시행본."""
+def _cap(key, base, vat, liquor, prof=False):
+    """처벌법 벌금 상한(자목). 제3조~제14조의 벌금 상한은 2016.3.2. 시행본과 2021.1.1. 시행본(현행)이 같아 행위일로 나누지 않는다(법제처 대조 2026-11-15)."""
     b = Fraction(base or 0)
     caps = {"제3조제1항본문": b * 2, "제3조제1항단서": b * 3, "제4조제1항": b * 5, "제4조제2항": b * 5, "제4조의2": Fraction(30_000_000),
             "제5조": b * 5, "제7조제1항·제2항": Fraction(30_000_000), "제7조제3항": Fraction(20_000_000), "제8조": Fraction(20_000_000),
@@ -184,7 +184,7 @@ def _voluntary_rate(v):
     return Fraction(0), "6개월 넘어 기한 후 신고 — 감경 없음"
 
 
-def settlement(offenses, notice_date, act_date=None, table_basis="통고일"):
+def settlement(offenses, notice_date, act_date=None, table_basis="통고일", _alt=True):
     문제 = []
     try:
         nd = datetime.date.fromisoformat(notice_date)
@@ -206,7 +206,7 @@ def settlement(offenses, notice_date, act_date=None, table_basis="통고일"):
     tbl = _table(tdate)
     경고 = []
     if ad and _table(ad) != _table(nd):
-        경고.append(f"행위일({ad}) 기준 표는 {TABLE_LABEL[_table(ad)]}, 통고일({nd}) 기준 표는 {TABLE_LABEL[_table(nd)]} — 개정 부칙에 적용례가 없어 어느 쪽인지 해석이 필요함(이 계산은 {table_basis} 기준)")
+        경고.append(f"행위일({ad}) 기준 표는 {TABLE_LABEL[_table(ad)]}, 통고일({nd}) 기준 표는 {TABLE_LABEL[_table(nd)]} — 개정 부칙에 적용례가 없음(이 계산은 {table_basis} 기준, 다른 기준 결과는 '다른_기준_결과')")
     if ad and datetime.date(2019, 1, 1) <= ad < T2_FROM and any(o.get("offense") in ("제15조제1항", "제16조제1항") for o in offenses if isinstance(o, dict)):
         경고.append("2019.1.1.~2.11. 행위: 처벌법 제15·16조는 범칙행위였지만 별표에는 2019.2.12. 개정 전까지 기준(저·처목)이 없었음")
     rows = []
@@ -246,24 +246,34 @@ def settlement(offenses, notice_date, act_date=None, table_basis="통고일"):
         amt, note = _amount(key, n, base, vat, o.get("property_value"), liquor or {}, bool(o.get("professional")))
         steps = [f"개별기준({OFFENSES[key][0]}, {min(n, 3)}차{' 이상' if n >= 3 else ''}): {note} = {int(amt):,}"]
         cur = amt
+        each = Fraction(0); n_adj = 0     # 개별기준 금액에 각각 곱해 더하고 빼는 해석(다른_해석)용
         if habitual:
             cur = cur * Fraction(3, 2); steps.append(f"나목 상습 50% 가중 → {int(cur):,}")
+            each += amt / 2; n_adj += 1
         if vol is not None:
             r, why = _voluntary_rate(vol)
             if r:
                 cur = cur * (1 - r)
+                each -= amt * r; n_adj += 1
             steps.append(f"다목: {why}" + (f" → {int(cur):,}" if r else ""))
         if aid:
             cur = cur * (1 - aid); steps.append(f"라목 방조 감경 {float(aid):.0%}(재량, 입력값) → {int(cur):,}")
+            each -= amt * aid; n_adj += 1
         if impaired:
             cur = cur / 2; steps.append(f"마목 심신미약·청각 및 언어 장애 50% 감경 → {int(cur):,}")
-        cap, capnote = _cap(key, base, vat, liquor or {}, ad, bool(o.get("professional")))
+            each -= amt / 2; n_adj += 1
+        cap, capnote = _cap(key, base, vat, liquor or {}, bool(o.get("professional")))
         capped = False
         if cur > cap:
             cur, capped = cap, True; steps.append(f"자목: 처벌법 벌금 상한 {int(cap):,}" + (f"({capnote})" if capnote else "") + "을 넘어 상한으로")
         fin = int(cur) // 10 * 10
         steps.append(f"아목: 10원 미만 절사 → {fin:,}")
-        rows.append({"offense": key, "목": OFFENSES[key][0], "차수": min(n, 3), "개별기준": int(amt), "벌금상당액": fin, "상한_적용": capped, "단계": steps})
+        row = {"offense": key, "목": OFFENSES[key][0], "차수": min(n, 3), "개별기준": int(amt), "벌금상당액": fin, "상한_적용": capped, "단계": steps}
+        if n_adj >= 2:      # 가중·감경이 둘 이상일 때만 두 해석의 금액이 갈림
+            alt = int(min(max(amt + each, Fraction(0)), cap)) // 10 * 10
+            if alt != fin:
+                row["다른_해석_벌금상당액"] = alt
+        rows.append(row)
     if 문제:
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제}
     g1keys = GROUP1 - ({"제15조제1항", "제16조제1항"} if tbl == "T1" else set())
@@ -283,15 +293,26 @@ def settlement(offenses, notice_date, act_date=None, table_basis="통고일"):
     total = (t1 + t2) // 10 * 10
     if g1 and g2:
         경합.append(f"바목3): 두 그룹을 각각 산정해 합산 {t1:,} + {t2:,} = {total:,}")
-    return {"결과": {"벌금상당액_합계": total, "범칙행위별": rows, "경합": 경합, "적용_별표": TABLE_LABEL[tbl], "표_기준일": f"{table_basis} {tdate}"},
+    다른_기준 = None
+    if _alt and ad and _table(ad) != _table(nd):      # 개정 별표의 기준일에 적용례가 없어 다른 기준의 결과도 함께 낸다
+        other = "행위일" if table_basis == "통고일" else "통고일"
+        o2 = settlement(offenses, notice_date, act_date, other, _alt=False)
+        다른_기준 = ({"기준": other, "계산 불가": o2.get("문제")} if "error" in o2 else
+                  {"기준": other, "적용_별표": o2["결과"]["적용_별표"], "벌금상당액_합계": o2["결과"]["벌금상당액_합계"],
+                   "범칙행위별": [{"offense": r["offense"], "벌금상당액": r["벌금상당액"]} for r in o2["결과"]["범칙행위별"]]})
+    return {"결과": {"벌금상당액_합계": total, "범칙행위별": rows, "경합": 경합, "적용_별표": TABLE_LABEL[tbl], "표_기준일": f"{table_basis} {tdate}",
+                   **({"다른_기준_결과": 다른_기준} if 다른_기준 else {})},
             "경고": 경고,
             "근거": "조세범 처벌절차법 제15조①1호·④·⑤, 시행령 제12조②·[별표] 벌금상당액 부과기준(" + TABLE_LABEL[tbl] + "), 조세범 처벌법 해당 조문(벌금 상한)",
             "판단": [{"항목": "납부·고발", "결론": "통고서를 송달받은 날부터 15일 이내에 이행하지 않으면 고발해야 함. 15일이 지났어도 고발 전에 이행하면 고발하지 않음. "
                                             "벌금상당액은 국세징수법 제12조①의 방법으로 납부(2023.1.17. 신설)", "근거": "조세범 처벌절차법 제17조②, 제15조⑤"},
                    {"항목": "통고 이행 효과", "결론": "통고대로 이행하면 같은 사건으로 다시 조사받거나 처벌받지 않음", "근거": "조세범 처벌절차법 제15조③"}],
             "주의": ["가중·감경은 사목 순서(횟수→상습→수정신고→방조→심신미약→경합)로 앞 단계 결과에 차례로 적용함 — 각 목의 문언은 '개별기준에 따른 벌금상당액의 …'이라 "
-                   "개별기준 금액에 각각 곱하는 해석도 가능(실무 확인 필요)",
+                   "개별기준 금액에 각각 곱하는 해석도 가능. 어느 쪽인지 정한 해석은 없음 — 근거 없음(국세법령정보시스템 검색 2026-11-15), 서면질의 필요. "
+                   "가중·감경이 둘 이상이라 금액이 갈리면 범칙행위별 '다른_해석_벌금상당액'에 함께 냄",
                    "자목 상한은 범칙행위마다 가중·감경 뒤에 적용하고, 경합 가중 뒤 다시 적용하지 않음",
-                   "개정 별표의 기준일(행위일·통고처분일)은 부칙 적용례가 없어 해석이 필요함 — 기본은 통고처분일(2012.2.2. 시행령 부칙의 '최초로 부과하는 통고처분부터' 선례)",
+                   "개정 별표의 기준일(행위일·통고처분일): 2016.12.5.·2019.2.12.·2023.2.28.·2026.2.27. 개정 부칙은 '공포한 날부터 시행'만 있고 적용례가 없음 — 근거 없음"
+                   "(법제처 부칙 원문·국세법령정보시스템 검색 2026-11-15), 서면질의 필요. 기본은 통고처분일(2012.2.2. 시행령 부칙 제2조 '이 영 시행 후 최초로 부과하는 통고처분부터' 선례)이고, "
+                   "act_date를 주어 두 기준의 표가 다르면 '다른_기준_결과'에 함께 냄",
                    "범칙행위 해당 여부, 제3조① 단서 해당 여부, 상습·방조 여부, 위반 횟수는 사실 판단 — 요건은 조문 MCP의 tax_crime_guide로 확인",
                    "통고처분·고발·무혐의 같은 처분 선택과 위원회 심의는 계산하지 않음 — 조세범칙조사 절차(조문 MCP)"]}

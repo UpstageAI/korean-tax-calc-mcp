@@ -38,7 +38,8 @@ def test_both_from_2024(year):
 
 
 def test_2019_unverified_and_2018_additional():
-    assert "부칙을 확인" in J(fo(2019, **BIG))["통합·개별기업보고서 제출자"]
+    # 갈음 단서(구 법 제11조① 단서)는 법률 제16843호 부칙 제2조에 따라 2020.1.1. 이후 개시 과세연도분부터 — 2019 사업연도에는 없음
+    assert "갈음 규정 없음" in J(fo(2019, **BIG))["통합·개별기업보고서 제출자"]
     r = fo(2018, **BIG)
     assert "추가로 제출" in J(r)["통합·개별기업보고서 제출자"] and r["결과"]["국제거래명세서"] is True
     assert r["결과"]["제출기한"].startswith("2019-03-31")

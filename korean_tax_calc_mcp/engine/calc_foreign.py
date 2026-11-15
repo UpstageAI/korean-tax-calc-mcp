@@ -71,10 +71,10 @@ _DOCS = ["사업계획서(자금조달·운용계획)", "신용정보 채무불�
 _SMALL_EVENTS = {"신설출자", "증액출자", "지분양수", "금전대여", "지점설치"}
 
 
-def _reporting_deadline(event: str, event_date: date, paid_in: bool,
+def _reporting_deadline(event: str, event_date: date,
                         ownership_ratio_after: float, loan_term_months: int | None,
                         counterparty_resident: bool, cumulative_usd: float,
-                        fiscal_year_end: date, main_bank_type: str, largest_shareholder: bool | None = None) -> dict:
+                        main_bank_type: str, largest_shareholder: bool | None = None) -> dict:
     """신고 구분·기한·서류(규정 제9-5조·제9-6조·제9-9조) — 이벤트 날짜의 규정(fx_rule)으로."""
     fdi, _ = _is_fdi(event, ownership_ratio_after, loan_term_months, False)
     if not fdi:
@@ -112,7 +112,7 @@ def _reporting_deadline(event: str, event_date: date, paid_in: bool,
 def _aftercare_schedule(event: str, event_date: date, paid_in: bool,
                         cumulative_usd: float, ownership_ratio_after: float,
                         loan_term_months: int | None,
-                        counterparty_resident: bool, recovered_usd: float | None,
+                        counterparty_resident: bool,
                         fiscal_year_end: date) -> list[dict]:
     """사후관리 보고서 일정(규정 제9-9조①)."""
     sched = []
@@ -186,8 +186,7 @@ def _aftercare_schedule(event: str, event_date: date, paid_in: bool,
     return sched
 
 
-def _tax_connection(event: str, fdi: bool, ownership_ratio_after: float,
-                    event_date: date, fiscal_year_end: date,
+def _tax_connection(event: str, fdi: bool, fiscal_year_end: date,
                     loan_term_months: int | None) -> dict:
     """세무 연결(국조법 제58조, 법인46012-3838, 법인46012-1986)."""
     안내 = []
@@ -254,18 +253,17 @@ def foreign_exchange_reporting(
     fdi, 사유 = _is_fdi(event, ownership_ratio_after, loan_term_months, financial_business)
 
     # 신고
-    신고 = _reporting_deadline(event, ed, paid_in, ownership_ratio_after,
-                                loan_term_months, counterparty_resident, cumulative_usd, fy,
+    신고 = _reporting_deadline(event, ed, ownership_ratio_after,
+                                loan_term_months, counterparty_resident, cumulative_usd,
                                 main_bank_type, largest_shareholder)
 
     # 사후관리 일정
     사후관리 = _aftercare_schedule(event, ed, paid_in, cumulative_usd,
                                     ownership_ratio_after, loan_term_months,
-                                    counterparty_resident,
-                                    recovered_usd, fy)
+                                    counterparty_resident, fy)
 
     # 세무 연결
-    세무 = _tax_connection(event, fdi and event != "청산", ownership_ratio_after, ed, fy, loan_term_months)
+    세무 = _tax_connection(event, fdi and event != "청산", fy, loan_term_months)
     if event == "청산":
         # 청산은 새 신고가 아니라 사후관리(청산보고서) — 지분·금액으로 만든 신고 안내를 붙이지 않는다
         신고 = {"구분": "해당없음", "기관": "", "기한": "", "서류": [], "비고": "청산은 새 신고가 아니라 사후관리(청산보고서, 제9-6조) 대상"}
@@ -303,7 +301,7 @@ def foreign_exchange_reporting(
 
 # ── 특수관계인 거래: 법인세법 제52조(부당행위계산 부인) vs 국조법 정상가격 조정 — 공용 분기 ──────────────
 # 국제거래에는 법인세법 제52조를 적용하지 않는다(국조법 제4조②, 2020년까지 제3조②). 다만 시행령이 정한 "자산의 증여 등" 네 가지는
-# 국제거래라도 법인세법 제52조(국조령 제4조, 2018년까지 제3조의2 — 2016·2018·2021·2023·2026 시행본 대조, 네 호 내용 동일).
+# 국제거래라도 법인세법 제52조(국조령 제4조, 2019년까지 개시분 제3조의2·2020년 개시분 제3조의3 — 2016~2021·2023·2026 시행본 대조, 네 호 내용 동일).
 INTL_EXCEPTION_TYPES = {
     "무상이전·채무면제": "자산을 무상으로 이전(현저히 저렴한 대가를 받고 이전하는 경우는 제외)하거나 채무를 면제하는 경우(1호)",
     "무수익자산": "수익이 없는 자산을 매입하거나 현물출자를 받는 경우 또는 그 자산에 대한 비용을 부담하는 경우(2호)",
@@ -325,7 +323,8 @@ def related_party_law(foreign_related: bool, transaction_type: str = "일반", y
     old = year is not None and year <= 2020
     법 = "구 국제조세조정에 관한 법률 제3조②" if old else "국제조세조정에 관한 법률 제4조②"
     정상 = "구 국제조세조정에 관한 법률 제4조" if old else "국제조세조정에 관한 법률 제7조"
-    영 = ("구 시행령 '부당행위계산 부인의 적용 범위' 조(2018년까지 제3조의2)" if old else "시행령 제4조")
+    # 구 시행령: 2020.2.10.까지 제3조의2, 대통령령 제30405호(2020.2.11.)로 제3조의3으로 이동 — 부칙 제2조: 2020.1.1. 이후 개시 과세연도분부터(2026-11-15 2016~2020 시행본 대조)
+    영 = (("구 시행령 제3조의3" if year == 2020 else "구 시행령 제3조의2") if old else "시행령 제4조")
     out = {}
     if transaction_type in INTL_EXCEPTION_TYPES:
         out = {"적용": "법인세법",
@@ -336,6 +335,4 @@ def related_party_law(foreign_related: bool, transaction_type: str = "일반", y
                "결론": ("국외특수관계인과의 국제거래 — 법인세법 제52조를 적용하지 않고 정상가격으로 조정. "
                         "3억원·5% 기준 없이 정상가격과의 차액이 조정 대상(거주자 소득이 줄어드는 방향)"),
                "근거": f"{법}, {정상}"}
-    if year is not None and 2019 <= year <= 2020:
-        out["주의"] = f"{year}년 시행령의 적용 범위 조문 번호는 대조하지 않음(2018년까지 제3조의2, 2021년부터 제4조 — 네 호 내용은 같음)"
     return out

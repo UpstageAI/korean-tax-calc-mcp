@@ -69,7 +69,8 @@ def test_named_comparables_and_notes():
 def test_input_errors():
     assert "error" in f(comparables=[0.03], tested_value=0.02, tested_is_resident=True)
     assert "error" in f(comparables=[0.03, "x"], tested_value=0.02, tested_is_resident=True)
-    assert "error" in f(comparables=C8, tested_value=0.02, year=2020, tested_is_resident=True)
+    assert "error" not in f(comparables=C8, tested_value=0.02, year=2020, tested_is_resident=True)      # 2016~2020은 구 시행령 제6조④⑤(2026-11-15)
+    assert "error" in f(comparables=C8, tested_value=0.02, year=2015, tested_is_resident=True)
     assert "error" in f(comparables=[0.01, 0.02], tested_value=0.02, quartile_method="exclusive", tested_is_resident=True)
     assert "error" in f(comparables=C8, tested_value=0.008, point="직접입력", tested_is_resident=True)
     assert "error" not in f(comparables=C8, tested_value=0.02, year=2025, tested_is_resident=True)

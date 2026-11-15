@@ -9,6 +9,7 @@
   · 잔여재산 분배액이 주식 취득가액을 넘으면 그 초과액은 의제배당
   · 못 미치면 그 차액은 청산이 끝나 잔여재산 분배가 완료된(배분 가능한 잔여재산이 없음이 확인된) 날이 속하는 사업연도의 손금"""
 from datetime import date
+from . import tp_era as ERA
 
 from . import calc_cit as CC
 
@@ -42,7 +43,7 @@ def loss_carryforward_ledger(years, sme=True, opening_losses=None):
     for i, o in enumerate(opening_losses or []):
         yr, amt = (o or {}).get("year"), (o or {}).get("amount")
         if not isinstance(yr, int) or not 2009 <= yr < (ok_years[0] if ok_years else YEAR_MAX):
-            문제.append(f"opening_losses[{i}].year={yr!r} — 2009년부터 첫 사업연도 전까지(2008년 이전 발생분은 당시 공제기간 부칙을 대조하지 않아 지원하지 않음)")
+            문제.append(f"opening_losses[{i}].year={yr!r} — 2009년부터 첫 사업연도 전까지(2008.12.31. 이전 개시 사업연도 발생분은 공제기간 5년이라 2016년 이후 사업연도에 남는 잔액이 없음 — 구 법인세법 제13조제1호(2008.12.26. 시행본 '개시일전 5년이내'), 법률 제9267호 부칙 제3조: 10년은 2009.1.1. 이후 최초로 개시하는 사업연도 발생분부터)")
         if isinstance(amt, bool) or not isinstance(amt, int) or amt <= 0:
             문제.append(f"opening_losses[{i}].amount — 미공제 결손금 잔액(원, 양의 정수)")
     if 문제:
@@ -89,7 +90,7 @@ def loss_carryforward_ledger(years, sme=True, opening_losses=None):
                    "한도율은 중소기업 등 100% — 회생계획 이행 법인 등 시행령 제10조①의 법인도 100%이므로 해당하면 sme=true로 입력"]}
 
 
-def foreign_subsidiary_liquidation(tax_basis, distribution, completed_on="", fy_end="", ownership_ratio=1.0, book_value=None):
+def foreign_subsidiary_liquidation(tax_basis, distribution, completed_on="", fy_end="", book_value=None):
     문제 = []
     for nm, v in (("tax_basis", tax_basis), ("distribution", distribution)):
         if isinstance(v, bool) or not isinstance(v, int) or v < 0:
@@ -153,7 +154,7 @@ _ADD = ("익금산입", "손금불산입")
 _SUB = ("손금산입", "익금불산입")
 _DISP_ADD = ("유보", "상여", "배당", "기타소득", "기타사외유출", "기타", "출자의 증가", "임시유보", "이전소득 배당")
 _EQUITY = "출자의 증가"
-# 임시유보·이전소득 배당(0.41.1): 국조령 제22조~제25조(2021·2022·2023·2025·2026 시행본 대조). 임시유보는 반환 여부 확인 전의 처분이라 유보 표에 넣지 않고 그 해 금액만 따로 보여 줌.
+# 임시유보·이전소득 배당(0.41.1): 국조령 제22조~제25조(2021·2022·2023·2025·2026 시행본 대조). 2016~2020은 구 시행령 제15조·제15조의2·제16조(tp_era, 2026-11-15 대조). 임시유보는 반환 여부 확인 전의 처분이라 유보 표에 넣지 않고 그 해 금액만 따로 보여 줌.
 _TEMP = "임시유보"
 _TP_ONLY = (_TEMP, "이전소득 배당")
 _DISP_SUB = ("유보", "기타")
@@ -176,8 +177,6 @@ def tax_adjustment_schedule(years, sme=True, opening_reserves=None, opening_loss
                 문제.append(f"years[{i}].adjustments[{j}].amount — 원(0 이상 정수)")
             if kind not in _ADD + _SUB:
                 문제.append(f"years[{i}].adjustments[{j}].kind={kind!r} — {list(_ADD + _SUB)}")
-            elif disp in _TP_ONLY and kind in _ADD and isinstance(yr, int) and yr <= 2020:
-                문제.append(f"years[{i}].adjustments[{j}].disposition={disp!r} — 2021 사업연도부터 지원(2020년까지는 구 시행령을 대조하지 않음)")
             elif disp not in (_DISP_ADD if kind in _ADD else _DISP_SUB):
                 문제.append(f"years[{i}].adjustments[{j}].disposition={disp!r} — {kind}은 {list(_DISP_ADD if kind in _ADD else _DISP_SUB)}"
                           + ("(손금산입·익금불산입의 '유보'는 △유보)" if kind in _SUB else ""))
@@ -228,9 +227,11 @@ def tax_adjustment_schedule(years, sme=True, opening_reserves=None, opening_loss
             rows[-1]["출자의_증가_누계"] = sum(equity_cum.values())
         if tmp:
             rows[-1]["임시유보"] = [{"항목": n, "당기": v} for n, v in sorted(tmp.items())]
-            판단.append({"항목": f"{yr}년 임시유보", "결론": f"{sum(tmp.values()):,}원 — 국외특수관계인 거래의 정상가격 조정으로 익금에 넣은 금액은 반환 여부를 확인하기 전까지 임시유보. 신고한 날부터 90일 안에 이전소득금액 반환 확인서를 내지 않으면 "
-                       "상대방이 내국법인이 출자한 법인이면 출자의 증가, 주주이거나 그 밖의 자이면 배당으로 처분. 유보 표에는 넣지 않고 그 해 금액만 보여 줌",
-                       "근거": "국제조세조정에 관한 법률 제13조①, 시행령 제22조~제24조"})
+            _d = ERA.disposition(yr)
+            판단.append({"항목": f"{yr}년 임시유보", "결론": f"{sum(tmp.values()):,}원 — 국외특수관계인 거래의 정상가격 조정으로 익금에 넣은 금액은 반환 여부를 확인하기 전까지 임시유보. {_d['기산']}부터 90일 안에 이전소득금액 반환 확인서를 내지 않으면 "
+                       "상대방이 내국법인이 출자한 법인이면 출자의 증가, 주주이거나 그 밖의 자이면 배당으로 처분. 유보 표에는 넣지 않고 그 해 금액만 보여 줌"
+                       + ("(2019년까지 개시한 과세연도의 임시유보는 과세당국의 처분으로만 규정 — 최초 신고 때 스스로 조정한 금액의 처분은 조문에 없음: 근거 없음(구 국조법령 2016~2019 시행본, 2026-11-15), 서면질의 필요)" if ERA.era(yr) == ERA.ERA_OLD else ""),
+                       "근거": _d["판단_근거"]})
         if eq:
             old = yr <= 2020
             판단.append({"항목": f"{yr}년 출자의 증가", "결론": f"{sum(eq.values()):,}원 — 국외특수관계인(내국법인이 출자한 법인)에게서 반환받은 것으로 확인되지 않은 익금산입액은 그 법인에 대한 출자의 증가로 조정. 사외유출이 아니어서 원천징수 대상 처분이 아니고, 유보 표와 따로 누계로 보여 줌",
@@ -252,7 +253,7 @@ def tax_adjustment_schedule(years, sme=True, opening_reserves=None, opening_loss
     if equity_cum:
         tot["기말_출자의_증가_누계"] = sum(equity_cum.values())
         주의_출자 = ["출자의 증가: 이전소득금액 반환 확인서를 시행령이 정한 기한(90일) 안에 내면 이 조정을 하지 않음. 상대방이 내국법인의 주주이거나 그 밖의 자이면 출자의 증가가 아니라 배당. "
-                  "출자의 증가 누계를 자본금과 적립금조정명세서에서 어떻게 관리하는지, 그 주식을 처분·청산할 때 세무상 취득가액에 더하는지는 이 도구가 판단하지 않음(해석 확인 필요)"]
+                  "출자의 증가 누계를 자본금과 적립금조정명세서에서 어떻게 관리하는지, 그 주식을 처분·청산할 때 세무상 취득가액에 더하는지는 근거 없음(국조법 제13조·시행령 제23조 문언과 국세법령정보시스템 해석·판례 검색, 2026-11-14·11-15), 서면질의 필요 — 이 도구는 누계만 보여 줌"]
     return {"결과": tot, "계산": {"연도별": rows}, "판단": 판단, "근거": "법인세법 제14조·제13조①·제55조·제67조, 시행령 제10조②·제106조",
             "서식": "소득금액조정합계표(법인세법 시행규칙 별지 제15호), 자본금과 적립금조정명세서(을)(별지 제50호)",
             "주의": ["조정 금액은 이미 계산한 값을 넣는다 — 이 도구는 연도별로 합치고 유보·결손금·세액을 이어 줄 뿐, 각 조정이 맞는지는 판단하지 않음",

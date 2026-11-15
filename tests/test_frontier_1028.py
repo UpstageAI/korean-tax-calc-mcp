@@ -136,4 +136,5 @@ def test_retirement_tax_uses_year_tables():
     assert c("retirement_income_tax", {"income": 100000000, "years_of_service": 10, "retire_year": 2025})["결과"]["퇴직소득세"] == 3875000
     assert c("retirement_income_tax", {"income": 100000000, "years_of_service": 10, "retire_year": 2022})["결과"]["퇴직소득세"] == 4982000
     assert c("retirement_income_tax", {"income": 300000000, "years_of_service": 25, "retire_year": 2022})["결과"]["퇴직소득세"] == 17999000
-    assert "입력 확인 필요" in json.dumps(c("retirement_income_tax", {"income": 1, "years_of_service": 1, "retire_year": 2018}), ensure_ascii=False)
+    # 2018년 퇴직: 종전 6,240,000 × 40% + 개정 4,982,000 × 60% = 5,485,200 (법률 제12852호 부칙 제25조)
+    assert c("retirement_income_tax", {"income": 100000000, "years_of_service": 10, "retire_year": 2018})["결과"]["퇴직소득세"] == 5485200

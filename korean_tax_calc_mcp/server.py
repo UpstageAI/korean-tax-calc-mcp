@@ -24,6 +24,7 @@ from .engine import calc_foreign as F
 from .engine import calc_branch_exit as BX
 from .engine import calc_provision as PV
 from .engine import calc_tp as ALR
+from .engine import tp_era as TPE
 from .engine import calc_tp_screen as TPS
 from .engine import calc_multiyear as MY
 from .engine import calc_incentive as INC
@@ -209,6 +210,8 @@ mcp = MCPServer(
                  "같은 항목에 값이 둘 나오면(안분 전후, 전체와 과세분 등) 질문이 묻는 금액 하나만 최종 답으로 쓰고 다른 값은 과정에만 둔다. "
                  "연도표가 없는 해는 오류로 멈추므로 추정하지 않는다. 계산 근거 원문·해석은 korean-tax-mcp로 확인한다. "
                  "계산 결과를 엑셀이나 법정서식으로 달라고 하면 엑셀 파일을 직접 만들지 말고 export_workbook(calls=이미 부른 도구 호출 목록)을 쓴다 — 법정서식 틀(금액 칸은 수식), 계산 근거, 입력·가정, 판단·근거 시트가 함께 나온다. "
+                 "사용자가 엑셀·스프레드시트·계산 근거·workings를 원하면 계산 도구를 부른 뒤 그 호출 목록을 export_workbook에 넘겨 완성된 .xlsx 파일을 받는다(결과.파일 = 저장 경로). 파이썬 등으로 xlsx를 직접 만들지 않는다 — 여러 계산·시나리오는 scenarios, 입력 출처는 sources, 쟁점 표는 issues에 넣으면 요약·입력·출처·시나리오·쟁점 목록 시트가 수식으로 연결되어 나온다(뒤에는 '계산 상세' 한 장 — 신고 서식까지 받으려면 detail='forms'). "
+                 "When the user asks for Excel, a spreadsheet or workings, pass the calculation tool calls to export_workbook, which writes the finished .xlsx file and returns its path; do not write your own spreadsheet script. "
                  "자료 불일치·가정·확인할 서류·판단이 갈리는 쟁점은 export_workbook의 review_notes에 넣어 '요약' 시트에 싣는다. 서식 틀이 없는 항목은 따로 정리해 덧붙여도 된다. "
                  "도구 결과는 한국어로 나오지만, 답변은 사용자가 질문한 언어로 작성한다(국문 용어는 괄호로 병기). Tool results are in Korean; always answer in the language the user asked in, keeping key Korean terms in parentheses. "
                  + AUDIT_INSTRUCTIONS)
@@ -246,8 +249,8 @@ class Loan(BaseModel):
     withholding: int | None = None  # 채권자불분명·비실명 이자의 원천징수세액(소득처분 분리용)
 
 
-def _weighted_average_rate(movements, fy_movements, fs, fe, days, borrowings, gajib_jeoksu_before,
-                           gajib_jeoksu_after, gupum_jeoksu, offset_blocked_jeoksu):
+def _weighted_average_rate(movements, fs, fe, days, borrowings, gajib_jeoksu_before,
+                           gajib_jeoksu_after, gupum_jeoksu):
     """가중평균차입이자율 계산(규칙 제43조①). movements의 증가(+) 하나하나를 대여 건으로 보고(날짜순), 감소(-)는 선입선출로 회수
     — 개시일 전 회수도 대여 건 잔액을 줄인다. 대여 건의 이자율 = 대여일 현재 잔액이 있는 차입금(borrowed_on ≤ 대여일 < repaid_on) 중
     related·unclear_creditor가 아닌 것의 Σ(금액×rate) ÷ Σ금액(규칙 제43조①·⑥). 그런 차입금이 없으면 당좌 4.6%(③1·2호).
@@ -540,10 +543,14 @@ def _ok(r, basis, **extra):
 
 # 국제거래 정상가격 조정의 소득처분(0.41.0): 반환 여부 확인 전까지 임시유보(국조령 제24조①). 별지 제15호서식 작성방법의 처분 이름을 그대로 쓴다.
 _TP_DISP = "임시유보"
-_TP_DISP_BASIS = "국제조세조정에 관한 법률 제13조①, 시행령 제24조①(반환 여부 확인 전 임시유보)"
-_TP_DISP_NOTE = ("세무조정의 임시유보(국조법 제13조①): 신고한 날부터 90일 안에 이전소득금액 반환 확인서를 내지 않으면 상대방이 내국법인이 출자한 법인이면 출자의 증가, "
-                 "내국법인의 주주이거나 그 밖의 자이면 배당으로 처분(시행령 제22조·제23조). 신고할 때 바로 그 처분을 원하면 임시유보 없이 처분할 수 있음(시행령 제25조①4호 — 2023.2.28. 신설·시행, 부칙에 이 호의 적용례 없음) — "
-                 "그때는 세무조정 항목의 소득처분을 '출자의 증가' 또는 '이전소득 배당'으로 바꿔 income_adjustment_total에 넣는다")
+_TP_DISP_BASIS = TPE.DISP[TPE.ERA_NEW]["근거"]
+_TP_DISP_NOTE = TPE.DISP[TPE.ERA_NEW]["주의"]
+
+
+def _tp_disp(year):
+    """사업연도 개시연도 → (소득처분 근거, 주의). 2020년까지는 구 국조법 제9조·구 시행령 제15조~제16조(tp_era)."""
+    d = TPE.disposition(year)
+    return d["근거"], d["주의"]
 
 
 def _adj(구분, 조정, 금액, 소득처분, 근거):
@@ -560,6 +567,8 @@ def _front(r):
 
 import json as _json
 
+from .engine.rounding import WITHHOLDING_ROUNDING_BASIS as _WH_ROUNDING_BASIS, attach_pay_amount as _attach_pay_amount  # 끝수 규칙(국고금 관리법 제47조) 한 곳
+
 _CALL_MEMO: dict[str, int] = {}   # key → 호출 횟수 (최근 500개만 보관, 초과 시 오래된 것부터 삭제)
 
 
@@ -571,6 +580,12 @@ def _reset_call_memo() -> None:
 def _call_key(fn_name: str, args: tuple, kwargs: dict) -> str:
     """프로세스 안에서 같은 호출을 식별하기 위한 정규화 키."""
     return _json.dumps({"args": args, "kwargs": kwargs}, sort_keys=True, ensure_ascii=False, default=str)
+
+
+# 계산 도구 결과의 공통 꼬리 — 엑셀을 직접 만들지 않고 export_workbook을 쓰게(모델이 계산 도구만 불러 놓고 xlsx를 따로 만든 사례)
+_EXCEL_TAIL = ("엑셀 결과물이 필요하면 export_workbook(완성된 .xlsx 생성)에 이 호출을 calls로 넘김 — 직접 xlsx를 만들지 않음. "
+               "For Excel workings, pass this call to export_workbook (it writes the finished .xlsx).")
+_NO_EXCEL_TAIL = frozenset({"export_workbook", "find_tool"})
 
 
 def _guard(fn):
@@ -587,7 +602,7 @@ def _guard(fn):
                 _CALL_MEMO.pop(next(iter(_CALL_MEMO)))
         repeat = count >= 2
         try:
-            inner = fn(*a, **k)
+            inner = _attach_pay_amount(fn.__name__, fn(*a, **k))
             r = _front(inner)
         except _NoYearTable as e:
             r = {"error": str(e), "주의": "연도표 없는 해는 추정 계산하지 않음"}
@@ -597,6 +612,8 @@ def _guard(fn):
             # Pydantic ValidationError 등 프레임워크 검증 오류 — 문제 필드명을 결과에 포함
             msg = str(e)
             r = {"error": f"입력 확인 필요 — 계산하지 않음", "문제": [msg]}
+        if isinstance(r, dict) and "결과" in r and "error" not in r and fn.__name__ not in _NO_EXCEL_TAIL:
+            r = {**r, "엑셀": _EXCEL_TAIL}
         if repeat:
             r = {"안내": f"같은 입력으로 {count}번째 계산입니다. 결과는 처음과 같습니다 — 빠진 사실이나 잘못 넣은 값이 없다면 이 결과를 그대로 쓰세요", **r}
         return r
@@ -684,7 +701,7 @@ def branch_profits_tax(
   treaty_basis·remitted_profit·prior_year_taxable(송금액 기준 조약), pe_closed(의제사업연도).
 결과: 지점세, 과세대상 금액, 세율·근거, 계산 내역(재투자 공제·자본금상당액 증감), 연도별 인용 조문, 한계.
   재투자 인정액은 시행령 제134조제1항(자본금상당액증가액 + 음수 미과세누적유보소득, 한도 있음), 결손 사업연도는 같은 조 제4항, 송금액 기준은 제5항.
-  조약의 지점세 허용·세율은 조문 MCP tax_treaty로 확인한다. 원 미만 처리 규정이 없어 최종 세액만 버린다."""
+  조약의 지점세 허용·세율은 조문 MCP tax_treaty로 확인한다. 과세표준 1원 미만·세액 원 미만을 버리고, 납부할 때 10원 미만 끝수를 버린다(국고금 관리법 제47조)."""
     r = BX.branch_profits_tax(year, pe_income, corporate_tax, credits_reductions, penalties_additional, local_income_tax, thin_cap_disallowed,
                                  capital_begin, capital_end, untaxed_retained_prior, treaty_allows_branch_tax, treaty_branch_rate,
                               residence_country_taxes_korean_branches, treaty_basis, remitted_profit, prior_year_taxable, pe_closed)
@@ -694,23 +711,27 @@ def branch_profits_tax(
 @mcp.tool(annotations=CALC)
 @_guard
 def emigration_exit_tax(
-    departure_date: Annotated[str, Field(description="출국일 YYYY-MM-DD(2018-01-01~2026-12-31). 2018년 전 출국은 과세 없음, 2027년 이후는 개정규정 미대조로 계산 안 함")],
+    departure_date: Annotated[str, Field(description="출국일 YYYY-MM-DD(2018-01-01~2027-12-31). 2018년 전 출국은 과세 없음, 2027.1.1. 이후 출국분은 법률 제21221호 개정규정(국외주식등 포함)으로 계산")],
     residence_years_in_10: Annotated[float, Field(description="출국일 10년 전부터 출국일까지 국내에 주소·거소를 둔 기간 합계(년) — 5년 이상이어야 과세", ge=0, le=10)],
     major_shareholder: Annotated[bool, Field(description="출국일이 속하는 연도의 직전 연도 종료일 현재 대주주(소득세법 시행령 제167조의8제1항)이면 true")],
-    holdings: Annotated[list, Field(description="출국 당시 소유한 국내주식등 [{name?, market_value(출국일 시가, 원), acquisition_cost(필요경비 제97조, 원), sme?(중소기업 주식등이면 true — 2019년 출국분 세율 구분)}]")],
+    holdings: Annotated[list, Field(description="출국 당시 소유한 주식등 [{name?, market_value(출국일 시가, 원), acquisition_cost(필요경비 제97조, 원), sme?(중소기업 주식등이면 true — 2019년 출국분·2027년 이후 국외주식등 세율 구분), foreign?(소득세법 제94조제1항제3호다목 국외주식등이면 true — 2027.1.1. 이후 출국분만 대상)}]")],
     holdings_reported: Annotated[bool, Field(description="출국일 전날까지 국내주식등 보유현황을 빠짐없이 신고했으면 true(기본)")] = True,
     unreported_face_value: Annotated[int, Field(description="보유현황 미신고·누락분의 액면금액 또는 출자가액(원) — 2019년 이후 출국분 100분의 2 가산", ge=0)] = 0,
     manager_reported: Annotated[bool, Field(description="납세관리인을 출국일 전날까지 신고했으면 true — 2019년 이후 출국분 신고기한 안내")] = False,
+    foreign_worker_exempt: Annotated[bool, Field(description="2027.1.1. 이후 출국분: 국외주식등이 시행령 제178조의8제2항제2호·제3호(외국인근로자와 그 배우자·20세 이하 직계비속 소유분)에 해당하면 true — 국외주식등을 대상에서 뺌")] = False,
 ) -> dict:
     """Departure tax (exit tax) on a Korean resident major shareholder's domestic shares (국외전출세, 소득세법 제118조의9~제118조의18).
 국외전출세 — 출국일 시가로 양도한 것으로 보아 양도소득금액 − 연 250만원 = 과세표준, 세율은 출국일로 고른다.
 언제: 대주주인 거주자가 해외로 이주하면서 보유한 국내주식에 내는 양도소득세와 신고기한·납부유예·실제 양도 후 공제를 확인할 때.
 입력: departure_date(출국일), residence_years_in_10(10년 중 국내 주소·거소 기간), major_shareholder(직전 연도 말 대주주 여부),
-  holdings(종목별 출국일 시가·필요경비·중소기업 여부), holdings_reported·unreported_face_value(보유현황 미신고 가산), manager_reported(납세관리인 신고).
+  holdings(종목별 출국일 시가·필요경비·중소기업 여부·국외주식등 여부), holdings_reported·unreported_face_value(보유현황 미신고 가산), manager_reported(납세관리인 신고), foreign_worker_exempt(외국인근로자 국외주식등 제외).
 결과: 납세의무 여부, 양도소득금액·과세표준·산출세액·미신고 가산, 세율 구간, 신고·납부기한, 조정공제·외국납부세액공제·비거주자 세액공제 안내, 납부유예 요건·이자상당액, 재전입 환급, 한계.
   세율: 2018년 출국분 20%, 2019년 이후 출국분 3억원 이하 20%·초과 25%(2019년 출국분 중소기업 주식등은 20%, 2018.12.31. 법률 제16104호 부칙 제1조 단서).
-  대주주 기준·출국일 시가는 입력값이다. 원 미만 처리 규정이 없어 최종 금액만 버린다."""
-    r = BX.emigration_exit_tax(departure_date, residence_years_in_10, major_shareholder, holdings, holdings_reported, unreported_face_value, manager_reported)
+  2027.1.1. 이후 출국분(법률 제21221호 부칙 제8조): 국외주식등(양도가액 합계 5억원 초과분만 대상)은 중소기업 10%·그 밖 20%, 대주주 판정에서는 국외주식등을 뺀다.
+  세율이 다른 주식등이 섞이면 양도차손은 양도소득금액 비율로 나눠 공제하고, 연 250만원 공제 순서에 따른 세액 범위를 함께 보여 준다.
+  대주주 기준·출국일 시가는 입력값이다. 과세표준 1원 미만·세액 원 미만을 버리고, 납부할 때 10원 미만 끝수를 버린다(국고금 관리법 제47조)."""
+    r = BX.emigration_exit_tax(departure_date, residence_years_in_10, major_shareholder, holdings, holdings_reported, unreported_face_value, manager_reported,
+                               foreign_worker_exempt)
     return _ok(r.pop("결과"), r.pop("근거"), **r)
 
 
@@ -720,10 +741,12 @@ def emigration_exit_tax(
 _FY_START_DESC = "사업연도 개시일 YYYY-MM-DD(선택, year 안의 날짜) — 사업연도가 역년과 다를 때. fy_end만 주면 1년 사업연도로 봄"
 _FY_END_DESC = "사업연도 종료일 YYYY-MM-DD(선택) — 신고기한(종료일이 속하는 달의 말일부터 3개월) 추정과 지출분 부칙 판정에 씀"
 _FILING_DESC = ("과세표준 신고일 YYYY-MM-DD(선택) — '과세표준을 신고하는 경우부터' 적용하는 부칙 판정. 없으면 fy_end 기준 신고기한에 신고한 것으로 봄. "
-                "기한후·수정신고일을 넣으면 그 날짜로 고르되, 법정신고기한과 신고일이 서로 다른 부칙 구간에 걸치면 신고기한 기준 결과를 함께 보여주고 '해석 미확인'을 붙임")
-_LATE_NOTE = ("해석 미확인 — 신고일 {filed}이 법정신고기한 {due} 뒤(기한후·수정신고)이고 두 날짜가 부칙의 다른 구간에 걸침. 부칙의 '과세표준을 신고하는 경우'에 "
-              "기한후과세표준신고서·과세표준수정신고서가 드는지 해석을 찾지 못함(국세기본법 제45조·제45조의3은 세 신고서를 따로 부름). "
-              "결과는 입력한 신고일 기준, 신고기한 기준 결과는 '{key}'에 함께 적음")
+                "기한후·수정신고일을 넣으면 그 날짜로 고르되, 법정신고기한과 신고일이 서로 다른 부칙 구간에 걸치면 신고기한 기준 결과를 '신고기한기준_결과'에 함께 보여줌(어느 쪽인지 정한 해석이 없음 — 주의에 검색 기록)")
+_LATE_NOTE = ("근거 없음 — 신고일 {filed}이 법정신고기한 {due} 뒤(기한후·수정신고)이고 두 날짜가 부칙의 다른 구간에 걸침. 쟁점: 부칙의 '과세표준을 신고하는 경우'에 "
+              "기한후과세표준신고서·과세표준수정신고서가 드는지(국세기본법 제45조·제45조의3은 세 신고서를 따로 부름). "
+              "검색: 국세법령정보시스템 해석·판례·심판(검색어 '시행 이후 과세표준을 신고하는 경우 기한후신고 포함', '신고하는 분부터 수정신고 경정청구 개정규정 적용', "
+              "'부칙 적용례 신고하는 분부터 당초 신고 수정신고' 등, 2026-11-14·2026-11-15) — 직접 답한 것 없음(기준-2025-법규법인-0059는 정기신고만 다룸). "
+              "확정하려면 서면질의 필요. 결과는 입력한 신고일 기준, 신고기한 기준 결과는 '{key}'에 함께 적음")
 
 
 def _late_due(fe, filing_date):
@@ -756,7 +779,7 @@ def _ent_dates(year, fy_start, fy_end, filing_date, market_used: bool, revenue_u
         reg_d = C.market_regime(_due, fe)
         if (reg_d["비율"], tuple(reg_d["대상"])) != (reg["비율"], tuple(reg["대상"])):
             out["regime_due"] = reg_d
-            out["주의"].append(_LATE_NOTE.format(filed=filed.isoformat(), due=_due.isoformat(), key="해석_미확인_신고기한기준")
+            out["주의"].append(_LATE_NOTE.format(filed=filed.isoformat(), due=_due.isoformat(), key="신고기한기준_결과")
                              + f" — 신고기한 기준 전통시장등 비율 {reg_d['비율']}·대상 {', '.join(reg_d['대상']) or '없음'}({reg_d['부칙']})")
     out["기준"] = {"사업연도": f"{fs.isoformat()}~{fe.isoformat()}", "신고일": filed.isoformat() + (" (신고기한 추정)" if est else ""),
                  "전통시장등_비율": reg["비율"], "전통시장등_대상": list(reg["대상"]), "전통시장등_부칙": reg["부칙"]}
@@ -800,7 +823,7 @@ def entertainment_limit(year: YEAR, sme: Annotated[bool, Field(description="중�
         _rd = dd["regime_due"]
         _alt = C.entertain(year, sme, general_revenue, related_revenue, expensed, culture=culture, months=months, market=market,
                            days_2020=dd["days_2020"], market_ratio=_rd["비율"])
-        extra["해석_미확인_신고기한기준"] = {"전통시장등_비율": _rd["비율"], "부칙": _rd["부칙"], **({k: _alt[k] for k in ("한도", "한도초과액") if k in _alt})}
+        extra["신고기한기준_결과"] = {"전통시장등_비율": _rd["비율"], "부칙": _rd["부칙"], **({k: _alt[k] for k in ("한도", "한도초과액") if k in _alt})}
     if dd["기준"]:
         extra["계산"] = {"전통시장등비율": reg["비율"]}
         extra["기준"] = dd["기준"]
@@ -820,7 +843,7 @@ def deemed_interest(movements: Annotated[list[Movement], Field(description="가�
                     deposits: Annotated[list[Deposit] | None, Field(description="동일인 가수금 [{date, amount(원, 입금 +, 반환 -), offset_blocked(상계 불가 여부), 이름?}]")] = None,
                     rate_mode: Annotated[Literal["입력", "가중평균", "당좌선택"], Field(description="이자율 계산 방식: '입력'(기본, market_rate 사용) | '가중평균'(borrowings로 가중평균차입이자율) | '당좌선택'(당좌대출이자율 4.6%, 2016.3.6.까지 발생분은 6.9%로 기간 안분, 이후 2개 사업연도 적용)")] = "입력",
                     borrowings: Annotated[list[Borrowing] | None, Field(description="차입금 [{borrowed_on, amount, rate, repaid_on?, related?, unclear_creditor?}] (rate_mode='가중평균'일 때)")] = None,
-                    foreign_related: Annotated[bool, Field(description="대여 상대가 국외특수관계인(해외 자회사 등)인지 — True면 법인세법 제52조가 아니라 국제조세조정에 관한 법률 제7조 정상가격 조정으로 계산(3억·5% 기준 없이 정상이자와의 차액 전부 익금산입). 2021 사업연도부터 지원")] = False) -> dict:
+                    foreign_related: Annotated[bool, Field(description="대여 상대가 국외특수관계인(해외 자회사 등)인지 — True면 법인세법 제52조가 아니라 국제조세조정에 관한 법률 제7조 정상가격 조정으로 계산(3억·5% 기준 없이 정상이자와의 차액 전부 익금산입). 2020년까지 개시한 사업연도는 구 국조법 제4조·구 시행령 제6조제7항으로 계산")] = False) -> dict:
     """Deemed interest on provisional payments to related parties and wrongful calculation check (가지급금 인정이자).
     가지급금 인정이자(적수 × 시가 이자율)와 부당행위계산 여부. 언제: 특수관계인 가지급금 이자와 부당행위 3억·5% 판정을 함께 구할 때.
     입력: 가지급금 증감 [{date, amount(원, 대여 +, 회수 -)}] → movements, 사업연도 종료일(YYYY-MM-DD) → year_end, 시가 이자율(소수) → market_rate(rate_mode='입력'일 때), 실제 이자율(소수) → charged_rate, 실제 받은 이자 금액(원) → received_interest, 사업연도 개시일(YYYY-MM-DD, 생략 시 year_end 기준 자동 계산) → fiscal_start, 동일인 가수금 [{date, amount(원, 입금 +, 반환 -), offset_blocked(상계 불가 여부), 이름?}] → deposits, 이자율 계산 방식('입력'|'가중평균'|'당좌선택') → rate_mode, 차입금 [{borrowed_on, amount, rate, repaid_on?, related?, unclear_creditor?}] → borrowings(rate_mode='가중평균'일 때).
@@ -828,7 +851,8 @@ def deemed_interest(movements: Annotated[list[Movement], Field(description="가�
     국외특수관계인 대여(foreign_related=True): 국제거래에는 법인세법 제52조를 적용하지 않고(국조법 제4조제2항) 정상이자율과의 차액을 익금산입(국조법 제7조) — 3억·5% 기준 없음.
       원칙은 채무액·만기·보증·신용을 고려해 산출한 정상이자율(rate_mode='입력', 시행령 제11조제1항). rate_mode='당좌선택'은 시행규칙 제3조제1호의 간주 정상이자율(당좌대출이자율)로,
       법 제8조제1항제6호의 방법이라 제1호~제5호로 산출할 수 없는 경우에만 쓴다(법 제8조제1항 단서). 입력한 이자율이 정상이자율인지는 판정하지 않음. '가중평균'은 쓰지 않음.
-      2020 사업연도까지(구 국조령 제6조제7항)는 지원하지 않음."""
+      2020년까지 개시한 사업연도: 구 국조법 제3조제2항·제4조, 구 시행령 제6조제7항. 간주 정상이자율(당좌대출이자율, 구 시행규칙 제2조의2)은 2017.2.7. 이후 자금거래분부터(대통령령 제27837호 부칙 제2조)라
+      그 전에 대여한 금액이 있으면 '당좌선택'을 받지 않고 '입력'으로 계산. 구법에서는 간주 이자율이 제1호 이자율과 나란한 선택지(구 시행령 제6조제7항 각 호의 어느 하나)."""
     from datetime import date as _date, timedelta
     from fractions import Fraction
     if received_interest is not None and charged_rate != 0.0:
@@ -839,8 +863,6 @@ def deemed_interest(movements: Annotated[list[Movement], Field(description="가�
     _chk.supported_year("year_end", year_end)
     if foreign_related:
         문제 = []
-        if y_end.year <= 2020:
-            문제.append(f"year_end={year_end} — 국외특수관계인 대여는 2021 사업연도부터 지원(2020년까지는 구 국조령 제6조제7항 적용, 간주 정상이자율 조문을 대조하지 않음)")
         if rate_mode == "가중평균":
             문제.append("rate_mode='가중평균' — 가중평균차입이자율은 법인세법 방식. 국외특수관계인 대여는 rate_mode='당좌선택'(국조칙 제3조제1호 간주 정상이자율) 또는 '입력'(직접 산출한 정상이자율)")
         if 문제:
@@ -857,6 +879,17 @@ def deemed_interest(movements: Annotated[list[Movement], Field(description="가�
         fiscal_start = fs_dt.isoformat()
     fs = _date.fromisoformat(fiscal_start)
     _chk.need(fs <= y_end, f"fiscal_start={fiscal_start}가 year_end={year_end}보다 뒤")
+    _tp_era = TPE.era(fs.year) if foreign_related else None      # 국조법령은 과세연도 개시일 기준(대통령령 제31448호 부칙 제3조, 제30405호 부칙 제2조)
+    _deemed_gap = False
+    if foreign_related and rate_mode == "당좌선택":      # 2021년 이후 개시분도 2017.2.7. 전 자금거래분은 구 시행령 제6조⑦(대통령령 제31448호 부칙 제17조)
+        _from, _rule = _date(*TPE.DEEMED_RATE_FROM), _date(*TPE.DEEMED_RULE_FROM)
+        _lent = [_date.fromisoformat(d_) for d_, a_ in mv if a_ > 0]
+        if any(d_ < _from for d_ in _lent):
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"rate_mode='당좌선택' — 2017.2.7. 전에 대여한 금액({min(_lent).isoformat()})이 있음. 간주 정상이자율(구 국조령 제6조제7항제2호)은 2017.2.7. 이후 자금거래분부터라"
+                           "(대통령령 제27837호 부칙 제2조, 제31448호 부칙 제17조) 그 전 대여분은 채무액·만기·보증·신용을 고려해 산출한 정상이자율을 rate_mode='입력'으로 넣는다. "
+                           "2017.2.7. 이후 대여분만 따로 나눠 호출하면 '당좌선택' 가능"]}
+        _deemed_gap = any(_from <= d_ < _rule for d_ in _lent)
     days = (y_end - fs).days + 1
     # 개시일 전 증감은 모두 개시일 잔액으로 합산
     opening = 0
@@ -939,8 +972,8 @@ def deemed_interest(movements: Annotated[list[Movement], Field(description="가�
             overdraft_split = (j_before, j - j_before)
             note += "; 2016.3.6.까지 발생분은 6.9%, 2016.3.7.부터 4.6%(시행규칙 제43조②, 2016.3.7. 개정 부칙 제4조). 2016.3.7. 전에 약정한 기간부 대여금은 약정 만료일까지 6.9%(부칙 제11조) — 해당하면 rate_mode='입력'으로 따로 계산"
     elif rate_mode == "가중평균":
-        market, loan_tranches = _weighted_average_rate(mv, fy_movements, fs, y_end, days,
-                                                          borrowings or [], j, net_jeoksu, gupum_jeoksu, offset_blocked_jeoksu)
+        market, loan_tranches = _weighted_average_rate(mv, fs, y_end, days,
+                                                          borrowings or [], j, net_jeoksu, gupum_jeoksu)
         note = None
     else:
         rate_used = Fraction(market_rate).limit_denominator(10**7)
@@ -999,15 +1032,25 @@ def deemed_interest(movements: Annotated[list[Movement], Field(description="가�
         result["정상가격_조정"] = diff > 0
         result["익금산입"] = diff if diff > 0 else 0
         all_notes = [n for n in all_notes if "이후 2개 사업연도" not in n]
-        all_notes.insert(0, (F.related_party_law(True, "일반", y_end.year)["결론"] + " 정상이자율은 "
-                             + ("시행규칙 제3조제1호 간주 이자율(당좌대출이자율) — 법 제8조①6호의 방법이라 비교가능 제3자 가격방법 등 제1호~제5호로 정상이자율을 산출할 수 없는 경우에만 적용(법 제8조① 단서). 산출할 수 있으면 rate_mode='입력'"
-                                if rate_mode == "당좌선택" else f"입력한 이자율 {market_rate:.2%}(채무액·만기·보증·신용을 고려해 법 제8조①의 방법으로 산출했는지 확인 — 이 도구는 정상이자율인지 판정하지 않음)")
-                             + ". 대여금 면제(채무 면제)나 자회사 증자 참여는 국제거래라도 법인세법 제52조 대상(국조령 제4조) — unfair_transaction의 transaction_type으로 판정"))
+        _old = _tp_era != TPE.ERA_NEW
+        if _old:
+            _rate_txt = ("구 시행규칙 제2조의2의 간주 정상이자율(당좌대출이자율) — 구 시행령 제6조⑦은 제1호(채무액·만기·보증·신용을 고려한 이자율)와 제2호(간주 이자율) 중 어느 하나로 정함"
+                         if rate_mode == "당좌선택" else f"입력한 이자율 {market_rate:.2%}(구 시행령 제6조⑦1호 — 채무액·만기·보증·신용을 고려해 산출했는지 확인. 이 도구는 정상이자율인지 판정하지 않음)")
+            _exc = "대여금 면제(채무 면제)나 자회사 증자 참여는 국제거래라도 법인세법 제52조 대상(" + ("구 국조령 제3조의3" if _tp_era == TPE.ERA_2020 else "구 국조령 제3조의2") + ") — unfair_transaction의 transaction_type으로 판정"
+        else:
+            _rate_txt = ("시행규칙 제3조제1호 간주 이자율(당좌대출이자율) — 법 제8조①6호의 방법이라 비교가능 제3자 가격방법 등 제1호~제5호로 정상이자율을 산출할 수 없는 경우에만 적용(법 제8조① 단서). 산출할 수 있으면 rate_mode='입력'"
+                         if rate_mode == "당좌선택" else f"입력한 이자율 {market_rate:.2%}(채무액·만기·보증·신용을 고려해 법 제8조①의 방법으로 산출했는지 확인 — 이 도구는 정상이자율인지 판정하지 않음)")
+            _exc = "대여금 면제(채무 면제)나 자회사 증자 참여는 국제거래라도 법인세법 제52조 대상(국조령 제4조) — unfair_transaction의 transaction_type으로 판정"
+        all_notes.insert(0, F.related_party_law(True, "일반", fs.year)["결론"] + " 정상이자율은 " + _rate_txt + ". " + _exc)
         result["판단"] = "; ".join(all_notes)
-        return _ok(result, "국제조세조정에 관한 법률 제4조②(법인세법 제52조 적용 배제)·제7조(정상가격에 의한 과세조정), 시행령 제11조, 시행규칙 제3조 1호(법인세법 시행규칙 제43조② 당좌대출이자율)",
-                   세무조정=([_adj("대여금 정상이자(국외특수관계인)", "익금산입", result["익금산입"], _TP_DISP, "국제조세조정에 관한 법률 제7조, " + _TP_DISP_BASIS)] if result["익금산입"] else []),
-                   주의=[_TP_DISP_NOTE,
-                         "외화 대여, 해외 자회사에서 빌리는 경우(차입)는 이 도구 범위 밖(차입은 통화별 지표금리 + 1.5%)"])
+        _db, _dn = _tp_disp(fs.year)
+        _주의 = [_dn, "외화 대여, 해외 자회사에서 빌리는 경우(차입)는 이 도구 범위 밖(차입은 통화별 지표금리 + 1.5%" + (", 2020년까지는 통화별 12개월 LIBOR + 1.5% — 구 시행규칙 제2조의2" if _old else "") + ")"]
+        if _deemed_gap:
+            _주의.append("2017.2.7.~2017.3.16. 대여분: 간주 정상이자율을 둔 구 시행령 제6조⑦2호는 2017.2.7. 시행됐지만 그 이자율을 정한 구 시행규칙 제2조의2②는 2017.3.17. 공포·시행이고 부칙(기획재정부령 제613호)에 이 항의 적용례가 없음 — "
+                       "근거 없음(구 국조령·국조칙 시행본과 부칙 대조, 2026-11-15), 서면질의 필요. 이 결과는 당좌대출이자율을 적용한 값이고, 적용되지 않는다고 보면 rate_mode='입력'으로 산출한 정상이자율을 넣는다")
+        return _ok(result, TPE.loan_basis(fs.year),
+                   세무조정=([_adj("대여금 정상이자(국외특수관계인)", "익금산입", result["익금산입"], _TP_DISP, ("국제조세조정에 관한 법률 제7조, " if not _old else "구 국제조세조정에 관한 법률 제4조, ") + _db)] if result["익금산입"] else []),
+                   주의=_주의)
     if all_notes:
         result["판단"] = "; ".join(all_notes)
     return _ok(result, "법인세법 제52조, 시행령 제88조③·제89조③, 시행규칙 제43조(이자율)")
@@ -1024,13 +1067,14 @@ def arm_length_range(comparables: Annotated[list, Field(description="비교대�
                      tested_is_resident: Annotated[bool | None, Field(description="필수 — 분석대상 당사자가 국내 법인(거주자)이면 True, 국외특수관계인(해외 자회사·모회사 등)이면 False. 조정 방향이 반대가 되므로 비우면 계산하지 않음. 회사 이름으로 추측하지 말고 소재지 자료로 정할 것")] = None,
                      higher_is_more_income: Annotated[bool, Field(description="지표가 높을수록 분석대상 당사자의 소득이 큰 지표인지(이익률은 True). 분석대상이 지급하는 가격·수수료율처럼 높을수록 소득이 줄면 False")] = True,
                      quartile_method: Annotated[Literal["inclusive", "exclusive"], Field(description="사분위 계산법 — inclusive(엑셀 QUARTILE.INC, 기본) / exclusive(엑셀 QUARTILE.EXC, 비교대상 셋 이상)")] = "inclusive",
-                     year: Annotated[int | None, Field(description="사업연도 개시연도(2021~2026, 선택 — 종료연도가 아님) — 국조령 전부개정(대통령령 제31448호) 부칙 제3조: 2021.1.1. 이후 개시하는 과세연도분부터. 2020년 이전 개시(예: 2020.7.1.~2021.6.30.)는 구 시행령을 대조하지 않아 지원하지 않음")] = None) -> dict:
+                     year: Annotated[int | None, Field(description="사업연도 개시연도(2016~2026, 선택 — 종료연도가 아님). 생략하면 현행 조문. 2021.1.1. 이후 개시분은 시행령 제15조(대통령령 제31448호 부칙 제3조), 2020년까지 개시분(예: 2020.7.1.~2021.6.30.)은 구 시행령 제6조제4항·제5항으로 근거를 냄")] = None) -> dict:
     """Transfer pricing arm's length range: interquartile range, median and adjustment amount (정상가격 범위).
     정상가격 범위와 조정액 — 비교대상 이익률 등으로 사분위·전체 범위, 중위값·평균값을 구하고 분석대상 당사자의 값이 범위 안인지, 벗어나면 기준점까지의 차이와 조정액(국제조세조정에 관한 법률 시행령 제15조제5항·제6항). 언제: 국외특수관계인 거래의 이익률이 정상가격 범위 안인지 확인하고 범위를 벗어난 경우 조정액을 구할 때.
     입력: 비교대상 값 → comparables, 분석대상 값 → tested_value, 지표 분모 금액 → base_amount, 범위 종류 → range_type, 기준점 → point·point_value, 분석대상이 거주자인지 → tested_is_resident, 지표 방향 → higher_is_more_income, 사분위 계산법 → quartile_method, 사업연도 → year.
     계산: 범위 안이면 조정 없음. 벗어나면 기준점(중위값·평균값·직접입력)과의 차이 × base_amount = 조정액(원 미만 절사). 분석대상이 거주자가 아니면 방향을 뒤집어 거주자 소득이 과소인지 과다인지 표시하고, '방향'에 한 문장으로 적음. tested_is_resident를 비우면 계산하지 않고 되물음.
     결과: 비교대상 수·최솟값·제1사분위·중위값·제3사분위·최댓값·평균값, 범위, 범위 안 여부, 조정 필요 여부, 기준점, 차이, 거주자 소득(과소·과다), 방향, 조정액, 판단·근거·주의.
     결과의 '비교대상_확인'은 비교가능 거래의 뜻(시행령 제14조제1항제1호), 분석요소(시행규칙 제6조제1항), 내부 비교가능 거래를 먼저 볼 것(시행규칙 제7조제1항제4호), 이익률 자료만으로는 타당성을 확인할 수 없다는 점을 알려 줌.
+    2016~2020년 개시 사업연도는 구 시행령 제6조제4항·제5항, 구 법 제4조(2020년 개시분부터 제4조의2)와 구 법 제9조·구 시행령 제15조의 임시유보로 근거를 냄.
     범위 밖: 비교대상이 적절한지(비교가능성·차이 조정·손실 기업 처리)는 판단하지 않음. 사분위 계산법과 기준점 선택은 국조법령이 특정하지 않음(조문에는 없고, 2022.3.18. 시행규칙부터 거래가격 조정신고서 작성방법이 정상사분위범위 기재를 전제 — OECD 이전가격지침 3.57의 통계적 도구) — 선택 이유는 보고서에 밝혀야 함. 데이터베이스 후보 목록을 거르는 일은 tp_comparable_screen."""
     r = ALR.arm_length_range(comparables, tested_value, base_amount, range_type, point, point_value, tested_is_resident, higher_is_more_income, quartile_method, year)
     if "error" in r:
@@ -1038,8 +1082,9 @@ def arm_length_range(comparables: Annotated[list, Field(description="비교대�
     res, 주의 = r["결과"], list(r["주의"])
     세무조정 = []
     if res.get("조정_필요") and res.get("조정액") and res.get("거주자_소득") == "과소":
-        세무조정.append(_adj("정상가격 조정(국외특수관계인 거래)", "익금산입", res["조정액"], _TP_DISP, "국제조세조정에 관한 법률 제6조·제7조, " + _TP_DISP_BASIS))
-        주의.append(_TP_DISP_NOTE)
+        _db, _dn = _tp_disp(year)
+        세무조정.append(_adj("정상가격 조정(국외특수관계인 거래)", "익금산입", res["조정액"], _TP_DISP, TPE.RANGE[TPE.era(year)]["법"] + ", " + _db))
+        주의.append(_dn)
     elif res.get("조정_필요") and res.get("거주자_소득") == "과다":
         주의.append("거주자 소득이 정상가격보다 많은 경우(감액)는 세무조정 항목을 내지 않음 — 감액은 요건·절차(경정청구, 상호합의 등)를 따로 확인")
     return _ok(res, r["근거"], 계산=r["계산"], 판단=r["판단"], 비교대상_확인=r["비교대상_확인"], 세무조정=세무조정, 주의=주의)
@@ -1084,7 +1129,7 @@ def tp_comparable_screen(tested_party: Annotated[dict, Field(description="분석
 @mcp.tool(annotations=CALC)
 @_guard
 def international_transaction_statement(
-        year: Annotated[int, Field(description="사업연도 — 개시일이 속하는 해(2016~2026). 엑셀 서식 틀은 2021 사업연도부터(2020년까지 구 서식 번호 미확인)")],
+        year: Annotated[int, Field(description="사업연도 — 개시일이 속하는 해(2016~2026). 2020년까지는 제출기한 날 시행 중인 서식 판(구 시행규칙 별지 제8호서식(갑) 2016·2017·2018판, 2021.3.16. 전부개정 별지 제16호서식(갑))으로 국외특수관계인별 한 장씩 엑셀 틀을 만듦")],
         parties: Annotated[list[dict], Field(description="국외특수관계인별 거래 [{name(법인명·상호, 필수), country, local_id(현지기업 고유번호), tax_id(현지 납세자번호), fiscal_year(상대방 사업연도 문구), "
                                                          "industry_code(주업종코드), established(설립일 'YYYY-MM'), relationship('지배'|'피지배'|'자매'|'실질 지배'|'본점ㆍ지점' — 서식 작성방법 4), "
                                                          "sales: 매출거래, purchases: 매입거래, transfer_pricing: {transaction(대상 거래), method(정상가격 산출방법), reason(선택 이유)}, "
@@ -1094,21 +1139,26 @@ def international_transaction_statement(
         fy_start: Annotated[str | None, Field(description="사업연도 개시일 YYYY-MM-DD(생략하면 year-01-01)")] = None,
         fy_end: Annotated[str | None, Field(description="사업연도 종료일 YYYY-MM-DD(생략하면 year-12-31) — 평균 대여금·차입금 분모 일수와 제출기한 계산")] = None,
         revenue: Annotated[int, Field(description="당기 매출액(원, 선택) — 국제거래정보통합보고서 대상 여부(통합·개별기업보고서 제출자의 국제거래명세서 제출 관계) 판정용", ge=0)] = 0,
-        filer: Annotated[dict | None, Field(description="정상가격 산출방법 신고서 신고인 칸(선택) {representative(대표자), industry(업종), phone(전화번호), address(소재지)}")] = None) -> dict:
+        filer: Annotated[dict | None, Field(description="정상가격 산출방법 신고서 신고인 칸(선택) {representative(대표자), industry(업종), phone(전화번호), address(소재지)}")] = None,
+        third_party: Annotated[dict | None, Field(description="국외특수관계 없는 자와의 국제거래 금액(선택, 원) {goods(재화거래), services(용역거래), intangibles(무형자산거래 — 2023년 이후 개시 과세연도만 씀)} — "
+                                                              "정상가격 산출방법 신고서 면제 가목(국제거래 전체 재화 50억·용역 10억·무형자산 10억)에만 더함. 생략하면 국외특수관계인 거래만으로 판정")] = None) -> dict:
     """Transfer pricing statement of international transactions with foreign related parties and filing duty (국제거래명세서).
     국제거래명세서 칸 집계와 제출 의무 — 국외특수관계인별 거래를 국조칙 별지 제16호서식(갑) 칸 번호대로 모아 매출·매입 계, 대여금·차입금 적수(금액×일수 합계), 평균 대여금·차입금(적수 ÷ 사업연도 일수)을 내고,
     국제거래명세서·요약손익계산서·정상가격 산출방법 신고서 제출 의무(국조법 제16조제2항, 시행령 제36조 — corporate_filing_obligations와 같은 연도표)와 제출기한, 함께 낼 서식(별지 제16호서식(을)·제17호·제18호·제19호·제20호)을 판정.
     언제: 국외특수관계인(해외 자회사·모회사 등)과 거래가 있는 법인이 국제거래명세서를 작성하거나 제출 대상인지, 어떤 서식을 함께 내야 하는지 확인할 때.
-    엑셀: export_workbook(layout='forms')에 넣으면 별지 제16호서식(갑)과 정상가격 산출방법 신고서(별지 제20호) 시트를 채움.
-    입력: 사업연도 → year(·fy_start·fy_end), 국외특수관계인별 매출·매입 거래 → parties[].sales·purchases(재화는 inventory·other_tangible, 무형자산은 royalty·intangible_sale, 용역은 guarantee·other_services·tangible_rental, 금전대차는 loans 건별 금액·일수와 interest, 가상자산·기타는 virtual_assets·other), 정상가격 산출방법 → parties[].transfer_pricing, 매출액 → revenue.
+    엑셀: export_workbook(layout='forms')에 넣으면 별지 제16호서식(갑)과 정상가격 산출방법 신고서(별지 제20호) 시트를 채움. 2016~2020 사업연도는 그 해 서식 판 — 구 별지 제8호서식(갑)(2016·2017·2018판)·별지 제16호서식(갑) 2021판을
+      국외특수관계인별 한 장씩(5명까지), 정상가격 산출방법 신고서는 구 별지 제1호의3서식(2015·2020판)·별지 제20호서식 2021판. 그 해 서식에 없는 칸에 금액이 있거나 2022.3.18. 이후에 내는 분이면 구 서식 시트 대신 목록에 사유.
+    입력: 사업연도 → year(·fy_start·fy_end), 국외특수관계인별 매출·매입 거래 → parties[].sales·purchases(재화는 inventory·other_tangible, 무형자산은 royalty·intangible_sale, 용역은 guarantee·other_services·tangible_rental, 금전대차는 loans 건별 금액·일수와 interest, 가상자산·기타는 virtual_assets·other), 정상가격 산출방법 → parties[].transfer_pricing, 매출액 → revenue, 국외특수관계 없는 자와의 국제거래 금액 → third_party(선택).
     계산(서식 작성방법 5·9·10): 매출 계 = 재고자산~가상자산 외 칸 합계(대여금 적수 칸 제외, 평균 대여금·수입이자 포함), 매입 계도 같은 방식. 적수 = 합계(금액 × 일수) — 서식 예시 100원×60일 + 200원×180일 = 42,000원.
       평균 = 적수 ÷ 사업연도 일수(365·366), 원 미만 절사 — 서식 예시 42,000 ÷ 365 = 115원.
     판정: 2023.1.1. 이후 개시 사업연도는 재화 5억·용역 1억·무형자산 1억 모두 이하면 국제거래명세서 면제, 2022년까지는 국외특수관계인과 거래가 있으면 제출. 기한은 사업연도 종료일이 속하는 달의 말일부터 6개월(2020 사업연도분부터).
       면제 금액은 매출·매입 합계로 재화(재고자산·기타 유형자산), 용역(지급보증·기타 용역·유형자산 사용료), 무형자산(사용료·매매 등)만 셈.
+      정상가격 산출방법 신고서 면제 가목(국제거래 전체 재화 50억·용역 10억, 2023년부터 무형자산 10억)에는 third_party 금액을 더함(사전-2022-법규국조-0527) — 넣지 않으면 국외특수관계인 거래만으로 판정.
     결과: 매출·매입 계·적수·평균·이자 합계, 거래 유형별 합계와 국외특수관계인별 최대, 서식별 제출 여부·제출기한, 함께_낼_서식, 계산(국외특수관계인별 칸 값), 서식_표·계산식_입력(엑셀 서식 틀용), 판단·근거·주의·한계.
     범위 밖: 정상가격 자체의 산출(arm_length_range·tp_comparable_screen), 주식 등 취득·양도와 가상자산 거래 명세(서식 제2쪽), 지급보증 정상가격(별지 제16호서식(을) 칸 계산)."""
     from .engine import calc_intl_statement as ITS
-    r = ITS.statement({"year": year, "parties": parties, "fy_start": fy_start, "fy_end": fy_end, "revenue": revenue, "filer": filer})
+    r = ITS.statement({"year": year, "parties": parties, "fy_start": fy_start, "fy_end": fy_end, "revenue": revenue, "filer": filer,
+                       "third_party": third_party})
     if "error" in r:
         return r
     extra = {k: v for k, v in r.items() if k not in ("결과", "근거")}
@@ -1246,25 +1296,27 @@ def tax_adjustment_schedule(years: Annotated[list, Field(description="사업연�
 
 @mcp.tool(annotations=CALC)
 @_guard
-def sme_status(year: Annotated[int, Field(description="과세연도(2018~2026)")],
-               industry_code: Annotated[str, Field(description="주된 업종의 한국표준산업분류 기호 — 제조업은 중분류(C10~C34, 화장품·화학제품 C20), 도매 및 소매업 G, 정보통신업 J, 수도업 E36, 임대업 N76 등")],
+def sme_status(year: Annotated[int, Field(description="과세연도(2016~2026)")],
+               industry_code: Annotated[str, Field(description="주된 업종의 한국표준산업분류 기호 — 제조업은 중분류(C10~C34, 화장품·화학제품 C20), 도매 및 소매업 G, 정보통신업 J, 수도업 E36, 임대업 N76 등. 2016 과세연도는 제9차 분류 기호(수도사업 D, 임대업 L)")],
                revenue: Annotated[int, Field(description="해당 과세연도 손익계산서 매출액(원)", ge=0)],
                total_assets: Annotated[int, Field(description="과세연도 종료일 재무상태표 자산총액(원)", ge=0)],
                domestic_affiliates: Annotated[list | None, Field(description="관계기업(국내기업만) [{revenue(원), ownership(소유비율 0.3~1)}] — 30% 이상 소유하면서 최다출자자인 지배·종속 관계")] = None,
                in_disclosure_group: Annotated[bool, Field(description="공시대상기업집단 소속(계열 편입 통지 포함) 여부")] = False,
                large_corp_owner: Annotated[bool, Field(description="자산총액 5천억원 이상 법인이 주식의 30% 이상을 소유한 최다출자자인지")] = False,
-               excluded_business: Annotated[bool, Field(description="부동산임대업 또는 소비성서비스업이 주된 사업인지")] = False,
+               excluded_business: Annotated[bool, Field(description="부동산임대업 또는 소비성서비스업이 주된 사업인지(2017 과세연도는 소비성서비스업, 2016 과세연도는 시행령 제2조제1항에 열거된 업종이 아닌 사업)")] = False,
                first_exceeded_year: Annotated[int | None, Field(description="규모 기준을 처음 넘은 과세연도(이전에 이미 넘었으면). 비우면 해당 과세연도")] = None,
-               founded_on: Annotated[str, Field(description="창업일 YYYY-MM-DD(선택) — 창업 후 2년 안에 기준을 넘으면 유예기간이 없음")] = "") -> dict:
+               founded_on: Annotated[str, Field(description="창업일 YYYY-MM-DD(선택) — 창업 후 2년 안에 기준을 넘으면 유예기간이 없음")] = "",
+               small_under_pre2016_rule: Annotated[bool, Field(description="2016.1.1. 전 기준(상시근로자 수)으로 소기업이던 기업이면 true — 2019 과세연도까지 소기업으로 봄(2016~2019 과세연도만)")] = False) -> dict:
     """SME status test: small and medium enterprise, small enterprise, grace period (중소기업 해당 여부).
     중소기업·소기업 해당 여부 — 업종별 매출 기준, 자산총액, 독립성, 유예기간으로 세법상 중소기업인지와 소기업·중기업 구분(조세특례제한법 시행령 제2조). 언제: 매출이 빠르게 커진 회사가 창업감면·특별세액감면·결손금 소급공제·최저한세 7% 같은 중소기업 규정을 그 해에도 적용받는지 볼 때.
     입력: 과세연도 → year, 업종 기호 → industry_code, 매출액 → revenue, 자산총액 → total_assets, 국내 관계기업 → domestic_affiliates, 독립성 → in_disclosure_group·large_corp_owner, 처음 넘은 해 → first_exceeded_year, 창업일 → founded_on.
     계산: 매출액(국내 관계기업 합산 — 50% 이상 소유는 전액, 미만은 소유비율만큼)이 업종별 기준(중소기업기본법 시행령 별표 1) 이내이고 자산총액 5천억원 미만이면 중소기업.
       기준을 넘으면 처음 넘은 과세연도와 그 다음 5개 과세연도(2023년까지 처음 넘었으면 3개)는 유예기간. 독립성을 잃거나 창업 후 2년 안에 넘으면 유예 없음.
       소기업은 매출액이 별표 3 기준 이내. 2025 과세연도부터 2025.9.1. 개정 기준(예: 화학제품 제조업·도소매 1,200억원, 소기업 120억원·60억원).
+      2016 과세연도는 2015.6.30. 개정 별표(제9차 분류 기호)와 업종 열거 방식, 2017 과세연도부터 2017.10.17. 개정 별표. 2016.1.1. 전 기준 소기업은 2019 과세연도까지 소기업.
     결과: 중소기업(참·거짓), 구분(소기업·중기업·유예기간 중·중소기업 아님), 계산(기준 금액·합산 매출액·유예기간), 판단·근거·주의.
-    범위 밖: 2017년 이전, 주된 업종 판정, 해외 자회사(합산 대상 아님), 손자기업 간접 지배, 상장법인 유예 7년, 합병에 따른 유예 배제, 1년 미만 과세연도 환산."""
-    r = INC.sme_status(year, industry_code, revenue, total_assets, domestic_affiliates, in_disclosure_group, large_corp_owner, excluded_business, first_exceeded_year, founded_on)
+    범위 밖: 2015년 이전, 주된 업종 판정, 해외 자회사(합산 대상 아님), 손자기업 간접 지배, 상장법인 유예 7년, 합병에 따른 유예 배제, 1년 미만 과세연도 환산."""
+    r = INC.sme_status(year, industry_code, revenue, total_assets, domestic_affiliates, in_disclosure_group, large_corp_owner, excluded_business, first_exceeded_year, founded_on, small_under_pre2016_rule)
     if "error" in r:
         return r
     return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 주의=r["주의"])
@@ -1298,10 +1350,10 @@ def rural_special_tax(year: YEAR,
     """Special tax for rural development surtax on corporate and income tax reductions and credits (농어촌특별세).
     농어촌특별세 — 조세특례제한법에 따라 법인세·소득세를 감면받은 세액에 붙는 농어촌특별세와 조문별 비과세 여부(농어촌특별세법 제4조·제5조). 언제: 세액공제·세액감면을 받는 회사가 본세와 함께 낼 농어촌특별세를 구하거나, 창업감면과 투자·고용 세액공제 중 어느 쪽이 실제로 유리한지 비교할 때.
     입력: 과세연도 → year, 감면 조문과 감면세액 → items.
-    계산: 비과세 조문이 아니면 감면세액 × 20%. 비과세는 그 과세연도 말 시행본의 농어촌특별세법 제4조와 시행령 제4조 목록으로 판정(2016~2026 연도별).
+    계산: 비과세 조문이 아니면 감면세액 × 20%. 비과세는 그 과세연도 말 시행본의 농어촌특별세법 제4조와 시행령 제4조 목록, 개정 부칙의 적용례로 판정(2016~2026 연도별, 12월 결산·기한 내 신고 기준).
       창업중소기업 감면(제6조)·중소기업 특별세액감면(제7조)·연구인력개발비 세액공제(제10조)는 비과세, 통합투자세액공제(제24조)·통합고용세액공제(제29조의8)는 과세.
     결과: 농어촌특별세 합계, 과세 대상·비과세 감면세액, 계산(항목별 과세 여부·세액·근거·확인할 것), 판단·근거·주의.
-    범위 밖: 저축·이자·배당 감면(세율 10%), 소득공제·비과세의 감면세액 환산, 관세·취득세·등록면허세·지방세특례제한법 감면, 연중 개정 조문의 부칙 적용례 판정."""
+    범위 밖: 저축·이자·배당 감면(세율 10%), 소득공제·비과세의 감면세액 환산, 관세·취득세·등록면허세·지방세특례제한법 감면, 12월 결산이 아닌 과세연도·기한 후 신고의 적용례 판정."""
     r = INC.rural_special_tax(year, items)
     if "error" in r:
         return r
@@ -1310,12 +1362,12 @@ def rural_special_tax(year: YEAR,
 
 @mcp.tool(annotations=CALC)
 @_guard
-def integrated_employment_credit(year: Annotated[int, Field(description="과세연도(2023~2026 — 2026은 2024·2025 증가분의 2차·3차 공제와 추가 납부만, 법률 제21223호 부칙 제34조)")],
+def integrated_employment_credit(year: Annotated[int, Field(description="과세연도(2023~2026 — 2026은 새 증가분을 개정 계산식으로, 2024·2025 증가분의 2차·3차 공제와 추가 납부를 종전 규정으로)")],
                                  size: Annotated[str, Field(description="중소기업 | 중견기업 | 일반")],
                                  headcounts: Annotated[list, Field(description="과세연도별 상시근로자 수 [{year, total(전체), youth(청년등), youth_for_recapture?(추가 납부 계산용 — 최초 공제 과세연도의 청년을 계속 청년등으로 본 인원)}] — 해당 과세연도와 직전 과세연도는 반드시, 앞 해의 2차·3차 공제까지 보려면 2022년부터. 인원은 매월 말 인원 합 ÷ 개월 수")],
                                  outside_capital_area: Annotated[bool, Field(description="인원이 수도권 밖에서 늘었으면 true(중소기업만 금액이 달라짐)")] = False,
                                  converted: Annotated[int, Field(description="정규직으로 전환한 인원(중소·중견기업, 2023·2024 과세연도)", ge=0)] = 0,
-                                 returned_from_leave: Annotated[int, Field(description="육아휴직에서 복귀한 인원(중소·중견기업)", ge=0)] = 0,
+                                 returned_from_leave: Annotated[int, Field(description="육아휴직에서 복귀한 인원(중소·중견기업, 2026.12.31.까지 복직)", ge=0)] = 0,
                                  credits_taken: Annotated[list | None, Field(description="추가 납부 한도용 — 실제로 공제받은 세액 [{first_year(최초 공제 과세연도), year(공제받은 과세연도), amount(원)}]. 비우면 산식 금액을 그대로 표시")] = None,
                                  carryforward_left: Annotated[list | None, Field(description="추가 납부 때 차감할 이월 공제액 [{first_year, amount(아직 공제받지 못하고 이월된 세액, 원)}]")] = None) -> dict:
     """Integrated employment tax credit for headcount increase by tax year (통합고용세액공제).
@@ -1326,12 +1378,15 @@ def integrated_employment_credit(year: Annotated[int, Field(description="과세�
       인원이 준 해에는 이미 공제받은 세액의 추가 납부액을 시행령 산식으로 계산하고, 실제로 공제받은 세액을 한도로 함.
       정규직 전환·육아휴직 복귀는 1명당 1,300만원(중견 900만원), 상시근로자가 줄지 않은 해만.
     결과: 기본공제, 정규직 전환·육아휴직 복귀 공제, 공제 대상 세액, 추가 납부세액, 계산(최초 공제 과세연도별 증가 인원·차수·공제액·추가 납부), 판단·근거·주의.
-    2026 과세연도: 2024·2025 과세연도 증가분의 2차·3차 공제와 추가 납부는 종전 규정으로 계산(2025.12.23. 개정 법률 제21223호 부칙 제34조). 2026 증가분(개정 계산식)과 2026 정규직 전환·육아휴직 복귀는 계산하지 않음.
-    범위 밖: 2022년 이전 증가분(고용증대 세액공제), 2026 과세연도 증가분의 개정 계산식, 최저한세·이월(minimum_tax_adjustment), 농어촌특별세(rural_special_tax), 합병·분할 승계 인원 조정."""
+    2026 과세연도: 2025 과세연도보다 늘어난 인원 × 금액(청년등 중소기업 700만원·수도권 밖 1,000만원, 중견 500만원, 그 밖 300만원. 청년등 외 중소기업 400만원·수도권 밖 700만원, 중견 300만원) — 2025.12.23. 개정 제29조의8제1항.
+      중소기업이 아니면 최소고용증가인원수(중견 5명, 그 밖 10명)를 넘게 늘어야 하고 그 인원에 대한 금액을 뺌. 개정 계산식에는 추가 납부가 없음.
+      2024·2025 과세연도 증가분의 2차·3차 공제와 추가 납부는 종전 규정으로 계산(법률 제21223호 부칙 제34조). 육아휴직 복귀 공제는 2026년에도 적용, 정규직 전환은 2024년 전환분까지.
+    범위 밖: 2022년 이전 증가분(고용증대 세액공제), 2027 과세연도 이후, 최저한세·이월(minimum_tax_adjustment), 농어촌특별세(rural_special_tax), 합병·분할 승계 인원 조정.
+    한계: 2025 과세연도 인원을 세는 방법은 국세청 2026.3.25. 공지(첨부 파일은 받지 못함)와 조문 MCP employment_credit_requirements_guide로 확인 — 이 도구는 넣은 인원으로만 계산."""
     r = INC.integrated_employment_credit(year, size, headcounts, outside_capital_area, converted, returned_from_leave, credits_taken, carryforward_left)
     if "error" in r:
         return r
-    return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 주의=r["주의"])
+    return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 주의=r["주의"], **({"한계": r["한계"]} if r.get("한계") else {}))
 
 
 @mcp.tool(annotations=CALC)
@@ -1349,7 +1404,8 @@ def employment_increase_credit(year: Annotated[int, Field(description="과세연
     계산: 늘어난 인원(전체 증가 인원 한도) × 1인당 금액 — 청년등은 중소기업 1,100만원(수도권 밖 1,200만원, 2021·2022년 수도권 밖 1,300만원), 중견 800만원, 그 밖 400만원. 청년등 외는 중소기업 700만원·770만원, 중견 450만원, 그 밖 0.
       최초 공제 과세연도와 그 뒤 1년(중소·중견기업 2년) 동안 공제. 전체 인원이 최초 공제 과세연도보다 줄면 중단, 청년등만 줄면 청년등 외 금액으로 공제. 준 해에는 추가 납부액 계산.
     결과: 공제 대상 세액, 추가 납부세액, 계산(최초 공제 과세연도별 증가 인원·차수·1인당 금액·공제액·추가 납부), 판단·근거·주의.
-    범위 밖: 2020년에 인원이 준 2018·2019년 최초 공제분의 유예 특례, 2019.1.1. 전에 신고한 2018 과세연도분, 2017년 이전 제도, 최저한세·이월(minimum_tax_adjustment), 통합고용세액공제(integrated_employment_credit)."""
+      2020년에 인원이 준 2018·2019년 최초 공제분은 사후관리 유예(제29조의7제5항~제7항): 2020년은 추가 납부 없음, 2021년에 회복하면 공제 재개, 2021·2022년에 줄면 추가 납부 — headcounts에 2018년부터 넣음.
+    범위 밖: 2019.1.1. 전에 신고한 2018 과세연도분, 2020.1.1. 전에 신고한 감소 과세연도의 종전 사후관리 식, 2017년 이전 제도, 최저한세·이월(minimum_tax_adjustment), 통합고용세액공제(integrated_employment_credit)."""
     r = INC.employment_increase_credit(year, size, headcounts, outside_capital_area, credits_taken, carryforward_left, only_first_years)
     if "error" in r:
         return r
@@ -1366,7 +1422,8 @@ def integrated_investment_credit(year: Annotated[int, Field(description="과세�
                                  months: Annotated[int, Field(description="해당 과세연도 개월 수", ge=1, le=12)] = 12,
                                  in_overconcentration_zone: Annotated[bool, Field(description="투자한 사업장이 수도권과밀억제권역 안이면 true(산업단지·공업지역은 false)")] = False,
                                  expansion: Annotated[bool, Field(description="증설투자면 true, 낡은 설비를 바꾸는 대체투자면 false")] = False,
-                                 graduated_year: Annotated[int | None, Field(description="size='졸업 뒤 3년'일 때 최초로 중소기업에 해당하지 않게 된 과세연도 — 2025 이후여야 졸업 뒤 3년 율, 그 전이면 중견기업 율(법률 제20617호 부칙 제5조제2항)")] = None) -> dict:
+                                 graduated_year: Annotated[int | None, Field(description="size='졸업 뒤 3년'일 때 최초로 중소기업에 해당하지 않게 된 과세연도 — 2025 이후여야 졸업 뒤 3년 율, 그 전이면 중견기업 율(법률 제20617호 부칙 제5조제2항)")] = None,
+                                 graduate_status: Annotated[str | None, Field(description="size='졸업 뒤 3년'일 때 그 과세연도의 지위: 중견기업 | 일반 — 임시 투자 세액공제(제24조제1항제3호) 율을 정함. 비우면 본칙만 적용하고 두 경우 금액을 판단에 표시")] = None) -> dict:
     """Integrated investment tax credit for business asset investment, basic and additional (통합투자세액공제).
     통합투자세액공제 — 사업용 자산 투자금액에 대한 기본공제와 추가공제(조세특례제한법 제24조). 언제: 기계장치 등 설비에 투자한 회사가 그 해 공제받을 금액을 구하거나, 창업감면·특별세액감면과 어느 쪽이 유리한지 비교할 때.
     입력: 과세연도 → year, 기업 규모 → size, 자산 구분별 투자금액 → investments, 직전 3년 투자 합계 → prior3_total, 수도권과밀억제권역·증설 여부 → in_overconcentration_zone·expansion.
@@ -1374,9 +1431,10 @@ def integrated_investment_credit(year: Annotated[int, Field(description="과세�
       2024·2025 과세연도는 본칙과 임시 공제 중 큰 쪽, 2023 과세연도는 임시 공제. 수도권과밀억제권역 안 증설투자는 배제.
       2020 과세연도는 2021.1.1. 이후 신고분이라 2021 율표(국가전략 구분 없음) — 종전 투자세액공제와 하나만 선택(법률 제17759호 부칙 제4조제1항·제36조, 종전 공제는 계산 안 함).
       '졸업 뒤 3년' 율은 2025.1.1. 이후 개시 과세연도에 처음 졸업한 경우만(graduated_year, 법률 제20617호 부칙 제5조제2항) — 그 전 졸업이면 중견기업 율, 미입력이면 졸업 뒤 3년 율로 계산하고 판단에 표시.
+      졸업 기업의 임시 공제(2025 과세연도)는 제3호에 중소·중견·그 밖 율만 있어 graduate_status(중견기업·일반)의 율로 본칙과 비교.
     결과: 기본공제, 추가공제, 공제 대상 세액, 적용(본칙·임시·배제), 계산(구분별 공제율·3년 연평균·초과 투자액·본칙과 임시 비교), 판단·근거·주의.
     범위 밖: 공제 대상 자산 판정, 종전 자산별 투자세액공제(2020 과세연도 선택분 포함), 다른 목적 전용 시 납부세액, 최저한세·이월(minimum_tax_adjustment), 농어촌특별세(rural_special_tax)."""
-    r = INC.integrated_investment_credit(year, size, investments, prior3_total, history_months, months, in_overconcentration_zone, expansion, graduated_year)
+    r = INC.integrated_investment_credit(year, size, investments, prior3_total, history_months, months, in_overconcentration_zone, expansion, graduated_year, graduate_status)
     if "error" in r:
         return r
     return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 주의=r["주의"])
@@ -1413,7 +1471,7 @@ def startup_tax_reduction(founded_on: Annotated[str, Field(description="창업�
                           tax: Annotated[int, Field(description="그 과세연도 법인세 산출세액(원)", ge=0)],
                           taxable_base: Annotated[int, Field(description="그 과세연도 과세표준(원)", gt=0)],
                           eligible_income: Annotated[int | None, Field(description="감면 대상 사업에서 발생한 소득(원). 비우면 과세표준 전부", ge=0)] = None,
-                          youth: Annotated[bool, Field(description="청년창업중소기업 여부 — 대표자가 창업 당시 15~34세(병역 기간 6년 한도 차감)이고 법인의 최대주주")] = False,
+                          youth: Annotated[bool, Field(description="청년창업중소기업 여부 — 대표자가 창업 당시 15~34세(2018.5.28. 이전 창업은 15~29세, 병역 기간 6년 한도 차감)이고 법인의 최대주주")] = False,
                           industry: Annotated[str, Field(description="업종: 제조업 | 위탁제조(제조업체에 맡겨 생산) | 통신판매업 | 그 밖의 대상 업종 | 도매업 | 소매업")] = "제조업",
                           oem: Annotated[dict | None, Field(description="위탁제조일 때 {domestic_maker(국내 제조업체 위탁), own_planning(직접 기획), own_name(자기 명의 제조), own_sale(인수해 자기 책임으로 직접 판매)} 각 true/false")] = None,
                           venture_confirmed_on: Annotated[str, Field(description="벤처기업 확인일 YYYY-MM-DD(창업 후 3년 안에 확인받은 경우)")] = "",
@@ -1422,10 +1480,10 @@ def startup_tax_reduction(founded_on: Annotated[str, Field(description="창업�
     창업중소기업 세액감면 — 창업일·지역·청년 여부·업종으로 감면 대상인지와 감면율, 감면기간, 그 과세연도 감면세액(조세특례제한법 제6조). 언제: 창업한 지 몇 해 안 된 중소기업이 이익이 난 해에 법인세를 얼마나 감면받는지, 위탁생산·온라인 판매 회사가 대상인지 볼 때.
     입력: 창업일 → founded_on, 지역 → region, 과세연도 → year, 최초 소득 과세연도 → first_income_year, 산출세액 → tax, 과세표준 → taxable_base, 청년창업 → youth, 업종 → industry, 위탁제조 요건 → oem, 벤처 확인일 → venture_confirmed_on.
     계산: 감면세액 = 산출세액 × 감면 대상 소득 ÷ 과세표준 × 감면율. 감면기간은 최초 소득 과세연도(사업 개시 후 5년이 되는 해까지 소득이 없으면 그 해)부터 5개 과세연도.
-      감면율은 창업일 기준 — 2016년 과밀억제권역 밖 50%, 2017년 청년 75%·50%, 2018.5.29.~2025년 청년 100%·50%와 과밀억제권역 밖 일반 50%, 2026년부터 100·75·50·25%.
-      위탁제조는 국내 제조업체 위탁·직접 기획·자기 명의·자기 책임 직접 판매를 모두 갖추면 제조업(시행규칙 제4조의2). 도매업·소매업은 대상 아님. 100%가 아니면 최저한세 적용.
+      감면율은 창업일 기준 — 2016년 과밀억제권역 밖 50%, 2017.1.1.~2018.5.28. 청년 75%·50%, 2018.5.29.~2025년 청년 100%·50%와 과밀억제권역 밖 일반 50%, 2026년부터 100·75·50·25%.
+      위탁제조는 국내 제조업체 위탁·직접 기획·자기 명의·자기 책임 직접 판매를 모두 갖추면 제조업(시행규칙 제4조의2, 2017.3.17. 전은 제2조제1항 — 2016년 창업 포함). 도매업·소매업은 대상 아님. 100%가 아니면 최저한세 적용.
     결과: 감면세액, 적용(제1항·제2항·대상 아님·감면기간 아님), 감면율, 감면 후 세액, 계산(감면기간·연차·감면 대상 세액·최저한세), 판단·근거·주의.
-    범위 밖: 2018.1.1.~5.28. 창업, 수입금액이 작은 창업기업 감면(제6항), 고용 증가 추가 감면(제7항), 창업보육센터·에너지신기술기업, 1년 미만 과세연도, 개인사업자."""
+    범위 밖: 2018.1.1.~5.28. 창업의 신성장 서비스업 75% 특례, 수입금액이 작은 창업기업 감면(제6항), 고용 증가 추가 감면(제7항), 창업보육센터·에너지신기술기업, 1년 미만 과세연도, 개인사업자."""
     r = INC.startup_tax_reduction(founded_on, region, year, first_income_year, tax, taxable_base, eligible_income, youth, industry, oem, venture_confirmed_on, business_started_on)
     if "error" in r:
         return r
@@ -1489,7 +1547,7 @@ def foreign_subsidiary_liquidation(tax_basis: Annotated[int, Field(description="
     계산: 분배액이 취득가액을 넘으면 초과액은 의제배당. 못 미치면 차액은 청산손실 — 청산이 끝나 잔여재산 분배가 완료된 날이 속하는 사업연도의 손금(법인46012-442, 사전-2015-법령해석법인-0057, 사전-2021-법령해석법인-1372).
     결과: 구분(의제배당·청산손실·손익 없음), 의제배당, 청산손실, 손금 귀속(사업연도 종료일·기준일), 유보 정리, 판단·근거·주의.
     범위 밖: 자회사에 대한 대여금·미수금의 대손과 채권 포기(따로 판정), 의제배당의 익금불산입 요건(foreign_subsidiary_dividend), 외국환 청산보고(foreign_exchange_reporting)."""
-    r = MY.foreign_subsidiary_liquidation(tax_basis, distribution, completed_on, fy_end, 1.0, book_value)
+    r = MY.foreign_subsidiary_liquidation(tax_basis, distribution, completed_on, fy_end, book_value)
     if "error" in r:
         return r
     return _ok(r["결과"], r["근거"], 판단=r["판단"], 주의=r["주의"])
@@ -1683,9 +1741,9 @@ def minimum_tax_adjustment(
             loss_carryforward=loss_carryforward, nontaxable=nontaxable, nontaxable_mt=nontaxable_mt,
             exclusion_mt=exclusion_mt, income_deduction=income_deduction, income_deduction_mt=income_deduction_mt,
             reductions=reductions, credits=credits, exclusion_order=exclusion_order, carry10=carry10_due)
-        extra.setdefault("주의", []).append(_LATE_NOTE.format(filed=_filed.isoformat(), due=_due.isoformat(), key="해석_미확인_신고기한기준")
+        extra.setdefault("주의", []).append(_LATE_NOTE.format(filed=_filed.isoformat(), due=_due.isoformat(), key="신고기한기준_결과")
                                           + f" — 이월공제기간 10년: 신고일 기준 {carry10}, 신고기한 기준 {carry10_due}(법률 제17759호 부칙 제35조)")
-        extra["해석_미확인_신고기한기준"] = {"이월공제기간_10년": carry10_due,
+        extra["신고기한기준_결과"] = {"이월공제기간_10년": carry10_due,
                                     **({k: _alt[k] for k in ("최저한세", "감면후세액", "차감세액", "최저한세_미달") if k in _alt} if "error" not in _alt else {"error": _alt["error"]})}
     return _ok(r, "조세특례제한법 제132조①·제144조, 시행령 제126조⑤, 법인세법 시행규칙 별지 제4호·제8호서식(갑)",
                계산={"산식": 산식}, 판단=판단목록, 계산식_입력=calc_inputs, **extra)
@@ -1825,7 +1883,12 @@ until이 due와 같은 날이면 가산세 0, due가 토·일·공휴일이면 �
         if notice:
             주의목록.append("2020.1.1. 전 성립분의 납세고지 후 체납은 구 국세징수법 가산금(3%)·중가산금 대상 — 이 도구는 계산하지 않음")
         if _d1 >= date(2026, 7, 1):
-            주의목록.append("2020.1.1. 전 성립분을 2026.7.1. 이후 납부·고지한 경우 — 법률 제16097호 부칙 제11조(종전 규정)로 끝날을 포함해 계산. 법률 제21212호(전날까지)와의 관계는 확인 필요")
+            _alt = C.late_payment_penalty(unpaid_tax, due, until, notice=bool(notice), pre2020=False)
+            out["결과"]["달리_볼_때"] = {"가정": "법률 제21212호 개정규정(납부고지일 또는 납부일의 전날까지)을 적용", "일수": _alt["일수"], "가산세": _alt["가산세"]}
+            주의목록.append("2020.1.1. 전 성립분을 2026.7.1. 이후 납부·고지한 경우 — 법률 제16097호 부칙 제11조(종전 규정)로 끝날을 포함해 계산. "
+                        "법률 제21212호 부칙(제1조~제4조)은 2026.6.30. 이전에 지정납부기한이 지난 경우만 종전 규정으로 두고 2020.1.1. 전 성립분은 따로 정하지 않음 — "
+                        "근거 없음(국세법령정보시스템 검색 '납부지연가산세 2020년 1월 1일 전 납세의무 성립 종전 규정 납부일' 2026-11-15, 해당 문서 없음), 서면질의 필요. "
+                        f"개정규정으로 보면 {_alt['일수']}일·{_alt['가산세']:,}원(결과의 '달리_볼_때')")
     elif _d1 >= date(2026, 7, 1):
         판단 = {"항목": "일수", "결론": "법정납부기한 다음 날부터 납부고지일(고지 전 납부는 납부일)의 전날까지 — 2026.7.1. 시행 개정", "근거": "국세기본법 제47조의4①1호(법률 제21212호)"}
     elif notice:
@@ -1863,7 +1926,7 @@ def _due_holiday_note(due: str) -> str | None:
 @_guard
 def withholding_late_payment_penalty(unpaid_tax: WON,
                                      due: Annotated[str, Field(description="법정납부기한(YYYY-MM-DD) — 원천징수세액은 보통 징수일이 속하는 달의 다음 달 10일(반기 납부 승인이면 반기 마지막 달의 다음 달 10일)")],
-                                     until: Annotated[str, Field(description="고지 전 자진납부면 납부일, 납부고지가 있었으면 납부고지일(YYYY-MM-DD, 이때 notice_due·paid_on도)")],
+                                     until: Annotated[str, Field(description="고지 전 자진납부면 납부일, 납부고지가 있었으면 납부고지일(YYYY-MM-DD, 이때 notice_due·paid_on도). 날짜는 그대로 넣는다 — 2026.7.1. 이후 '전날까지' 세는 것은 도구가 처리(하루를 미리 빼지 않음)")],
                                      notice_due: Annotated[str, Field(description="지정납부기한 = 납부고지서에 따른 납부기한(YYYY-MM-DD) — 납부고지가 있었을 때만")] = "",
                                      paid_on: Annotated[str, Field(description="납부고지 후 실제 납부일(YYYY-MM-DD) — notice_due와 함께")] = "",
                                      dunning_fee: Annotated[int, Field(ge=0, description="독촉에 드는 비용(원, 제47조의5제1항제4호·영 제27조의4제3항 등기우편 요금) — 개정 규정의 고지 후분에만")] = 0,
@@ -1984,6 +2047,11 @@ until이 due와 같은 날(기한 당일 납부)이면 가산세 0. due가 토·
     결과["적용_규정"] = {"고지 전": r["고지전_규정"], "고지 후": r["고지후_규정"]}
     out = _ok(결과, ", ".join(근거), 산식=산식)
     out["판단"] = 판단
+    if nd == date(2026, 6, 30) and pd is not None and pd > nd:
+        경계 = ("지정납부기한이 2026.6.30.인 경우 — 법률 제21212호 부칙 제4조 '2026년 6월 30일 이전에 지정납부기한이 경과한 경우'로 보아 종전 규정(일수분)으로 계산. "
+              "기한 당일이 지나는 때를 2026.7.1.로 보아 개정규정(경과 개월 수 × 이자율·독촉비용)을 적용하는지는 근거 없음"
+              "(국세법령정보시스템 검색 2026-11-15, 해당 문서 없음), 서면질의 필요 — 개정규정 쪽 금액은 notice_due를 2026-07-01로 넣어 비교")
+        주의 = [주의, 경계] if 주의 else 경계
     if 주의:
         out["주의"] = 주의
     return out
@@ -2162,7 +2230,7 @@ def assessment_limitation(due_date: Annotated[str, Field(description="법정신�
     국세 부과제척기간과 만료일(2020년 이후 부과분 기준 현행 조문). 언제: 어느 과세기간의 세금이든 부과·제척기간이 언제까지인지 역산한다.
 입력: 법정신고기한(원천징수분은 법정납부기한, YYYY-MM-DD) → due_date, 부과 성격(일반·무신고·부정행위) → case, 역외거래 여부 → offshore, 상속세·증여세 여부 → inheritance_gift, 원천징수분 → withholding.
 기한 특례: 법정신고기한(납부기한)이 토·일·공휴일·대체공휴일·근로자의 날이면 다음 날이 기한(국세기본법 제5조제1항)이라 그다음 날부터 기산하고, 만료일이 토요일·공휴일이면 다음 날 만료(국세기본법 제4조·민법 제161조, 기본통칙 4-0…2). 공휴일표 2016~2027.
-결과: 제척기간(년)·법정신고기한(적용)(원천징수분은 법정납부기한(적용))·기산일·만료일(이월 전 역법상 만료일 함께), 근거(국세기본법 제26조의2제1항·제2항·제4항, 시행령 제12조의3, 기한이 미뤄졌으면 제5조제1항, 만료일이 미뤄졌으면 제4조). 일반 5년(역외 7년), 무신고 7년(역외 10년), 부정행위 10년(역외 15년), 상속·증여 10년(부정 등 15년). 역외 7년·10년은 2019.1.1. 이후 납세의무 성립분부터이고 그 전 성립분은 5년·7년(부정행위 15년은 그 전에도 같음). 법정신고기한 2016.1.1. 이후만 지원.
+결과: 제척기간(년)·법정신고기한(적용)(원천징수분은 법정납부기한(적용))·기산일·만료일(이월 전 역법상 만료일 함께), 근거(국세기본법 제26조의2제1항·제2항·제4항, 시행령 제12조의3, 기한이 미뤄졌으면 제5조제1항, 만료일이 미뤄졌으면 제4조). 일반 5년(역외 7년), 무신고 7년(역외 10년), 부정행위 10년(역외 15년), 상속·증여 10년(부정 등 15년). 역외 7년·10년은 2019.1.1. 이후 납세의무 성립분부터이고 그 전 성립분은 5년·7년(역외 부정행위 15년은 법률 제12848호 부칙 제4조로 2015.1.1. 이후 부과할 수 있는 날이 개시하는 분부터 — 이 도구 범위인 법정신고기한 2016.1.1. 이후분은 모두 15년). 법정신고기한 2016.1.1. 이후만 지원.
 경정청구가 있으면 제척기간이 지나도 청구일부터 2개월 안에 경정할 수 있음(제26조의2제6항제3호) — 경정청구 기한은 refund_claim_deadline."""
     try:
         d = _chk.to_date("due_date", due_date)
@@ -2442,6 +2510,7 @@ def _wh_small(out: dict, kind: str, year: int, paid_date, cps: bool) -> dict:
     """소득세법 제86조제1호 소액부징수 — 원천징수세액 1천원 미만이면 징수하지 않음(이자소득·2024.7.1. 이후 지급 인적용역 사업소득 제외)."""
     if "error" in out:
         return out
+    out.setdefault("끝수", "원천징수세액은 한 소득자·한 번 지급분을 납부하는 금액이라 10원 미만 버림 — " + _WH_ROUNDING_BASIS + ". 여러 건을 한꺼번에 지급하면 소득자별로 더한 뒤 버림")
     tax = out["결과"]["원천징수세액"]
     if not 0 < tax < 1_000:
         return out
@@ -2609,17 +2678,40 @@ def nonresident_inheritance_gift(
 @_guard
 def retirement_income_tax(income: Annotated[int, Field(description="퇴직소득금액(퇴직급여, 비과세 제외, 원)")],
                           years_of_service: Annotated[int, Field(description="근속연수(1~60년)")],
-                          retire_year: Annotated[int, Field(description="계산: 2020~2026년 퇴직. 2016~2019년 퇴직은 경과 부칙(법률 제12852호) 대상이라 계산하지 않고 안내. 근속연수공제표(2023 개정)·기본세율표가 이 해 기준", ge=2016, le=2026)] = 2025) -> dict:
+                          retire_year: Annotated[int, Field(description="퇴직한 해(2016~2026). 2016~2019년 퇴직은 종전 규정 세액과 개정규정 세액을 퇴직연도별 비율로 더함(법률 제12852호 부칙 제25조). 근속연수공제표(2023 개정)·기본세율표가 이 해 기준", ge=2016, le=2026)] = 2025,
+                          years_before_2013: Annotated[int, Field(description="2012.12.31. 이전 근속연수(년, 1년 미만은 1년으로 올림) — 2016~2019년 퇴직의 종전 규정 세액에서만 씀(법률 제11611호 부칙 제22조제2항). 2013.1.1. 이후 입사면 0", ge=0, le=60)] = 0) -> dict:
     """Retirement income tax on severance pay with service-year deduction (퇴직소득세).
     퇴직소득세(근속연수공제·환산급여 방식). 언제: 퇴직금(퇴직급여)을 지급할 때 퇴직소득세를 계산한다.
-입력: 퇴직소득금액(퇴직급여, 비과세 제외, 원) → income, 근속연수(1~60년) → years_of_service, 퇴직한 해 → retire_year(기본 2025).
-계산: 2020~2026년 퇴직. 2016~2019년 퇴직은 경과 부칙(법률 제12852호) 대상이라 계산하지 않고 안내.
+입력: 퇴직소득금액(퇴직급여, 비과세 제외, 원) → income, 근속연수(1~60년) → years_of_service, 퇴직한 해 → retire_year(기본 2025), 2012.12.31. 이전 근속연수 → years_before_2013(2016~2019년 퇴직만).
+계산: 2020~2026년 퇴직은 환산급여 방식. 2016~2019년 퇴직은 종전 규정(40% 정률공제 + 근속연수공제, 5배 환산 — 2012.12.31. 이전 근속분은 연분연승) 세액과 개정규정 세액을 2016년 80:20, 2017년 60:40, 2018년 40:60, 2019년 20:80으로 더함(법률 제12852호 부칙 제25조).
 연도: 근속연수공제는 2023.1.1. 이후 퇴직 개정표(100만·200만·250만·300만), 2022년까지는 구표(30만·50만·80만·120만). 기본세율은 퇴직한 해 표.
 결과: 퇴직소득세(산출세액)와 계산 단계 — 근속연수공제·환산급여·환산급여공제·퇴직소득과세표준·환산산출세액, 산식, 근거(소득세법 제48조·제55조제2항). Retirement income tax (근속연수공제·환산급여 방식)."""
     _chk.int_range("years_of_service", years_of_service, 1, 60, "근속연수(1년 미만의 기간은 1년으로 보아 올려 넣음, 소득세법 제48조① 괄호) ")
+    if years_before_2013 > years_of_service:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"years_before_2013={years_before_2013} — 근속연수 {years_of_service}년 이내"]}
     if retire_year < 2020:
-        return {"error": "입력 확인 필요 — 계산하지 않음",
-                "문제": [f"retire_year={retire_year}: 2016~2019년 퇴직은 종전 방식과 개정 방식 세액을 비율로 섞는 경과 부칙(법률 제12852호) 대상 — 이 도구는 지원하지 않음"]}
+        tr = I.retirement_tax_transition(income, years_of_service, retire_year, years_before_2013)
+        new, old, share = tr["개정규정"], tr["종전규정"], tr["개정규정_비율"]
+        p_new, p_old = int(share * 100), 100 - int(share * 100)
+        n, n_pre, n_post = years_of_service, years_before_2013, years_of_service - years_before_2013
+        산식 = [
+            f"[종전 규정] 퇴직소득공제 = 정률공제 {old['정률공제']:,}(퇴직소득금액의 40%) + 근속연수공제 {old['근속연수공제']:,} (2015.7.1. 시행본 제48조①②)",
+            f"[종전 규정] 과세표준 = {income:,} − {old['정률공제'] + old['근속연수공제']:,} = {old['과세표준']:,}원, 연평균과세표준 = ÷ {n} = {old['연평균과세표준']:,}원",
+            f"[종전 규정] 2012.12.31. 이전분({n_pre}년) = 연평균과세표준 × 기본세율({retire_year}년 표) × {n_pre} = {old['산출세액_2012이전분']:,}원 (법률 제11611호 부칙 제22조②)",
+            f"[종전 규정] 2013.1.1. 이후분({n_post}년) = (연평균과세표준 × 5) × 기본세율 ÷ 5 × {n_post} = {old['산출세액_2013이후분']:,}원 (2015.7.1. 시행본 제55조②)",
+            f"[종전 규정] 산출세액 = {old['산출세액']:,}원",
+            f"[개정규정] 근속연수공제 {new['근속연수공제']:,} → 환산급여 {new['환산급여']:,} − 환산급여공제 {new['환산급여공제']:,} = 과세표준 {new['과세표준']:,} → 산출세액 {new['산출세액']:,}원 (제48조①·제55조②)",
+            f"퇴직소득 산출세액 = 종전 {old['산출세액']:,} × {p_old}% + 개정 {new['산출세액']:,} × {p_new}% = {tr['산출세액']:,}원 ({retire_year}년 퇴직, 법률 제12852호 부칙 제25조)",
+        ]
+        주의 = ["세액은 원 미만을 한 번만 버림(종전·개정 세액을 분수로 계산해 비율을 곱한 뒤) — 서식 칸마다 원 미만을 버리면 1~2원 차이가 날 수 있음"]
+        if not years_before_2013:
+            주의.append("2012.12.31. 이전에 입사했으면 years_before_2013(그날까지의 근속연수)을 넣어야 함 — 그 부분은 5배 환산 없이 계산(법률 제11611호 부칙 제22조제2항)")
+        return _ok({"퇴직소득세": tr["산출세액"], "종전규정_산출세액": old["산출세액"], "개정규정_산출세액": new["산출세액"],
+                    "종전규정_비율": f"{p_old}%", "개정규정_비율": f"{p_new}%", "종전규정": old,
+                    "개정규정": {"근속연수공제": new["근속연수공제"], "환산급여": new["환산급여"], "환산급여공제": new["환산급여공제"],
+                              "퇴직소득과세표준": new["과세표준"], "환산산출세액": new["환산산출세액"]}},
+                   "소득세법 제48조·제55조②, 법률 제12852호(2014.12.23.) 부칙 제25조, 법률 제11611호(2013.1.1.) 부칙 제22조제2항, 시행규칙 별지 제24호서식(2) <개정 2016.3.16.> 작성방법",
+                   산식=산식, 주의=주의)
     st = I.retirement_tax_steps(income, years_of_service, retire_year)
     n = years_of_service
     산식 = [
@@ -2692,7 +2784,7 @@ def vat_input_tax_deduction(period: Annotated[str, Field(description="과세기�
 def vat_tax_base_adjustments(period: Annotated[str, Field(description="과세기간('YYYY-1' 또는 'YYYY-2', 2016-1~2026-2)")],
                              sales: Annotated[int, Field(description="조정 전 매출 공급가액 합계(원, 부가세 제외) — 마일리지등으로 결제받은 거래는 빼고 mileage_sales에 따로 넣는다", ge=0)] = 0,
                              adjustments: Annotated[list | None, Field(description="조정 항목 [{종류, 금액(원, 공급가액 기준), 이름?, 발생일?(YYYY-MM-DD)}] — 종류: 매출에누리·환입·도달전파손·매출할인·연체이자·보조금(공급가액에 포함하지 않음) / 판매장려금·대손금(과세표준에서 공제하지 않음). 환입은 발생일(환입된 날)이 과세기간 밖이면 차감하지 않음")] = None,
-                             mileage_sales: Annotated[list | None, Field(description="마일리지·포인트 등으로 대금 일부를 결제받은 거래 [{이름?, 공급일(YYYY-MM-DD, 2017-04-01 이후), 현금등(마일리지등 외 결제액), 자기적립마일리지(자기가 적립해 준 마일리지등 결제액), 그외마일리지(제휴사 등 다른 사업자가 적립한 마일리지등 결제액), 보전금액(그외마일리지 결제분에 대해 제3자에게서 보전받는 금액), 시가?, 자기생산취득재화?(bool), 특수관계_저가보전?(bool)}]")] = None,
+                             mileage_sales: Annotated[list | None, Field(description="마일리지·포인트 등으로 대금 일부를 결제받은 거래 [{이름?, 공급일(YYYY-MM-DD), 현금등(마일리지등 외 결제액), 자기적립마일리지(자기가 적립해 준 마일리지등 결제액), 그외마일리지(제휴사 등 다른 사업자가 적립한 마일리지등 결제액), 보전금액(그외마일리지 결제분에 대해 제3자에게서 보전받는 금액), 시가?, 자기생산취득재화?(bool), 특수관계_저가보전?(bool)}]")] = None,
                              vat_included: Annotated[bool, Field(description="mileage_sales의 금액이 부가세 포함 결제액인지(소비자 판매면 True → ×100/110). sales·adjustments에는 적용하지 않음")] = False) -> dict:
     """VAT tax base adjustments for returns, discounts, rebates, bad debts and points (부가가치세 과세표준 조정).
     과세표준 조정 — 반품(환입)·에누리·할인·장려금·대손금, 마일리지·포인트 결제 거래의 공급가액(부가가치세법 제29조, 시행령 제61조·제70조). 언제: 반품·할인·장려금·포인트 결제가 있는 과세기간의 부가가치세 과세표준을 구할 때.
@@ -2702,7 +2794,7 @@ def vat_tax_base_adjustments(period: Annotated[str, Field(description="과세기
       과세표준에서 공제하지 않음(제29조제6항): 판매장려금, 대손금.
       마일리지등 결제(시행령 제61조 9호·10호, 2017.4.1. 이후 공급분): 공급가액 = 마일리지등 외 결제액 + 자기적립 외 마일리지등 결제분에 대해 제3자에게서 보전받는 금액. 자기적립마일리지등 결제분은 포함하지 않음.
         자기적립 외 마일리지등 결제분을 보전받지 않고 자기생산·취득재화를 공급했거나(자기생산취득재화=True) 특수관계인에게서 부당하게 낮게 보전받으면(특수관계_저가보전=True) 시가가 공급가액(시가 입력 필요).
-    연도: 제29조제5항·제6항은 2016~2026 같음. 마일리지등 규정은 2017.4.1. 공급분부터(대통령령 제27838호 부칙 제1조), 2017.3.31.까지 공급분은 계산하지 않음.
+    연도: 제29조제5항·제6항은 2016~2026 같음. 마일리지등 규정은 2017.4.1. 공급분부터(대통령령 제27838호 부칙 제1조·제2조). 2017.3.31.까지 공급분은 적립 마일리지 결제액을 에누리액으로 본 대법원 2015두58959 전원합의체·2019두58766 기준 금액과 구 시행령 제61조제4항 문언(마일리지 상당액 포함) 기준 금액을 함께 돌려줌.
     결과: 과세표준·조정 전 매출·차감 합계·마일리지등 거래 공급가액·매출세액, 계산(항목별), 판단·근거."""
     r = V.vat_tax_base_adjustments(period, sales, adjustments, mileage_sales, vat_included)
     if "error" in r:
@@ -2720,7 +2812,7 @@ def vat_deemed_supply_items(period: Annotated[str, Field(description="과세기�
       거래: '판매'|'면세전용'|'비영업용승용차전용'|'타사업장반출'|'개인적공급'|'사업상증여'|'폐업시잔존'.
       감가상각: {구분:'건물'|'구축물'|'기타', 취득가액, 취득일, 공급일} → 간주시가 = 취득가액 × (1 − 체감률 × 경과과세기간수), 체감률 건물·구축물 5%·기타 25%.
       취득구분(선택): '자기매입'(기본) | '사업양수'(사업양도로 취득, 양도자가 매입세액 공제받은 재화 — 제10조1항2호) | '수출영세율'(영세율 적용받은 재화 — 제10조1항3호).
-        '사업양수'·'수출영세율'이면 매입세액공제가 False여도 간주공급 대상(시가·감가상각 간주시가 그대로). 양수 재화의 경과 과세기간은 입력한 취득일 기준(판단에 "양수 재화 취득일 기준 — 해석 확인 필요" 기재).
+        '사업양수'·'수출영세율'이면 매입세액공제가 False여도 간주공급 대상(시가·감가상각 간주시가 그대로). 양수 재화의 경과 과세기간은 사업을 양도한 자가 당초 취득한 날부터 셈 — 감가상각.취득일에 양도자의 당초 취득일을 입력(부가46015-1921, 1999.7.3.).
       개인적공급: 시가(감가상각 간주시가) 전액 과세. 사용인에게 준 경조사·설날·추석·창립기념일·생일 등 재화만(영 제19조의2 3호) 목별로 사용인 1명당 연간 10만원 한도,
         초과액만 과세 — 사용인_구분('경조사'|'설날·추석'|'창립기념일·생일', '명절'·'생일' 등도 됨), 인원(선물 받은 사용인 수, 시가는 그 합계), 1인당_연간금액(이 선물을 포함한 그 목의 1인당 연간 누계,
         앞서 준 같은 목 선물 포함)을 넣는다. 목: 2024년 제2기부터 가 경조사·나 설날·추석·다 창립기념일·생일 등, 2020년 제2기~2024년 제1기는 설날·추석·창립기념일·생일이 한 목. 2020년 제1기 이전은 미지원.
@@ -2886,7 +2978,7 @@ def donation_limit(year: YEAR, base_income: WON,
                        (social_enterprise and over_d.get("social_ratio") != over.get("social_ratio"))
             if _matters:
                 _alt = C.donation(base_income, carried_loss, special, general, special_carry, general_carry, sme, social_enterprise, year=year, **over_d)
-                주의.append(_LATE_NOTE.format(filed=filed.isoformat(), due=_due.isoformat(), key="해석_미확인_신고기한기준")
+                주의.append(_LATE_NOTE.format(filed=filed.isoformat(), due=_due.isoformat(), key="신고기한기준_결과")
                           + " (법률 제16833호 부칙 제4조·제16008호 부칙 제4조제1항)")
                 over["_alt"] = {"이월분_먼저": over_d["carry_first"], **({"사회적기업_비율": over_d.get("social_ratio") or None} if social_enterprise else {}), "결과": _alt}
     else:
@@ -2898,7 +2990,7 @@ def donation_limit(year: YEAR, base_income: WON,
     r = C.donation(base_income, carried_loss, special, general, special_carry, general_carry, sme, social_enterprise, year=year, **over)
     extra = {k: v for k, v in (("기준", 기준), ("주의", 주의)) if v}
     if _alt_d:
-        extra["해석_미확인_신고기한기준"] = _alt_d
+        extra["신고기한기준_결과"] = _alt_d
     return _ok(r, "법인세법 제24조" + (", 법률 제16833호 부칙 제4조·제16008호 부칙 제4조(신고일 기준)" if 기준 else ""),
                산식="특례 = (기준소득 − 결손금) × 50%, 일반 = (기준소득 − 결손금 − 특례 손금산입) × 10%(사회적기업: 2019.1.1. 이후 신고분 20%, 2026 개시 사업연도부터 30%)", **extra)
 
@@ -3844,12 +3936,18 @@ def _ymd(name: str, v: str | None) -> date | None:
 
 _FW_LIMITS = [
     "특수관계기업 여부(시행령 제16조의2제2항)·외국인투자기업 예외(같은 조 제1항)·지역본부(같은 조 제3항) 해당 여부는 입력값을 그대로 씀 — 도구가 판정하지 않음",
-    "2014.1.1. 전 근무 시작자의 2016 귀속: 5년 기간을 세는지 확인 필요(이 도구는 세지 않음)",
-    "지방세특례제한법 제106조의2(지방소득세 = 제18조의2제2항 세율의 100분의 10)는 현행본(2026.6.2. 시행)만 대조 — 2016~2025 연도별 문언은 확인 필요",
     "사택 제공 이익 비과세 유지(제18조의2제3항 괄호, 시행령 제16조의2제5항 → 소득세법 시행령 제17조의4제1호)는 2024.1.1. 이후 지급분부터(법률 제19936호 부칙 제6조) — "
-    "이 도구는 귀속연도 2024부터로 처리, 2023년 귀속분을 2024년에 지급한 경우는 확인 필요. 소득세법 시행령 제17조의4는 현행본만 대조",
+    "이 도구는 귀속연도 2024부터로 처리, 2023년 귀속분을 2024년에 지급한 경우는 지급일 기준으로 따로 확인",
     "원천징수(제18조의2제4항) 월 세액은 입력한 월 지급액 × 세율 — 월 원천징수 대상에 비과세 급여를 넣는지는 확인 필요",
-    "원 미만: 법 문언에 끝수 처리가 없어 최종 세액만 원 미만 절사",
+    "끝수: 세액은 원 단위까지 계산(원 미만 버림) — 납부할 때 10원 미만 끝수는 버림(국고금 관리법 제47조제1항)",
+]
+# 원문 대조로 닫은 것(법제처 시행본·부칙, 2026-11-15) — 결과의 '대조'로 내보낸다.
+_FW_VERIFIED = [
+    "2014.1.1. 전 근무 시작자의 2016 귀속: 법률 제12173호 부칙 제59조로 종전 제18조의2제2항(2013.10.31. 시행본 '국내에서 근무함으로써 2014년 12월 31일까지 받는 근로소득' — 5년 기간 문언 없음)을 적용하고, "
+    "법률 제12853호 부칙 제8조는 본문 개정(기한 2016.12.31.)을 이들에게도 적용 — 5년을 세지 않음. 특수관계기업 근로는 부칙 제59조 단서로 개정규정 적용",
+    "지방세특례제한법 제106조의2: 2014.3.24. 신설 뒤 개정 없음(2026.6.2. 시행본 조문 연혁 표시) — 2016~2026 같은 문언(제18조의2제2항 세율의 100분의 10, 개인지방소득세 세액공제·감면 규정은 적용 안 함)",
+    "소득세법 시행령 제17조의4제1호(사택 제공 이익): 2024.11.12.·2025.11.28.·2026.10.1. 시행본 같은 문언(부처 이름만 바뀜)",
+    "농어촌특별세: 제18조의2 과세특례는 비과세(농어촌특별세법 제4조제12호, 시행령 제4조제6항제1호 2016.12.1. 시행본·제7항제1호 2026.1.2. 시행본에 제18조·제18조의2 열거)",
 ]
 
 
@@ -3909,18 +4007,26 @@ def foreign_worker_flat_tax(
     주의 = el["주의"] + ["외국인기술자 감면(제18조) 대상이면 누진세율 쪽에 그 감면을 반영해 foreign_expert_income_reduction으로 따로 비교"]
     if prog["과세표준추정"]:
         주의.append("누진세율 과세표준은 본인 기본공제만 뺀 추정 — 부양가족 등 공제가 있으면 tax_base를 주세요")
-    return _ok(결과, " · ".join(근거), 주의=주의, 한계=_FW_LIMITS, 시행본=el["시행본"])
+    return _ok(결과, " · ".join(근거), 주의=주의, 한계=_FW_LIMITS, 대조=_FW_VERIFIED, 시행본=el["시행본"])
 
 
 _FE_LIMITS = [
     "외국인기술자 범위(시행령 제16조제1항 각 호 — 엔지니어링기술도입계약, 연구원 요건, 2025 시행본부터 우수 해외인재)와 소재·부품·장비 특화선도기업등 근무(같은 조 제2항)는 입력값을 그대로 씀",
-    "시행령 제16조제1항제2호 연구원 요건 개정(2021.2.17.)과 제3호 우수 해외인재 신설(2025.2.28.)의 부칙 적용 시점은 확인 필요 — 이 도구는 연말 시행본 기준(연구원 특수관계 요건 2021 귀속부터, 우수 해외인재 2025 귀속부터)",
-    "'N년이 되는 날'은 첫 근로일 산입으로 계산 — 최초 근로일이 1일이면 마지막 감면 달이 한 달 달라질 수 있어 확인 필요",
-    "2018년 최초 근로자의 2023년 이후 재감면(법률 제19199호 부칙 제9조 문언)은 해석례를 찾지 못함 — 확인 필요",
-    "감면대상 근로소득금액은 근로소득금액을 총급여 비율로 나눔(소득세법 제59조의5 준용, 현행본만 대조) — 다른 종합소득이 있으면 확인 필요",
-    "농어촌특별세·최저한세·중복지원 배제(조특법 제127조) 관계는 대조하지 않음 — 확인 필요",
-    "지방소득세: 지방세특례제한법 제106조(현행본) 감면은 최초 근로 2018.12.31. 이전·2년만 규정 — 이 도구는 개인지방소득세 감면을 계산하지 않고 감면 후 소득세의 10%를 참고로만 붙임, 확인 필요",
-    "원 미만: 최종 감면세액만 원 미만 절사",
+    "시행령 제16조제1항제2호 연구원 요건 개정(대통령령 제31444호, 2021.2.17.)은 2021.2.17. 이후 최초로 국내에서 근로계약을 체결하는 경우부터, 그 전 계약자는 종전 규정(부칙 제3조·제17조). "
+    "제3호 우수 해외인재(대통령령 제35347호, 2025.2.28.)는 2025.2.28. 이후 지급받는 근로소득부터(부칙 제8조) — 귀속연도가 아니라 근로계약 체결일·지급일로 가르므로 입력할 때 그 기준으로 대상 여부를 정해 넣음",
+    "'N년이 되는 날'은 최초 근로일부터 기산(첫날 산입) — '최초로 근로를 제공한 날부터 기산하여 연속적으로 5년이 되는 날이 속하는 달까지'(서면인터넷방문상담2팀-39, 2005.1.5.; 국제세원관리담당관실-137, 2012.3.21.)",
+    "2018년 최초 근로자의 2023년 이후 재감면(법률 제19199호 부칙 제9조 문언)과 소재·부품·장비 단서 대상자의 본문 10년 선택: 근거 없음 — 국세법령정보시스템 검색('외국인기술자 감면 5년이 되는 날이 속하는 달 기산'·"
+    "'외국인기술자 소득세 감면 10년 2018년 최초 근로 부칙 제9조', 2026-11-15)에 해당 문서 없음, 서면질의 필요. 부칙 문언대로 계산한 결과와 다시 감면하지 않는 경우의 차이는 주의에 표시",
+    "감면대상 근로소득금액은 근로소득금액을 총급여 비율로 나눔(소득세법 제59조의5 준용) — 다른 종합소득이 있으면 종합소득 산출세액 기준으로 다시 계산해야 함",
+    "지방소득세: 지방세특례제한법 제106조 감면은 최초 근로 2018.12.31. 이전·2년만 규정(2014.12.31. 개정 뒤 그대로) — 이 도구는 개인지방소득세 감면을 계산하지 않고 감면 후 소득세의 10%를 참고로만 붙임",
+    "끝수: 감면세액은 원 단위까지 계산(원 미만 버림) — 납부할 때 10원 미만 끝수는 버림(국고금 관리법 제47조제1항)",
+]
+_FE_VERIFIED = [
+    "소득세법 제59조의5: 2013.1.1. 개정(2014.1.1. 조 이동) 뒤 개정 없음 — 2016~2026 같은 문언",
+    "농어촌특별세: 제18조 감면은 비과세(농어촌특별세법 제4조제12호, 시행령 제4조제6항제1호 2016.12.1. 시행본·제7항제1호 2026.1.2. 시행본에 제18조 열거)",
+    "최저한세: 조세특례제한법 제132조제2항은 사업소득에 대한 소득세만 대상(2016.10.4.·2026.9.18. 시행본) — 근로소득 감면인 제18조는 대상이 아님",
+    "중복지원 배제: 조세특례제한법 제127조(2016.10.4.·2026.9.18. 시행본)에 제18조를 든 항 없음",
+    "지방세특례제한법 제106조: 2014.12.31. 개정 뒤 개정 없음(2026.6.2. 시행본 조문 연혁 표시)",
 ]
 
 
@@ -4006,7 +4112,7 @@ def foreign_expert_income_reduction(
     주의 = win["주의"] + [배분, "단일세율과 비교하려면 foreign_worker_flat_tax로 같은 해를 계산해 결정세액을 견줌"]
     if assumed:
         주의.append("산출세액은 본인 기본공제만 뺀 과세표준으로 추정 — 실제 과세표준이나 산출세액을 주세요")
-    return _ok(결과, " · ".join(근거), 주의=주의, 한계=_FE_LIMITS)
+    return _ok(결과, " · ".join(근거), 주의=주의, 한계=_FE_LIMITS, 대조=_FE_VERIFIED)
 
 
 @mcp.tool(annotations=CALC)
@@ -5205,7 +5311,7 @@ def entertainment_adjustment(year: YEAR, sme: Annotated[bool, Field(description=
     return _ok(unified, 근거_문자열, 세무조정=settlements, 판단=judgments, 계산=calc_dict,
                산식=f"기본한도 = 중소 {기본한도_중소:,}원·일반 {기본한도_일반:,}원 × 월수/12, 수입금액 한도 = 수입금액 구간별 비율을 적용한 금액(+ 특수관계 10%), 문화한도 = min(문화비, 일반한도 × 20%), 전통시장등한도 = min(전통시장등 지출, (기본한도+수입금액한도) × {시장비율}) [신고일 기준 대상·비율], 한도 = 기본 + 수입금액 + 문화 + 전통시장등, 한도초과 = 시부인 대상 − 한도",
                계산식_입력=계산식_입력, 계산식=계산식, **extra,
-               **({"해석_미확인_신고기한기준": {"전통시장등_비율": dd["regime_due"]["비율"], "전통시장등_대상": list(dd["regime_due"]["대상"]), "부칙": dd["regime_due"]["부칙"],
+               **({"신고기한기준_결과": {"전통시장등_비율": dd["regime_due"]["비율"], "전통시장등_대상": list(dd["regime_due"]["대상"]), "부칙": dd["regime_due"]["부칙"],
                                          "안내": "신고기한 기준 금액은 filing_date를 비우고 다시 호출하면 나옴"}} if dd.get("regime_due") else {}))
 
 
@@ -5497,7 +5603,7 @@ def financial_income_aggregate(year: YEAR,
         · 의제배당_잉여금자본전입 — 무상주(재원 source)
         · 의제배당_감자 — 감자 의제배당(2025.1.1. 이후 취득분 중 법인세 미과세는 corp_tax_paid=false → Gross-up 제외)
         · 재평가적립금감액배당·자본준비금감액배당 — 제17조제3항제6호·제7호(2025.1.1. 이후 지급분 Gross-up 제외, paid_date)
-        · 고배당기업배당 — 조특법 제104조의27(2026.1.1. 이후 받는 배당, 법률 제21223호 부칙 제23조): separate_election=true면 특례배당소득을 종합과세표준·Gross-up에서 빼고 분리 산출세액(2천만 이하 14%, 3억 이하 280만+20%, 50억 이하 5,880만+25%, 초과 123,380만+30%), false면 일반 상장배당. 2천만원 기준금액 판정 포함 여부는 해석 미확인이라 두 경우를 함께 보여줌
+        · 고배당기업배당 — 조특법 제104조의27(2026.1.1. 이후 받는 배당, 법률 제21223호 부칙 제23조): separate_election=true면 특례배당소득을 종합과세표준·Gross-up에서 빼고 분리 산출세액(2천만 이하 14%, 3억 이하 280만+20%, 50억 이하 5,880만+25%, 초과 123,380만+30%), false면 일반 상장배당. 2천만원 기준금액 판정 포함 여부는 근거 없음(해석례 없음)이라 두 경우를 함께 보여줌
         · 출자공동사업자배당 — 무조건 종합과세, 2천만원 판정 제외, 원천 25%
         · 외국법인배당·환매조건부매매차익 — 조건부 종합과세
         · 법원보증금이자·비실명이자·비실명배당(paid_date로 지급일 세율)·직장공제회초과반환금 — 분리과세, 합계 제외
@@ -5665,7 +5771,7 @@ def financial_income_aggregate(year: YEAR,
                     return {"error": "입력 확인 필요 — 계산하지 않음",
                             "문제": [f"고배당기업배당 {amt:,}원({'지급일 ' + str(_pd) if _pd else str(year) + '년 귀속'}): 조세특례제한법 제104조의27제3항 합산배제 신청 여부 — separate_election(true/false) 입력 필요"],
                             "안내": "신청했으면 separate_election=true(분리 산출세액 14·20·25·30%), 신청하지 않았으면 false(일반 상장법인 배당, Gross-up 대상)."}
-                return {"error": "미지원 — 확인 필요",
+                return {"error": "입력 확인 필요 — 계산하지 않음",
                         "문제": [f"고배당기업배당 {amt:,}원({'지급일 ' + str(_pd) if _pd else str(year) + '년 귀속'}): {_r.get('미지원', '조세특례제한법 제104조의27 특례 미지원')}"],
                         "안내": "2025.12.31.까지 받은 배당에는 제104조의27(2025.12.23. 신설, 법률 제21223호 부칙 제23조: 2026.1.1. 이후 받는 배당부터) 특례가 없음 — 상장법인현금배당으로 입력."}
         elif k == "의제배당_잉여금자본전입":
@@ -5749,7 +5855,7 @@ def financial_income_aggregate(year: YEAR,
         # 기준금액(2천만원) 판정에 특례배당소득을 넣는지: 소득세법 제14조제3항제6호는 "제3호부터 제5호까지의 규정 외의" 이자·배당의 합계로
         # 판정하고 제5호는 "「조세특례제한법」에 따라 분리과세되는 소득". 제104조의27제1항은 "종합소득과세표준에 합산하지 아니한다"고만 해
         # 제5호에 드는지 문언으로 정해지지 않음(소득세법 시행령 제116조의2제2호의 제104조의27 언급은 2015.2.3. 개정 문언). 기본 결과는 넣지 않은 것,
-        # 넣는 경우를 함께 보여준다(해석 미확인).
+        # 넣는 경우를 함께 보여준다(근거 없음 — 국세법령정보시스템 검색 2026-11-15, 서면질의 필요).
         _alt_total = cond_total + 특례배당
         if _alt_total <= threshold:
             _alt = {"분리과세": True, "Gross-up": 0, "합산액": partner_div + 미원천}
@@ -5763,12 +5869,13 @@ def financial_income_aggregate(year: YEAR,
                    "근거": "조세특례제한법 제104조의27제2항", "이유": _high_dividend_formula(특례배당)})
         지급일_주의.append("특례배당소득 산출세액은 종합소득 산출세액과 따로 — 종합소득 결정세액에 더해 납부. 고배당기업 요건(제104조의27제1항 각 호)·합산배제 신청(조특령 제104조의24)은 충족한 것으로 보고 계산")
         if _alt["합산액"] != 합산 or _alt["분리과세"] != (cond_total <= threshold):
-            지급일_주의.append(f"해석 미확인 — 특례배당소득을 금융소득 종합과세 기준금액(2천만원) 판정에 넣는지 원문으로 정해지지 않음(소득세법 제14조제3항제5호·제6호, 조특법 제104조의27제1항). "
+            지급일_주의.append(f"근거 없음 — 특례배당소득을 금융소득 종합과세 기준금액(2천만원) 판정에 넣는지 원문으로 정해지지 않음(소득세법 제14조제3항제5호·제6호, 조특법 제104조의27제1항. "
+                           f"국세법령정보시스템 검색 '고배당기업 배당소득 분리과세 금융소득 종합과세 기준금액 2천만원'·'조세특례제한법 제104조의27 종합과세기준금액' 2026-11-15 — 2026년 시행 규정을 다룬 문서 없음), 서면질의 필요. "
                            f"이 결과는 넣지 않은 경우. 넣으면(영 제116조의2 순서: 이자 → 비대상 배당 → 특례배당 → Gross-up 대상) "
                            f"{'분리과세' if _alt['분리과세'] else '종합과세'}, 합산액 {_alt['합산액']:,}원, Gross-up {_alt['Gross-up']:,}원")
             특례_결과["기준금액_포함시"] = _alt
         else:
-            지급일_주의.append("해석 미확인 — 특례배당소득을 기준금액(2천만원) 판정에 넣는지 원문으로 정해지지 않음(소득세법 제14조제3항제5호·제6호). 이 입력에서는 넣든 빼든 합산액·Gross-up이 같음")
+            지급일_주의.append("근거 없음 — 특례배당소득을 기준금액(2천만원) 판정에 넣는지 원문으로 정해지지 않음(소득세법 제14조제3항제5호·제6호, 국세법령정보시스템 검색 2026-11-15 해당 문서 없음), 서면질의 필요. 이 입력에서는 넣든 빼든 합산액·Gross-up이 같음")
 
     # ── 계산식 단계 (SPEC_export_workbook_f) ──────────────────────────────
     결과_배당소득금액 = (div_n + div_g + grossup) if not 분리과세 else partner_div + (미원천 - 미원천_이자)
@@ -6653,12 +6760,14 @@ def simplified_vat_return(year: YEAR,
                          prepaid_assessed: Annotated[int, Field(description="예정부과 고지세액")] = 0,
                          business_start: Annotated[str | None, Field(description="사업 개시일 YYYY-MM-DD — 해당 과세기간 신규 개시면 개시일~12.31 공급대가를 12개월 환산해 면제 판정(제69조제3항제1호)")] = None,
                          closed_on: Annotated[str | None, Field(description="휴업·폐업·유형전환일 YYYY-MM-DD — 1.1~그날 공급대가를 12개월 환산해 면제 판정(제69조제3항제2호)")] = None,
-                         ledger: Annotated[dict, Field(description="원장형 입력 {공급: [{항목, 금액}], 매입: [{항목, 금액}]} — 금액은 공급대가(부가세 포함). 공급 항목이 없으면 error. 항목명은 어휘 간이과세자_원장항목의 키워드로 역할을 정함")] = ...) -> dict:
+                         ledger: Annotated[dict, Field(description="원장형 입력 {공급: [{항목, 금액}], 매입: [{항목, 금액}]} — 금액은 공급대가(부가세 포함). 공급 항목이 없으면 error. 항목명은 어휘 간이과세자_원장항목의 키워드로 역할을 정함. year=2021이면 항목마다 기간('상반기'·'하반기') 또는 공급일(YYYY-MM-DD) 필요")] = ...,
+                         entertainment_venue: Annotated[bool, Field(description="음식점업 중 개별소비세법상 과세유흥장소 여부 — 2021.6.30.까지 공급받은 면세농산물등의 의제매입세액 공제율(시행령 제113조제2항제1호)에만 씀")] = False,
+                         business_type_before_202107: Annotated[str | None, Field(description="year=2021일 때만: 2021.6.30.까지 공급분에 쓰는 종전 표(5·10·20·30%)의 업종명 — business_type과 이름이 같으면 생략")] = None) -> dict:
     """VAT simplified taxpayer final VAT return net tax payable (간이과세자 확정신고).
     간이과세자 부가가치세 확정신고 차가감납부세액 계산(부가가치세법 제63조·제68조의2·제69조·제46조).
     언제: 간이과세자의 과세기간(1.1~12.31) 부가가치세 확정신고 시 차가감납부세액을 원래 사실관계에서 계산한다.
     입력:
-      · 과세연도(2022~2026) → year, 업종(부가가치세법 시행령 제111조제2항 표의 업종 — 소매업·음식점업·제조업·숙박업·건설업·운수 및 창고업·정보통신업·
+      · 과세연도(2016~2026) → year, 업종(부가가치세법 시행령 제111조제2항 표의 업종 — 소매업·음식점업·제조업·숙박업·건설업·운수 및 창고업·정보통신업·
         금융 및 보험 관련 서비스업·전문·과학 및 기술서비스업·부동산임대업·그 밖의 서비스업 등, 띄어쓰기·'및' 표기 차이는 같은 업종으로 봄) → business_type.
       · 원장: ledger={공급:[{항목, 금액}], 매입:[{항목, 금액}]}.
         항목명 → 역할 매핑은 어휘 간이과세자_원장항목.판단.공급/매입에서 읽음(항목명에 키워드가 포함되면 해당 역할).
@@ -6667,17 +6776,28 @@ def simplified_vat_return(year: YEAR,
       대손 확정액(기본 0) → bad_debt_confirmed, 직전연도 합계 → prior_year_supplies,
       예정부과 고지세액 → prepaid_assessed,
       사업 개시일 → business_start, 휴업·폐업·유형전환일 → closed_on(있으면 그 기간 공급대가를 12개월로 환산해 면제 판정, 제69조제3항).
+      · 2016~2020 과세기간과 2021 과세기간 상반기(2021.6.30.까지 공급하거나 공급받은 분)는 종전 산식: 업종별 부가가치율 5·10·20·30%(전기·가스·증기 및 수도 사업,
+        소매업·재생용 재료수집 및 판매업·음식점업, 제조업·농업·임업 및 어업·숙박업·운수 및 통신업, 건설업·부동산임대업·그 밖의 서비스업), 매입세액 × 부가가치율 공제,
+        음식점업·제조업의 면세농산물등 의제매입세액 공제(과세유흥장소면 entertainment_venue=true), 카드 발행세액공제 음식점업·숙박업 2.6%.
+        year=2021은 ledger 항목마다 기간('상반기'·'하반기') 또는 공급일을 넣고, 종전 표의 업종명이 다르면 business_type_before_202107에 넣는다(법률 제17653호 부칙 제8조·제10조~제13조).
     결과: 판단(항목·결론·근거)·계산(과세표준·부가가치율·납부세액·공제·가산세)·결과(납부의무면제·예정부과세액_공제·차가감납부세액(음수면 환급세액, 제67조제2항)·환급세액)·산식·근거."""
-
-    # 2021-07-01 이전 체계 미지원. 2021 과세기간은 1~6월 공급분 종전·7월~ 개정 산식이 섞여(법률 제17653호 부칙 제10조·제11조) 한 과세기간 계산을 하지 않음
-    if year < 2022:
-        return {"error": "2021-07-01 이전 체계 미지원" + (" — 2021 과세기간은 2021.6.30.까지 공급분(종전 산식)과 7.1. 이후 공급분(개정 산식)이 섞여 계산하지 않음(법률 제17653호 부칙 제10조·제11조)" if year == 2021 else "")}
 
     # ── 빈 원장 거부 ──
     if not ledger.get("공급"):
         return {"error": "입력 확인 필요 — 원장 항목이 없음",
                 "허용값": {"공급": {"필수": "공급 항목 목록 [{항목, 금액}]"},
                            "매입": {"선택": "매입 항목 목록 [{항목, 금액}]"}}}
+
+    # 2016~2020 과세기간·2021 과세기간(상반기 종전 + 하반기 개정, 법률 제17653호 부칙 제8조·제10조~제13조)은 종전 산식 모듈에서 계산
+    if year < 2022:
+        from .engine.calc_vat_simplified_old import simplified_return_old
+        return simplified_return_old(year, business_type, ledger, bad_debt_confirmed=bad_debt_confirmed, prior_year_supplies=prior_year_supplies,
+                                     prepaid_assessed=prepaid_assessed, business_start=business_start, closed_on=closed_on,
+                                     entertainment_venue=entertainment_venue, business_type_before_202107=business_type_before_202107,
+                                     annualize=_simplified_annualize)
+    if entertainment_venue or business_type_before_202107:
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": ["entertainment_venue·business_type_before_202107은 2021.6.30.까지 공급분(year 2016~2021)에만 씀"]}
 
     # ── 원장형 입력 처리 ──
     원장항목_규칙 = vocab.rule("간이과세자_원장항목", year)
@@ -6957,7 +7077,7 @@ def vat_return_general(
       · 경감·공제: other_credit(그 밖의 경감·공제세액), card_sales_credit(vat_card_sales_credit 결과), e_filing(전자신고 여부)·filed_on(신고일, 생략하면 확정신고 기한) → 전자신고세액공제는 조세특례제한법 시행령 제104조의5 제3항·제4항 연도표로 계산(예정신고 0).
       · 그 밖: small_biz_reduction(소규모 감면), prepaid_refund_pending(예정신고 미환급세액), prepaid_assessed(예정부과 고지세액), occasional_assessed(수시부과세액), prepaid_by_transferee·prepaid_buyer_special·prepaid_by_card_company(대리납부 등 기납부세액), penalties(가산세 목록 — invoice_penalty_bundle·late_payment_penalty 결과).
       · ledger(선택): 원장형 입력. 공급·매입·세액 항목명은 어휘 원장 허용값(공급: 세금계산서 발급분·매입자발행 세금계산서·신용카드·현금영수증 발행분·기타 매출·간주공급·영세율 세금계산서 발급분·영세율 기타·예정신고 누락 매출; 매입: 세금계산서 수취분 일반매입·고정자산·예정신고 누락 매입·매입자발행 세금계산서 수취·신용카드·현금영수증 수취분; 세액: 의제매입세액·그 밖의 공제매입세액·변제대손세액·공제받지 못할 매입세액·공통매입세액 면세사업분·대손세액·수입분 납부유예). ledger를 주면서 같은 항목의 scalar 입력을 0이 아닌 값으로 주면 error.
-    서식 엑셀: export_workbook에 이 call을 넣으면 '부가 별지21 신고서' 시트(제1쪽 신고내용 (1)~(30), 금액 칸은 입력 이름, 세액·합계는 수식, 도구 값 대조)가 나옴 — 2025년 이후 과세기간.
+    서식 엑셀: export_workbook에 이 call을 넣으면 '부가 별지21 신고서' 시트(제1쪽 신고내용 (1)~(30), 금액 칸은 입력 이름, 세액·합계는 수식, 도구 값 대조)가 나옴 — 2016~2024년 과세기간과 2025년 제1기 예정신고는 그 해 신고서 판(칸 번호 (26)·(27)까지)의 '부가 별지21 신고서 YYYY판' 시트로 나옴.
     결과: {결과: {과세표준·영세율_과세표준·매출세액·대손세액_가감·매출세액_합계·매입세액·공제받지못할_매입세액·매입세액_차감계·납부환급세액·경감공제세액·소규모감면세액·예정신고미환급세액·예정고지세액·수시부과세액·기납부세액_기타·가산세액계·차가감_납부세액·납부세액·환급세액}, 서식: {(1)~(30) 서식 원문 칸 이름}, 단계별_계산, 근거, 주의?, 원장대조?}."""
     from .engine.calc_vat import vat_return_general as _eng, validate_ledger_entries, e_filing_credit_amount, default_filed_on  # 엔진이 ledger를 집계하므로 서버는 검사만
 
@@ -7030,6 +7150,9 @@ def vat_return_general(
                  ("신용카드업자_대리납부세액", g("(28) 신용카드업자가 대리납부한 세액"), "(28)"), ("가산세액_계", g("(29) 가산세액 계"), "(29)")]
         r["계산식_입력"] = [{"이름": n, "값": int(v or 0), "설명": f"별지 제21호서식 {d}"} for n, v, d in names]
         r["계산식_입력"].append({"이름": "과세연도", "값": int(year), "설명": "과세기간이 속하는 연도"})
+        # 2025년 과세기간의 서식 판: (1)~(30) 칸 서식은 <개정 2025. 7. 4.>(기획재정부령 제1136호, 부칙 '공포한 날부터 시행' — 서식 적용례 없음)부터라
+        # 그 전에 신고하는 제1기 예정신고(기한 4.25.)는 <개정 2025. 3. 21.> 서식((1)~(27))
+        r["계산식_입력"].append({"이름": "예정신고_1기", "값": int(period == "1" and kind == "예정"), "설명": "제1기 예정신고이면 1 — 2025년 과세기간의 서식 판 선택에 씀"})
     return r
 
 
@@ -7683,7 +7806,7 @@ def depreciation_adjustment(
 @_guard
 def retirement_allowance_adjustment(
     year: YEAR,
-    allowance: Annotated[dict, Field(description="장부상 퇴직급여충당금(원) {opening: 기초, closing: 기말, provision?: 당기 설정(손비 계상), paid_cash?: 회사가 직접 지급하고 충당금과 상계, paid_pension?: 퇴직연금운용자산에서 지급하고 충당금과 상계, other_increase?: 합병·사업양수 승계 등 설정 아닌 증가} — 생략 키는 0, 기초+증가−감소=기말이어야 함")],
+    allowance: Annotated[dict, Field(description="장부상 퇴직급여충당금(원) {opening: 기초, closing: 기말, provision?: 당기 설정(손비 계상), paid_cash?: 회사가 직접 지급하고 충당금과 상계, paid_pension?: 퇴직연금운용자산에서 지급하고 충당금과 상계, other_increase?: 합병·사업양수 승계 등 설정 아닌 증가, dc_conversion?: 확정기여형 전환자의 설정 전 계상 충당금 {prior_estimate_total, prior_estimate_dc} 또는 {amount}, 선택 related_disallowed·paid} — 생략 키는 0, 기초+증가−감소=기말이어야 함")],
     prior_disallowed: Annotated[int, Field(description="기초 퇴직급여충당금 부인누계(유보 잔액, 원)", ge=0)],
     estimate: Annotated[dict | None, Field(description="기말 퇴직급여추계액(원) {lump_sum: 일시퇴직기준, actuarial?: 보험수리기준(영 제44조의2제4항제1호의2 금액)} — 설정액이나 퇴직연금이 있으면 필수")] = None,
     salary: Annotated[dict | None, Field(description="당기 총급여액(원) {total: 전체 임원·직원 총급여, dc_members?: 확정기여형 퇴직연금 설정자분, not_eligible?: 퇴직급여 지급대상 아닌 자(예: 규정상 1년 미만 근속자)분} — 당기 설정액이 있으면 필수")] = None,
@@ -7704,7 +7827,8 @@ def retirement_allowance_adjustment(
       pension — 확정급여형 {asset_closing, asset_opening?(운용자산 기초잔액, 있으면 운용자산기초·운용자산납입 도출), deposited?(당기 납입액, 있으면 운용자산납입에 사용), prior_deducted, book_provision?, book_paid?(운용자산 지급 중 장부 퇴직연금충당금 상계분), dc_transferred_allowance?}.
       운용자산에서 퇴직금을 지급한 해에는 장부 퇴직연금충당금 상계분(book_paid)과 퇴직급여충당금 상계분(paid_pension)을 나눠 넣어야 세무상 연금충당금 잔액이 맞는다.
     결과: 세무조정(구분·조정 손금불산입/손금산입·금액·소득처분 유보/△유보), 소득금액_순영향, 계산(세무상 잔액·한도). 입력이 모자라거나 장부 증감이 맞지 않으면 error.
-    한계: 확정기여형 전환 전 근무분 퇴직급여충당금(시행규칙 제31조제2항)은 입력 금액을 떼어 두는 것까지만 처리 — 금액 계산, 확정기여형만 있는 회사의 입력, 그 몫의 지급·이전, 관련 부인누계 구분은 하지 않고 판단에 '확인 필요'로 알림."""
+    확정기여형 전환: 설정 전 계상 퇴직급여충당금(시행규칙 제31조제2항)은 allowance.dc_conversion={prior_estimate_total: 직전 사업연도말 재직자 전원 추계액, prior_estimate_dc: 그중 해당 사업연도 확정기여형 설정자 추계액}으로 계산하거나 {amount}로 직접 입력(확정급여형 퇴직연금이 없어도 됨), related_disallowed(그 몫과 관련된 부인액)는 기초 부인누계에서 제외(별지 제32호서식 작성방법 2·3).
+    설정 전 근무기간분 부담금으로 지출해 충당금과 상계한 금액은 dc_conversion.paid(paid_cash에 포함)로 넣으면 설정 전 충당금에서 먼저 지출한 것으로 봄(법인세과-1032, 2009.9.21.). 한계: 그 몫과 관련된 부인액의 추인 시기는 계산하지 않음."""
     return _retirement_allowance_adjustment_impl(year, allowance, prior_disallowed, estimate, salary, succeeded_disallowed, conversion_fund, pension)
 
 
@@ -8505,7 +8629,7 @@ def inheritance_tax(
     prior_gift_deductions: WON = 0,
     bequest_to_non_heirs: WON = 0,
     renounced_to_next: WON = 0,
-    spouse: Annotated[dict | None, Field(description="실제 상속받은 금액·법정상속분 등. {actual(실제 상속액), legal_share('3/5' 같은 분수 문자열 또는 0.6 같은 0 초과 1 이하 소수)}")] = None,
+    spouse: Annotated[dict | None, Field(description="실제 상속받은 금액·법정상속분 등. {actual(실제 상속액), legal_share('3/5' 같은 분수 문자열 또는 0.6 같은 0 초과 1 이하 소수), prior_gift_tax_base(선택 — 가산한 증여재산 중 배우자가 사전증여받은 재산의 증여세 과세표준, 한도식에서 뺌)}")] = None,
     sole_spouse_heir: Annotated[bool, Field(description="배우자 단독상속")] = False,
     children: Annotated[int, Field(description="자녀 수")] = 0,
     minors: Annotated[list, Field(description="[미성년자별 19세까지 남은 연수]")] = None,
@@ -9064,6 +9188,21 @@ def _소형주택_제외기준(year: int) -> tuple[int, int] | None:
     return None
 
 
+# 소득세법 시행규칙 제23조제1항 정기예금이자율(영 제53조제3항제1호 산식) — 연도별 시행본 대조(법제처, 2026-11-15).
+# 부칙: 각 개정령 제2조 "이 규칙 시행일이 속하는 과세기간에 발생하는 소득분부터 적용"(2016~2019), 2020년부터는
+# "시행일이 속하는 과세기간 전에 발생한 소득분은 종전 규정"(제781호 부칙 제7조, 제848호 제5조, 제966호 제4조, 제1052호 제3조, 제1124호 제6조)
+# → 개정된 해의 귀속분 전체에 새 율. 2022년은 개정 없음(1.2% 유지), 2026.1.2. 개정(재정경제부령 제1호)은 부처 이름만 바꿈.
+주택간주임대료_이자율 = {2016: 0.018,   # 기획재정부령 제556호(2016.3.16.) 연간 1,000분의 18
+                 2017: 0.016,   # 제604호(2017.3.10.) 1,000분의 16
+                 2018: 0.018,   # 제670호(2018.3.21.) 1천분의 18
+                 2019: 0.021,   # 제731호(2019.3.20.) 1천분의 21
+                 2020: 0.018,   # 제781호(2020.3.13.) 1천분의 18
+                 2021: 0.012, 2022: 0.012,   # 제848호(2021.3.16.) 1천분의 12
+                 2023: 0.029,   # 제966호(2023.3.20.) 1천분의 29
+                 2024: 0.035,   # 제1052호(2024.3.22.) 1천분의 35
+                 2025: 0.031, 2026: 0.031}   # 제1124호(2025.3.21.) 1천분의 31, 2026.7.1. 시행본 같은 율
+
+
 def _주택간주임대료_계산식(rows: list, days: int, rate: float, 금융: int, estimated: bool,
                          적수합: int, 전: int, 산입액: int, 사유: str) -> tuple[list, list]:
     """간주임대료 계산식_입력·계산식 — 3억 차감은 적수가 큰 주택부터 차례로 MIN(보증금, 남은 공제)로(행 순서가 그 판단)."""
@@ -9094,7 +9233,7 @@ def _주택간주임대료(year: int, houses: list, financial_income: int = 0, e
     if not houses or not all(isinstance(h, dict) for h in houses):
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["houses는 [{기준시가, 면적, 보증금, 일수?}] 목록"]}
     days_in_year = 366 if calendar.isleap(year) else 365
-    r = rate if rate is not None else V.DEEMED_RENT_RATE.get(year)
+    r = rate if rate is not None else 주택간주임대료_이자율.get(year)
     if r is None:
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"{year}년 정기예금이자율 연도표 없음 — rate 입력"]}
     소형 = _소형주택_제외기준(year)
@@ -9155,7 +9294,7 @@ def housing_deemed_rent_income(
         "임대하지 않는 주택도 주택 수 판정에 넣는다(부부 합산 등 주택 수 계산은 시행령 제8조의2 — 합산한 목록을 넣을 것)"))],
     financial_income: Annotated[int, Field(description="임대사업 부분에서 생긴 수입이자·할인료·배당금(장부로 보증금 운용이 확인되는 것, 원). 추계면 무시", ge=0)] = 0,
     estimated: Annotated[bool, Field(description="추계신고·결정이면 True — 금융수익을 빼지 않음(시행령 제53조제4항)")] = False,
-    rate: Annotated[float | None, Field(description="정기예금이자율(소수). 생략 시 연도표(소득세법 시행규칙 제23조, 부가·법인 간주임대료와 같은 율)")] = None,
+    rate: Annotated[float | None, Field(description="정기예금이자율(소수). 생략 시 연도표(소득세법 시행규칙 제23조제1항 2016~2026 시행본 — 개정된 해의 귀속분 전체에 적용)")] = None,
 ) -> dict:
     """Housing deemed rent on lease deposits as individual business income (주택 간주임대료).
     주택 임대 보증금 간주임대료 — 개인 사업소득 총수입금액 산입액(소득세법 제25조제1항, 시행령 제53조제3항·제4항).
@@ -9181,7 +9320,9 @@ def housing_deemed_rent_income(
 #    이하면 200만원(등록임대 400만원) 추가 차감 — 2019~2026 시행본 같은 문구.
 #  · 등록임대주택 범위(시행령 제122조의2①): 2019 시행본은 공공지원·장기일반·단기 모두. 2020.10.7. 개정으로 아파트 매입
 #    장기일반·단기는 2020.7.10. 이전 등록 신청분만, 2020.7.11. 이후 단기→장기 변경 신고분 제외(같은 조②).
-#    이 개정의 적용 부칙은 조회 도구에서 확인하지 못함 → 2021 귀속부터 적용하고, 2020 귀속에서 결과가 갈리는 입력은 멈춤.
+#    대통령령 제31083호(2020.10.7.) 부칙: 제1조 "공포한 날부터 시행", 제2조~제5조는 양도소득세 규정만 — 제122조의2에 관한 적용례·경과조치 없음
+#    (2020.10.7. 시행본 부칙 전문 대조, 2026-11-15). 소득세 납세의무는 과세기간이 끝나는 때 성립(국세기본법 제21조제2항제1호)하므로
+#    2020 귀속(2020.12.31. 현재 시행본)부터 개정 문언을 적용한다. 개정 문언 자체가 2020.7.10. 이전 신청분을 등록임대주택으로 남겨 둔다.
 #  · 의무임대기간(제64조의2③2호): 4년 → 10년(2020.12.29. 개정) — 부칙 제13조② "2020년 8월 18일 이후 등록을 신청하는
 #    민간임대주택부터 적용", 제36조 그 전 신청분은 종전(4년). ③ 단서(자동말소 등 추징 제외)는 부칙 제13조① 2020.8.18. 이후 말소분.
 _주택임대_고가기준 = {**{y: 900_000_000 for y in range(2016, 2023)}, **{y: 1_200_000_000 for y in range(2023, 2027)}}
@@ -9201,13 +9342,12 @@ def _등록임대_판정(year: int, h: dict, nm: str) -> tuple[bool | None, str]
         return None, f"{nm}: {'단기' if 유형 == '단기' else '아파트 장기일반(매입)'} 임대 — 등록신청일(YYYY-MM-DD) 입력(2020.7.10. 이전 신청분만 등록임대주택)"
     늦은신청 = bool(제한대상 and date.fromisoformat(신청일) > date(2020, 7, 10))
     늦은변경 = bool(변경일 and date.fromisoformat(변경일) >= date(2020, 7, 11))
-    if year == 2020 and (늦은신청 or 늦은변경):
-        return None, (f"{nm}: 2020 귀속 — 2020.10.7. 개정 시행령 제122조의2①1호·②(2020.7.10. 이전 신청·2020.7.11. 이후 변경 신고 제외)의 "
-                      "적용 시점을 확인하지 못해 계산하지 않음")
+    꼬리 = (" 2020 귀속: 대통령령 제31083호 부칙에 이 조 적용례·경과조치가 없어 과세기간 종료일(2020.12.31.) 시행본 적용"
+            if year == 2020 else "")
     if 늦은신청:
-        return False, f"{유형} 등록 신청 {신청일} — 2020.7.10. 이전 신청분만 등록임대주택(시행령 제122조의2①1호 나·다목)"
+        return False, f"{유형} 등록 신청 {신청일} — 2020.7.10. 이전 신청분만 등록임대주택(시행령 제122조의2①1호 나·다목)" + 꼬리
     if 늦은변경:
-        return False, f"단기→장기 변경 신고 {변경일} — 2020.7.11. 이후 변경 신고분은 등록임대주택 제외(시행령 제122조의2②)"
+        return False, f"단기→장기 변경 신고 {변경일} — 2020.7.11. 이후 변경 신고분은 등록임대주택 제외(시행령 제122조의2②)" + 꼬리
     return True, f"{유형}민간임대주택 — 등록임대주택(시행령 제122조의2①1호)"
 
 
@@ -9236,9 +9376,9 @@ def housing_rental_income(
     판정(연도별): 주택 수 1개(부부 합산·국외 포함)이고 국내·기준시가 기준 이하면 전액 비과세 — 기준 2016~2022 9억, 2023~ 12억(2022.12.31. 개정 부칙 제11조).
       총수입금액(월세 + 간주임대료, 시행령 제8조의2제6항) 2천만원 이하: 2016~2018 비과세 / 2019~ 분리과세 선택 가능. 초과면 종합과세.
     분리과세 산식: (총수입금액 − 필요경비 50%, 등록임대 60% − 다른 종합소득금액 2천만원 이하면 200만원, 등록임대 400만원 — 섞이면 수입금액 비율 안분) × 14%.
-      등록임대: 2019 공공지원·장기일반·단기 / 2021~ 아파트 매입 장기일반·단기는 2020.7.10. 이전 등록 신청분만. 의무임대기간 4년, 2020.8.18. 이후 등록 신청분 10년.
+      등록임대: 2019 공공지원·장기일반·단기 / 2020~ 아파트 매입 장기일반·단기는 2020.7.10. 이전 등록 신청분만(대통령령 제31083호, 2020.10.7. 시행). 의무임대기간 4년, 2020.8.18. 이후 등록 신청분 10년.
     지원하지 않음(입력 확인 필요로 멈춤): 겸용주택 주택 부분 판정(제8조의2제4항), 공동소유 주택의 주택 수 판정(제8조의2제3항제2호 — 주택수_산입을 직접 입력하면 계산),
-      국외주택 보증금 간주임대료, 조특법 제96조 소형주택 임대 감면, 2020 귀속 중 2020.10.7. 개정 시행령으로 결과가 갈리는 등록임대, 2016 전·2027 이후 연도.
+      국외주택 보증금 간주임대료, 조특법 제96조 소형주택 임대 감면, 2016 전·2027 이후 연도.
     결과: 과세 여부·구분(비과세|분리과세 선택 가능|종합과세)·주택 수·총수입금액(월세·간주임대료)·분리과세 세액·종합과세 참고 세액·의무임대기간·근거."""
     if not houses or not all(isinstance(h, dict) for h in houses):
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["houses는 [{기준시가, 월세?, 보증금?, ...}] 목록"]}
@@ -9555,7 +9695,7 @@ def asset_grant_reserve(
 입력: 사업연도 → year, 재원 구분 → kind, 수령액 → received, 자산별 내역 → assets(취득·개량가액·사용액·상각·처분·충당금 등).
 결과: 손금산입 한도·충당금 설정금액·상계액·처분 익금·사용계획·미사용·기말 잔액·소득금액 순영향·세무조정·근거. 일시상각충당금·압축기장충당금 계산."""
     return C.asset_grant_reserve(
-        year=year, kind=kind, received=received, assets=assets,
+        kind=kind, received=received, assets=assets,
         lost_book_value=lost_book_value, receipt_year=receipt_year,
         planned_use=planned_use, expired_unused=expired_unused, claim_by_return=claim_by_return,
     )
@@ -9860,7 +10000,7 @@ def vat_exempt_use_deemed_supply(
     면세전용 간주공급 과세표준(부가법 제10조제1항, 부가령 제66조). 언제: 과세사업에 쓰던 재화를 면세사업에 전용할 때 간주공급 과세표준을 계산한다.
 입력: 전용일(YYYY-MM-DD) → use_date, 전용 범위(전부/일부) → mode, 자산 목록 [{구분, 취득일, 취득가액, 매입세액공제, 시가, 취득구분}] → assets, 일부일 때 공급가액 {taxable, exempt} → supplies.
   취득구분(선택): '자기매입'(기본) | '사업양수'(사업양도로 취득, 양도자가 매입세액 공제받은 재화 — 제10조1항2호) | '수출영세율'(영세율 적용받은 재화 — 제10조1항3호).
-    '사업양수'·'수출영세율'이면 매입세액공제가 False여도 간주공급 대상(시가·감가상각 간주시가 그대로).
+    '사업양수'·'수출영세율'이면 매입세액공제가 False여도 간주공급 대상(시가·감가상각 간주시가 그대로). 사업양수 재화의 취득일에는 사업을 양도한 자가 당초 취득한 날을 입력(부가46015-1921, 1999.7.3.).
 결과: 과세표준·계산(자산별 경과과세기간수·간주시가·제외사유, 면세비율)·판단, 근거(부가가치세법 제10조제1항, 시행령 제66조)."""
     _chk.supported_year("use_date", use_date)
     if mode == "일부" and (supplies is None or not isinstance(supplies, dict) or "taxable" not in supplies or "exempt" not in supplies):
@@ -9904,7 +10044,7 @@ def vat_exempt_use_deemed_supply(
 
         # 취득구분에 따른 근거 표시
         if 취득구분 == "사업양수":
-            판단.append({"항목": f"{구분} {취득일} 취득가액 {취득가액:,}원", "결론": "사업양수 재화 — 양도자가 매입세액 공제받은 재화(제10조①2호), 양수 재화 취득일 기준 — 해석 확인 필요",
+            판단.append({"항목": f"{구분} {취득일} 취득가액 {취득가액:,}원", "결론": "사업양수 재화 — 양도자가 매입세액 공제받은 재화(제10조①2호). 경과 과세기간은 사업을 양도한 자가 당초 취득한 날부터 셈 — 취득일에 양도자의 당초 취득일을 입력(부가46015-1921, 1999.7.3.)",
                          "근거": "부가가치세법 제10조①2호"})
         elif 취득구분 == "수출영세율":
             판단.append({"항목": f"{구분} {취득일} 취득가액 {취득가액:,}원", "결론": "수출영세율 재화 — 영세율 적용받은 재화(제10조①3호)",
@@ -10258,10 +10398,14 @@ def export_workbook(
     biz_no: Annotated[str, Field(description="사업자등록번호(서식 머리에 표시, 기본 빈 문자열)")] = "",
     review_notes: Annotated[list | str | None, Field(description="검토·확인 필요 사항 [{항목, 내용}] 또는 문장 목록(선택) — 자료 불일치, 가정, 확인할 서류, 판단이 갈리는 쟁점을 적으면 맨 앞 '요약' 시트에 실림. lang='en'이면 영문으로 적는다")] = None,
     lang: Annotated[Literal["ko", "en"], Field(description="표기 언어 — 'ko'(기본, 기존과 같음) 또는 'en'(English labels with the Korean original in parentheses, for foreign readers)")] = "ko",
+    scenarios: Annotated[list | str | None, Field(description="시나리오 시트(선택) — [{sheet, title, subtitle, heading, columns: [{call, heading}], notes: {줄 이름: 메모}, summary_note}]. columns의 call(label 또는 1부터 세는 순번)을 열로 나란히 놓고 오른쪽에 '근거 · 메모' 열을 둔다. 한 블록의 call은 같은 도구, sheet 이름이 같은 블록은 한 시트에 차례로. 주면 맨 앞에 요약(Summary)·입력·출처(Inputs) 시트가 함께 생김")] = None,
+    sources: Annotated[list | str | None, Field(description="입력값 출처(선택) — [{call, arg, source, assumption, from_call, from_row, less}]. arg는 그 call의 입력 이름(예: amount), source는 문서명·조문, assumption=true면 가정으로 노랑 표시. 입력이 다른 call의 결과에서 온 값이면 from_call(그 call)·from_row(결과 줄 이름, 예: 원천징수세액)·less(차감할 금액, 선택)를 적어 수식으로 잇는다(값이 맞을 때만). '입력·출처(Inputs)' 시트의 출처 열에 실림")] = None,
+    issues: Annotated[list | str | None, Field(description="쟁점 목록(선택) — [{no, issue, finding, risk, action}](국문 키 번호·쟁점·발견·위험도·조치도 됨). 적은 글을 그대로 '쟁점 목록(Issues Log)' 시트에 표로 싣는다 — 도구는 쟁점을 판단하지 않음")] = None,
+    detail: Annotated[Literal["compact", "forms", "full"] | None, Field(description="뒤에 붙는 시트(선택, scenarios·sources·issues를 줄 때만 적용) — 'compact'(기본): 앞 시트 + '계산 상세(Calc detail)' 한 장, 'forms': compact + 신고 서식 시트, 'full': 서식·call별 '계산 N'·입력·가정·판단·근거 전부")] = None,
 ) -> dict:
-    """Excel export of calculation tool results as an .xlsx workbook (계산 결과 엑셀).
-    계산 도구 결과를 엑셀(.xlsx)로 정리한다. 각 call은 서버가 직접 다시 실행하며, 결과·계산·세무조정·판단·산식을 탭으로 펼친다.
-언제: 계산 결과(세무조정·소득처분·판단·산식)를 실무자가 검토할 수 있는 엑셀 파일로 남길 때.
+    """Produces a finished Excel (.xlsx) workings file with live formulas from calculation tool results, saves it in output_dir and returns its absolute path in result '파일'; use this instead of writing your own spreadsheet script whenever the user asks for Excel, a spreadsheet, workings or a calculation schedule (계산 근거 엑셀).
+    완성된 엑셀(.xlsx) 파일을 만들어 output_dir 폴더에 저장하고 절대경로(결과.파일)를 돌려준다 — 엑셀·스프레드시트·계산 근거(workings)를 달라고 하면 파이썬 등으로 xlsx를 직접 만들지 말고 이 도구를 쓴다. 각 call은 서버가 직접 다시 실행하며, 결과·계산·세무조정·판단·산식을 탭으로 펼치고 금액 칸은 도구 값과 대조되는 수식으로 둔다.
+언제: 계산 결과(세무조정·소득처분·판단·산식)를 실무자가 검토할 수 있는 엑셀 파일로 남길 때, 사용자가 엑셀·스프레드시트·계산 근거 파일을 원할 때, 여러 계산(지급 건별·시나리오별)을 한 통합 문서로 묶을 때.
 입력:
   title — 문서 제목(파일명 기본값).
   calls — [{label, tool, args}] 목록(1~30개). tool 이름이 없거나 'export_workbook'이면 오류(재귀 금지).
@@ -10278,6 +10422,20 @@ def export_workbook(
     warnings에 모은다(번역을 지어내지 않음). 법정서식 틀 시트는 한국어 신고 서식이라 그대로 두고 요약 시트에 시트마다 한 줄 영문 안내를 붙인다.
     도구가 돌려준 문장(판단 근거·주의·한계)은 번역하지 않고 'Notes (Korean original)' 칸에 한국어로 둔다. 숫자·수식·파일명 기본값은 같다.
     With lang='en', write review_notes in English.
+  scenarios·sources·issues — 통합 문서(선택). 셋 다 없으면 기존 출력 그대로. 하나라도 주면 맨 앞에 다음 시트를 두고, 뒤 시트는 detail로 고른다(기본 compact — 앞 시트 + '계산 상세' 한 장):
+    요약(Summary) — 시나리오 시트의 핵심 숫자를 링크하고 블록마다 summary_note 한 줄(예: 납부기한), 색 규칙 범례.
+    입력·출처(Inputs) — 입력값과 법정 세율·이율을 한곳에 모으고 값마다 출처 열(sources의 source, 세율은 근거 조문). 계산 시트는 이 칸을 가리키는 수식.
+      sources에 from_call·from_row(·less)를 적으면 그 입력 칸을 '다른 call의 결과 줄 − less' 수식으로 잇는다 — 도구에 넣은 값과 같을 때만 잇고, 다르면 값 그대로 두고 warnings에 적는다.
+    시나리오 시트 — scenarios의 columns에 적은 call을 열로 나란히(예: A 계약대로 / B 대안), 오른쪽 '근거 · 메모' 열(도구 근거 조문 + notes), 블록 끝에 도구 값 대조 한 줄.
+      scenarios에 넣지 않은 call은 '그 밖의 계산(Other workings)' 한 시트에 차례로(detail='full'이면 call마다 한 시트). nonresident_withholding(총액·순액 역산·지방소득세 부담)과 withholding_late_payment_penalty(납부고지 전 자진납부, 납부고지 후 종전 일수분·개정 3호·4호와 50% 한도)는
+      입력에서 결과까지 수식, 결과에 계산식이 있는 도구는 그 단계를 수식으로, 그 밖의 도구는 결과 값을 옮긴다(회색 — 수식 아님).
+    쟁점 목록(Issues Log) — issues의 행(번호·쟁점·발견·위험도·조치)을 그대로 표로. 도구가 쟁점이나 위험도를 만들지 않는다.
+    색 규칙: 파랑 = 입력, 초록 = 다른 시트 링크, 검정 = 수식, 노랑 = 핵심 결과·가정.
+  detail — 통합 문서의 뒤 시트(scenarios·sources·issues를 줄 때만 적용, 기본 'compact'):
+    compact — 앞 시트 뒤에 '계산 상세(Calc detail)' 한 장만: call 순서대로 도구 결과와 판단·근거를 위아래로 쌓는다. 신고 서식이 있으면 요약 끝과 결과.서식_안내에 한 줄.
+    forms — compact + 신고 서식 시트. 서식 칸이 가리키는 호출 입력은 '계산 상세' 아래 '서식 연결 칸'에 둔다.
+    full — 서식 틀, call별 '계산 N', 입력·가정, 판단·근거, 목록까지 전부. 기존 '요약'·'입력·가정'은 '호출 요약'(lang='en'이면 'Call summary'·'Call inputs')으로 이름이 바뀐다.
+    lang='en'이면 scenarios·sources·issues의 글도 영문으로 적는다(적은 글은 번역하지 않고 그대로 싣는다).
   '요약' 시트(layout='forms'): 세액 요약(소득금액 집계·산출세액 call이 있을 때), 세무조정 항목별 근거와 계산 시트, call별 주요 값, 검토·확인 필요 사항.
   시트 규칙: '계산 N'은 N번째 call(오류 call 포함, call마다 한 장). 같은 도구를 여러 번 부르면 신고서 한 부에 한 장인
     서식(별지3·15·34, 부가 별지19 등)은 마지막 call이 본 시트, 앞선 call은 '<시트> (호출 N)' 시트. 자산·거래·소득자마다 한 장인
@@ -10285,13 +10443,15 @@ def export_workbook(
     모으는 줄(부가 신고서 (4) 간주공급·(8) 대손세액 가감·(29) 가산세액, 별지25 부동산임대)은 한 장. 서식 칸은 그 값을 만든 call에서 채운다.
 
 결과:
-  결과.파일 — 절대경로.
+  결과.파일 — 저장한 .xlsx 파일의 절대경로(output_dir 안, 같은 이름이 있으면 ' (2)'를 붙임).
   결과.시트 — 시트 이름 목록.
   결과.call_수 — calls 길이.
   결과.오류_call — 오류 발생한 call의 label 목록.
+  scenarios·sources·issues를 줬을 때만: 결과.통합_시트(맨 앞에 더한 시트 이름), 결과.detail, 결과.서식_안내(compact에서 서식이 있을 때), warnings(맞는 줄을 찾지 못한 notes·sources).
   lang='en'일 때만: 결과.lang, 결과.번역_라벨_수, 결과.번역_없음(용어집에 없는 국문 라벨 목록), warnings(같은 내용을 한 줄로).
   근거 — '계산 도구 결과 정리(세무 자문 아님)'."""
-    return _export_workbook_impl(title, calls, output_dir, filename, layout, company, period, biz_no, review_notes, lang)
+    return _export_workbook_impl(title, calls, output_dir, filename, layout, company, period, biz_no, review_notes, lang,
+                                 scenarios, sources, issues, detail)
 
 
 # ── 국세 우선권에 따른 매각대금 배분(국세기본법 제35조·제36조) ──────────────────────
@@ -10316,7 +10476,7 @@ def tax_priority_distribution(
     국세 우선권에 따른 매각대금 배분 순서·금액(경매·공매, 국세기본법 제35조·제36조). 언제: 체납자 재산이 경매·공매로 매각될 때 집행비용 → 최우선변제 → 당해세 → 법정기일과 담보 설정일 비교 → 임금 → 그 밖의 조세 → 일반채권 순으로 누가 얼마를 받는지 계산할 때.
     입력: 매각대금 → sale_amount, 매각(허가)결정일 → sale_date, 채권 목록 → claims, 집행비용 → execution_cost, 재산 종류 → property_type, 직전 보유자 체납(양도된 재산) → prior_owner.
     지원 연도: 2016.1.1.~2026.12.31. 매각결정분. 2023.4.1. 이후 매각결정분은 제1항제3호의2(양도 전 설정 담보 > 현 소유자 국세, 직전 보유자 체납액 한도 안 국세는 우선)·제3항 후단(3호의2 재산은 종부세만 당해세 우선)·제7항(주택 임차인 당해세 순위 대신 변제), 2024.1.1. 이후는 한도 안 국세를 법정기일이 설정일보다 빠른 것으로 한정. 지방세 당해세·법정기일 비교(지방세기본법 제71조), 국세·지방세 상호간 압류선착(제36조·지방세기본법 제73조, 압류 없으면 동순위 안분).
-    지원하지 않음(입력 확인 필요로 반환): 가압류채권과 후순위 담보권 안분·흡수배당, 조세 상호간 흡수배당(조세가 담보권 앞뒤로 나뉘고 뒤 조세가 덜 받는 경우), 담보권 사이 순환관계, 공과금, 납세담보(제37조), 3호·3호의2 담보 혼재·3호의2 담보 둘 이상, 일반임금채권과 전세권·확정일자 임차권의 순위, 제35조제7항 대상 임차인 둘 이상. 소액임차 일정액·최우선임금 범위는 계산된 금액을 넣는다(2분의 1 한도만 적용).
+    지원하지 않음(입력 확인 필요로 반환): 가압류채권과 후순위 담보권 안분·흡수배당, 담보권 사이 순환관계, 공과금, 납세담보(제37조), 3호·3호의2 담보 혼재·3호의2 담보 둘 이상, 일반임금채권과 전세권·확정일자 임차권의 순위, 제35조제7항 대상 임차인 둘 이상. 소액임차 일정액·최우선임금 범위는 계산된 금액을 넣는다(2분의 1 한도만 적용).
     결과: 채권별 배분액·미배분액·단계별 근거, 배분 순서, 잔여(소유자 몫), 판단(적용한 개정·특례), 적용표."""
     try:
         return TP.distribute(sale_amount, execution_cost, sale_date, property_type, claims, prior_owner)
@@ -10656,26 +10816,26 @@ def foreign_subsidiary_dividend(
 @mcp.tool(annotations=CALC)
 @_guard
 def withholding_return(
-    year: Annotated[int, Field(description="귀속연도 — filed_on이 없으면 2025만, 있으면 2025·2026")],
+    year: Annotated[int, Field(description="귀속연도(2016~2026)")],
     month: Annotated[int, Field(description="귀속월(1~12)", ge=1, le=12)],
-    lines: Annotated[list, Field(description="[{코드, 인원, 총지급액, 소득세, 농어촌특별세?, 가산세?, 비거주자?, 메모?}] — 코드: A01 간이세액·A02 중도퇴사·A03 일용근로·A04 연말정산 합계·A05 분납신청·A06 납부금액·A21·A22 퇴직·A25 사업 매월징수·A26 사업 연말정산·A41·A43·A44·A49·A59 인적용역·A42 기타 그 외·A48·A45·A46 연금·A50 이자·A60 배당·A69·A70·A80 법인원천·A90 수정신고. 환급할 세액은 음수. 금액은 원")],
+    lines: Annotated[list, Field(description="[{코드, 인원, 총지급액, 소득세, 농어촌특별세?, 가산세?, 비거주자?, 메모?}] — 코드: A01 간이세액·A02 중도퇴사·A03 일용근로·A04 연말정산 합계·A05 분납신청·A06 납부금액·A21·A22 퇴직·A25 사업 매월징수·A26 사업 연말정산·A41·A43·A44·A49·A59 인적용역·A42 기타 그 외·A48·A45·A46 연금·A50 이자·A60 배당·A71 금융투자소득(2022.3.18.~2024.12.31. 신고 서식만)·A69·A70·A80 법인원천·A90 수정신고. 신고일의 서식에 없는 칸은 받지 않음. 환급할 세액은 음수. 금액은 원")],
     paid_month: Annotated[int | None, Field(description="지급월(1~12) — 생략하면 귀속월과 같음", ge=1, le=12)] = None,
     prior_unrefunded: Annotated[int, Field(description="전월 미환급세액(원)", ge=0)] = 0,
     prior_refund_claimed: Annotated[int, Field(description="기환급 신청세액(원)", ge=0)] = 0,
     trust_refund: Annotated[int, Field(description="신탁재산(금융회사 등) 환급세액(원)", ge=0)] = 0,
     other_refund: Annotated[int, Field(description="그 밖의 환급세액(원)", ge=0)] = 0,
     refund_claim: Annotated[int, Field(description="환급신청액(원) — 차월이월 환급세액 이내", ge=0)] = 0,
-    filed_on: Annotated[str | None, Field(description="신고·제출일(YYYY-MM-DD) — 서식을 고르는 기준. 2026-03-20 이후면 개정 서식(A27 사업소득 연말정산 분납신청·A28 납부금액 허용, 징수세액 가감계 A30 = A25 + A28), 그 전이면 2025.3.21. 서식. 생략하면 2025.3.21. 서식(2025년 귀속만)")] = None,
+    filed_on: Annotated[str | None, Field(description="신고·제출일(YYYY-MM-DD) — 서식을 고르는 기준. 2026-03-20 이후면 개정 서식(A27 사업소득 연말정산 분납신청·A28 납부금액 허용, 징수세액 가감계 A30 = A25 + A28), 그 전이면 그 신고일에 시행 중인 서식(2016.1.1. 신고분부터 — 2015.3.13.~2025.3.21. 개정 서식). 생략하면 2025년 귀속은 2025.3.21. 서식, 그 밖의 연도는 법정 신고기한(지급월의 다음 달 10일) 신고로 보고 서식을 고름")] = None,
 ) -> dict:
     """Monthly withholding tax status return aggregation by income code (원천징수이행상황신고서).
     원천징수이행상황신고서(소득세법 시행규칙 별지 제21호서식 제1쪽) 집계 — 소득 코드별 인원·총지급액·징수세액을 넣으면 가감계, 총합계, 조정환급, 납부세액을 서식 칸대로 계산. 언제: 한 달치 원천징수 내역을 이행상황신고서로 모으거나, 이미 낸 신고서가 지급 내역과 맞는지 대조할 때.
     입력: 귀속연도·귀속월 → year·month, 지급월 → paid_month, 코드별 줄 → lines, 전월 미환급세액 등 환급 조정 → prior_unrefunded·prior_refund_claimed·trust_refund·other_refund·refund_claim, 신고·제출일 → filed_on.
-    서식 선택: 귀속연도가 아니라 신고·제출일 기준(재정경제부령 제22호 부칙 제2조). 2026.3.20. 이후 신고는 <개정 2026. 3. 20.> 서식 — 사업소득 A27·A28 칸, 징수세액 가감계 A30 = A25 + A28. 2026.5.22. 개정은 제4쪽만이라 제1쪽 집계는 같음.
+    서식 선택: 귀속연도가 아니라 신고·제출일 기준(각 개정령 부칙의 서식 적용례). 2016.1.1.~2026.3.19. 신고는 그날 시행 중인 서식의 칸(분납 A05·A06은 2016.2.25.부터, 종교인 A43·A44는 2018.1.1.부터, 가상자산 A49는 2021.3.16.부터, 금융투자소득 A71은 2022.3.18.~2024.12.31., 인적용역 A59는 2023.12.29.부터). 2026.3.20. 이후 신고는 <개정 2026. 3. 20.> 서식 — 사업소득 A27·A28 칸, 징수세액 가감계 A30 = A25 + A28. 2026.5.22. 개정은 제4쪽만이라 제1쪽 집계는 같음.
     계산: 근로·퇴직·사업·기타·연금소득은 가감계(A10·A20·A30·A40·A47) 기준. 환급할 세액은 총합계에 넣지 않고 일반환급으로 모아, 조정대상 환급세액을 납부할 세액에 코드 순서대로 충당한 뒤 남은 금액이 납부세액.
     세액 자체는 계산하지 않음 — 소득별 원천징수세액은 withholding_tax(거주자), nonresident_withholding(비거주자), wage_income_tax 등으로, 가산세는 withholding_late_payment_penalty로 구해 넣는다.
     비거주자 개인의 인적용역·임대·사용료소득은 사업소득 칸(A25)에, 외국법인분은 법인원천 칸(A80)에 합산(줄에 비거주자=true를 주면 안내).
     결과: 귀속·지급연월, 총지급액, 징수세액, 가산세, 당월조정환급세액, 납부세액, 차월이월 환급세액, 계산(코드별 행·환급세액 조정), 판단·근거·주의. export_workbook에 넣으면 '원천 별지21 이행상황신고서' 시트.
-    범위 밖: 2025.3.21. 전 신고분·2024년 이전 귀속, 부표, 반기별 납부, 수정신고서 표기, 지방소득세. 개정 서식 신고분은 서식 엑셀 시트를 만들지 않음."""
+    범위 밖: 2016.1.1. 전 신고분, 부표, 반기별 납부, 수정신고서 표기, 지방소득세. 서식 엑셀 시트는 2025.3.21. 서식 신고분만 만듦."""
     from .engine.calc_withholding_return import withholding_return as _wr
     return _wr(year, month, lines, paid_month, prior_unrefunded, prior_refund_claimed, trust_refund, other_refund, refund_claim, filed_on)
 
@@ -10716,12 +10876,11 @@ def expat_cost_recharge(
             처분 = str(it.get("소득처분") or "")
             세무조정.append(_adj(f"{it.get('이름', '')} 인건비(현지법인 귀속분)", "손금불산입", it["본사_손금불산입"], 처분.split("(")[0].strip() or "기타소득",
                                "법인세법 제19조, 시행령 제106조①1호 라목"))
-        if it.get("정상가격_조정_익금산입") and year <= 2020:
-            주의.append(f"{it.get('이름', '')} 정상가격 조정 {it['정상가격_조정_익금산입']:,}원 — 2020 사업연도까지는 구 시행령의 소득처분 규정을 대조하지 않아 세무조정 항목으로 내지 않음")
-        elif it.get("정상가격_조정_익금산입"):
-            세무조정.append(_adj(f"{it.get('이름', '')} 인건비 청구 정상가격 조정", "익금산입", it["정상가격_조정_익금산입"], _TP_DISP, "국제조세조정에 관한 법률 제7조, " + _TP_DISP_BASIS))
+        if it.get("정상가격_조정_익금산입"):
+            세무조정.append(_adj(f"{it.get('이름', '')} 인건비 청구 정상가격 조정", "익금산입", it["정상가격_조정_익금산입"], _TP_DISP,
+                               ("국제조세조정에 관한 법률 제7조, " if year >= 2021 else "구 국제조세조정에 관한 법률 제4조, ") + _tp_disp(year)[0]))
     if any(a["소득처분"] == _TP_DISP for a in 세무조정):
-        주의.append(_TP_DISP_NOTE)
+        주의.append(_tp_disp(year)[1])
     return _ok(r["결과"], r["근거"], 판단=r.get("판단", []), 세무조정=세무조정, **({"주의": 주의} if 주의 else {}))
 
 
@@ -10758,6 +10917,9 @@ def corporate_filing_obligations(
     party_max_intangibles: Annotated[int, Field(description="국외특수관계인별 무형재산 최대 거래(원, 기본 0)")] = 0,
     fy_start: Annotated[str | None, Field(description="사업연도 개시일 YYYY-MM-DD(선택, 생략하면 year-01-01) — 외부감사 신기준(2019.11.1. 이후 시작 사업연도) 판정")] = None,
     fy_end: Annotated[str | None, Field(description="사업연도 종료일 YYYY-MM-DD(선택, 생략하면 year-12-31) — 국제거래명세서·해외현지법인 자료 제출기한 계산")] = None,
+    third_party_goods: Annotated[int, Field(description="국외특수관계 없는 자와의 국제거래 중 재화거래 금액(원, 기본 0) — 정상가격 산출방법 신고서 면제 가목(전체 50억)에만 더함", ge=0)] = 0,
+    third_party_services: Annotated[int, Field(description="국외특수관계 없는 자와의 국제거래 중 용역거래 금액(원, 기본 0) — 같은 가목(전체 10억)에만 더함", ge=0)] = 0,
+    third_party_intangibles: Annotated[int, Field(description="국외특수관계 없는 자와의 국제거래 중 무형자산거래 금액(원, 기본 0) — 2023년 이후 개시 과세연도의 같은 가목(전체 10억)에만 더함", ge=0)] = 0,
 ) -> dict:
     """External audit and external tax adjustment obligations plus transfer pricing filing duties (외부감사·외부세무조정 의무).
     외부감사(외감법 제4조)·외부세무조정(법인세법 제60조제9항)·국제거래 자료 제출 의무(국조법 제16조·제34조·제36조·제58조) 판정.
@@ -10769,6 +10931,7 @@ def corporate_filing_obligations(
       유한회사 사원 수 → members(선택). 설립일 → established_on(선택).
       외국자회사·국외사업장·특례·준비금·결정경정·합병분할·해외직접투자 → 각 bool.
       국외특수관계인 거래 합계·상대방별 최대 → related_goods/services/intangibles, party_max_goods/services/intangibles.
+      국외특수관계 없는 자와의 국제거래 금액 → third_party_goods/services/intangibles(선택 — 정상가격 산출방법 신고서 면제 가목의 전체 금액에만 더함, 사전-2022-법규국조-0527).
     결과: 외부감사는 대상 여부·충족조건, 외부세무조정은 대상 여부·사유(제1~7호) 목록,
       국제거래명세서·요약손익계산서·정상가격산출방법신고서·국제거래정보통합보고서 각각 대상 여부,
       해외직접투자명세는 대상 여부·기한. 판단·근거.
@@ -10793,6 +10956,8 @@ def corporate_filing_obligations(
         "party_max_goods": party_max_goods, "party_max_services": party_max_services,
         "party_max_intangibles": party_max_intangibles,
         "fy_start": fy_start, "fy_end": fy_end,
+        "third_party_goods": third_party_goods, "third_party_services": third_party_services,
+        "third_party_intangibles": third_party_intangibles,
     })
     if "error" in r:
         return r
@@ -10925,7 +11090,7 @@ def overseas_account_reporting(
     reported_amount_krw: Annotated[int, Field(description="기한 내 신고한 금액(과소신고 계산용, 기본 0 = 미신고)")] = 0,
     corrected_on: Annotated[str | None, Field(description="수정신고일(YYYY-MM-DD — 기한 후 감경표 적용)")] = None,
     unexplained_amount_krw: Annotated[int | None, Field(description="소명 불이행 과태료 계산용 금액(원, 선택)")] = None,
-    assessed_on: Annotated[str | None, Field(description="과태료 부과일(YYYY-MM-DD, 선택). 생략하면 지금 부과하는 것으로 보아 2025.2.28. 개정 기준(10%, 10억원 한도, 소명 불이행 10%). 2025.2.28. 전이면 종전 누진표와 소명 불이행 20%")] = None,
+    assessed_on: Annotated[str | None, Field(description="과태료 부과일(YYYY-MM-DD, 선택). 생략하면 지금 부과하는 것으로 보아 2025.2.28. 개정 기준(10%, 10억원 한도, 소명 불이행 10%). 2025.2.28. 전이면 종전 누진표와 소명 불이행 20%, 2021.2.17. 전이면 구 시행령 제51조 누진표(20억원 한도 없음). 2016.1.1. 이후")] = None,
 ) -> dict:
     """Overseas financial account reporting duty and administrative fine (해외금융계좌 신고).
     해외금융계좌 신고의무·과태료 판정(국조법 제53조(1항·2항)·제54조·제90조(1항·2항), 시행령 제92조(3항)·제93조(1항)·제94조·제147조(1항·2항·4항).
@@ -10943,7 +11108,7 @@ def overseas_account_reporting(
       reported_amount_krw — 기한 내 신고한 금액(기본 0 = 미신고).
       corrected_on — 수정신고일(YYYY-MM-DD).
       unexplained_amount_krw — 소명 불이행 과태료 계산용 금액(원, 선택).
-      assessed_on — 과태료 부과일(선택). 과태료 기준은 보유연도가 아니라 부과일로 갈린다: 2025.2.28. 이후 부과분은 10%·10억원 한도·소명 불이행 10%, 그 전은 누진표·소명 불이행 20%.
+      assessed_on — 과태료 부과일(선택). 과태료 기준은 보유연도가 아니라 부과일로 갈린다: 2025.2.28. 이후 부과분은 10%·10억원 한도·소명 불이행 10%, 그 전은 누진표·소명 불이행 20%(2021.2.17. 전 부과분은 구 시행령 제51조 — 20억원 한도 없음).
     결과: 신고의무·최고잔액·최고잔액_월·신고기한·위반금액·과태료·과태료_범위·감경비율·감경후_과태료·소명불이행_과태료·면제사유.
     판단: 실질적 소유자 안내 — 명의와 무관하게 사실상 관리하는 자가 보유자(영 제94조(1항)),
     내국인이 의결권 100% 직·간접 보유한 외국법인 계좌는 비조약국이면 실질적 소유자(영 제94조(2항)),
@@ -11090,7 +11255,7 @@ def cfc_deemed_dividend(
         _cfc_b = ("구 국제조세조정에 관한 법률 제17조①·제19조①" if year <= 2019 else "구 국제조세조정에 관한 법률 제18조①·제19조" if year == 2020
                   else "국제조세조정에 관한 법률 제27조①·제31조")
         세무조정.append(_adj("특정외국법인 배당간주금액", "익금산입", res["배당간주금액"], "유보", _cfc_b + ", 법인세법 시행령 제106조①2호"))
-        주의.append("세무조정의 유보: 배당간주금액은 사외로 나간 금액이 아니어서 법인세법 시행령 제106조①2호(사외에 유출되지 않은 금액)에 따라 유보로 둠 — 이 처분을 직접 다룬 해석례는 찾지 못함. "
+        주의.append("세무조정의 유보: 배당간주금액은 사외로 나간 금액이 아니어서 법인세법 시행령 제106조①2호(사외에 유출되지 않은 금액)에 따라 유보로 둠 — 이 처분을 직접 다룬 해석례는 근거 없음(국세법령정보시스템 해석·판례 검색 '특정외국법인 배당간주 유보 소득처분' 등, 2026-11-14·11-15), 서면질의 필요. 가까운 회신: 국업46017-76(2000.2.10., 요지 — 실제 배당 전 주식을 매각해도 이미 과세된 간주배당분은 세무조정 없이 비망계정으로 관리). "
                   "실제 배당을 받는 해에 그 금액을 익금불산입(국조법 제32조① — cfc_actual_dividend). 익금에 넣는 사업연도는 특정외국법인 사업연도 종료일의 다음 날부터 60일이 되는 날이 속하는 사업연도(제31조)")
     extra = {"계산식_입력": r["계산식_입력"]} if r.get("계산식_입력") else {}
     return _ok(res, r["근거"], 세무조정=세무조정, 주의=주의, 단계별_계산=r.get("단계별_계산", []), **extra)
@@ -11141,7 +11306,7 @@ def cfc_share_disposal(year: Annotated[int, Field(description="특정외국법�
 @mcp.tool(annotations=CALC)
 @_guard
 def overseas_subsidiary_statement(
-    year: Annotated[int, Field(description="거주자 과세기간 또는 모법인 사업연도 개시연도(2021~2026)")],
+    year: Annotated[int, Field(description="거주자 과세기간 또는 모법인 사업연도 개시연도(2016~2026). 2020년까지 개시분은 종전 제출기한이 2021.1.1. 전에 지났으면 구 법인세법 제121조의2·구 소득세법 제165조의2로 판정")],
     filer: Annotated[Literal["법인", "개인"], Field(description="제출인 — 법인(내국법인) 또는 개인(거주자). 손실거래명세서 금액 기준이 다름")] = "법인",
     fy_end: Annotated[str | None, Field(description="모법인 사업연도(거주자 과세기간) 종료일 YYYY-MM-DD — 없으면 year-12-31. 제출기한 계산용")] = None,
     subsidiary: Annotated[dict | None, Field(description="해외현지법인 기본사항(서식 문구용, 선택): name(영문 전체 이름)·country(거주지국)·industry(업종)·industry_code(기준경비율 코드)·investment_date(투자일 YYYY-MM-DD)·local_id(해외현지기업 고유번호)·tin(현지납세자번호)·address(소재지)·fiscal_year(현지법인 사업연도 표기)·fx_bs(재무상태표 적용환율 표기)·fx_pl(손익 적용환율 표기)·shares(주식 수)·dividend_income(배당금수입)·loan_interest(대부수입이자)")] = None,
@@ -11164,20 +11329,24 @@ def overseas_subsidiary_statement(
       재무상황표 코드별 금액 → financials, 가결산 → provisional.
     판정: 재무상황표 — 직접 10% 이상이고 투자금액(출자+대여) 1억원 이상(영 제98조제1항제2호가목), 또는 직접·간접 10% 이상이고 특수관계(나목).
       손실거래명세서 — 나목 해당자 중 손실거래금액이 법인 단일 50억원·5년 누적 100억원(개인 10억원·20억원) 이상(제3호). 2021~2026년 시행본 문언 같음.
+      2016~2020년 개시분: 종전 제출기한(법인 — 사업연도 종료일이 속하는 달의 말일부터 3개월, 개인 — 다음 연도 5.31.)이 2021.1.1. 전에 지났으면 구 법인세법 제121조의2제1항·구 시행령 제164조의2
+      (개인은 구 소득세법 제165조의2·구 시행령 제217조의2)와 구 법인세법 시행규칙 별지 제81호·제82호·제82호의2서식(개인은 구 소득세법 시행규칙 별지 제93호~제95호서식)으로 판정하고, 지나지 않았으면 현행 규정(법률 제17651호 부칙 제28조). 결과의 '적용_규정'에 표시.
+      엑셀 서식 틀: 종전 규정 적용 법인은 구 법인세법 시행규칙 별지 제81호·제82호서식(2014.3.14. 개정본), 2020년까지 개시분 중 현행 규정 적용분은 국조칙 별지 제47호·제48호서식 2021.3.16. 전부개정본(재무상황표는 제출기한이 2022.3.18. 이후면 2022판). 개인의 종전 규정 적용분은 틀 없음.
       기한 — 종료일이 속하는 달의 말일부터 6개월(법 제58조제1항, 2021.1.1. 시행 법률 제17651호부터).
     확인: 01 = 14 + 21, 56 = 27 − 30, 57 = 56 − 31, 58 = 57 + 38 − 42, 48 = 58 − 47, 82 = 71 + 76 − 77과 하위 과목 합계(08·14·21·23·27·31·38·42·77) — 식의 코드가 모두 있을 때만, 다르면 '확인 필요'.
     결과: 명세서_제출대상·재무상황표_제출대상·재무상황표_사유·손실거래명세서_제출대상·제출기한·지분율·투자금액·항등식_확인·항등식_불일치, 판단·주의.
-    범위 밖: 2020 사업연도 이전(구 법인세법 제121조의2 시기), 해외영업소 설치현황표·해외부동산 명세서, 과태료 계산."""
+    범위 밖: 해외영업소 설치현황표·해외부동산 명세서, 과태료 계산, 구 소득세법 시행규칙 별지 제93호·제94호서식 엑셀 틀."""
     from .engine import calc_overseas_sub as OS
     r = OS.statement(year, filer, fy_end, subsidiary, ownership_direct, ownership_indirect, equity_investment,
-                     loan_investment, related_party, loss_single_year, loss_cumulative_5y, financials, provisional)
+                     loan_investment, related_party, loss_single_year, loss_cumulative_5y, financials)
     if "error" in r:
         return r
     sub = subsidiary or {}
     _txt = (("현지법인명", "name"), ("거주지국", "country"), ("업종", "industry"), ("업종코드", "industry_code"),
             ("투자일", "investment_date"), ("고유번호", "local_id"), ("납세자번호", "tin"), ("소재지", "address"),
             ("현지사업연도", "fiscal_year"), ("환율_재무", "fx_bs"), ("환율_손익", "fx_pl"))
-    입력 = [("사업연도", year), ("가결산", 1 if provisional else 0), ("직접지분율", r["결과"]["직접지분율"]),
+    입력 = [("사업연도", year), ("종전규정", 1 if r["종전"] else 0), ("개인", 1 if filer == "개인" else 0), ("재무상황표_서식판", r["서식판"]),
+            ("가결산", 1 if provisional else 0), ("직접지분율", r["결과"]["직접지분율"]),
             ("간접지분율", r["결과"]["간접지분율"]), ("출자금액", int(equity_investment)), ("대여금", int(loan_investment))]
     입력 += [(n, str(sub[k])) for n, k in _txt if sub.get(k) not in (None, "")]
     입력 += [(n, sub[k]) for n, k in (("주식수", "shares"), ("배당금수입", "dividend_income"), ("대부수입이자", "loan_interest"))
@@ -11216,15 +11385,17 @@ def nominee_gift_tax(asset_value: Annotated[int, Field(ge=0, description="명의
                      share_appraisal_count: Annotated[int, Field(ge=1, description="비상장주식 평가기관 수")] = 1,
                      filed: Annotated[bool, Field(description="법정신고기한 내 신고 여부 — 신고세액공제, 부과제척기간 10년·15년")] = True,
                      nominee_kind: Annotated[Literal["개인", "영리법인", "비영리법인"], Field(description="명의자 구분 — 2018.12.31. 이전 의제분에서 영리법인이면 실제소유자가 납부")] = "개인",
-                     prior_gifts_same_donor: Annotated[int, Field(ge=0, description="같은 증여자(실제소유자)로부터 10년 내 받은 다른 증여(원) — 2019.1.1. 이후 의제분은 합산배제라 쓰지 않음, 종전 규정 의제분에 넣으면 '확인 필요'")] = 0) -> dict:
+                     prior_gifts_same_donor: Annotated[int, Field(ge=0, description="같은 증여자(실제소유자)로부터 10년 내 받은 다른 증여재산가액(원, 다른 명의신탁 의제분 포함) — 2019.1.1. 이후 의제분은 합산배제라 쓰지 않음, 종전 규정 의제분은 1천만원 이상이면 가산")] = 0,
+                     prior_gift_tax_paid: Annotated[int, Field(ge=0, description="가산한 증여에 대한 증여세 산출세액(원) — 납부세액공제(제58조), 종전 규정 의제분에만")] = 0,
+                     prior_gifts_deduction: Annotated[int, Field(ge=0, description="가산한 증여가 일반 증여일 때 그 증여에 적용된 증여재산공제(원) — 가산분이 명의신탁 의제분이면 0")] = 0) -> dict:
     """Gift tax on deemed gift of nominee-held property: tax base, tax and taxpayer (명의신탁재산 증여의제).
     명의신탁재산 증여의제 증여세(상속세 및 증여세법 제45조의2) — 증여의제일의 시행본으로 과세표준(명의신탁재산의 금액 − 감정평가수수료, 증여재산공제 없음)·산출세액·신고세액공제·납부할세액, 납세의무자(2019.1.1. 이후 의제분 실제소유자, 명의자 물적납세의무), 신고기한과 부과제척기간 만료일. 언제: 차명주식·차명 등록재산이 증여의제로 과세될 때 세액과 누가 내는지, 언제까지 부과될 수 있는지 계산할 때.
     입력: 재산 가액 → asset_value, 유형 → trust_type, 증여의제일 → deemed_gift_date(타인명의), 소유권취득일 → acquisition_date(명의개서해태), 감정평가수수료 → appraisal_fee·share_appraisal_fee, 신고 여부 → filed, 명의자 구분 → nominee_kind.
-    시점 구분(법률 제16102호 부칙 제3조·제6조): 2019.1.1. 이후 의제분은 실제소유자가 납세의무자(제4조의2제2항)이고 합산배제(제47조제1항). 2018.12.31. 이전 의제분과, 2018.12.31. 이전 취득 후 명의개서 해태로 2019.1.1. 이후 의제되는 분은 종전 규정(명의자 납세의무, 실제소유자 연대).
+    시점 구분(법률 제16102호 부칙 제3조·제6조): 2019.1.1. 이후 의제분은 실제소유자가 납세의무자(제4조의2제2항)이고 합산배제(제47조제1항). 2018.12.31. 이전 의제분과, 2018.12.31. 이전 취득 후 명의개서 해태로 2019.1.1. 이후 의제되는 분은 종전 규정(명의자 납세의무, 실제소유자 연대, 같은 증여자 10년 내 증여재산 1천만원 이상이면 가산하고 납부세액공제 — prior_gifts_same_donor·prior_gift_tax_paid).
     결과: 증여의제일·평가기준일·적용 규정·과세표준·산출세액·신고세액공제·납부할세액·납세의무자·연대·물적납세의무·법정신고기한·부과제척기간(assessment_limitation과 같은 계산). 2016~2026 의제분만.
-    범위 밖: 증여의제 요건(대상 재산, 조세회피목적, 반복 과세 제한 — 조문 MCP nominee_trust_guide), 세대생략 할증, 가산세. 부동산실명법 과징금은 시행령 별표 부과기준을 원문 대조하지 못해 계산 도구를 두지 않음."""
+    범위 밖: 증여의제 요건(대상 재산, 조세회피목적, 반복 과세 제한 — 조문 MCP nominee_trust_guide), 세대생략 할증(조심 2014서5656에 따라 계산하지 않음), 가산세. 부동산실명법 과징금은 계산하지 않음(부과기준 안내는 조문 MCP nominee_trust_guide)."""
     r = NOM.nominee_gift_tax(asset_value, trust_type, deemed_gift_date, acquisition_date, appraisal_fee, share_appraisal_fee,
-                             share_appraisal_count, filed, nominee_kind, prior_gifts_same_donor)
+                             share_appraisal_count, filed, nominee_kind, prior_gifts_same_donor, prior_gift_tax_paid, prior_gifts_deduction)
     if "error" in r:
         return r
     lim = assessment_limitation.__wrapped__(r["결과"]["법정신고기한(이월 전)"], case="일반" if filed else "무신고", inheritance_gift=True)
@@ -11361,7 +11532,9 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "경정청구": ["refund_claim_deadline", "assessment_limitation"], "후발적 경정청구": ["refund_claim_deadline"], "제45조의2": ["refund_claim_deadline"],
     "법정신고기한": ["refund_claim_deadline", "assessment_limitation"], "기한의 특례": ["refund_claim_deadline", "assessment_limitation"],
     "기한 특례": ["refund_claim_deadline", "assessment_limitation"], "신고기한 공휴일": ["refund_claim_deadline"],
-    "수입배당금": ["dividend_received_deduction"], "엑셀": ["export_workbook"], "서식": ["export_workbook"], "신고서 검토": ["return_precheck", "precheck_schema"],
+    "수입배당금": ["dividend_received_deduction"], "엑셀": ["export_workbook"], "서식": ["export_workbook"],
+    "excel": ["export_workbook"], "xlsx": ["export_workbook"], "workings": ["export_workbook"], "spreadsheet": ["export_workbook"],
+    "workbook": ["export_workbook"], "계산 근거": ["export_workbook"], "스프레드시트": ["export_workbook"], "워크북": ["export_workbook"], "신고서 검토": ["return_precheck", "precheck_schema"],
     "국세 우선": ["tax_priority_distribution"], "국세우선권": ["tax_priority_distribution"], "당해세": ["tax_priority_distribution"],
     "법정기일": ["tax_priority_distribution"], "배당표": ["tax_priority_distribution"], "배당 순위": ["tax_priority_distribution"], "매각대금 배분": ["tax_priority_distribution"],
     "경매": ["tax_priority_distribution"], "공매": ["tax_priority_distribution"], "매각대금": ["tax_priority_distribution"],
@@ -11513,11 +11686,24 @@ def find_tool(query: Annotated[str, Field(description="찾는 계산을 평소 �
     맞는 계산 도구 찾기 — 도구가 많으니, 어떤 도구를 쓸지 모르겠으면 먼저 이걸 부른다.
     언제: 계산 문제를 받았는데 맞는 도구 이름이 바로 떠오르지 않을 때, 또는 '이 계산 도구는 없다'고 판단하기 전에 반드시.
     입력: 찾는 계산 → query(평소 말, 세목·쟁점·조문 무엇이든), 개수 → n.
-    결과: 후보 도구 목록(이름·한 줄 설명·언제 쓰는지·일치 이유). 후보가 없으면 계산 도구가 없는 것이니 korean-tax-mcp로 조문을 찾는다."""
-    tools = _tool_catalog()
+    결과: 후보 도구 목록(이름·한 줄 설명·언제 쓰는지·일치 이유). 후보가 없으면 계산 도구가 없는 것이니 korean-tax-mcp로 조문을 찾는다.
+    메모·의견서·Word(docx) 문서를 찾는 말이면 결과에 '메모 문서' 한 줄 — korean-tax-mcp tax_memo_guide → build_tax_memo(이 서버는 메모를 만들지 않음)."""
     q = (query or keyword).strip()
     if not q:
         return {"error": "입력 확인 필요 — query(찾는 계산)를 넣으세요"}
+    out = _find_tool(q, n)
+    if _MEMO_QUERY.search(q) and isinstance(out.get("결과"), dict):      # 메모·의견서·Word 문서는 이 서버가 만들지 않음 — 한 줄 안내만
+        out["결과"]["메모 문서"] = _MEMO_HINT
+    return out
+
+
+_MEMO_QUERY = re.compile(r"메모|의견서|\b(?:memo|memorandum|word|docx)\b", re.I)
+_MEMO_HINT = ("세무 메모·의견서(Word .docx)는 이 서버가 만들지 않음 — korean-tax-mcp의 tax_memo_guide로 구성을 받은 뒤 build_tax_memo로 작성(계산 값은 이 서버 도구 결과를 넣음). "
+              "Tax memos (Word .docx) are built by korean-tax-mcp: tax_memo_guide, then build_tax_memo.")
+
+
+def _find_tool(q: str, n: int) -> dict:
+    tools = _tool_catalog()
     qn = q.replace(" ", "").lower()
     for words, what, arts in _NOT_SUPPORTED:
         if all(w.replace(" ", "").lower() in qn for w in words) and not (words[0] in ("취득세", "재산세", "자동차세") and any(e in qn for e in _NOT_SUPPORTED_EXEMPT)):

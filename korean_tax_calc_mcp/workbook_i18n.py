@@ -4,7 +4,7 @@
 - 한국어 워크북을 먼저 그대로 만든 뒤 저장 직전에 이 모듈이 표기만 바꾼다(lang='ko'면 호출하지 않으므로 기존 출력과 같다).
 - 번역표는 패키지 안 data/glossary_ko_en.json(docs/glossary_ko_en.md의 사본)이다. 용어집에 없는 국문 라벨은 그대로 두고
   '번역 없음' 목록에 모은다 — 이 서버는 문장을 만들어 내지 않는다(생성형 AI 없음).
-- 용어집 비고에 '확인 필요'가 있는 행은 번역에 쓰지 않는다.
+- 용어집 비고에 '공식 영문 없음'이나 '확인 필요'가 있는 행은 번역에 쓰지 않는다.
 - 법정서식 틀 시트는 한국어 신고 서식이므로 글자를 건드리지 않는다(다른 시트 이름을 가리키는 수식 참조만 새 이름으로 맞춘다).
 - 숫자·수식·표시 형식은 그대로다. 도구가 돌려준 문장(판단 근거·주의·한계)은 한국어 그대로 'Notes (Korean original)' 칸에 둔다.
 """
@@ -19,6 +19,7 @@ from typing import Any
 _DATA = Path(__file__).parent / "data" / "glossary_ko_en.json"
 _HANGUL = re.compile(r"[가-힣]")
 _UNCERTAIN = "확인 필요"
+_NO_OFFICIAL = "공식 영문 없음"     # 영문법령의 해당 조문에 그 용어가 없음을 확인한 행 — 번역에 쓰지 않는다
 NOTES_HEADER = "Notes (Korean original)"
 UNTRANSLATED_TITLE = "Untranslated labels (번역 없음)"
 _HEADER_FILL = "D9E1F2"
@@ -45,11 +46,12 @@ def _norm(s: str) -> str:
 
 @lru_cache(maxsize=1)
 def load_glossary() -> dict[str, str]:
-    """번역에 쓰는 {정규화한 국문: English}. '확인 필요' 행과 영문이 빈 행은 뺀다."""
+    """번역에 쓰는 {정규화한 국문: English}. '공식 영문 없음'·'확인 필요' 행과 영문이 빈 행은 뺀다."""
     data = json.loads(_DATA.read_text(encoding="utf-8"))
     out: dict[str, str] = {}
     for row in data["terms"]:
-        if not row.get("en") or _UNCERTAIN in (row.get("note") or "") or _UNCERTAIN in row["en"]:
+        note = row.get("note") or ""
+        if not row.get("en") or _UNCERTAIN in note or _UNCERTAIN in row["en"] or _NO_OFFICIAL in note:
             continue
         out.setdefault(_norm(row["ko"]), row["en"])
     return out
@@ -258,10 +260,13 @@ def _summary_cells(ws, T: Translator, title: str, layout: str) -> None:
                     _wide(ws, c.row)
     if layout != "steps":
         a1, a2 = ws.cell(1, 1), ws.cell(2, 1)
-        if isinstance(a1.value, str) and a1.value.endswith(" — 요약"):
+        from .workbook_blend import as_text       # 제목·회사명이 '='로 시작해도 글 그대로(수식으로 저장하지 않음)
+        if isinstance(a1.value, str) and (a1.data_type != "f" or a1.quotePrefix) and a1.value.endswith(" — 요약"):
             a1.value = a1.value[: -len("요약")] + "Summary (요약)"
-        if isinstance(a2.value, str):
+            as_text(a1)
+        if isinstance(a2.value, str) and (a2.data_type != "f" or a2.quotePrefix):
             a2.value = a2.value.replace("단위: 원", "Unit: KRW (단위: 원)")
+            as_text(a2)
         for key, en in (("(+) 익금산입·손금불산입", "(+) "), ("(−) 손금산입·익금불산입", "(−) ")):
             for row in ws.iter_rows(min_col=1, max_col=1):
                 if row[0].value == key:
@@ -344,8 +349,9 @@ def _form_line(sheet: str, form: str) -> str:
     return f"Sheet '{sheet}' — {kind}: {form} (Korean filing format, kept in Korean)"
 
 
-def _append_guide(ws, wb, T: Translator, *, form_info: dict[str, str], ren: dict[str, str], results: list[dict]) -> None:
-    """요약 시트 아래: 시트 안내(시트마다 한 줄)와 '번역 없음' 목록."""
+def append_guide(ws, wb, T: Translator, *, form_info: dict[str, str], ren: dict[str, str], results: list[dict],
+                 front: dict[str, str] | None = None) -> None:
+    """요약 시트 아래: 시트 안내(시트마다 한 줄)와 '번역 없음' 목록. front는 {통합 문서 앞 시트 이름: 안내 한 줄}."""
     from openpyxl.styles import Alignment, Font, PatternFill
     bold, fill = Font(bold=True), PatternFill("solid", fgColor=_HEADER_FILL)
     back = {v: k for k, v in ren.items()}
@@ -370,7 +376,9 @@ def _append_guide(ws, wb, T: Translator, *, form_info: dict[str, str], ren: dict
     for n, sh in enumerate(wb.worksheets, 1):
         name, old = sh.title, back.get(sh.title, sh.title)
         m = _CALC_RE.match(old)
-        if name in form_info:
+        if front and name in front:
+            text = front[name]
+        elif name in form_info:
             text = _form_line(name, form_info[name])
         elif m:
             cd = results[int(m.group(1)) - 1] if int(m.group(1)) <= len(results) else {}
@@ -415,7 +423,8 @@ def _append_guide(ws, wb, T: Translator, *, form_info: dict[str, str], ren: dict
     ws.sheet_properties.pageSetUpPr.fitToPage = True
 
 
-def apply_english(wb, T: Translator, *, layout: str, title: str, form_info: dict[str, str], results: list[dict]) -> dict[str, str]:
+def apply_english(wb, T: Translator, *, layout: str, title: str, form_info: dict[str, str], results: list[dict],
+                  guide: bool = True) -> dict[str, str]:
     """완성된 한국어 워크북을 영문 표기로 바꾼다. 돌려주는 값: {옛 시트 이름: 새 시트 이름}.
 
     form_info는 {서식 틀 시트 이름: 서식 표기}. 그 시트의 글자는 바꾸지 않는다.
@@ -437,8 +446,8 @@ def apply_english(wb, T: Translator, *, layout: str, title: str, form_info: dict
             _plain_sheet(ws, T)
     ren = _rename_sheets(wb, form_sheets)
     summary = next((wb[n] for o, n in ren.items() if o == "요약"), None) or (wb["요약"] if "요약" in wb.sheetnames else None)
-    if summary is not None:
-        _append_guide(summary, wb, T, form_info=form_info, ren=ren, results=results)
+    if summary is not None and guide:      # guide=False: 통합 문서가 앞 시트를 더한 뒤에 append_guide를 부름
+        append_guide(summary, wb, T, form_info=form_info, ren=ren, results=results)
     return ren
 
 

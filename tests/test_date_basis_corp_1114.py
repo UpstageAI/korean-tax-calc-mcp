@@ -252,7 +252,7 @@ def test_wording_items():
     from korean_tax_calc_mcp import vocab
     assert vocab.rule("간이과세자_납부의무면제", 2018)["기준"] == 30 * M                 # 16101 부칙§6: 2019.1.1. 이후 신고분 → 2018 과세기간
     r = call("simplified_vat_return", {"year": 2021, "business_type": "소매업", "ledger": {"공급": [{"항목": "카드매출", "금액": 1}], "매입": []}})
-    assert "error" in r and "17653" in r["error"]
+    assert "error" in r and "17653" in r["문제"][0]                                   # 2021은 항목별 반기 표시가 있어야 계산(종전·개정 산식 혼합)
     assert "주의" in ok(call("loss_carryforward_limit", {"year": 2024, "sme": False}))
     r = ok(call("bundled_supply_split", {"total_price": 100 * M, "vat_included": False, "standard_value": {"building": 40 * M, "land": 60 * M}, "supply_date": "2021-03-01"}))
     assert "2호 사유 없음" in r["범위"]

@@ -3,7 +3,7 @@
 대조한 원문(국세법령정보시스템 응답 캐시 발췌, 고도화_1114/raw_inc_interest·raw_inc_business):
   · 소득세법 2016.1.1.~2026.4.21. 시행본 제12조·제17조③·제86조, 부칙 법률 제14389호·제16104호·제15225호·제18975호·제19196호·제19933호·제20615호·제21221호
   · 소득세법 시행령 2026.10.1. 시행본 부칙 제33267호(제7조①)·제34265호(제4조①)·제36129호(제3조), 2023.10.1.·2024.11.12. 시행본 제143조④·제18조③·제208조⑤
-  · 조세특례제한법 제104조의27(2025.12.23. 신설) — 세율표는 원문 그림이라 대조하지 못함(계산하지 않고 '미지원 — 확인 필요')
+  · 조세특례제한법 제104조의27(2025.12.23. 신설) — 2025.12.31.까지 받은 배당에는 특례가 없어 '입력 확인 필요'로 안내
 기대값은 위 조문으로 손으로 계산한 값. 경계일 양쪽과 날짜를 주지 않은 경우를 함께 본다.
 """
 from korean_tax_calc_mcp import server as S, vocab
@@ -91,7 +91,7 @@ def test_high_dividend_not_silently_listed():
     r = S.financial_income_aggregate(2026, [{"kind": "고배당기업배당", "amount": 5 * M, "separate_election": False}])
     assert r["결과"]["Gross-up"] == 3_000_000 and any("특례 미신청" in n for n in r["주의"])
     r = S.financial_income_aggregate(2025, [{"kind": "고배당기업배당", "amount": 5 * M, "separate_election": False}])
-    assert r["error"] == "미지원 — 확인 필요"                                     # 2025.12.31.까지는 이 특례 없음
+    assert r["error"] == "입력 확인 필요 — 계산하지 않음"                                     # 2025.12.31.까지는 이 특례 없음
     r = S.financial_income_aggregate(2025, [{"kind": "고배당기업배당", "amount": 5 * M, "paid_date": "2026-01-05", "separate_election": False}])
     assert r["결과"]["Gross-up"] == 3_000_000
 
@@ -121,7 +121,7 @@ def _egp(year, items):
 def test_childcare_2025_paid_in_2026_per_child():
     f = {"purpose": "보육", "months": 1, "child_ages": [3, 5]}
     r = _egp(2025, [{"kind": "출산·보육수당", "amount": 400_000, "facts": {**f, "paid_date": "2026-01-10"}}])
-    assert r["결과"]["비과세_합계"] == 400_000 and any("국세청 해석" in n for n in r["주의"])   # 자녀 1명당 20만 × 2
+    assert r["결과"]["비과세_합계"] == 400_000 and any("서면질의 필요" in n for n in r["주의"])   # 자녀 1명당 20만 × 2
     r = _egp(2025, [{"kind": "출산·보육수당", "amount": 400_000, "facts": {**f, "paid_date": "2025-12-26"}}])
     assert r["결과"]["비과세_합계"] == 200_000 and "주의" not in r
     r = _egp(2025, [{"kind": "출산·보육수당", "amount": 400_000, "facts": f}])                    # 날짜 없음 — 경계 연도 안내

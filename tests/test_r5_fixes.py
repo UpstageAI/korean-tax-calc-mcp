@@ -259,8 +259,9 @@ def test_retirement_year_range_consistent():
     p = t.input_schema["properties"]["retire_year"]
     assert (p.get("minimum"), p.get("maximum")) == (2016, 2026)
     for text in (p.get("description", ""), t.description):
-        assert "2020~2026" in text and "2016~2019" in text, text
-    assert "error" in call("retirement_income_tax", {"income": 50_000_000, "years_of_service": 10, "retire_year": 2019})
+        assert "2016~2019" in text, text
+    # 2016~2019년 퇴직: 법률 제12852호 부칙 제25조 특례로 계산(2026-11-15)
+    assert "error" not in call("retirement_income_tax", {"income": 50_000_000, "years_of_service": 10, "retire_year": 2019})
     assert "error" not in call("retirement_income_tax", {"income": 50_000_000, "years_of_service": 10, "retire_year": 2020})
 
 

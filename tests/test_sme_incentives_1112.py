@@ -50,7 +50,7 @@ def test_industry_gates():
     r = ST(founded_on="2021-03-02", industry="위탁제조", oem=dict(OEM, domestic_maker=False), **base)      # 해외 제조업체 위탁
     assert r["결과"]["적용"] == "대상 아님" and any("위탁제조 요건 미충족" in p for p in r["판단"])
     assert "error" in ST(founded_on="2021-03-02", industry="위탁제조", **base)                             # 요건 미입력
-    assert "error" in ST(founded_on="2018-03-01", industry="제조업", **base)                               # 대조 못 한 기간
+    assert ST(founded_on="2018-03-01", industry="제조업", **base)["결과"]["감면세액"] == 66 * M              # 2018.1.1. 시행 제6조제1항: 과밀억제권역 밖 50%
 
 
 def test_period_and_five_year_rule():
@@ -107,9 +107,9 @@ def test_special_reduction_rates_cap_and_minimum_tax():
 def test_carryback_refund():
     # 2023 결손 3억, 2022 과세표준 5억(2,000만 + 3억×20% = 8,000만) → 2억에 대한 세액 2,000만 → 환급 6,000만
     r = CB(year=2023, loss=300 * M, prior_base=500 * M)
-    assert r["결과"] == {"환급세액": 60 * M, "소급공제_결손금": 300 * M, "이월할_결손금": 0}
+    assert r["결과"] == {"환급세액": 60 * M, "소급공제_결손금": 300 * M, "이월할_결손금": 0, "환급받을 금액(10원 미만 버림)": 60 * M}
     r = CB(year=2023, loss=800 * M, prior_base=500 * M)
-    assert r["결과"] == {"환급세액": 80 * M, "소급공제_결손금": 500 * M, "이월할_결손금": 300 * M}
+    assert r["결과"] == {"환급세액": 80 * M, "소급공제_결손금": 500 * M, "이월할_결손금": 300 * M, "환급받을 금액(10원 미만 버림)": 80 * M}
     # 직전 감면 5,000만 → 한도 3,000만. 3,000만을 돌려받는 최소 소급공제액: 세액 5,000만이 되는 과세표준 3.5억 → 1.5억(원 미만 절사 때문에 4원 적은 149,999,996원이 최소)
     r = CB(year=2023, loss=300 * M, prior_base=500 * M, prior_credits=50 * M)
     assert r["결과"]["환급세액"] == 30 * M and r["계산"]["한도만큼_환급받는_최소_소급공제액"] == 150 * M - 4

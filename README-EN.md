@@ -51,6 +51,8 @@ flowchart LR
   F -.->|no calculator for the question| K
 ```
 
+**Rounding** — tax bases drop fractions of a won; computed tax figures (calculated tax, credits, reductions, penalties) are kept in whole won, truncated only at the final amount where no rule says otherwise. Amounts actually paid to or refunded by the Treasury or a local government drop anything under 10 won and are shown separately as `납부할 금액(10원 미만 버림)` (or `환급받을 금액(10원 미만 버림)` for refund-only results) — Management of the National Funds Act (국고금 관리법) Article 47; local taxes follow it through 지방세기본법 Article 59. Withholding tax is truncated on the total for one payee and one payment (`withholding_tax` and `nonresident_withholding` return that 10-won figure directly).
+
 ## Try asking
 
 | Question | Tools |
@@ -75,7 +77,7 @@ If you do not know which tool to use, ask `find_tool` in plain words.
 
 [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp) is the companion server for statutes, addenda, rulings and cases. With both installed, "find the basis → compute → fill the form" runs in one conversation, and this server's `find_tool` returns ready-to-call statute lookups for questions it has no calculator for (rent tax credit, pension-account credit, stock gains …).
 
-To pick up a new release right away: `uvx --refresh korean-tax-calc-mcp` (uvx caches the downloaded version). Pin with `uvx korean-tax-calc-mcp@0.54.0`.
+To pick up a new release right away: `uvx --refresh korean-tax-calc-mcp` (uvx caches the downloaded version). Pin with `uvx korean-tax-calc-mcp@0.55.0`.
 
 Optional keys: `LAW_OC` (law.go.kr lookups in two audit tools), `UPSTAGE_API_KEY` (PDF table extraction), `VWORLD_KEY` (official property price lookup).
 
@@ -191,12 +193,30 @@ The example questions in "Try asking" above (royalty to a US parent, secondee re
 | Inputs | the named input values the form formulas use |
 | Judgments | conclusion, amount, statutory basis and reason per item |
 
+Pass `scenarios`, `sources` and `issues` to get a combined workings set (without them the layout above is unchanged). By default it is the front sheets below plus one 'Calc detail' sheet; choose the back sheets with `detail`.
+
+| Sheet | Contents |
+|---|---|
+| Summary | key figures linked to the scenario sheets, a one-line note per block (for example the due date), colour key |
+| Inputs | input values and statutory rates in one place, each with a source column (document or article) |
+| Scenario sheets | calculations side by side (for example A as contracted / B alternative) with a basis / note column; formulas on the input cells, checked against the tool values at the end of each block |
+| Issues Log | number, issue, finding, risk, action — shown exactly as you wrote them (the tool does not assess issues) |
+| Calc detail | tool results and basis for every calculation, stacked on one sheet |
+
+| `detail` | Back sheets |
+|---|---|
+| `compact` (default) | one 'Calc detail' sheet; if statutory forms exist, the Summary ends with a one-line pointer |
+| `forms` | 'Calc detail' plus the statutory form sheets |
+| `full` | statutory forms, a 'Calc N' sheet per calculation, call inputs, judgments and the sheet list |
+
+Colour key: blue = input, green = link to another sheet, black = formula, yellow = key result or assumption.
+
 | Tax | Forms |
 |---|---|
 | Corporate tax | Forms 3, 4, 8(a), 15 (with disposition codes), 16-2, 20(1)(2), 21, 23(a)(b), 26(a)(b), 29, 32, 33, 34, 50(b) of the Corporate Tax Act Enforcement Rule |
-| VAT | Form 21 return page 1 lines 1–30 and page 4 penalty schedule, Form 22, Form 15, Form 19(1), Form 25, and calculation sheets for common input tax and bundled supply (no statutory form) |
+| VAT | Form 21 return page 1 lines 1–30 (the form edition of that year for 2016–2024 periods and the 2025 first-period preliminary return) and page 4 penalty schedule, Form 22, Form 15, Form 19(1), Form 25, and calculation sheets for common input tax and bundled supply (no statutory form) |
 | Withholding | withholding tax return (Income Tax Act Enforcement Rule Form 21) page 1, Form 23(1) interest and dividend statement, Form 23(5) non-resident statement |
-| International tax | Adjustment of International Taxes Act Enforcement Rule Forms 16(a) (international transactions), 20 (transfer-pricing method report), 30(a) (CFC retained earnings), 31(a)(b)(c) (CFC inclusion test), 32(a)(b) (scope test), 47 (overseas subsidiary statement), 48 (financial status) — fiscal years from 2021 |
+| International tax | Adjustment of International Taxes Act Enforcement Rule Forms 16(a) (international transactions), 20 (transfer-pricing method report), 30(a) (CFC retained earnings), 31(a)(b)(c) (CFC inclusion test), 32(a)(b) (scope test), 47 (overseas subsidiary statement), 48 (financial status) — fiscal years from 2021. Fiscal years 2016–2020 use the form edition of that year: international transaction statement (former Form 8(a), 2016/2017/2018 editions, and Form 16(a) 2021 edition — one sheet per foreign related party), transfer-pricing method report (former Form 1-3, 2015/2020 editions, and Form 20 2021 edition), overseas subsidiary statement and financial status (former Corporate Tax Act Enforcement Rule Forms 81 and 82, and Forms 47 and 48 2021 edition) |
 | Income, capital gains, gift | Form 40(1) schedules for interest, dividend, wage, pension and other income; Form 84 capital gains tax calculation and Schedule 1; gift tax Form 10 |
 
 With `lang="en"` the sheet names, summary labels, table headers and result keys are written as "English (Korean)" — for example "Tax base (과세표준)" — using [the glossary](docs/glossary_ko_en.md). A Korean label with no glossary entry is left as it is and listed under "Untranslated labels (번역 없음)" on the Summary sheet and in the result's `warnings`; statutory form sheets stay in Korean with a one-line English description each; tool notes (basis, cautions, limitations) are not machine-translated and stay in Korean under "Notes (Korean original)". Numbers and formulas are the same as in the Korean workbook.
@@ -276,17 +296,17 @@ Click a group to expand its tools.
 
 | Tool | What it does |
 |---|---|
-| `sme_status` | SME and small-enterprise status for tax purposes — revenue thresholds by industry (2018–2024, 2025–), total assets, independence, domestic affiliates, grace period (STTCA Decree art.2) |
+| `sme_status` | SME and small-enterprise status for tax purposes — revenue thresholds by industry (2016, 2017–2024, 2025–), total assets, independence, domestic affiliates, grace period (STTCA Decree art.2) |
 | `startup_tax_reduction` | Startup SME tax reduction — eligibility, rate, period and amount by founding date, region, youth founder and industry incl. contract manufacturing and online retail (STTCA art.6) |
 | `sme_special_tax_reduction` | SME special tax reduction — rate by size, region and industry, KRW 100m cap, minimum tax (STTCA art.7) |
 | `reduction_income_segments` | Income eligible for a tax reduction when eligible and other businesses are run together — allocation of common income and expenses, loss offset across businesses, attribution of deducted loss carryforwards, main business (STTCA Art. 143; CIT Enforcement Rule Arts. 75–76) |
-| `integrated_employment_credit` | Integrated employment tax credit — increase in regular employees × per-person amount, credited in the first year and the following 1–2 years, stopped on a decrease, plus conversion to regular status and return from childcare leave, recapture on a decrease (STTCA Art. 29-8, 2023–2025) |
-| `employment_increase_credit` | Tax credit for increased employment — headcount increases in 2018–2024 × per-person amount, second- and third-year credits, stop and recapture on a decrease, choice against the integrated employment credit (STTCA Arts. 29-7 and 127(11)) |
+| `integrated_employment_credit` | Integrated employment tax credit — increase in regular employees × per-person amount, credited in the first year and the following 1–2 years, stopped on a decrease, plus conversion to regular status and return from childcare leave, recapture on a decrease, and the revised formula for tax year 2026 (STTCA Art. 29-8, 2023–2026) |
+| `employment_increase_credit` | Tax credit for increased employment — headcount increases in 2018–2024 × per-person amount, second- and third-year credits, stop and recapture on a decrease, the 2020 deferral of recapture, choice against the integrated employment credit (STTCA Arts. 29-7 and 127(11)) |
 | `integrated_investment_credit` | Integrated investment tax credit — basic rate by year, company size and asset class, additional credit on the excess over the prior three-year average, temporary credit for 2023–2025, exclusion of expansion investment in the Seoul overconcentration control zone (STTCA Arts. 24 and 130, 2021–2026) |
 | `rnd_tax_credit` | R&D tax credit — general research and workforce development expenses: current-year amount versus incremental amount, with the four-year average condition (STTCA Art. 10(1)(3), 2016–2026) |
 | `minimum_tax` | minimum tax |
 | `minimum_tax_adjustment` | minimum tax adjustment (exclusion order, Forms 4 and 8(a)) |
-| `rural_special_tax` | Special tax for rural development — 20% of income or corporate tax reduced under the STTCA, with exemption status by article (Act Art. 4 and Decree Art. 4 lists by year, 2016–2026) |
+| `rural_special_tax` | Special tax for rural development — 20% of income or corporate tax reduced under the STTCA, with exemption status by article (Act Art. 4 and Decree Art. 4 lists by year, 2016–2026, with the application rules of each amending decree) |
 
 </details>
 <details>
@@ -299,7 +319,7 @@ Click a group to expand its tools.
 | `nonresident_withholding` | non-resident withholding |
 | `nonresident_capital_gains_withholding` | withholding on Korean real estate/securities gains of nonresidents and foreign corporations |
 | `nonresident_inheritance_gift` | inheritance tax for nonresident decedents, gift tax for nonresident donees |
-| `withholding_return` | monthly withholding tax return (Form 21, page 1) — subtotals by income code, grand total, refund offset and tax payable (2025 only) |
+| `withholding_return` | monthly withholding tax return (Form 21, page 1) — subtotals by income code, grand total, refund offset and tax payable (2016–2026 attribution years, using the form in force on the filing date) |
 | `retirement_income_tax` | retirement income |
 | `wage_income_tax` | wage income |
 | `foreign_worker_flat_tax` | foreign worker flat-rate tax (17%/19%) vs progressive tax (STTCL Art. 18-2) |
@@ -477,7 +497,7 @@ When a case is out of scope, the tool stops with "input needed" or an error, or 
 | `vat_supply_timing` | Gift cards, processing, vending machines, bonded areas, consignment, deemed supply, exports other than shipment date, real-estate rental and prepaid annual fees, international transport, deemed closure, late-invoice penalties |
 | `vat_deemed_supply_items` | Employee gift limits before 2020-1 |
 | `refund_claim_deadline` | Causes or notices before 2016, transition rules before 2015, whether a later-arising cause applies |
-| `tax_priority_distribution` | Provisional-attachment pro-rating, tax-to-tax absorption, circular priority among security interests, public charges, tax security, etc. (returned as input needed) |
+| `tax_priority_distribution` | Provisional-attachment pro-rating, circular priority among security interests, public charges, tax security, etc. (returned as input needed). Among taxes, absorption by the first-seizing tax is computed; taxes that only requested delivery are not re-divided |
 | `individual_donation_expense` | The donation tax credit amount itself |
 | `stock_major_shareholder` | Market-cap lookup (enter it yourself) |
 | `minimum_tax_adjustment` | Ship standard profit (119); Article 59 ordering and limits for excluded items; donation limit recalculation; deduction/credit summary statement (appendix) and additional tax payable (b) |

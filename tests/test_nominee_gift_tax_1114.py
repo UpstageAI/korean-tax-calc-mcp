@@ -70,8 +70,9 @@ def test_corporate_nominee_before_2019():
 def test_aggregation():
     a = R(asset_value=100_000_000, deemed_gift_date="2020-03-01", prior_gifts_same_donor=50_000_000)
     assert a["산출세액"] == 10_000_000 and "쓰지 않음" in a["합산"]
-    r = T(asset_value=100_000_000, deemed_gift_date="2018-03-01", prior_gifts_same_donor=50_000_000)
-    assert r["error"].startswith("확인 필요")
+    # 2026-11-15: 종전 체계 의제분은 10년 내 같은 증여자 증여재산을 가산(서면-2016-상속증여-5376, 서울고등법원 2016누33027) — 1.5억 × 20% − 1천만
+    r = R(asset_value=100_000_000, deemed_gift_date="2018-03-01", prior_gifts_same_donor=50_000_000)
+    assert r["과세표준"] == 150_000_000 and r["산출세액"] == 20_000_000 and r["납부할세액"] == 19_000_000
 
 
 def test_errors():

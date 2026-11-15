@@ -272,13 +272,13 @@ def earned_income_gross_pay_impl(year, items) -> dict:
                     r = {**r, **{kk: rp.get(kk) for kk in _EGP_지급일_종류[k]}}
                     b = vocab.basis(k, _pdd.year)
                     지급일_주의.append(f"{k} {amount:,}원: 귀속연도 {year}년이지만 지급일 {_pdd} — 부칙이 지급받는 분 기준이라 {_pdd.year}년 한도 적용"
-                                    "(원천징수시기 특례 소득세법 제135조 아래 실제 지급일로 볼지는 국세청 해석 확인 필요)")
+                                    "(원천징수시기 특례 소득세법 제135조의 지급 의제일이 아니라 실제 지급일로 보는지는 근거 없음(국세법령정보시스템 검색 '비과세 지급받는 분부터 적용 원천징수시기 특례 지급시기 의제' 등 2026-11-15, 해당 문서 없음), 서면질의 필요. 귀속연도 한도로 보면 year를 그대로 두고 paid_date를 빼고 계산해 비교)")
                 elif _pdd.year != year and k == "출산·보육수당" and facts.get("purpose") != "보육" and vocab.rule_paid(k, year, _pdd)[1]:
                     지급일_주의.append(f"{k}(출산) {amount:,}원: 지급일 {_pdd} — 출산 급여 비과세는 지급일·신고 시기별 부칙이 달라 귀속연도 {year}년 규정으로만 계산함, 확인 필요")
             elif year in _EGP_지급일_경계.get(k, ()) and not (k == "출산·보육수당" and facts.get("purpose") != "보육") \
                     and not (k == "연장근로수당" and not facts.get("eligible_occupation")):
                 지급일_주의.append(f"{k}: {year}년분 중 {year + 1}년에 지급한 금액(예: 12월분을 다음 해 1월 지급)이 있으면 facts.paid_date(지급일)로 항목을 나눠 넣으세요 — "
-                                f"부칙이 지급받는 분 기준이라 그 금액은 {year + 1}년 한도 적용. 원천징수시기 특례(소득세법 제135조) 아래 실제 지급일로 볼지는 국세청 해석 확인 필요")
+                                f"부칙이 지급받는 분 기준이라 그 금액은 {year + 1}년 한도 적용. 원천징수시기 특례(소득세법 제135조)의 지급 의제일이 아니라 실제 지급일로 보는지는 근거 없음(국세법령정보시스템 검색 '비과세 지급받는 분부터 적용 원천징수시기 특례 지급시기 의제' 등 2026-11-15, 해당 문서 없음), 서면질의 필요. 귀속연도 한도로 보면 year를 그대로 두고 paid_date를 빼고 계산해 비교")
         구분 = r.get("구분", "과세")
         과세액 = amount
         비과세액 = 0

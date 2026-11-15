@@ -32,8 +32,8 @@ def _parse_legal_share(s):
     return f.numerator, f.denominator
 
 
-def _rate_table(year):
-    """상속세·증여세 공통 세율표(법 제26조 준용)."""
+def _rate_table():
+    """상속세·증여세 공통 세율표(법 제26조 준용). 2016.9.1. 현재 시행본과 2026.1.2. 시행본의 표가 같아 year로 나누지 않는다(법제처 대조 2026-11-15)."""
     return [(100 * M, 0.10), (500 * M, 0.20), (1_000 * M, 0.30), (3_000 * M, 0.40), (None, 0.50)]
 
 
@@ -43,7 +43,7 @@ def _tier(amount, tiers):
 
 
 def _calc_tax(amount, year):
-    return _tier(amount, _rate_table(year))
+    return _tier(amount, _rate_table())
 
 
 def _장례비용(funeral_cost, enshrinement_cost):
@@ -53,7 +53,7 @@ def _장례비용(funeral_cost, enshrinement_cost):
     return _won(max(lower, min(funeral_cost, upper))) + _won(min(enshrinement_cost, enshr))
 
 
-def _인적공제(year, children, minors, seniors, disabled, spouse, sole_spouse_heir, filed):
+def _인적공제(year, children, minors, seniors, disabled, sole_spouse_heir, filed):
     """기초공제 + 그밖의인적공제 + 일괄공제 선택. filed = 제21조제1항 단서의 '신고'가 있는지(기한내 신고, 2020.1.1. 이후 기한후신고 포함)."""
     voc = vocab.rule("상속세_인적공제", year)
     기초 = voc["기초공제"]  # 2억
@@ -97,17 +97,22 @@ def _인적공제(year, children, minors, seniors, disabled, spouse, sole_spouse
 
 
 def _배우자공제(year, estate_value, deemed_estate, nontaxable, public_charges, debts, excluded,
-                bequest_to_non_heirs, prior_gifts_heirs, spouse):
-    """법 제19조, 영 제17조①."""
+                bequest_to_non_heirs, prior_gifts_heirs, spouse, presumed=0):
+    """법 제19조제1항제1호 한도금액 = (A − B + C) × D − E, 영 제17조제1항.
+    A(상속으로 인하여 얻은 자산총액 − 비과세·공과금·채무·과세가액 불산입)의 자산총액에는 추정상속재산(제15조)이 들어간다 —
+    시행규칙 별지 제9호서식 부표 3(배우자 상속공제 명세서)의 '총 상속재산가액'이 부표 1의 '총상속재산가액 합계'
+    (상속재산가액 + 상속개시 전 처분재산등 산입액)를 옮겨 적게 함(2026.3.20. 시행 서식). 영 제17조제1항 문언은 2016~2026 시행본이 같다(2017.2.7. 자구 정비).
+    E = 가산한 증여재산 중 배우자가 사전증여받은 재산의 증여세 과세표준(spouse['prior_gift_tax_base'], 없으면 0)."""
     if spouse is None:
         return 0, None
 
     voc = vocab.rule("배우자상속공제", year)
     최소, 최대 = voc["최소"], voc["최대"]
 
-    A = estate_value + deemed_estate - nontaxable - public_charges - debts - excluded
+    A = estate_value + deemed_estate + presumed - nontaxable - public_charges - debts - excluded
     num, den = _parse_legal_share(spouse["legal_share"])
-    한도 = _won((A - bequest_to_non_heirs + prior_gifts_heirs) * num / den)
+    E = spouse.get("prior_gift_tax_base") or 0
+    한도 = _won((A - bequest_to_non_heirs + prior_gifts_heirs) * num / den) - E
     한도 = max(0, 한도)
 
     actual = spouse["actual"]
@@ -257,6 +262,9 @@ def inheritance_tax(
             _parse_legal_share(spouse["legal_share"])
         except ValueError as e:
             return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [str(e)]}
+        _e = spouse.get("prior_gift_tax_base")
+        if _e is not None and (isinstance(_e, bool) or not isinstance(_e, (int, float)) or _e < 0):
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["spouse.prior_gift_tax_base — 배우자가 사전증여받은 재산의 증여세 과세표준(0 이상, 원)"]}
 
     late_d = None
     if late_filed_on:
@@ -303,14 +311,14 @@ def inheritance_tax(
 
     # 6. 인적공제
     if resident:
-        인적적용액, 일괄적용 = _인적공제(year, children, minors, seniors, disabled, spouse, sole_spouse_heir, 신고있음)
+        인적적용액, 일괄적용 = _인적공제(year, children, minors, seniors, disabled, sole_spouse_heir, 신고있음)
     else:   # 비거주자: 기초공제만(제18조), 제20조·제21조는 '거주자의 사망'
         인적적용액, 일괄적용 = vocab.rule("상속세_인적공제", year)["기초공제"], False
 
     # 7. 배우자공제
     배우자공제, 배우자한도 = _배우자공제(year, estate_value, deemed_estate, nontaxable,
                                           public_charges, debts, excluded, bequest_to_non_heirs,
-                                          prior_gifts_heirs, spouse)
+                                          prior_gifts_heirs, spouse, presumed=추정_합계)
 
     # 8. 금융재산공제
     금융공제 = _금융재산공제(year, net_financial_assets)
@@ -398,10 +406,22 @@ def inheritance_tax(
         판단["입력값_사용"].append("세대생략 할증: 입력값 사용")
     if gift_tax_credit:
         판단["입력값_사용"].append("증여세액공제: 입력값 사용")
-    if resident and year == 2016:
-        판단["확인필요"].append("2016년 미성년자·장애인 연수: 제20조①2호(버림)와 제20조③(1년 미만 1년) 충돌 — 확인 필요")
+    if resident and year == 2016 and any(float(v) != int(v) for v in list(minors) + list(disabled)):
+        # 2016.1.1.~12.31. 시행본(법률 제13557호)만 제20조제1항제2호 괄호 '소수점 이하는 버린다. 이하 이 항에서 같다'와 제3항 '1년 미만의 기간은 1년으로'가 함께 있음
+        # (괄호는 법률 제14388호로 2017.1.1. 삭제). 해석례를 찾지 못해(국세법령정보시스템 검색 2026-11-15) 두 계산을 함께 보여 준다.
+        _v = vocab.rule("상속세_인적공제", year)
+        _올림 = sum(_v["미성년공제"] * math.ceil(m) for m in minors) + sum(_v["장애공제"] * math.ceil(d) for d in disabled)
+        _버림 = sum(_v["미성년공제"] * (int(m) if m >= 1 else 1) for m in minors) + sum(_v["장애공제"] * (int(d) if d >= 1 else 1) for d in disabled)
+        판단["2016년_연수_두_해석"] = {
+            "적용": "버림(1년 미만이면 1년)", "미성년자·장애인공제_버림": _버림, "미성년자·장애인공제_올림": _올림, "차이": _올림 - _버림,
+            "결론": "2016년 상속개시분은 제20조제1항제2호 괄호(연수의 소수점 이하는 버린다, 이 항에서 같다)와 제3항(1년 미만의 기간은 1년으로)이 함께 있어 "
+                  "연수의 끝수 처리가 두 가지로 읽힘 — 이 계산은 버림(전체가 1년 미만이면 1년). 올림으로 보면 공제가 '차이'만큼 큼(일괄공제를 적용하면 세액은 같음)",
+            "근거": "상속세 및 증여세법 제20조제1항제2호·제3항(법률 제13557호, 2016.1.1. 시행본), 법률 제14388호(2017.1.1. 괄호 삭제). 근거 없음 — 국세법령정보시스템 검색(2026-11-15), 서면질의 필요"}
     if spouse is not None:
-        판단["확인필요"].append("배우자공제 한도식 A(영 제17조①): 추정상속재산 제외 — 예규 확인 필요")
+        판단["배우자공제_한도식"] = {
+            "결론": f"한도금액 = (A − B + C) × 법정상속분 − E = {배우자한도:,}원. A의 자산총액에 추정상속재산 {추정_합계:,}원 포함, "
+                  f"E(배우자 사전증여재산의 증여세 과세표준) {int(spouse.get('prior_gift_tax_base') or 0):,}원",
+            "근거": "상속세 및 증여세법 제19조제1항제1호, 시행령 제17조제1항, 시행규칙 별지 제9호서식 부표 3 배우자 상속공제 명세서(총 상속재산가액 = 부표 1의 총상속재산가액 합계 — 상속개시 전 처분재산등 산입액 포함)"}
     if 신고율 != 0.03:
         판단["확인필요"].append(f"신고세액공제율 {신고율*100:.0f}%: 2017~2018년 특례 적용 여부 확인")
 
@@ -624,9 +644,9 @@ def gift_tax(
         할증_계산 = {"총_증여재산가액": 총, "2016년_전_증여분": prior_gifts_before_2016, "2016년_전분_할증": max(0, 구분),
                   "종전_납부_할증세액": prior_surcharge_before_2016, "나머지분_할증_40%": 신분}
         할증_판단 = {"결론": f"2016.1.1. 전 증여분 {prior_gifts_before_2016:,}원: 산출세액 {산출세액:,} × {prior_gifts_before_2016:,}/{총:,} × 30% − 종전 납부 할증세액 {prior_surcharge_before_2016:,}"
-                         f" = {구분:,}원" + (" (음수라 0으로 봄 — 부칙에 규정 없음, 확인 필요)" if 구분 < 0 else "")
+                         f" = {구분:,}원" + (" (음수라 0으로 봄 — 부칙 제9조에는 규정이 없고, 본칙 시행령 제46조의3제2항 후단 '음수인 경우에는 영으로 한다'와 같게 처리)" if 구분 < 0 else "")
                          + f" / 나머지 {총 - prior_gifts_before_2016:,}원: 산출세액 × {총 - prior_gifts_before_2016:,}/{총:,} × 40% = {신분:,}원",
-                   "근거": "상속세 및 증여세법 시행령 부칙(대통령령 제26960호, 2016.2.5.) 제9조, 상속세 및 증여세법 제57조제1항"}
+                   "근거": "상속세 및 증여세법 시행령 부칙(대통령령 제26960호, 2016.2.5.) 제9조, 시행령 제46조의3제2항, 상속세 및 증여세법 제57조제1항, 서면-2017-법령해석재산-2641(2017.12.18.)"}
     elif 할증율 == 0.4 and 합산여부 and prior_gifts_before_2016 is None and gift_date < "2026-01-01":
         할증_판단 = {"결론": "합산한 사전증여 중 2016.1.1. 전에 받은 조부모 등(부모 제외 직계존속) 증여분이 있으면 prior_gifts_before_2016(그 재산가액)·prior_surcharge_before_2016(그때 낸 할증세액)을 넣는다 — "
                          "그 재산분은 30% 기준 계산식(상증령 부칙 제9조)으로 할증. 넣지 않아 합산 전체에 40% 적용", "근거": "상속세 및 증여세법 시행령 부칙(대통령령 제26960호, 2016.2.5.) 제9조", "확인필요": True}
