@@ -210,6 +210,8 @@ mcp = MCPServer(
                  "같은 항목에 값이 둘 나오면(안분 전후, 전체와 과세분 등) 질문이 묻는 금액 하나만 최종 답으로 쓰고 다른 값은 과정에만 둔다. "
                  "연도표가 없는 해는 오류로 멈추므로 추정하지 않는다. 계산 근거 원문·해석은 korean-tax-mcp로 확인한다. "
                  "계산 결과를 엑셀이나 법정서식으로 달라고 하면 엑셀 파일을 직접 만들지 말고 export_workbook(calls=이미 부른 도구 호출 목록)을 쓴다 — 법정서식 틀(금액 칸은 수식), 계산 근거, 입력·가정, 판단·근거 시트가 함께 나온다. "
+                 "사용자가 엑셀·스프레드시트·계산 근거·workings를 원하면 계산 도구를 부른 뒤 그 호출 목록을 export_workbook에 넘겨 완성된 .xlsx 파일을 받는다(결과.파일 = 저장 경로). 파이썬 등으로 xlsx를 직접 만들지 않는다 — 여러 계산·시나리오는 scenarios, 입력 출처는 sources, 쟁점 표는 issues에 넣으면 요약·입력·출처·시나리오·쟁점 목록 시트가 수식으로 연결되어 나온다(뒤에는 '계산 상세' 한 장 — 신고 서식까지 받으려면 detail='forms'). "
+                 "When the user asks for Excel, a spreadsheet or workings, pass the calculation tool calls to export_workbook, which writes the finished .xlsx file and returns its path; do not write your own spreadsheet script. "
                  "자료 불일치·가정·확인할 서류·판단이 갈리는 쟁점은 export_workbook의 review_notes에 넣어 '요약' 시트에 싣는다. 서식 틀이 없는 항목은 따로 정리해 덧붙여도 된다. "
                  "도구 결과는 한국어로 나오지만, 답변은 사용자가 질문한 언어로 작성한다(국문 용어는 괄호로 병기). Tool results are in Korean; always answer in the language the user asked in, keeping key Korean terms in parentheses. "
                  + AUDIT_INSTRUCTIONS)
@@ -580,6 +582,12 @@ def _call_key(fn_name: str, args: tuple, kwargs: dict) -> str:
     return _json.dumps({"args": args, "kwargs": kwargs}, sort_keys=True, ensure_ascii=False, default=str)
 
 
+# 계산 도구 결과의 공통 꼬리 — 엑셀을 직접 만들지 않고 export_workbook을 쓰게(모델이 계산 도구만 불러 놓고 xlsx를 따로 만든 사례)
+_EXCEL_TAIL = ("엑셀 결과물이 필요하면 export_workbook(완성된 .xlsx 생성)에 이 호출을 calls로 넘김 — 직접 xlsx를 만들지 않음. "
+               "For Excel workings, pass this call to export_workbook (it writes the finished .xlsx).")
+_NO_EXCEL_TAIL = frozenset({"export_workbook", "find_tool"})
+
+
 def _guard(fn):
     import functools
 
@@ -604,6 +612,8 @@ def _guard(fn):
             # Pydantic ValidationError 등 프레임워크 검증 오류 — 문제 필드명을 결과에 포함
             msg = str(e)
             r = {"error": f"입력 확인 필요 — 계산하지 않음", "문제": [msg]}
+        if isinstance(r, dict) and "결과" in r and "error" not in r and fn.__name__ not in _NO_EXCEL_TAIL:
+            r = {**r, "엑셀": _EXCEL_TAIL}
         if repeat:
             r = {"안내": f"같은 입력으로 {count}번째 계산입니다. 결과는 처음과 같습니다 — 빠진 사실이나 잘못 넣은 값이 없다면 이 결과를 그대로 쓰세요", **r}
         return r
@@ -1916,7 +1926,7 @@ def _due_holiday_note(due: str) -> str | None:
 @_guard
 def withholding_late_payment_penalty(unpaid_tax: WON,
                                      due: Annotated[str, Field(description="법정납부기한(YYYY-MM-DD) — 원천징수세액은 보통 징수일이 속하는 달의 다음 달 10일(반기 납부 승인이면 반기 마지막 달의 다음 달 10일)")],
-                                     until: Annotated[str, Field(description="고지 전 자진납부면 납부일, 납부고지가 있었으면 납부고지일(YYYY-MM-DD, 이때 notice_due·paid_on도)")],
+                                     until: Annotated[str, Field(description="고지 전 자진납부면 납부일, 납부고지가 있었으면 납부고지일(YYYY-MM-DD, 이때 notice_due·paid_on도). 날짜는 그대로 넣는다 — 2026.7.1. 이후 '전날까지' 세는 것은 도구가 처리(하루를 미리 빼지 않음)")],
                                      notice_due: Annotated[str, Field(description="지정납부기한 = 납부고지서에 따른 납부기한(YYYY-MM-DD) — 납부고지가 있었을 때만")] = "",
                                      paid_on: Annotated[str, Field(description="납부고지 후 실제 납부일(YYYY-MM-DD) — notice_due와 함께")] = "",
                                      dunning_fee: Annotated[int, Field(ge=0, description="독촉에 드는 비용(원, 제47조의5제1항제4호·영 제27조의4제3항 등기우편 요금) — 개정 규정의 고지 후분에만")] = 0,
@@ -10388,10 +10398,14 @@ def export_workbook(
     biz_no: Annotated[str, Field(description="사업자등록번호(서식 머리에 표시, 기본 빈 문자열)")] = "",
     review_notes: Annotated[list | str | None, Field(description="검토·확인 필요 사항 [{항목, 내용}] 또는 문장 목록(선택) — 자료 불일치, 가정, 확인할 서류, 판단이 갈리는 쟁점을 적으면 맨 앞 '요약' 시트에 실림. lang='en'이면 영문으로 적는다")] = None,
     lang: Annotated[Literal["ko", "en"], Field(description="표기 언어 — 'ko'(기본, 기존과 같음) 또는 'en'(English labels with the Korean original in parentheses, for foreign readers)")] = "ko",
+    scenarios: Annotated[list | str | None, Field(description="시나리오 시트(선택) — [{sheet, title, subtitle, heading, columns: [{call, heading}], notes: {줄 이름: 메모}, summary_note}]. columns의 call(label 또는 1부터 세는 순번)을 열로 나란히 놓고 오른쪽에 '근거 · 메모' 열을 둔다. 한 블록의 call은 같은 도구, sheet 이름이 같은 블록은 한 시트에 차례로. 주면 맨 앞에 요약(Summary)·입력·출처(Inputs) 시트가 함께 생김")] = None,
+    sources: Annotated[list | str | None, Field(description="입력값 출처(선택) — [{call, arg, source, assumption, from_call, from_row, less}]. arg는 그 call의 입력 이름(예: amount), source는 문서명·조문, assumption=true면 가정으로 노랑 표시. 입력이 다른 call의 결과에서 온 값이면 from_call(그 call)·from_row(결과 줄 이름, 예: 원천징수세액)·less(차감할 금액, 선택)를 적어 수식으로 잇는다(값이 맞을 때만). '입력·출처(Inputs)' 시트의 출처 열에 실림")] = None,
+    issues: Annotated[list | str | None, Field(description="쟁점 목록(선택) — [{no, issue, finding, risk, action}](국문 키 번호·쟁점·발견·위험도·조치도 됨). 적은 글을 그대로 '쟁점 목록(Issues Log)' 시트에 표로 싣는다 — 도구는 쟁점을 판단하지 않음")] = None,
+    detail: Annotated[Literal["compact", "forms", "full"] | None, Field(description="뒤에 붙는 시트(선택, scenarios·sources·issues를 줄 때만 적용) — 'compact'(기본): 앞 시트 + '계산 상세(Calc detail)' 한 장, 'forms': compact + 신고 서식 시트, 'full': 서식·call별 '계산 N'·입력·가정·판단·근거 전부")] = None,
 ) -> dict:
-    """Excel export of calculation tool results as an .xlsx workbook (계산 결과 엑셀).
-    계산 도구 결과를 엑셀(.xlsx)로 정리한다. 각 call은 서버가 직접 다시 실행하며, 결과·계산·세무조정·판단·산식을 탭으로 펼친다.
-언제: 계산 결과(세무조정·소득처분·판단·산식)를 실무자가 검토할 수 있는 엑셀 파일로 남길 때.
+    """Produces a finished Excel (.xlsx) workings file with live formulas from calculation tool results, saves it in output_dir and returns its absolute path in result '파일'; use this instead of writing your own spreadsheet script whenever the user asks for Excel, a spreadsheet, workings or a calculation schedule (계산 근거 엑셀).
+    완성된 엑셀(.xlsx) 파일을 만들어 output_dir 폴더에 저장하고 절대경로(결과.파일)를 돌려준다 — 엑셀·스프레드시트·계산 근거(workings)를 달라고 하면 파이썬 등으로 xlsx를 직접 만들지 말고 이 도구를 쓴다. 각 call은 서버가 직접 다시 실행하며, 결과·계산·세무조정·판단·산식을 탭으로 펼치고 금액 칸은 도구 값과 대조되는 수식으로 둔다.
+언제: 계산 결과(세무조정·소득처분·판단·산식)를 실무자가 검토할 수 있는 엑셀 파일로 남길 때, 사용자가 엑셀·스프레드시트·계산 근거 파일을 원할 때, 여러 계산(지급 건별·시나리오별)을 한 통합 문서로 묶을 때.
 입력:
   title — 문서 제목(파일명 기본값).
   calls — [{label, tool, args}] 목록(1~30개). tool 이름이 없거나 'export_workbook'이면 오류(재귀 금지).
@@ -10408,6 +10422,20 @@ def export_workbook(
     warnings에 모은다(번역을 지어내지 않음). 법정서식 틀 시트는 한국어 신고 서식이라 그대로 두고 요약 시트에 시트마다 한 줄 영문 안내를 붙인다.
     도구가 돌려준 문장(판단 근거·주의·한계)은 번역하지 않고 'Notes (Korean original)' 칸에 한국어로 둔다. 숫자·수식·파일명 기본값은 같다.
     With lang='en', write review_notes in English.
+  scenarios·sources·issues — 통합 문서(선택). 셋 다 없으면 기존 출력 그대로. 하나라도 주면 맨 앞에 다음 시트를 두고, 뒤 시트는 detail로 고른다(기본 compact — 앞 시트 + '계산 상세' 한 장):
+    요약(Summary) — 시나리오 시트의 핵심 숫자를 링크하고 블록마다 summary_note 한 줄(예: 납부기한), 색 규칙 범례.
+    입력·출처(Inputs) — 입력값과 법정 세율·이율을 한곳에 모으고 값마다 출처 열(sources의 source, 세율은 근거 조문). 계산 시트는 이 칸을 가리키는 수식.
+      sources에 from_call·from_row(·less)를 적으면 그 입력 칸을 '다른 call의 결과 줄 − less' 수식으로 잇는다 — 도구에 넣은 값과 같을 때만 잇고, 다르면 값 그대로 두고 warnings에 적는다.
+    시나리오 시트 — scenarios의 columns에 적은 call을 열로 나란히(예: A 계약대로 / B 대안), 오른쪽 '근거 · 메모' 열(도구 근거 조문 + notes), 블록 끝에 도구 값 대조 한 줄.
+      scenarios에 넣지 않은 call은 '그 밖의 계산(Other workings)' 한 시트에 차례로(detail='full'이면 call마다 한 시트). nonresident_withholding(총액·순액 역산·지방소득세 부담)과 withholding_late_payment_penalty(납부고지 전 자진납부, 납부고지 후 종전 일수분·개정 3호·4호와 50% 한도)는
+      입력에서 결과까지 수식, 결과에 계산식이 있는 도구는 그 단계를 수식으로, 그 밖의 도구는 결과 값을 옮긴다(회색 — 수식 아님).
+    쟁점 목록(Issues Log) — issues의 행(번호·쟁점·발견·위험도·조치)을 그대로 표로. 도구가 쟁점이나 위험도를 만들지 않는다.
+    색 규칙: 파랑 = 입력, 초록 = 다른 시트 링크, 검정 = 수식, 노랑 = 핵심 결과·가정.
+  detail — 통합 문서의 뒤 시트(scenarios·sources·issues를 줄 때만 적용, 기본 'compact'):
+    compact — 앞 시트 뒤에 '계산 상세(Calc detail)' 한 장만: call 순서대로 도구 결과와 판단·근거를 위아래로 쌓는다. 신고 서식이 있으면 요약 끝과 결과.서식_안내에 한 줄.
+    forms — compact + 신고 서식 시트. 서식 칸이 가리키는 호출 입력은 '계산 상세' 아래 '서식 연결 칸'에 둔다.
+    full — 서식 틀, call별 '계산 N', 입력·가정, 판단·근거, 목록까지 전부. 기존 '요약'·'입력·가정'은 '호출 요약'(lang='en'이면 'Call summary'·'Call inputs')으로 이름이 바뀐다.
+    lang='en'이면 scenarios·sources·issues의 글도 영문으로 적는다(적은 글은 번역하지 않고 그대로 싣는다).
   '요약' 시트(layout='forms'): 세액 요약(소득금액 집계·산출세액 call이 있을 때), 세무조정 항목별 근거와 계산 시트, call별 주요 값, 검토·확인 필요 사항.
   시트 규칙: '계산 N'은 N번째 call(오류 call 포함, call마다 한 장). 같은 도구를 여러 번 부르면 신고서 한 부에 한 장인
     서식(별지3·15·34, 부가 별지19 등)은 마지막 call이 본 시트, 앞선 call은 '<시트> (호출 N)' 시트. 자산·거래·소득자마다 한 장인
@@ -10415,13 +10443,15 @@ def export_workbook(
     모으는 줄(부가 신고서 (4) 간주공급·(8) 대손세액 가감·(29) 가산세액, 별지25 부동산임대)은 한 장. 서식 칸은 그 값을 만든 call에서 채운다.
 
 결과:
-  결과.파일 — 절대경로.
+  결과.파일 — 저장한 .xlsx 파일의 절대경로(output_dir 안, 같은 이름이 있으면 ' (2)'를 붙임).
   결과.시트 — 시트 이름 목록.
   결과.call_수 — calls 길이.
   결과.오류_call — 오류 발생한 call의 label 목록.
+  scenarios·sources·issues를 줬을 때만: 결과.통합_시트(맨 앞에 더한 시트 이름), 결과.detail, 결과.서식_안내(compact에서 서식이 있을 때), warnings(맞는 줄을 찾지 못한 notes·sources).
   lang='en'일 때만: 결과.lang, 결과.번역_라벨_수, 결과.번역_없음(용어집에 없는 국문 라벨 목록), warnings(같은 내용을 한 줄로).
   근거 — '계산 도구 결과 정리(세무 자문 아님)'."""
-    return _export_workbook_impl(title, calls, output_dir, filename, layout, company, period, biz_no, review_notes, lang)
+    return _export_workbook_impl(title, calls, output_dir, filename, layout, company, period, biz_no, review_notes, lang,
+                                 scenarios, sources, issues, detail)
 
 
 # ── 국세 우선권에 따른 매각대금 배분(국세기본법 제35조·제36조) ──────────────────────
@@ -11502,7 +11532,9 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "경정청구": ["refund_claim_deadline", "assessment_limitation"], "후발적 경정청구": ["refund_claim_deadline"], "제45조의2": ["refund_claim_deadline"],
     "법정신고기한": ["refund_claim_deadline", "assessment_limitation"], "기한의 특례": ["refund_claim_deadline", "assessment_limitation"],
     "기한 특례": ["refund_claim_deadline", "assessment_limitation"], "신고기한 공휴일": ["refund_claim_deadline"],
-    "수입배당금": ["dividend_received_deduction"], "엑셀": ["export_workbook"], "서식": ["export_workbook"], "신고서 검토": ["return_precheck", "precheck_schema"],
+    "수입배당금": ["dividend_received_deduction"], "엑셀": ["export_workbook"], "서식": ["export_workbook"],
+    "excel": ["export_workbook"], "xlsx": ["export_workbook"], "workings": ["export_workbook"], "spreadsheet": ["export_workbook"],
+    "workbook": ["export_workbook"], "계산 근거": ["export_workbook"], "스프레드시트": ["export_workbook"], "워크북": ["export_workbook"], "신고서 검토": ["return_precheck", "precheck_schema"],
     "국세 우선": ["tax_priority_distribution"], "국세우선권": ["tax_priority_distribution"], "당해세": ["tax_priority_distribution"],
     "법정기일": ["tax_priority_distribution"], "배당표": ["tax_priority_distribution"], "배당 순위": ["tax_priority_distribution"], "매각대금 배분": ["tax_priority_distribution"],
     "경매": ["tax_priority_distribution"], "공매": ["tax_priority_distribution"], "매각대금": ["tax_priority_distribution"],
@@ -11654,11 +11686,24 @@ def find_tool(query: Annotated[str, Field(description="찾는 계산을 평소 �
     맞는 계산 도구 찾기 — 도구가 많으니, 어떤 도구를 쓸지 모르겠으면 먼저 이걸 부른다.
     언제: 계산 문제를 받았는데 맞는 도구 이름이 바로 떠오르지 않을 때, 또는 '이 계산 도구는 없다'고 판단하기 전에 반드시.
     입력: 찾는 계산 → query(평소 말, 세목·쟁점·조문 무엇이든), 개수 → n.
-    결과: 후보 도구 목록(이름·한 줄 설명·언제 쓰는지·일치 이유). 후보가 없으면 계산 도구가 없는 것이니 korean-tax-mcp로 조문을 찾는다."""
-    tools = _tool_catalog()
+    결과: 후보 도구 목록(이름·한 줄 설명·언제 쓰는지·일치 이유). 후보가 없으면 계산 도구가 없는 것이니 korean-tax-mcp로 조문을 찾는다.
+    메모·의견서·Word(docx) 문서를 찾는 말이면 결과에 '메모 문서' 한 줄 — korean-tax-mcp tax_memo_guide → build_tax_memo(이 서버는 메모를 만들지 않음)."""
     q = (query or keyword).strip()
     if not q:
         return {"error": "입력 확인 필요 — query(찾는 계산)를 넣으세요"}
+    out = _find_tool(q, n)
+    if _MEMO_QUERY.search(q) and isinstance(out.get("결과"), dict):      # 메모·의견서·Word 문서는 이 서버가 만들지 않음 — 한 줄 안내만
+        out["결과"]["메모 문서"] = _MEMO_HINT
+    return out
+
+
+_MEMO_QUERY = re.compile(r"메모|의견서|\b(?:memo|memorandum|word|docx)\b", re.I)
+_MEMO_HINT = ("세무 메모·의견서(Word .docx)는 이 서버가 만들지 않음 — korean-tax-mcp의 tax_memo_guide로 구성을 받은 뒤 build_tax_memo로 작성(계산 값은 이 서버 도구 결과를 넣음). "
+              "Tax memos (Word .docx) are built by korean-tax-mcp: tax_memo_guide, then build_tax_memo.")
+
+
+def _find_tool(q: str, n: int) -> dict:
+    tools = _tool_catalog()
     qn = q.replace(" ", "").lower()
     for words, what, arts in _NOT_SUPPORTED:
         if all(w.replace(" ", "").lower() in qn for w in words) and not (words[0] in ("취득세", "재산세", "자동차세") and any(e in qn for e in _NOT_SUPPORTED_EXEMPT)):

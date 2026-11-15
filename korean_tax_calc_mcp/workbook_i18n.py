@@ -346,8 +346,9 @@ def _form_line(sheet: str, form: str) -> str:
     return f"Sheet '{sheet}' — {kind}: {form} (Korean filing format, kept in Korean)"
 
 
-def _append_guide(ws, wb, T: Translator, *, form_info: dict[str, str], ren: dict[str, str], results: list[dict]) -> None:
-    """요약 시트 아래: 시트 안내(시트마다 한 줄)와 '번역 없음' 목록."""
+def append_guide(ws, wb, T: Translator, *, form_info: dict[str, str], ren: dict[str, str], results: list[dict],
+                 front: dict[str, str] | None = None) -> None:
+    """요약 시트 아래: 시트 안내(시트마다 한 줄)와 '번역 없음' 목록. front는 {통합 문서 앞 시트 이름: 안내 한 줄}."""
     from openpyxl.styles import Alignment, Font, PatternFill
     bold, fill = Font(bold=True), PatternFill("solid", fgColor=_HEADER_FILL)
     back = {v: k for k, v in ren.items()}
@@ -372,7 +373,9 @@ def _append_guide(ws, wb, T: Translator, *, form_info: dict[str, str], ren: dict
     for n, sh in enumerate(wb.worksheets, 1):
         name, old = sh.title, back.get(sh.title, sh.title)
         m = _CALC_RE.match(old)
-        if name in form_info:
+        if front and name in front:
+            text = front[name]
+        elif name in form_info:
             text = _form_line(name, form_info[name])
         elif m:
             cd = results[int(m.group(1)) - 1] if int(m.group(1)) <= len(results) else {}
@@ -417,7 +420,8 @@ def _append_guide(ws, wb, T: Translator, *, form_info: dict[str, str], ren: dict
     ws.sheet_properties.pageSetUpPr.fitToPage = True
 
 
-def apply_english(wb, T: Translator, *, layout: str, title: str, form_info: dict[str, str], results: list[dict]) -> dict[str, str]:
+def apply_english(wb, T: Translator, *, layout: str, title: str, form_info: dict[str, str], results: list[dict],
+                  guide: bool = True) -> dict[str, str]:
     """완성된 한국어 워크북을 영문 표기로 바꾼다. 돌려주는 값: {옛 시트 이름: 새 시트 이름}.
 
     form_info는 {서식 틀 시트 이름: 서식 표기}. 그 시트의 글자는 바꾸지 않는다.
@@ -439,8 +443,8 @@ def apply_english(wb, T: Translator, *, layout: str, title: str, form_info: dict
             _plain_sheet(ws, T)
     ren = _rename_sheets(wb, form_sheets)
     summary = next((wb[n] for o, n in ren.items() if o == "요약"), None) or (wb["요약"] if "요약" in wb.sheetnames else None)
-    if summary is not None:
-        _append_guide(summary, wb, T, form_info=form_info, ren=ren, results=results)
+    if summary is not None and guide:      # guide=False: 통합 문서가 앞 시트를 더한 뒤에 append_guide를 부름
+        append_guide(summary, wb, T, form_info=form_info, ren=ren, results=results)
     return ren
 
 

@@ -294,6 +294,6 @@ def test_docstring_and_schema_document_lang():
     tool = next(t for t in asyncio.run(mcp.list_tools()) if t.name == "export_workbook")
     schema = getattr(tool, "inputSchema", None) or tool.input_schema
     assert schema["properties"]["lang"]["enum"] == ["ko", "en"] and schema["properties"]["lang"]["default"] == "ko"
-    assert tool.description.splitlines()[0].isascii() or tool.description.startswith("Excel export")
+    assert tool.description.splitlines()[0].isascii() or tool.description.startswith("Produces a finished Excel (.xlsx) workings file")
     for phrase in ("lang —", "Untranslated labels (번역 없음)", "Notes (Korean original)", "With lang='en', write review_notes in English"):
         assert phrase in tool.description, phrase
