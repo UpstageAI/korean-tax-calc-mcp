@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.57.2 (2026-11-16)
+
+도구의 읽기 전용·외부 호출 표시(annotations)를 실제 동작에 맞춤. 계산 결과 변화 없음(도구 140개). Claude 작성.
+
+- **왜**: 전체 점검에서 표시가 동작과 다른 도구 14개를 찾음. 클라이언트는 이 표시로 "읽기만 하는 도구"를 가려 승인 절차를 정하므로, 파일을 저장하는 도구가 읽기 전용으로 보이면 안 됨.
+- **고친 것**
+  - `export_workbook`·`verify_workbook`: 작업 폴더에 엑셀 파일을 저장하는데 읽기 전용(`readOnlyHint=true`)으로 표시돼 있었음 → 읽기 전용 아님(`readOnlyHint=false`, `destructiveHint=false`).
+  - 세무조사 판정 도구 12개에 표시가 없었음 → 모두 읽기 전용으로 표시. 그중 외부를 부를 수 있는 5개는 `openWorldHint=true`: `related_judge`·`related_provision_at`(LAW_OC가 있으면 법제처 조회), `extract_relations`·`tunnelling_from_pdf`·`return_precheck_pdf`(UPSTAGE_API_KEY가 있으면 문서 추출 API).
+- **테스트**: `tests/test_tool_annotations_1116.py` 3건 — 모든 도구에 표시가 있는지, 파일을 저장하는 도구만 읽기 전용이 아닌지, 외부 호출 도구 목록.
+
 ## 0.57.1 (2026-11-15)
 
 `nonresident_withholding` 순액 약정 결과에서 수취인 송금액이 약정 순액과 몇 원 다르게 읽히던 것을 고침 — 송금액은 약정 순액, 끝수는 따로. 과세표준·세액 계산 변화 없음(도구 140개). Claude 작성.
