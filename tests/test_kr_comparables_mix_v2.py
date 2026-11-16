@@ -11,7 +11,12 @@ import pytest
 from korean_tax_calc_mcp.engine.kr_comparables import candidates as C
 from korean_tax_calc_mcp.engine.kr_comparables import revenue_mix as RM
 from korean_tax_calc_mcp.engine.kr_comparables import statements as ST
-from korean_tax_calc_mcp.engine.kr_comparables.compare import compare_profile
+from korean_tax_calc_mcp.engine.kr_comparables.compare import compare_profile as _cp
+from kr_example_rules import EX_RULES
+
+
+def compare_profile(t, c, rules=None):       # 예시 기준값을 rules로(도구에는 관행 기본값 없음)
+    return _cp(t, c, {**EX_RULES, **(rules or {})})
 from korean_tax_calc_mcp.engine.kr_comparables.schema import empty_profile, value
 
 RESELLER = {"main_category": "merchandise", "main_share": 0.90, "inventory_basis": "ratio", "inv_to_sales": 0.15,
@@ -226,7 +231,7 @@ def test_overview_fixtures_pass_checks():
 
 
 def test_extraction_failure_skips_model_and_needs_review(monkeypatch, tmp_path):
-    from korean_tax_calc_mcp.engine.kr_comparables.compare import compare_profile
+    pass                                                     # compare_profile은 모듈 머리의 래퍼(예시 기준값)를 씀
     from tests.test_kr_comparable_candidates import Transport, _client, FAKE_KEY
     monkeypatch.setenv("KR_COMPARABLES_CACHE_DIR", str(tmp_path))
     monkeypatch.setenv("DART_API_KEY", FAKE_KEY)

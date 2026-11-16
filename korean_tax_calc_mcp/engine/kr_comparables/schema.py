@@ -41,7 +41,13 @@ PROFILE_FIELDS = {
     "ar_to_sales": "매출채권 ÷ 매출",
     "wc_ratio": "운전자본(매출채권 + 재고 − 매입채무) ÷ 매출",
     "related_sales_ratio": "특수관계자 매출 ÷ 매출(감사보고서 주석)",
+    "related_purchase_ratio": "특수관계자 매입 ÷ 매출원가(없으면 매출)(감사보고서 주석)",
+    "sga_ratio": "판매비와관리비 ÷ 매출",
+    "business_desc": "사업 설명 원문(상장: 사업의 개요, 비상장: 감사보고서 주석 회사 개요) — 품목 키워드 대조용",
     "max_shareholder_pct": "최대주주 지분율 %(상장, 최대주주 현황)",
+    "owner_pct": "최대주주·지배기업 지분율 %(비상장, 감사보고서 주석 주주 현황·지배기업 문장 — 근거 문장 포함, 지분만으로 제외하지 않음)",
+    "loss_years": "분석 연도 중 영업손실 연도 수(note에 'n년 중 k년')",
+    "control_signals": "실질 지배 신호 문장 [{kind: 임원 겸직|지배기업|유의적 영향력|자금 대여·보증, sentence}] — 참고, 법정 특수관계 판정 아님",
     "major_label": "대분류 꼬리표(제조·유통·서비스·무형자산 — 설명용, 판정에 쓰지 않음)",
 }
 VALUE_FIELDS = [k for k in PROFILE_FIELDS if k not in ("company_id", "company_name", "listed", "industry_code", "year", "fs_basis", "rcept_no", "major_label")]

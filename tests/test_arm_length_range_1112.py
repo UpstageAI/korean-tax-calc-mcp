@@ -8,15 +8,18 @@ def f(**k):
     return getattr(S.arm_length_range, "fn", S.arm_length_range)(**k)
 
 
-def test_quartiles_inclusive():
-    # n=8: Q1 위치 1.75 → 0.021 + 0.75×0.004 = 0.024, 중위값 (0.031+0.038)/2 = 0.0345, Q3 위치 5.25 → 0.044 + 0.25×0.008 = 0.046
+def test_quartiles_default_nts_and_excel_inc():
+    # 기본(0.61.0~) 국조법 기본통칙 8-15…1, n=8: 아래 위치 (8+2)/4 = 2.5 → (0.021+0.025)/2 = 0.023, 위 위치 (24+2)/4 = 6.5 → (0.044+0.052)/2 = 0.048
     r = f(comparables=C8, tested_value=0.03, tested_is_resident=True)["결과"]
+    assert (r["제1사분위"], r["중위값"], r["제3사분위"]) == (0.023, 0.0345, 0.048) and r["사분위_방식"]["방식"] == "nts"
+    # 이전 기본(엑셀 QUARTILE.INC) 재현: Q1 위치 1.75 → 0.021 + 0.75×0.004 = 0.024, 중위값 (0.031+0.038)/2 = 0.0345, Q3 위치 5.25 → 0.044 + 0.25×0.008 = 0.046
+    r = f(comparables=C8, tested_value=0.03, tested_is_resident=True, quartile_method="excel_inc")["결과"]
     assert (r["제1사분위"], r["중위값"], r["제3사분위"]) == (0.024, 0.0345, 0.046)
     assert r["평균값"] == 0.03625 and r["범위_안"] is True and r["조정_필요"] is False and r["조정액"] == 0
 
 
 def test_foreign_tested_party_below_range():
-    # 해외 판매법인 이익률 0.8% < 하한 2.4% → 중위값 3.45%까지, 차이 2.65%p × 매출 100억 = 2.65억. 해외법인 소득이 적다 = 거주자 소득 과다
+    # 해외 판매법인 이익률 0.8% < 하한 2.3% → 중위값 3.45%까지, 차이 2.65%p × 매출 100억 = 2.65억. 해외법인 소득이 적다 = 거주자 소득 과다
     r = f(comparables=C8, tested_value=0.008, base_amount=10_000_000_000, tested_is_resident=False)
     res = r["결과"]
     assert res["조정_필요"] is True and res["조정액"] == 265_000_000 and res["거주자_소득"] == "과다"
@@ -24,7 +27,7 @@ def test_foreign_tested_party_below_range():
 
 
 def test_foreign_tested_party_above_range_means_resident_income_low():
-    # 해외 판매법인 이익률 8% > 상한 4.6% → 거주자(본사) 소득 과소, (8% − 3.45%) × 100억 = 4.55억
+    # 해외 판매법인 이익률 8% > 상한 4.8% → 거주자(본사) 소득 과소, (8% − 3.45%) × 100억 = 4.55억
     r = f(comparables=C8, tested_value=0.08, base_amount=10_000_000_000, tested_is_resident=False)
     assert r["결과"]["거주자_소득"] == "과소" and r["결과"]["조정액"] == 455_000_000
     assert any("제7조" in p["결론"] for p in r["판단"])
@@ -40,7 +43,7 @@ def test_resident_tested_party_and_direction_flag():
 def test_full_range_and_mean_point():
     r = f(comparables=C8, tested_value=0.05, range_type="전체", tested_is_resident=True)["결과"]
     assert r["범위"] == {"종류": "전체", "하한": 0.012, "상한": 0.067} and r["범위_안"] is True
-    assert f(comparables=C8, tested_value=0.05, tested_is_resident=True)["결과"]["범위_안"] is False          # 사분위 상한 4.6% 초과
+    assert f(comparables=C8, tested_value=0.05, tested_is_resident=True)["결과"]["범위_안"] is False          # 사분위 상한 4.8% 초과
     r = f(comparables=C8, tested_value=0.07, range_type="전체", point="평균값", base_amount=1_000_000_000, tested_is_resident=True)["결과"]
     assert r["기준점"] == {"종류": "평균값", "값": 0.03625} and r["조정액"] == 33_750_000
 
@@ -53,9 +56,12 @@ def test_custom_point_must_be_inside_range():
 
 
 def test_quartile_exclusive_and_odd_count():
-    # n=5 [1,2,3,4,5]%: inclusive Q1=2%, Q3=4% / exclusive Q1 위치 0.5 → 1.5%, Q3 위치 3.5 → 4.5%
+    # n=5 [1,2,3,4,5]%: 통칙(기본) 위치 1.75·4.25 → (1+2)/2 = 1.5%, (4+5)/2 = 4.5% / excel_inc Q1=2%, Q3=4% / exclusive Q1 위치 0.5 → 1.5%, Q3 위치 3.5 → 4.5%
     c = [0.01, 0.02, 0.03, 0.04, 0.05]
-    a = f(comparables=c, tested_value=0.03, tested_is_resident=True)["결과"]
+    n = f(comparables=c, tested_value=0.03, tested_is_resident=True)["결과"]
+    assert (n["제1사분위"], n["제3사분위"]) == (0.015, 0.045)
+    a = f(comparables=c, tested_value=0.03, quartile_method="excel_inc", tested_is_resident=True)["결과"]
+    assert a == f(comparables=c, tested_value=0.03, quartile_method="inclusive", tested_is_resident=True)["결과"] | {"사분위_방식": a["사분위_방식"]}
     b = f(comparables=c, tested_value=0.03, quartile_method="exclusive", tested_is_resident=True)["결과"]
     assert (a["제1사분위"], a["제3사분위"]) == (0.02, 0.04) and (b["제1사분위"], b["제3사분위"]) == (0.015, 0.045) and a["중위값"] == b["중위값"] == 0.03
 

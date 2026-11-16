@@ -415,3 +415,132 @@ def goods_signals(cogs_rows, inv_rows, cogs_total=None, rcept_no=None):
     if cs is not None and cogs_total and cs >= 0:
         out["goods_cost_share"] = max(0.0, 1 - cs / cogs_total) if out["merch_ratio"] is not None else None
     return out
+
+
+# ---------------- 실질 지배 신호(특수관계자 주석) ----------------
+PURCHASE_HDR = r"^(매입|매입등|원재료매입|상품매입|매입거래|재화의매입|재화등의매입)"
+
+
+def related_purchases(s, is_bizrep, cogs=None, revenue=None):
+    """특수관계자 거래 주석 표의 매입 열 합계 ÷ 매출원가(없으면 매출) → (비율, 근거)."""
+    sec, t = find_section(s, r"특수\s*관계", is_bizrep)
+    if not sec:
+        return None, "특수관계자 절 못 찾음"
+    base, bl = (cogs, "매출원가") if cogs else (revenue, "매출")
+    if not base or base <= 0:
+        return None, "매출원가·매출 없음"
+    for tb, ctx in tables_in(sec):
+        trs = re.findall(r"<TR[^>]*>(.*?)</TR>", tb, re.S)
+        col = None
+        for tr in trs[:3]:
+            pos = 0
+            for tag, attr, b in re.findall(r"<(TH|TD|TE)([^>]*)>(.*?)</\1>", tr, re.S):
+                if col is None and re.match(PURCHASE_HDR, re.sub(r"\s", "", txt(b))):
+                    col = pos
+                pos += _span(attr)
+            if col is not None:
+                break
+        if col is None:
+            continue
+        unit = parse_group(ctx)[1]
+        total, rows_sum = None, 0
+        for tr in trs:
+            cells = re.findall(r"<(TH|TD|TE)([^>]*)>(.*?)</\1>", tr, re.S)
+            if not cells or cells[0][0] == "TH":
+                continue
+            pos, val = 0, None
+            for tag, attr, b in cells:
+                if pos == col:
+                    val = num(txt(b))
+                pos += _span(attr)
+            if val is None:
+                continue
+            if re.sub(r"\s", "", txt(cells[0][2])) in ("합계", "계", "총계"):
+                total = val
+            else:
+                rows_sum += val
+        r = (total if total is not None else rows_sum) * unit / base
+        if 0 <= r <= 1.5:
+            return r, f"특수관계자 주석 표 매입 ÷ {bl}: " + t[:30]
+        return None, f"비율 범위 밖({r:.2f}) — 단위·열 확인 필요"
+    if re.search(r"거래(내역)?(은|는|이|가)?없", re.sub(r"\s", "", txt(sec))):
+        return 0.0, "특수관계자 거래 없음 문장"
+    return None, "매입 열 못 찾음"
+
+
+CONTROL_KW = [("임원 겸직", r"겸직|겸임"), ("지배기업", r"지배기업|최상위\s*지배|모회사"), ("유의적 영향력", r"유의적인?\s*영향력"),
+              ("자금 대여·보증", r"자금\s*(대여|차입|거래)|대여금|차입금|지급보증|담보\s*제공"),
+              ("기업집단 계열", r"기업집단|계열회사|상호출자제한"), ("지식재산 사용료", r"사용료|로열티|기술료|상표권\s*사용")]
+
+
+def control_signals(s, is_bizrep):
+    """특수관계자 주석에서 실질 지배 신호 문장 — 참고용, 법정 특수관계 판정 아님(판단은 조문 MCP). 반환 (신호 목록 [{kind, sentence}], 절 제목) — 절을 못 찾으면 (None, 사유)."""
+    sec, t = find_section(s, r"특수\s*관계", is_bizrep)
+    if not sec:
+        return None, "특수관계자 절 못 찾음"
+    text = re.sub(r"\s+", " ", txt(re.sub(r"<TR[^>]*>", " . ", sec)))
+    sents = [x.strip() for x in re.split(r"(?<=[다음함])\.\s*|\s\.\s", text) if 10 <= len(x.strip()) <= 400]
+    out = []
+    for kind, pat in CONTROL_KW:
+        hits = [x for x in sents if re.search(pat, x)][:3]
+        out += [{"kind": kind, "sentence": x[:200]} for x in hits]
+    return out, t
+
+
+# ---------------- 비상장 최대주주·지배기업 지분율(감사보고서 주석) ----------------
+OWNER_SUBJ = (r"(지배기업|최상위\s*지배|모회사|최대주주|주요\s*주주|주주\s*현황|주식을\s*(소유|보유)|지분을\s*(소유|보유)"
+              r"|지분\s*\d{1,3}(\.\d+)?\s*%\s*(를|을)?\s*(소유|보유)|%\s*(의)?\s*(지분|주식)\s*(을|를)?\s*(소유|보유))")
+
+
+def owner_share(s):
+    """감사보고서 주석(일반사항·주주 현황·특수관계자)에서 최대주주·지배기업 지분율 → (지분율 %, 근거 문장·행).
+    표('주주명 | 주식수 | 지분율')가 있으면 가장 큰 지분율 행, 없으면 지배기업·최대주주 문장의 % 값. 못 찾으면 (None, 사유)."""
+    i = s.find("주석")
+    body = s[i:] if i >= 0 else s
+    best = None
+    for tb, ctx in tables_in(body[:200000]):
+        trs = re.findall(r"<TR[^>]*>(.*?)</TR>", tb, re.S)
+        if len(trs) < 2:
+            continue
+        head = re.sub(r"\s", "", txt(" ".join(trs[:2])))
+        if not re.search(r"(지분율|소유비율|지분비율|소유지분율|지분\(%\))", head) or not re.search(r"(주주|성명|회사명|주주명|주식수|구분)", head):
+            continue
+        pre = re.sub(r"\s", "", txt(ctx[:ctx.rfind("<TABLE")]))[-200:]
+        if re.search(r"(종속|관계|공동)기업|투자|매도가능|피투자|장부금액|취득원가|분할|신설", head + pre):
+            continue                                   # 투자한 회사 지분표는 제외
+        col = None
+        for tr in trs[:2]:
+            pos = 0
+            for tag, attr, b in re.findall(r"<(TH|TD|TE)([^>]*)>(.*?)</\1>", tr, re.S):
+                if col is None and re.search(r"(지분율|소유비율|지분비율)", re.sub(r"\s", "", txt(b))):
+                    col = pos
+                pos += _span(attr)
+        for tr in trs:
+            cells = re.findall(r"<(TH|TD|TE)([^>]*)>(.*?)</\1>", tr, re.S)
+            if not cells or col is None:
+                continue
+            pos, val = 0, None
+            for tag, attr, b in cells:
+                if pos == col:
+                    m = re.fullmatch(r"\(?(\d{1,3}(?:\.\d+)?)\s*%?\)?", re.sub(r"\s", "", txt(b)))
+                    val = float(m.group(1)) if m else None
+                pos += _span(attr)
+            name = re.sub(r"\s+", " ", txt(cells[0][2])).strip()
+            if val is None or not (0 < val <= 100) or re.sub(r"\s", "", name) in ("합계", "계", "총계", "소계"):
+                continue
+            if best is None or val > best[0]:
+                best = (val, f"주주 표: {name[:40]} {val:g}%")
+    if best:
+        return best
+    text = re.sub(r"\s+", " ", txt(body))
+    for sent in re.split(r"(?<=[다음함])\.\s*", text):
+        if re.search(OWNER_SUBJ, sent) and len(sent) < 400:
+            pcts = [float(x) for x in re.findall(r"(\d{1,3}(?:\.\d+)?)\s*%", sent) if 0 < float(x) <= 100]
+            if pcts and not re.search(r"종속기업|관계기업|분할|신설회사|취득|투자주식|피투자", sent):
+                v = max(pcts)
+                k = sent.find(f"{v:g}") if f"{v:g}" in sent else sent.find("%")
+                k2 = max(sent.rfind(m) for m in ("지배", "주주", "지분") if True)
+                a = max(0, min(k, k2 if k2 >= 0 else k) - 100)
+                if best is None or v > best[0]:
+                    best = (v, sent[a:a + 200].strip())
+    return best if best else (None, "주주·지배기업 지분율 문장·표 못 찾음")

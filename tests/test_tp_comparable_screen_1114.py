@@ -7,6 +7,7 @@ import pytest
 
 from korean_tax_calc_mcp import server as S
 from korean_tax_calc_mcp.engine import calc_tp_screen as T
+from kr_example_rules import EX_SCREENS
 
 CSV = os.path.join(os.path.dirname(__file__), "data", "tp_screen_candidates_1114.csv")
 YEARS = [2022, 2023, 2024]
@@ -21,7 +22,8 @@ def _tp(**kw):
     return d
 
 
-BASE = {"industry_codes": ["424210"], "size_min": 5e6, "size_max": 1e9}
+BASE = {**EX_SCREENS, "industry_codes": ["424210"], "size_min": 5e6, "size_max": 1e9,
+        "loss_action": "exclude", "require_all_years": True}   # 0.61.0 기본(손실 사람 확인·연도 자료 필수 해제) 전 설정으로 기존 기댓값 유지
 
 
 def run(**kw):
@@ -47,7 +49,8 @@ def test_funnel_and_final():
 def test_range_and_weighted_average():
     r = run()
     g = r["결과"]["범위"]
-    assert (g["제1사분위%"], g["중위값%"], g["제3사분위%"]) == (2.284, 3.091, 4.432)
+    # 최종 8개 가중평균 [1.261, 1.687, 2.483, 2.88, 3.301, 4.243, 4.999, 13.583]% — 통칙 8-15…1 위치 2.5·6.5 → (1.687+2.483)/2, (4.243+4.999)/2
+    assert (g["제1사분위%"], g["중위값%"], g["제3사분위%"]) == (2.085, 3.091, 4.621) and g["계산법"] == "nts" and "8-15…1" in g["근거"]
     assert r["결과"]["분석대상_값%"] == 2.023 and r["결과"]["범위_안"] is False
     w = {f["company_id"]: f["가중평균%"] for f in r["최종_비교대상"]}
     assert w["C01"] == 2.483 and w["C08"] == 13.583
@@ -57,11 +60,11 @@ def test_range_and_weighted_average():
 def test_sensitivity_flips():
     r = run()
     sc = {s["시나리오"][0]: s for s in r["민감도"]}
-    assert (sc["B"]["최종_수"], sc["B"]["제3사분위%"]) == (9, 4.999)
-    assert sc["C"]["범위_안"] is True and sc["C"]["제1사분위%"] == 1.687
-    assert (sc["E"]["제1사분위%"], sc["E"]["제3사분위%"]) == (3.334, 6.032)
-    assert sc["F"]["범위_안"] is True and sc["F"]["제1사분위%"] == 1.886
-    assert (sc["G"]["최종_수"], sc["G"]["제3사분위%"]) == (7, 3.772)
+    assert (sc["B"]["최종_수"], sc["B"]["제3사분위%"]) == (9, 5.502)         # n=9 위 위치 7.25 → (4.999+6.004)/2
+    assert sc["C"]["범위_안"] is True and sc["C"]["제1사분위%"] == 1.474     # n=9 아래 위치 2.75 → 두 값 평균
+    F = {s["시나리오"]: s for s in r["민감도"] if s["시나리오"].startswith("F")}
+    assert F["F 사분위 계산법 excel_inc"]["제1사분위%"] == 2.284 and F["F 사분위 계산법 excel_inc"]["제3사분위%"] == 4.432   # 이전 기본값
+    assert (sc["G"]["최종_수"], sc["G"]["제3사분위%"]) == (7, 3.772)         # n=7은 통칙·INC 같음(위치 5.75 → (3.301+4.243)/2)
     assert r["경고"][0].startswith("선정 기준에 민감")
 
 
@@ -69,7 +72,7 @@ def test_feeds_arm_length_range_same_quartiles():
     r = run()
     a = r["arm_length_range_입력"]
     out = S.arm_length_range(a["comparables"], a["tested_value"], tested_is_resident=a["tested_is_resident"], quartile_method=a["quartile_method"], year=a["year"])
-    assert round(out["결과"]["제1사분위"] * 100, 3) == 2.284 and round(out["결과"]["제3사분위"] * 100, 3) == 4.432
+    assert round(out["결과"]["제1사분위"] * 100, 3) == 2.085 and round(out["결과"]["제3사분위"] * 100, 3) == 4.621
     assert out["결과"]["거주자_소득"] == "과다"
 
 
@@ -141,7 +144,7 @@ def test_server_tool():
 def test_wca_requires_basis():
     assert "error" in run(wca={"rate": 0.05})
     r = run(wca={"rate": 0.05, "rate_basis": "예시"})
-    assert r["결과"]["범위"]["제1사분위%"] == 3.334
+    assert r["결과"]["범위"]["제1사분위%"] == 3.035
 
 
 def test_codesolar_fixes_1114():

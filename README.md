@@ -77,7 +77,7 @@ flowchart LR
 
 [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp)는 조문·부칙·해석·판례를 찾는 짝 서버입니다. 같이 두면 **근거 찾기 → 계산 → 서식**이 한 대화에서 이어지고, 이 서버의 `find_tool`도 계산 도구가 없는 질문(월세·연금계좌 세액공제, 주식 양도 등)에 바로 부를 조문 호출값을 돌려줍니다.
 
-새 버전으로 바로 바꾸려면 `uvx --refresh korean-tax-calc-mcp`(uvx는 받은 버전을 캐시합니다). 특정 버전 고정은 `uvx korean-tax-calc-mcp@0.60.1`.
+새 버전으로 바로 바꾸려면 `uvx --refresh korean-tax-calc-mcp`(uvx는 받은 버전을 캐시합니다). 특정 버전 고정은 `uvx korean-tax-calc-mcp@0.61.0`.
 
 선택 키: `LAW_OC`(세무조사 판정 도구 2개의 법제처 조문 조회), `UPSTAGE_API_KEY`(PDF 표 추출·공시 매출 행 분류), `VWORLD_KEY`(부동산 공시가격 조회), `DART_API_KEY`(국내 비교기업 후보 — [OpenDART](https://opendart.fss.or.kr)에서 본인 키를 무료 발급, 약관상 본인만 사용. 없으면 그 도구만 꺼짐).
 
@@ -282,10 +282,10 @@ flowchart LR
 | `branch_profits_tax` | 외국법인 지점세(법인세법 제96조) — 재투자 인정액·자본금상당액 증감·송금액 기준, 조약 세율 |
 | `emigration_exit_tax` | 국외전출세(소득세법 제118조의9~18) — 출국일 시가 의제 양도, 연도별 세율, 신고·납부유예 안내 |
 | `thin_capitalization` | 과소자본 |
-| `arm_length_range` | 정상가격 범위와 조정액 — 비교대상 이익률로 사분위·전체 범위, 중위값, 분석대상 값의 범위 안 여부, 조정액과 조정 방향(국조령 제15조⑤⑥). 분석대상이 국내 법인인지 국외 법인인지는 필수 입력 |
-| `tp_comparable_screen` | 비교대상 기업 선정 — 유료 데이터베이스에서 내보낸 후보 목록(CSV·엑셀)에 독립성·자료·업종·규모·손실·연구개발·광고·특수관계 매출·부문·특수 상황 기준과 사람의 판단(사유 필수)을 적용해 회사별 탈락 사유표, 최종 비교대상, 다년 가중평균 지표, 사분위 범위, 기준을 바꿨을 때의 민감도, 개별기업보고서 부록 표를 냄. 법정 기준(특수관계 50%)과 관행 기준을 나눠 표시 |
+| `arm_length_range` | 정상가격 범위와 조정액 — 비교대상 이익률로 사분위·전체 범위, 중위값, 분석대상 값의 범위 안 여부, 조정액과 조정 방향(국조령 제15조⑤⑥). 사분위 계산법 기본은 국세청 기본통칙 8-15…1(위치 (n+2)/4·(3n+2)/4), 엑셀 QUARTILE.INC·EXC·미국식(26 CFR §1.482-1(e)(2)(iii)(C))은 선택, 결과에 세 방식 민감도. 분석대상이 국내 법인인지 국외 법인인지는 필수 입력 |
+| `tp_comparable_screen` | 비교대상 기업 선정 — 유료 데이터베이스에서 내보낸 후보 목록(CSV·엑셀)에 독립성·자료·업종·규모·손실·연구개발·광고·특수관계 매출·부문·특수 상황 기준과 사람의 판단(사유 필수)을 적용해 회사별 탈락 사유표, 최종 비교대상, 다년 가중평균 지표, 사분위 범위, 기준을 바꿨을 때의 민감도, 개별기업보고서 부록 표를 냄. 도구가 스스로 적용하는 기준은 법정(최대주주 50%, 둘 이상)뿐이고 관행 기준은 `screens`로 받은 값만(값·출처는 조문 MCP `transfer_pricing_guide`). 지속 손실은 기본 사람 확인(자동 제외는 선택), 연도별로 비교대상이 달라도 됨(전 연도 자료 필수는 선택), 다년 범위와 함께 연도별 사분위 범위, 운전자본 조정(선택)을 켜면 조정 전·후 범위 |
 | `kr_comparable_candidates` | 국내 비교기업 후보 — OpenDART 공시(상장 재무 API·비상장 감사보고서 원문)에서 업종 코드로 후보를 모아 연도별 재무와 후보 프로필(매출 구성 6갈래·재고·원재료 재고·유형/무형자산·연구개발·광고·운전자본·특수관계 매출·최대주주 지분)을 근거(접수번호·계정)와 값 상태(확보/불명-없음/불명-못찾음)로 냄. 후보 행은 `tp_comparable_screen` 입력 열 그대로. 본인 DART_API_KEY 필요 |
-| `kr_comparable_profile_compare` | 국내 비교기업 프로필 비교 — 분석대상 프로필(비율)과 후보 프로필을 매출 구성·재고·유형자산·연구개발·광고 항목별로 가까움/다름/불명 판정해 포함 후보·사람 확인·제외 후보로 나누고, 사람 확인 목록(사유·근거)과 `tp_comparable_screen` manual_decisions 초안(사람 확정)을 냄. 기준값은 조정 가능한 기본값 |
+| `kr_comparable_profile_compare` | 국내 비교기업 프로필 비교 — 분석대상 프로필(비율)과 후보 프로필을 매출 구성·재고·유형자산·연구개발·광고·판관비·품목 키워드의 차이·배수를 내고, `rules`로 받은 기준으로 가까움/다름/불명을 판정해(재고·유형자산은 하나만 다르면 사람 확인, 둘 다면 제외 후보) 특수관계 거래 비중·실질 지배 신호 문장(법정 판정 아님)·지속 손실은 사람 확인으로 돌려 포함 후보·사람 확인·제외 후보로 나누고, 사람 확인 목록(사유·근거)과 `tp_comparable_screen` manual_decisions 초안(사람 확정)을 냄. 관행 기준값은 도구에 없음 — `rules`가 없으면 법정 기준만. 사유 코드와 기준값마다 법정·법정 준용·관행·우리 규칙 구분 표시 |
 | `international_transaction_statement` | 국제거래명세서(국조칙 별지 제16호서식(갑)) 칸 집계 — 국외특수관계인별 매출·매입 계, 대여금·차입금 적수(금액×일수)·평균, 국제거래명세서·요약손익계산서·정상가격 산출방법 신고서 제출 의무(국조법 제16조②·시행령 제36조)·기한, 함께 낼 서식 |
 | `foreign_subsidiary_dividend` | 외국자회사 수입배당금 익금불산입·외국납부세액공제 |
 | `foreign_subsidiary_liquidation` | 해외 자회사 청산 손익 — 의제배당 또는 청산손실과 손금 귀속 사업연도(법인세법 제16조①4호) |
@@ -587,6 +587,15 @@ Anthropic의 BM25 도구 검색(`tool_search_tool_bm25`)으로 에이전트를 �
 - **데이터 전송:** UPSTAGE_API_KEY를 설정해 PDF 도구를 사용할 때만 문서 내용이 Upstage API(api.upstage.ai)로 전송됩니다. 시세 조회(`stock_price_lookup`)는 KRX로 종목코드·날짜를, 공시가격 조회(`official_property_price`, VWORLD_KEY 필요)는 브이월드로 주소·필지번호·연도를 보냅니다. 국내 비교기업 후보(`kr_comparable_candidates`, DART_API_KEY 필요)는 OpenDART로 회사 고유번호·연도·접수번호를 보내고, UPSTAGE_API_KEY가 있으면 공시 매출 행 이름(금액 제외)과 공시된 사업의 개요(최대 4,000자)를 Upstage로 보냅니다. 키 없이 사용하면(pypdf 로컬 추출) 외부 전송이 없습니다. 민감정보가 담긴 문서는 API 전송 시 넣지 마세요.
 
 </details>
+
+## 비교대상 선정 기준 예시값(0.60.x까지 도구 기본값)
+
+0.61.0부터 `tp_comparable_screen`·`kr_comparable_profile_compare`에는 관행 기준값이 없습니다. 아래는 이전 결과를 재현할 때 넣던 값의 **예시**일 뿐 기준이 아니며, 실제 값과 출처는 짝 서버 korean-tax-mcp의 `transfer_pricing_guide`(비교대상 선정 기준)에서 받아 넣습니다.
+
+| 도구 | 입력 | 0.60.x 값 |
+|---|---|---|
+| `tp_comparable_screen` | `screens` | `{"independence_pct": 25, "independence_bvd_reject": ["C", "D", "U"], "loss_years": 2, "loss_action": "exclude", "require_all_years": true, "rnd_max": 0.03, "adv_max": 0.05, "related_max": 0.25, "segment_min": 0.75, "special_flags": ["start_up", "bankruptcy", "restructuring", "merger", "delisted"], "outlier_k": 1.5}`, `quartile_method: "excel_inc"` |
+| `kr_comparable_profile_compare` | `rules` | `{"mix_max_diff": 0.2, "coverage_min": 0.8, "coverage_max": 1.2, "ratio_low": 0.5, "ratio_high": 2.0, "ppe_abs_tol": 0.05, "rnd_abs_tol": 0.01, "advert_mult": 2.0, "advert_abs_tol": 0.01, "related_review": 0.25, "unknown_review_count": 3, "mix_unverified_review": 0.1}` — 값만 같고, 재고·유형자산 조합(하나만 다르면 사람 확인)은 0.61.0 규칙 |
 
 ## 라이선스
 

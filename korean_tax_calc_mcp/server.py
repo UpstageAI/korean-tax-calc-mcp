@@ -1216,16 +1216,16 @@ def arm_length_range(comparables: Annotated[list, Field(description="비교대�
                      point_value: Annotated[float | None, Field(description="point='직접입력'일 때 기준점 값(범위 안의 값)")] = None,
                      tested_is_resident: Annotated[bool | None, Field(description="필수 — 분석대상 당사자가 국내 법인(거주자)이면 True, 국외특수관계인(해외 자회사·모회사 등)이면 False. 조정 방향이 반대가 되므로 비우면 계산하지 않음. 회사 이름으로 추측하지 말고 소재지 자료로 정할 것")] = None,
                      higher_is_more_income: Annotated[bool, Field(description="지표가 높을수록 분석대상 당사자의 소득이 큰 지표인지(이익률은 True). 분석대상이 지급하는 가격·수수료율처럼 높을수록 소득이 줄면 False")] = True,
-                     quartile_method: Annotated[Literal["inclusive", "exclusive"], Field(description="사분위 계산법 — inclusive(엑셀 QUARTILE.INC, 기본) / exclusive(엑셀 QUARTILE.EXC, 비교대상 셋 이상)")] = "inclusive",
+                     quartile_method: Annotated[Literal["nts", "nts_rule_8_15", "excel_inc", "inclusive", "exclusive", "us"], Field(description="사분위 계산법 — nts(기본, nts_rule_8_15도 같음, 국조법 기본통칙 8-15…1: 아래 사분위 위치 (n+2)/4·위 사분위 위치 (3n+2)/4, 소수 위치면 인접 두 값 평균) / excel_inc(엑셀 QUARTILE.INC — 0.60.x까지 기본, 이전 결과 재현용, inclusive도 같음) / exclusive(엑셀 QUARTILE.EXC, 비교대상 셋 이상) / us(미국 26 CFR §1.482-1(e)(2)(iii)(C), 보간 없음). 결과 사분위_민감도에 nts·excel_inc·us를 함께")] = "nts",
                      year: Annotated[int | None, Field(description="사업연도 개시연도(2016~2026, 선택 — 종료연도가 아님). 생략하면 현행 조문. 2021.1.1. 이후 개시분은 시행령 제15조(대통령령 제31448호 부칙 제3조), 2020년까지 개시분(예: 2020.7.1.~2021.6.30.)은 구 시행령 제6조제4항·제5항으로 근거를 냄")] = None) -> dict:
     """Transfer pricing arm's length range: interquartile range, median and adjustment amount (정상가격 범위).
     정상가격 범위와 조정액 — 비교대상 이익률 등으로 사분위·전체 범위, 중위값·평균값을 구하고 분석대상 당사자의 값이 범위 안인지, 벗어나면 기준점까지의 차이와 조정액(국제조세조정에 관한 법률 시행령 제15조제5항·제6항). 언제: 국외특수관계인 거래의 이익률이 정상가격 범위 안인지 확인하고 범위를 벗어난 경우 조정액을 구할 때.
     입력: 비교대상 값 → comparables, 분석대상 값 → tested_value, 지표 분모 금액 → base_amount, 범위 종류 → range_type, 기준점 → point·point_value, 분석대상이 거주자인지 → tested_is_resident, 지표 방향 → higher_is_more_income, 사분위 계산법 → quartile_method, 사업연도 → year.
     계산: 범위 안이면 조정 없음. 벗어나면 기준점(중위값·평균값·직접입력)과의 차이 × base_amount = 조정액(원 미만 절사). 분석대상이 거주자가 아니면 방향을 뒤집어 거주자 소득이 과소인지 과다인지 표시하고, '방향'에 한 문장으로 적음. tested_is_resident를 비우면 계산하지 않고 되물음.
-    결과: 비교대상 수·최솟값·제1사분위·중위값·제3사분위·최댓값·평균값, 범위, 범위 안 여부, 조정 필요 여부, 기준점, 차이, 거주자 소득(과소·과다), 방향, 조정액, 판단·근거·주의.
+    결과: 비교대상 수·최솟값·제1사분위·중위값·제3사분위·최댓값·평균값, 범위, 사분위_방식(방식·n·근거), 사분위_민감도(통칙·엑셀 INC·미국식), 범위 안 여부, 조정 필요 여부, 기준점, 차이, 거주자 소득(과소·과다), 방향, 조정액, 판단·근거·주의.
     결과의 '비교대상_확인'은 비교가능 거래의 뜻(시행령 제14조제1항제1호), 분석요소(시행규칙 제6조제1항), 내부 비교가능 거래를 먼저 볼 것(시행규칙 제7조제1항제4호), 이익률 자료만으로는 타당성을 확인할 수 없다는 점을 알려 줌.
     2016~2020년 개시 사업연도는 구 시행령 제6조제4항·제5항, 구 법 제4조(2020년 개시분부터 제4조의2)와 구 법 제9조·구 시행령 제15조의 임시유보로 근거를 냄.
-    범위 밖: 비교대상이 적절한지(비교가능성·차이 조정·손실 기업 처리)는 판단하지 않음. 사분위 계산법과 기준점 선택은 국조법령이 특정하지 않음(조문에는 없고, 2022.3.18. 시행규칙부터 거래가격 조정신고서 작성방법이 정상사분위범위 기재를 전제 — OECD 이전가격지침 3.57의 통계적 도구) — 선택 이유는 보고서에 밝혀야 함. 데이터베이스 후보 목록을 거르는 일은 tp_comparable_screen."""
+    범위 밖: 비교대상이 적절한지(비교가능성·차이 조정·손실 기업 처리)는 판단하지 않음. 사분위 계산법은 기본이 국세청 기본통칙 8-15…1(결과 사분위_방식에 방식·n·근거, 다른 두 방식은 사분위_민감도), 기준점 선택은 국조법령이 특정하지 않음(조문에는 없고, 2022.3.18. 시행규칙부터 거래가격 조정신고서 작성방법이 정상사분위범위 기재를 전제 — OECD 이전가격지침 3.57의 통계적 도구) — 선택 이유는 보고서에 밝혀야 함. 데이터베이스 후보 목록을 거르는 일은 tp_comparable_screen."""
     r = ALR.arm_length_range(comparables, tested_value, base_amount, range_type, point, point_value, tested_is_resident, higher_is_more_income, quartile_method, year)
     if "error" in r:
         return r
@@ -1237,7 +1237,7 @@ def arm_length_range(comparables: Annotated[list, Field(description="비교대�
         주의.append(_dn)
     elif res.get("조정_필요") and res.get("거주자_소득") == "과다":
         주의.append("거주자 소득이 정상가격보다 많은 경우(감액)는 세무조정 항목을 내지 않음 — 감액은 요건·절차(경정청구, 상호합의 등)를 따로 확인")
-    return _ok(res, r["근거"], 계산=r["계산"], 판단=r["판단"], 비교대상_확인=r["비교대상_확인"], 세무조정=세무조정, 주의=주의)
+    return _ok(res, r["근거"], 계산=r["계산"], 사분위_민감도=r["사분위_민감도"], 판단=r["판단"], 비교대상_확인=r["비교대상_확인"], 세무조정=세무조정, 주의=주의)
 
 
 @mcp.tool(annotations=CALC)
@@ -1251,10 +1251,10 @@ def tp_comparable_screen(tested_party: Annotated[dict, Field(description="분석
                          pli: Annotated[Literal["OM", "ROA", "NCP", "BERRY"], Field(description="지표 — OM 매출액 대비 거래순이익(기본, 시행령 제8조제1항1호)·ROA 자산 대비(2호)·NCP 원가·영업비용 대비(3호)·BERRY 영업비용 대비 매출총이익(4호)")] = "OM",
                          averaging: Annotated[Literal["weighted", "simple"], Field(description="다년 평균 — weighted(Σ분자/Σ분모, 기본)·simple(연도별 지표의 산술평균)")] = "weighted",
                          tested_years: Annotated[list[int] | None, Field(description="분석대상 기간(생략하면 analysis_years와 같음) — 다르면 경고")] = None,
-                         screens: Annotated[dict | None, Field(description="기준 바꾸기(None이면 끔): independence_pct(기본 25, 50 이하), independence_bvd_reject, industry_codes, size_min·size_max(평균 매출), loss_years(기본 2), crisis_exception(시행령 제15조제7항), rnd_max(0.03), adv_max(0.05), wc_band, related_max(0.25), segment_min(0.75), special_flags, outlier_k(1.5), op_tolerance(0.005)")] = None,
+                         screens: Annotated[dict | None, Field(description="선정 기준값(조문 MCP transfer_pricing_guide의 값을 그대로, 없는 키는 그 기준 끔 — 이 도구에 관행 기본값 없음): independence_pct(최대주주 % 상한, 50 이하), independence_bvd_reject(독립성 등급 목록), industry_codes, size_min·size_max(평균 매출), loss_years(손실 연도 수)·loss_action(review 사람 확인 기본 / exclude 탈락), require_all_years(기본 false), crisis_exception(시행령 제15조제7항), rnd_max·adv_max(소수), wc_band, related_max(소수), segment_min(소수), special_flags(목록), outlier_k(IQR 배수, 표시만), sample_min·spread_ratio(표본·편차 경고), op_tolerance(영업이익 대사 허용 오차, 기본 0.005). screens가 없으면 법정 기준(최대주주 50% 이상 탈락, 비교대상 둘 이상)만 적용하고 결과 '안내'에 표시")] = None,
                          manual_decisions: Annotated[list[dict] | None, Field(description="사람의 판단 [{company_id, decision: accept|reject, reason(필수), evidence, reviewer}] — accept는 관행 기준 탈락을 뒤집을 수 있고 법정 50%는 못 뒤집음")] = None,
                          search_log: Annotated[dict | None, Field(description="데이터베이스 이름·추출일·검색 단계별 조건과 남은 수 — 보고서 부록에 그대로 실음")] = None,
-                         quartile_method: Annotated[Literal["inclusive", "exclusive"], Field(description="사분위 계산법(arm_length_range와 같음)")] = "inclusive",
+                         quartile_method: Annotated[Literal["nts", "nts_rule_8_15", "excel_inc", "inclusive", "exclusive", "us"], Field(description="사분위 계산법(arm_length_range와 같음) — nts(기본, nts_rule_8_15도 같음, 국조법 기본통칙 8-15…1)·excel_inc(엑셀 QUARTILE.INC, 0.60.x까지 기본)·exclusive·us(26 CFR §1.482-1(e)(2)(iii)(C))")] = "nts",
                          wca: Annotated[dict | None, Field(description="운전자본 조정(단순형) {rate: 이자율 소수, rate_basis: 금리 근거(필수)}")] = None,
                          multi_year_reason: Annotated[dict | None, Field(description="다년도 자료 사유 {code: 1 경기 변동|2 사업전략|3 그 밖의 합리적 사유(시행규칙 제9조), text}")] = None,
                          op_source: Annotated[Literal["reported", "recalc"], Field(description="거래순이익 — reported(보고 영업이익, 기본)·recalc(매출−매출원가−판관비)")] = "reported",
@@ -1263,8 +1263,8 @@ def tp_comparable_screen(tested_party: Annotated[dict, Field(description="분석
     """Transfer pricing comparable company screening: rejection matrix, weighted average, sensitivity (비교대상 기업 선정).
     비교대상 기업 선정(스크리닝) — 유료 데이터베이스에서 내보낸 후보 목록에 선정 기준을 적용해 회사별 탈락 사유표, 최종 비교대상, 다년 가중평균 지표, 사분위 범위, 기준을 바꿨을 때의 민감도를 냄. 언제: 이전가격 거래순이익률방법에서 비교대상을 거르고 탐색 과정·탈락 사유를 개별기업보고서(Ⅱ-11·12·13·15)에 남길 때.
     입력: 후보 목록 → file_path 또는 rows, 분석대상 → tested_party, 분석 연도 → analysis_years, 사업연도 → tested_year, 기준 → screens, 사람 판단 → manual_decisions(사유 필수), 검색 기록 → search_log.
-    기준: S1a 독립성 법정 하한(최대주주 50% 이상, 끌 수 없음) / S1b 독립성 관행 25% / S2 자료 충분성 / S3 업종 코드 / S4 규모 / S5 지속 손실(경제위기 예외 시행령 제15조제7항) / S6 연구개발 / S7 광고 / S8 운전자본(표시) / S9 특수관계 매출 / S10 부문 / S11 특수 상황 / S12 사람 판단 / S13 이상치(표시만). 법정이 아닌 기준값은 [관행]으로 표시.
-    결과: 결과(후보·최종 수, 범위, 분석대상 값, 범위 안 여부), 탈락_매트릭스(모든 회사×모든 기준), 최종_비교대상(연도별 재무·지표), 민감도, arm_length_range_입력(그대로 넘기면 같은 사분위), 보고서_부록, 경고, 판단·근거·주의.
+    기준: S1a 독립성 법정 하한(최대주주 50% 이상, 끌 수 없음) / S1b 독립성(관행 — screens로 줄 때) / S2 자료 충분성 / S3 업종 코드 / S4 규모 / S5 지속 손실(screens.loss_years를 줄 때 — 기본은 사람 확인, 탈락은 loss_action=exclude, 경제위기 예외 시행령 제15조제7항) / S6 연구개발 / S7 광고 / S8 운전자본(표시) / S9 특수관계 매출 / S10 부문 / S11 특수 상황 / S12 사람 판단 / S13 이상치(표시만). S1a·둘 이상만 법정, 나머지는 screens로 받은 값만 적용([관행] 표시).
+    결과: 결과(후보·최종 수, 주_결과(단년이 기본 — 다년은 multi_year_reason이 있을 때, 서식 Ⅱ-11), 단년_범위, 다년 범위(계산법·n·조정점 중위값), 사분위_민감도(INC·국세청 통칙·미국식), 연도별_범위(연도마다 자료 있는 비교대상으로), 사람_확인(지속 손실 등), 운전자본 조정(wca, 선택)을 켜면 조정_전_범위도, 분석대상 값, 범위 안 여부), 탈락_매트릭스(모든 회사×모든 기준), 최종_비교대상(연도별 재무·지표), 민감도, arm_length_range_입력(그대로 넘기면 같은 사분위), 보고서_부록, 경고, 판단·근거·주의.
     범위 밖: 데이터베이스 검색 자체, 회사별 기능·거래단계 비교, 비교대상이 적절하다는 결론. 최종 비교대상이 둘 미만이면 범위를 내지 않음(시행령 제15조제5항)."""
     r = TPS.comparable_screen(rows=rows, file_path=file_path, column_map=column_map, tested_party=tested_party, analysis_years=analysis_years,
                               tested_year=tested_year, pli=pli, averaging=averaging, tested_years=tested_years, screens=screens,
@@ -1320,16 +1320,22 @@ def kr_comparable_candidates(
 언제: kr_comparable_candidates로 만든 국내 후보를 분석대상과 기능·자산·위험 면에서 비교해 거르기 전에, 숫자로 갈리는 후보와 사람이 볼 후보를 나눌 때.
 입력: 분석대상 프로필(비율) → tested {main_category: product|merchandise|service|sw_license|platform_fee|other, main_share, inventory_basis: ratio|raw_material,
   inv_to_sales, raw_material_inv, ppe_ratio, rnd_ratio, advert_ratio}, 후보 → candidates(kr_comparable_candidates 결과 그대로 또는 후보_프로필 목록), 기준 바꾸기 → rules(일부 키만).
-판정(기본값·조정 가능, 법령 숫자 아님): 매출 구성 = 분석대상 주된 갈래 비중 차이 20%p 이내(후보 커버리지 0.8~1.2일 때만), 재고 = 재고/매출 0.5~2배 또는 원재료 재고 유무,
-  유형자산 = 0.5~2배 또는 차이 5%p 이내, 연구개발·광고 = 0.5~2배 또는 차이 1%p 이내. 값 상태 '불명-없음'(계정 없음)은 0으로, '불명-못찾음'은 불명으로 봄.
-종합: 핵심(매출 구성·재고·유형자산) 다름이 있거나 최대주주 50% 이상(법정, 국조법 시행령 제2조제2항) → 제외 후보 / 핵심 불명·불명 3개 이상·특수관계 매출 25% 이상·원문 유형 칸 없이 분류한 매출 행 10% 이상 → 사람 확인 / 나머지 → 포함 후보.
-결과: 비교표, 종합 수, 사람_확인_목록, manual_decisions_초안(제외 후보의 reject 초안 — 사람이 사유 확인 후 reviewer를 채워 확정), 포함_후보_id, 사용_기준.
+기준값: 이 도구에는 관행 기준값이 없음 — rules로 받은 값만 씀(값·출처는 조문 MCP transfer_pricing_guide '비교대상 선정 기준'에서 받아 그대로 넣음). rules가 없으면 법정 기준만:
+  최대주주 50% 이상 → 제외 후보(I1, 국조법 시행령 제2조제2항 준용), 특수관계 매출 또는 매입 50% 이상 → 사람 확인(C2, 실질 지배 거래 의존), 결과 첫 줄 '안내'에 "관행 기준 미적용". 숫자(비중 차이·배수·차이)는 늘 냄.
+rules 키(단위, 없으면 그 기준 끔): mix_max_diff(비중 차이, 소수 예 0.2), coverage_min·coverage_max(커버리지 배, 예 0.8·1.2), ratio_low·ratio_high(재고/매출·유형자산/자산·연구개발/매출 배수, 예 0.5·2),
+  ppe_abs_tol·rnd_abs_tol(비율 차이, 예 0.05·0.01), advert_mult·sga_mult(배수 x → 1/x~x, 예 3·2), advert_abs_tol·sga_abs_tol(비율 차이, 예 0.03·0.05), related_review(특수관계 매출·매입 비중, 예 0.2),
+  loss_review_years(분석 연도 중 손실 연도 수, 예 2), unknown_review_count(불명 항목 수, 예 3), mix_unverified_review(분류로 정한 매출 행 비중, 예 0.1). 예는 형식 예시일 뿐 기준이 아님.
+종합(준 기준만): 제외 후보 = M1 매출 구성 다름·K3 재고·유형자산 둘 다 다름·K4 원재료 재고 유무까지 다름·I1 /
+  사람 확인 = M0 매출 구성 불명·K1·K2·K5 하나만 다름·A1 광고판촉·A2 판관비율(분석대상 sga_ratio를 줄 때)·P1 품목 키워드(product_keywords) 겹침 없음·I2 특수관계 매출·매입·C2·I3 비상장 최대주주·지배기업 지분 50% 이상(지분만으로 제외 안 함)·L2 지속 손실·R1 매출 행 분류·U1 불명 다수 / 나머지 → 포함 후보.
+  표시만 = C1 실질 지배 신호 문장(임원 겸직·지배기업·유의적 영향력·자금 대여·보증·기업집단·사용료 — 참고), W3 연구개발, L1 손실 연도.
+  I2·I3·C1·C2는 법정 특수관계 판정이 아님 — 판단은 조문 MCP. 결과(후보별 숫자·차이·근거 문장·접수번호)를 그대로 조문 MCP 판단 도구에 넘김.
+결과: 비교표(사유 코드·표시), 종합 수, 사람_확인_목록(근거·품목 대조 원문·실질 지배 근거 문장), manual_decisions_초안(제외 후보의 reject 초안 — 사람이 사유 확인 후 reviewer를 채워 확정), 포함_후보_id, 사용_기준(값마다 법정·법정 준용·관행·우리 규칙 구분, 입력 여부).
 범위 밖: 거래 단계·시장·계약 조건처럼 숫자로 안 잡히는 비교가능성, 비교대상이 적절하다는 결론. 대분류 꼬리표는 설명용.""")
 @_guard
 def kr_comparable_profile_compare(
-        tested: Annotated[dict, Field(description="분석대상 프로필(비율) {main_category, main_share, inventory_basis(ratio|raw_material), inv_to_sales, raw_material_inv, ppe_ratio, rnd_ratio, advert_ratio}")],
+        tested: Annotated[dict, Field(description="분석대상 프로필(비율) {main_category, main_share, inventory_basis(ratio|raw_material), inv_to_sales, raw_material_inv, ppe_ratio, rnd_ratio, advert_ratio, sga_ratio(선택, 판관비/매출), product_keywords(선택, 품목 키워드 목록), own_marketing·bears_inventory_risk(선택, 자체 마케팅·재고위험 부담 true|false — 사람 확인 목록에 기능 질문으로)}")],
         candidates: Annotated[dict | list, Field(description="kr_comparable_candidates 결과 그대로(결과.후보_프로필을 읽음) 또는 후보 프로필 목록")],
-        rules: Annotated[dict | None, Field(description="기준 바꾸기(일부 키만): mix_max_diff·ratio_low·ratio_high·ppe_abs_tol·rnd_abs_tol·advert_abs_tol·coverage_min·coverage_max·independence_legal_pct·related_sales_review·unknown_review_count·mix_unverified_review")] = None) -> dict:
+        rules: Annotated[dict | None, Field(description="판정 기준값(조문 MCP transfer_pricing_guide의 값을 그대로): mix_max_diff·coverage_min·coverage_max·ratio_low·ratio_high·ppe_abs_tol·rnd_abs_tol·advert_mult·advert_abs_tol·sga_mult·sga_abs_tol·related_review(예전 이름 related_sales_review)·loss_review_years·unknown_review_count·mix_unverified_review, 법정 independence_legal_pct·control_dependence(더 엄격하게만) — 단위는 도구 설명. 없으면 법정 기준만")] = None) -> dict:
     from .engine.kr_comparables import profile_compare as _krc_compare
     r = _krc_compare(tested, candidates, rules)
     extra = {k: v for k, v in r.items() if k not in ("결과", "근거")}
@@ -12166,7 +12172,7 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "소급공제": ["loss_carryback_refund"], "결손금 환급": ["loss_carryback_refund"], "결손금 소급": ["loss_carryback_refund"],
     "이월결손금 추적": ["loss_carryforward_ledger"], "결손금 잔액": ["loss_carryforward_ledger"], "결손금 소멸": ["loss_carryforward_ledger"], "이월결손금": ["loss_carryforward_ledger", "loss_carryforward_limit"],
     "해외법인 청산": ["foreign_subsidiary_liquidation", "foreign_exchange_reporting"], "자회사 청산 손실": ["foreign_subsidiary_liquidation"], "투자주식 손실": ["foreign_subsidiary_liquidation"],
-    "정상가격 범위": ["arm_length_range"], "사분위": ["arm_length_range"], "이전가격 조정액": ["arm_length_range"], "비교대상 이익률": ["arm_length_range", "tp_comparable_screen"], "비교대상 선정": ["tp_comparable_screen"], "비교기업": ["kr_comparable_candidates", "tp_comparable_screen"], "국내 비교기업": ["kr_comparable_candidates", "kr_comparable_profile_compare"], "프로필 비교": ["kr_comparable_profile_compare"], "기능 자산 위험 비교": ["kr_comparable_profile_compare"], "비교가능성 비교": ["kr_comparable_profile_compare"], "후보 비교": ["kr_comparable_profile_compare"], "비교기업 후보": ["kr_comparable_candidates"], "전자공시 재무": ["kr_comparable_candidates"], "공시 재무제표": ["kr_comparable_candidates"], "감사보고서 재무": ["kr_comparable_candidates"], "특정외국법인 배당": ["cfc_actual_dividend"], "배당간주 실제 배당": ["cfc_actual_dividend"], "특정외국법인 주식 양도": ["cfc_share_disposal"], "통고처분": ["tax_crime_settlement_amount"], "벌금상당액": ["tax_crime_settlement_amount"], "조세범칙": ["tax_crime_settlement_amount"], "스크리닝": ["tp_comparable_screen"], "탈락 사유": ["tp_comparable_screen"], "벤치마크": ["tp_comparable_screen"],
+    "정상가격 범위": ["arm_length_range"], "사분위": ["arm_length_range"], "사분위 계산법": ["arm_length_range", "tp_comparable_screen"], "quartile": ["arm_length_range"], "이전가격 조정액": ["arm_length_range"], "비교대상 이익률": ["arm_length_range", "tp_comparable_screen"], "비교대상 선정": ["tp_comparable_screen"], "비교기업": ["kr_comparable_candidates", "tp_comparable_screen"], "국내 비교기업": ["kr_comparable_candidates", "kr_comparable_profile_compare"], "프로필 비교": ["kr_comparable_profile_compare"], "기능 자산 위험 비교": ["kr_comparable_profile_compare"], "비교가능성 비교": ["kr_comparable_profile_compare"], "후보 비교": ["kr_comparable_profile_compare"], "비교기업 후보": ["kr_comparable_candidates"], "전자공시 재무": ["kr_comparable_candidates"], "공시 재무제표": ["kr_comparable_candidates"], "감사보고서 재무": ["kr_comparable_candidates"], "특정외국법인 배당": ["cfc_actual_dividend"], "배당간주 실제 배당": ["cfc_actual_dividend"], "특정외국법인 주식 양도": ["cfc_share_disposal"], "통고처분": ["tax_crime_settlement_amount"], "벌금상당액": ["tax_crime_settlement_amount"], "조세범칙": ["tax_crime_settlement_amount"], "스크리닝": ["tp_comparable_screen"], "탈락 사유": ["tp_comparable_screen"], "벤치마크": ["tp_comparable_screen"],
     "마일리지충당부채": ["provision_reserve_ledger"], "포인트충당부채": ["provision_reserve_ledger"], "판매보증충당부채": ["provision_reserve_ledger"],
     "충당부채": ["provision_reserve_ledger"], "유효기간 소멸": ["provision_reserve_ledger"], "마일리지 유보": ["provision_reserve_ledger"],
     "마일리지": ["vat_tax_base_adjustments", "provision_reserve_ledger"], "포인트 결제": ["vat_tax_base_adjustments"], "반품": ["vat_tax_base_adjustments"], "환입": ["vat_tax_base_adjustments"],

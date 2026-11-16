@@ -179,6 +179,7 @@ def _profile_listed(R, corp, name, code, rows, fin_items, last, cls_ctx):
                     if i.get("sj_div") in ("IS", "CIS") and ST.amt(i.get("thstrm_amount")) is not None]
         sig = _signals(s, True, api_cogs, [], last.get("cogs"), brc)
         ov = _overview(s, name)
+        p["business_desc"] = value(ov["ctx"][:1500], rcept_no=brc, account="사업의 개요") if ov["ctx"] else value(note="사업의 개요 못 찾음")
         _mix(R, p, rows_mix, tinfo, rev, brc, True, ov["ctx"] or cls_ctx, items_cfs=(corp, last["year"]), signals=sig, ctx_problems=ov["problems"])
         sga = _rows_from_sections(s, True, r"판매비\s*와?\s*(일반)?관리비|판매비및관리비") + _rows_from_sections(s, True, r"비용의\s*성격")
         sga_detail = any(re.match(r"^(급여|복리후생비|지급수수료|감가상각비)", l) for l, c, pr in sga)
@@ -193,6 +194,10 @@ def _profile_listed(R, corp, name, code, rows, fin_items, last, cls_ctx):
             value(False, STATUS_NONE, note="재고 계정 없음") if p["inv_to_sales"]["status"] == STATUS_NONE else value(note="재고 구성 주석 못 찾음"))
         r, why = ST.related_sales(s, True, rev)
         p["related_sales_ratio"] = value(r, rcept_no=brc, account=why) if r is not None else value(note=why)
+        sig, st = ST.control_signals(s, True)
+        p["control_signals"] = value(sig, rcept_no=brc, account=st) if sig is not None else value(note=st)
+        r, why = ST.related_purchases(s, True, last.get("cogs"), rev)
+        p["related_purchase_ratio"] = value(r, rcept_no=brc, account=why) if r is not None else value(note=why)
     else:
         p["mix_coverage"] = value(note="사업보고서 원문 없음")
     h = R.dc.get("hyslrSttus.json", {"corp_code": corp, "bsns_year": str(last["year"]), "reprt_code": "11011"})
@@ -481,10 +486,18 @@ def _profile_unlisted(R, corp, name, code, rows, parsed, docs, last):
         value(False, STATUS_NONE, note="재고 계정 없음") if p["inv_to_sales"]["status"] == STATUS_NONE else value(note="재고 구성 못 찾음"))
     r, why = ST.related_sales(s, False, rev)
     p["related_sales_ratio"] = value(r, rcept_no=rc, account=why) if r is not None else value(note=why)
+    sig, st = ST.control_signals(s, False)
+    p["control_signals"] = value(sig, rcept_no=rc, account=st) if sig is not None else value(note=st)
+    r, why = ST.related_purchases(s, False, last.get("cogs"), rev)
+    p["related_purchase_ratio"] = value(r, rcept_no=rc, account=why) if r is not None else value(note=why)
     p["max_shareholder_pct"] = value(note="비상장 — OpenDART 최대주주 현황 API는 사업보고서 제출 회사만")
+    op, osent = ST.owner_share(s)
+    p["owner_pct"] = value(op, rcept_no=rc, sentence=osent, account="감사보고서 주석(주주 현황·지배기업)") if op is not None else value(note=osent)
+    ctx = _context(s, False)
+    p["business_desc"] = value(ctx[:1500], rcept_no=rc, account="감사보고서 주석 회사 개요") if ctx else value(note="회사 개요 못 찾음")
     if col == 0:
         sig = _signals(s, False, is_, bs, last.get("cogs"), rc)
-        _mix(R, p, RM.unlisted_rows(is_), {}, rev, rc, False, _context(s, False) or f"{name} 업종코드 {code}", signals=sig)
+        _mix(R, p, RM.unlisted_rows(is_), {}, rev, rc, False, ctx or f"{name} 업종코드 {code}", signals=sig)
     else:
         p["mix_coverage"] = value(note="마지막 연도 감사보고서 없음(다음 해 보고서 전기 열) — 매출 구성 생략")
     return p, extra
@@ -620,6 +633,12 @@ def _one(R, kind, corp, info, years, fs_pref, rmin, rmax):
     else:
         prof, extra = _profile_unlisted(R, corp, name, code, rows, parsed, docs, last)
     prof["major_label"] = None
+    with_op = [r for r in rows if r.get("operating_profit") is not None]
+    k = sum(1 for r in with_op if r["operating_profit"] < 0)
+    opx = last.get("opex")
+    prof["sga_ratio"] = value(_ratio(opx, rev), rcept_no=last.get("rcept_no"), account="판매비와관리비/매출액") if opx is not None and rev else value(note="판관비 못 읽음")
+    prof["loss_years"] = value(k, rcept_no=last.get("rcept_no"), account="영업이익",
+                               note=f"분석 연도 {len(with_op)}년 중 {k}년 영업손실") if with_op else value(note="영업이익 자료 없음")
     out = []
     ms = prof["max_shareholder_pct"]["value"]
     rel = prof["related_sales_ratio"]["value"]
