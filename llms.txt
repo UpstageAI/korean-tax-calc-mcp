@@ -1,6 +1,6 @@
 # korean-tax-calc-mcp
 
-> MCP server that computes Korean (South Korea) tax amounts with statutory citations: corporate and income tax, VAT, withholding (incl. payments to non-residents and foreign corporations), VAT reverse charge, expat cost recharges, dividends from foreign subsidiaries, foreign tax credits, CFC rules, transfer pricing ranges, penalties, deadlines, inheritance and gift tax, and tax-audit checks. 142 tools, tax years 2016–2026, deterministic code (no generative AI except 3 optional PDF tools and optional revenue-row classification in kr_comparable_candidates).
+> MCP server that computes Korean (South Korea) tax amounts with statutory citations: corporate and income tax, VAT, withholding (incl. payments to non-residents and foreign corporations), VAT reverse charge, expat cost recharges, dividends from foreign subsidiaries, foreign tax credits, CFC rules, transfer pricing ranges, penalties, deadlines, inheritance and gift tax, and tax-audit checks. 141 tools, tax years 2016–2026, deterministic code (no generative AI except 3 optional PDF tools and optional revenue-row classification in kr_comparable_candidates).
 
 Install: `uvx korean-tax-calc-mcp` (Claude Code: `claude mcp add korean-tax-calc -- uvx korean-tax-calc-mcp`). No key needed. Optional: `LAW_OC` (law.go.kr, two audit tools), `UPSTAGE_API_KEY` (PDF table extraction), `VWORLD_KEY` (official property price lookup).
 
@@ -53,7 +53,7 @@ If you build an agent with Anthropic's BM25 tool search (`tool_search_tool_bm25`
 | Check sheet or statutory-form workbook in English for foreign readers (labels as "English (Korean)", statutory basis as English citations such as "Corporate Tax Act (법인세법) Art. 98(1)6") | `verify_workbook` with `lang="en"` for a workbook you built yourself; `export_workbook` with `lang="en"` |
 | Give English (or other wording) to labels left in Korean — re-saving the file drops the stored values (phones show 0); if it was re-saved, `verify_workbook` fills them back in | `export_workbook` with `labels={"원래 라벨": "text"}` |
 
-The table lists the main tools; `find_tool` searches all 142.
+The table lists the main tools; `find_tool` searches all 141.
 
 Example (invented figures) — a dividend reported at 15% where 20% applies. Call the calculator once per scenario, write the workbook yourself, then check it by call id.
 

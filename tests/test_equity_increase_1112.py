@@ -50,6 +50,6 @@ def test_no_equity_keys_when_not_used():
 def test_consignment_manufacturing_notices():
     r = f(S.sme_special_tax_reduction, year=2024, size="소기업", hq_in_capital_area=True, industry_group="그 밖의 감면 업종", tax=550 * M, taxable_base=3_000 * M)
     assert r["결과"]["감면세액"] == 100 * M
-    assert any("조심2023서10448" in s and "조심2010중3890" in s and "제4조의2" in s for s in r["주의"])
+    assert any("위탁제조" in s and "도매업등" in s and "sme_tax_incentives_guide" in s for s in r["주의"])   # 결정례는 조문 MCP
     r = f(S.sme_status, year=2025, industry_code="C20", revenue=50_000 * M, total_assets=25_000 * M)
-    assert r["결과"]["구분"] == "중기업" and any("자기 계정으로 구입한 원재료" in s and "industry_code='G'" in s for s in r["주의"])
+    assert r["결과"]["구분"] == "중기업" and any("industry_code='G'" in s and "sme_tax_incentives_guide" in s for s in r["주의"])
