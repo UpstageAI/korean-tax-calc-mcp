@@ -77,7 +77,7 @@ If you do not know which tool to use, ask `find_tool` in plain words.
 
 [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp) is the companion server for statutes, addenda, rulings and cases. With both installed, "find the basis → compute → fill the form" runs in one conversation, and this server's `find_tool` returns ready-to-call statute lookups for questions it has no calculator for (rent tax credit, pension-account credit, stock gains …).
 
-To pick up a new release right away: `uvx --refresh korean-tax-calc-mcp` (uvx caches the downloaded version). Pin with `uvx korean-tax-calc-mcp@0.57.2`.
+To pick up a new release right away: `uvx --refresh korean-tax-calc-mcp` (uvx caches the downloaded version). Pin with `uvx korean-tax-calc-mcp@0.58.0`.
 
 Optional keys: `LAW_OC` (law.go.kr lookups in two audit tools), `UPSTAGE_API_KEY` (PDF table extraction), `VWORLD_KEY` (official property price lookup).
 
@@ -371,7 +371,7 @@ Click a group to expand its tools.
 | `vat_bad_debt_credit` | bad debt credit (added back to output tax on recovery) |
 | `underreporting_penalty` | under-reporting penalty |
 | `late_payment_penalty` | late payment penalty |
-| `withholding_late_payment_penalty` | withholding tax late-payment penalty (Framework Act Art. 47-5: 3% + daily, capped) |
+| `withholding_late_payment_penalty` | withholding tax late-payment penalty (Framework Act Art. 47-5: 3% + daily, capped); `tax="local"` for the local income tax collected with it (Framework Act on Local Taxes Art. 56) |
 | `invoice_penalty` | invoice penalty |
 | `invoice_penalty_bundle` | tax invoice penalties for one supply with several grounds — overlap excluded (VAT Act art. 60(2), (9)), then totals |
 | `assessment_limitation` | assessment period |

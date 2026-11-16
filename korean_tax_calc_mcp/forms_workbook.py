@@ -1002,6 +1002,8 @@ def export_form_inputs(tool: str, args: dict | None, data: dict | None) -> dict 
                _inp("적용세율", res.get("세율"), "소득세법 제129조"), _inp("조약지방세포함", 0), _inp("법인여부", 0),
                _inp("거주구분", "[√] 거주자  [ ] 비거주자"), _inp("거주지국", "")]
     elif tool == "withholding_late_payment_penalty":
+        if a.get("tax") == "local":      # 지방소득세 특별징수분(지방세기본법 제56조)은 이율·경과조치가 달라 국세 계산식을 붙이지 않는다 — 도구 값 그대로
+            return data
         import datetime as _dt
         from .engine import calc_vat as V
         try:

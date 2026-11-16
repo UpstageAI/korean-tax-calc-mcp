@@ -76,7 +76,7 @@ def compliance_issue(side: int, kind: str) -> dict:
     else:
         txt = "지급할 때 징수해 다음 달 10일까지 납부(소득세법 제156조제1항), 지급명세서는 다음 해 2월 말일(제164조의2제1항)"
         refs = ["소득세법 제156조제1항", "소득세법 제164조의2제1항", "지방세법 제103조의18제1항"]
-    txt += " — 기한을 넘기면 가산세는 withholding_late_payment_penalty"
+    txt += " — 기한을 넘기면 가산세는 withholding_late_payment_penalty(함께 특별징수한 지방소득세분은 tax='local')"
     if kind == "사용료":
         txt += ". 미지급으로 계상만 한 사용료는 지급 전까지 원천징수 없음(지급시기 의제 규정 없음, 법인세법 시행령 제137조 — 유추)"
         refs.append("법인세법 시행령 제137조")
