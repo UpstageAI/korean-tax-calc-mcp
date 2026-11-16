@@ -10,9 +10,9 @@
 
 **Korean tax calculations for AI agents — code, not guesses.**
 
-세금 계산은 AI가 자주 틀립니다. 이 서버는 법인세·소득세·부가가치세·원천세·국제조세·상속증여세 계산과 세무조정을 코드로 하고, 결과마다 근거 조문을 붙입니다. 도구 140개, 세율·한도 연도표 2016~2026, 연도표가 없는 해는 추정하지 않고 멈춥니다. 외국 기업·주재원·한국 자회사용 계산(외국인 근로자 단일세율, 비거주자 원천징수, 외국법인 지점세, 국외전출세 등)도 있고, 영어로 물어도 됩니다 — 도구 설명 첫 줄이 영어이고 `find_tool`은 영어 검색어도 받습니다. 결과는 법정서식 검토용 엑셀로 내보낼 수 있습니다.
+세금 계산은 AI가 자주 틀립니다. 이 서버는 법인세·소득세·부가가치세·원천세·국제조세·상속증여세 계산과 세무조정을 코드로 하고, 결과마다 근거 조문을 붙입니다. 도구 141개, 세율·한도 연도표 2016~2026, 연도표가 없는 해는 추정하지 않고 멈춥니다. 외국 기업·주재원·한국 자회사용 계산(외국인 근로자 단일세율, 비거주자 원천징수, 외국법인 지점세, 국외전출세 등)도 있고, 영어로 물어도 됩니다 — 도구 설명 첫 줄이 영어이고 `find_tool`은 영어 검색어도 받습니다. 결과는 법정서식 검토용 엑셀로 내보낼 수 있습니다.
 
-> 세무 자문이 아닙니다. 결과는 근거·계산 과정을 보여 주는 참고 자료이며, 신고·불복 판단은 세무 전문가와 확인하세요. 생성형 AI는 PDF 도구 3개만 쓰며 결과에 표시합니다 — [면책·AI 고지 전문](#disclaimer)
+> 세무 자문이 아닙니다. 결과는 근거·계산 과정을 보여 주는 참고 자료이며, 신고·불복 판단은 세무 전문가와 확인하세요. 생성형 AI는 PDF 도구 3개와 국내 비교기업 후보 도구의 매출 행 분류(선택)에만 쓰며 결과에 표시합니다 — [면책·AI 고지 전문](#disclaimer)
 
 ## 설치
 
@@ -79,7 +79,7 @@ flowchart LR
 
 새 버전으로 바로 바꾸려면 `uvx --refresh korean-tax-calc-mcp`(uvx는 받은 버전을 캐시합니다). 특정 버전 고정은 `uvx korean-tax-calc-mcp@0.59.1`.
 
-선택 키: `LAW_OC`(세무조사 판정 도구 2개의 법제처 조문 조회), `UPSTAGE_API_KEY`(PDF 표 추출), `VWORLD_KEY`(부동산 공시가격 조회).
+선택 키: `LAW_OC`(세무조사 판정 도구 2개의 법제처 조문 조회), `UPSTAGE_API_KEY`(PDF 표 추출·공시 매출 행 분류), `VWORLD_KEY`(부동산 공시가격 조회), `DART_API_KEY`(국내 비교기업 후보 — [OpenDART](https://opendart.fss.or.kr)에서 본인 키를 무료 발급, 약관상 본인만 사용. 없으면 그 도구만 꺼짐).
 
 </details>
 
@@ -104,7 +104,7 @@ flowchart LR
 
 요건과 과세연도별 판단(세액공제 대상 여부, 정상가격 산출방법, 국내사업장 판정 등)은 짝 서버 [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp)가 맡습니다. 이 서버는 요건을 갖춘 금액을 받아 계산만 하고, 결과에서 조문 확인을 안내합니다.
 
-도구 140개 중 PDF 도구 3개를 뺀 137개는 생성형 AI 없이 코드로 동작합니다. 그중 시세·공시가격 조회 2개는 KRX·브이월드 공개 데이터를 가져오기만 합니다. PDF 도구 3개는 `UPSTAGE_API_KEY`가 있을 때만 Upstage를 씁니다.
+도구 141개 중 PDF 도구 3개와 국내 비교기업 후보 도구를 뺀 137개는 생성형 AI 없이 코드로 동작합니다. 그중 시세·공시가격 조회 2개는 KRX·브이월드 공개 데이터를 가져오기만 합니다. PDF 도구 3개와 국내 비교기업 후보 도구는 `UPSTAGE_API_KEY`가 있을 때만 Upstage를 씁니다(후보 도구는 OpenDART 공시를 가져오고, 키가 없으면 매출 행을 이름 규칙으로 분류).
 
 </details>
 
@@ -164,7 +164,7 @@ flowchart LR
 | 비거주자·외국법인에 지급하는 이자·배당·사용료·용역 대가의 원천징수 | `nonresident_withholding` |
 | 국외사업자에게 산 용역의 부가가치세 대리납부 | `vat_reverse_charge` |
 | 국외지배주주 차입금 중 배수 초과분 이자(과소자본) | `thin_capitalization` |
-| 정상가격 범위, 비교대상 기업 선정, 국제거래명세서 | `arm_length_range` · `tp_comparable_screen` · `international_transaction_statement` |
+| 정상가격 범위, 비교대상 기업 선정, 국내 비교기업 후보, 국제거래명세서 | `arm_length_range` · `tp_comparable_screen` · `kr_comparable_candidates` · `international_transaction_statement` |
 | 외국납부세액공제(법인·개인) | `foreign_tax_credit` · `individual_foreign_tax_credit` |
 | 외국자회사 배당 — 익금불산입과 외국납부세액공제 비교, 2026년 수령분 100% 익금불산입(조세특례제한법 제23조의2) | `foreign_subsidiary_dividend` |
 | 해외 파견 직원 — 정상가격 가산 청구액, 손금, 국외근로 비과세 | `expat_cost_recharge` |
@@ -242,7 +242,7 @@ flowchart LR
 </details>
 
 <details>
-<summary><b>도구 전체 (140개)</b></summary>
+<summary><b>도구 전체 (141개)</b></summary>
 
 묶음 이름을 누르면 도구 목록이 펼쳐집니다.
 
@@ -274,7 +274,7 @@ flowchart LR
 
 </details>
 <details>
-<summary><b>국제조세·해외 거래</b> (18)</summary>
+<summary><b>국제조세·해외 거래</b> (19)</summary>
 
 | 도구 | 하는 일 |
 |---|---|
@@ -284,6 +284,7 @@ flowchart LR
 | `thin_capitalization` | 과소자본 |
 | `arm_length_range` | 정상가격 범위와 조정액 — 비교대상 이익률로 사분위·전체 범위, 중위값, 분석대상 값의 범위 안 여부, 조정액과 조정 방향(국조령 제15조⑤⑥). 분석대상이 국내 법인인지 국외 법인인지는 필수 입력 |
 | `tp_comparable_screen` | 비교대상 기업 선정 — 유료 데이터베이스에서 내보낸 후보 목록(CSV·엑셀)에 독립성·자료·업종·규모·손실·연구개발·광고·특수관계 매출·부문·특수 상황 기준과 사람의 판단(사유 필수)을 적용해 회사별 탈락 사유표, 최종 비교대상, 다년 가중평균 지표, 사분위 범위, 기준을 바꿨을 때의 민감도, 개별기업보고서 부록 표를 냄. 법정 기준(특수관계 50%)과 관행 기준을 나눠 표시 |
+| `kr_comparable_candidates` | 국내 비교기업 후보 — OpenDART 공시(상장 재무 API·비상장 감사보고서 원문)에서 업종 코드로 후보를 모아 연도별 재무와 후보 프로필(매출 구성 6갈래·재고·원재료 재고·유형/무형자산·연구개발·광고·운전자본·특수관계 매출·최대주주 지분)을 근거(접수번호·계정)와 값 상태(확보/불명-없음/불명-못찾음)로 냄. 후보 행은 `tp_comparable_screen` 입력 열 그대로. 본인 DART_API_KEY 필요 |
 | `international_transaction_statement` | 국제거래명세서(국조칙 별지 제16호서식(갑)) 칸 집계 — 국외특수관계인별 매출·매입 계, 대여금·차입금 적수(금액×일수)·평균, 국제거래명세서·요약손익계산서·정상가격 산출방법 신고서 제출 의무(국조법 제16조②·시행령 제36조)·기한, 함께 낼 서식 |
 | `foreign_subsidiary_dividend` | 외국자회사 수입배당금 익금불산입·외국납부세액공제 |
 | `foreign_subsidiary_liquidation` | 해외 자회사 청산 손익 — 의제배당 또는 청산손실과 손금 귀속 사업연도(법인세법 제16조①4호) |
@@ -581,8 +582,8 @@ Anthropic의 BM25 도구 검색(`tool_search_tool_bm25`)으로 에이전트를 �
 
 - **면책:** 이 도구의 결과는 세무 자문이 아닙니다. 법령·해석을 바탕으로 계산·판정 과정을 보여 주는 참고 자료이며, 실제 신고·세무조사·불복 판단은 세무사·회계사·변호사 등 전문가에게 확인하세요. 근거 조문·판례는 원문으로 확인하세요.
 - **세무대리 아님:** 이 도구는 **세무사법 제2조의 세무대리**(세무조정계산서 작성, 신고 대리, 세무상담 등)를 수행하지 않으며, 그 업무는 세무사와 등록한 공인회계사·변호사만 할 수 있습니다(세무사법 제20조). 법령에 적힌 산식을 코드로 옮겨 입력값에 대한 계산 과정을 보여 주는 소프트웨어이고, 입력 사실관계의 확인과 최종 판단은 세무 전문가(세무사·회계사·변호사)와 함께 해 주세요.
-- **AI 사용 고지:** PDF 검토 도구 3개를 뺀 계산·판정·조회 도구는 모두 코드로 동작하며 생성형 AI를 쓰지 않습니다. PDF 검토 도구 3개(`extract_relations`, `tunnelling_from_pdf`, `return_precheck_pdf`)는 UPSTAGE_API_KEY가 있으면 생성형 AI(Upstage Solar Pro 4)로 표를 추출하며 결과에 그 사실을 표시합니다. 키가 없으면 pypdf로 로컬 텍스트 추출(host_ai 모드) 후 정리 안내에 따라 다음 도구 입력으로 직접 정리할 수 있습니다.
-- **데이터 전송:** UPSTAGE_API_KEY를 설정해 PDF 도구를 사용할 때만 문서 내용이 Upstage API(api.upstage.ai)로 전송됩니다. 시세 조회(`stock_price_lookup`)는 KRX로 종목코드·날짜를, 공시가격 조회(`official_property_price`, VWORLD_KEY 필요)는 브이월드로 주소·필지번호·연도를 보냅니다. 키 없이 사용하면(pypdf 로컬 추출) 외부 전송이 없습니다. 민감정보가 담긴 문서는 API 전송 시 넣지 마세요.
+- **AI 사용 고지:** PDF 검토 도구 3개와 `kr_comparable_candidates`를 뺀 계산·판정·조회 도구는 모두 코드로 동작하며 생성형 AI를 쓰지 않습니다. PDF 검토 도구 3개(`extract_relations`, `tunnelling_from_pdf`, `return_precheck_pdf`)는 UPSTAGE_API_KEY가 있으면 생성형 AI(Upstage Solar Pro 4)로 표를 추출하며 결과에 그 사실을 표시합니다. 키가 없으면 pypdf로 로컬 텍스트 추출(host_ai 모드) 후 정리 안내에 따라 다음 도구 입력으로 직접 정리할 수 있습니다. `kr_comparable_candidates`는 UPSTAGE_API_KEY가 있으면 공시 매출 표의 행 이름만 생성형 AI(Upstage Solar Pro 4)로 분류하고(금액은 원문 숫자 그대로) 결과에 분류 방법을 표시합니다. 키가 없으면 이름 규칙으로 분류하고 '정확도 낮음'으로 표시합니다.
+- **데이터 전송:** UPSTAGE_API_KEY를 설정해 PDF 도구를 사용할 때만 문서 내용이 Upstage API(api.upstage.ai)로 전송됩니다. 시세 조회(`stock_price_lookup`)는 KRX로 종목코드·날짜를, 공시가격 조회(`official_property_price`, VWORLD_KEY 필요)는 브이월드로 주소·필지번호·연도를 보냅니다. 국내 비교기업 후보(`kr_comparable_candidates`, DART_API_KEY 필요)는 OpenDART로 회사 고유번호·연도·접수번호를 보내고, UPSTAGE_API_KEY가 있으면 공시 매출 행 이름(금액 제외)을 Upstage로 보냅니다. 키 없이 사용하면(pypdf 로컬 추출) 외부 전송이 없습니다. 민감정보가 담긴 문서는 API 전송 시 넣지 마세요.
 
 </details>
 

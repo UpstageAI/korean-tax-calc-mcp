@@ -656,7 +656,7 @@ _EXCEL_TAIL = ("계산 근거·보고용 Excel은 직접 짠다(구성은 자유
                "{{cell: \"시트!칸\", call: \"{id}\"}}를 넣어 대조하고(key 생략 가능), 대조하지 않은 금액은 사용자에게 밝힌다. 법정서식(별지 서식) 엑셀이 필요할 때만 export_workbook. "
                "For Excel, build the workbook yourself, save it and run verify_workbook with checks [{{cell: \"Sheet!B9\", call: \"{id}\"}}]; "
                "tell the user which amounts were not checked. Use export_workbook only for Korean statutory return forms.")
-_NO_EXCEL_TAIL = frozenset({"export_workbook", "verify_workbook", "find_tool"})
+_NO_EXCEL_TAIL = frozenset({"export_workbook", "verify_workbook", "find_tool", "kr_comparable_candidates"})
 
 
 _PY_DATE_ERR = re.compile(r"Invalid isoformat string: '([^']*)'|time data '([^']*)' does not match format")
@@ -1272,6 +1272,41 @@ def tp_comparable_screen(tested_party: Annotated[dict, Field(description="분석
                               multi_year_reason=multi_year_reason, op_source=op_source, fx=fx, sensitivity=sensitivity)
     if "error" in r:
         return r
+    extra = {k: v for k, v in r.items() if k not in ("결과", "근거")}
+    return _ok(r["결과"], r["근거"], **extra)
+
+
+@mcp.tool(annotations=CALC_OPEN, description="""Korean comparable company candidates from DART filings: financials, revenue mix and profile (국내 비교기업 후보·프로필).
+국내 비교기업 후보 만들기 — 금융감독원 전자공시(OpenDART)에서 업종 코드(KSIC 앞자리)로 상장·비상장 외감법인 후보를 모아 연도별 재무(매출·매출원가·판관비·영업이익·자산총계·재고·매출채권·매입채무)와
+후보 프로필(매출 구성 6갈래·재고/매출·원재료 재고·유형/무형자산 비중·연구개발·광고·매출채권·운전자본·특수관계 매출·최대주주 지분)을 근거(접수번호·계정)와 함께 낸다.
+언제: 이전가격 거래순이익률방법의 비교대상 후보를 국내 공시로 직접 찾고, 후보마다 기능·자산·위험 숫자를 붙여 분석대상과 비교하려 할 때.
+입력: 업종 코드 앞자리 → industry_codes, 분석 연도 → years, 상장 구분 → listed, 매출 범위(마지막 연도, 원) → revenue_min·revenue_max, 후보 수 → limit(상한 100),
+  재무제표 기준 → fs_pref(별도 우선), 비상장 탐색 기간 → unlisted_window, 이번 실행 호출 상한 → max_calls.
+결과: 후보_행(tp_comparable_screen 입력 열 그대로 + 접수번호·연결/별도·바꾼 칸), 후보_프로필(값마다 상태: 확보 / 불명-없음(계정 없음 → 0) / 불명-못찾음),
+  매출_분류_방법(Solar 또는 규칙 — 규칙이면 정확도_낮음), 업종_짧은코드_포함(등록 코드가 입력보다 짧아 들어온 회사 — 세분류 확인), 호출 수, 멈춤 사유.
+처리: 재무는 상장 = 단일회사 재무 API(별도 우선, 없으면 연결), 비상장 = 감사보고서 원문 표(그 해 보고서, 없으면 다음 해 보고서의 전기 열). 매출 구성 금액은 원문 표 숫자만 쓰고,
+  분류만 Solar(UPSTAGE_API_KEY 있을 때, 행 이름만 보냄) 또는 이름 규칙으로 함. 매출 구성 합계가 매출의 80~120%일 때만 비중을 확보로 둠.
+키: 환경변수 DART_API_KEY(본인 발급, 무료 — opendart.fss.or.kr, 약관상 본인만 사용). 없으면 이 도구만 꺼지고 발급 안내를 돌려줌.
+안전: 순차 호출·0.35초 간격·하루 상한(KR_COMPARABLES_DAILY_CAP, 기본 2,000)·실행 상한(max_calls)·한도 초과(020)·연속 오류 시 멈춤, 결과·오류에 키를 남기지 않음,
+  캐시(KR_COMPARABLES_CACHE_DIR, 기본 ~/.cache/korean-tax-calc-mcp/opendart)로 같은 요청은 다시 부르지 않음 — 처음 실행은 회사 수만큼 호출이 들고, 상한에 닿으면 다시 실행해 이어감.
+한계(범위 밖): 비교대상이 적절한지 판단(프로필 비교·사람 검토 몫), 비상장 최대주주 지분(API 없음 → 불명), 12월 결산 외 회사·영업부문별 재무, 비상장 탐색은 기간 안 감사보고서를 낸 회사만.""")
+@_guard
+def kr_comparable_candidates(
+        industry_codes: Annotated[list[str], Field(description="업종 코드 앞자리 목록(KSIC, 예 ['4651', '4652']) — 공시 회사의 등록 코드가 2~5자리로 섞여 있어 앞자리로 맞춤")],
+        years: Annotated[list[int], Field(description="분석 연도 목록(사업연도, 예 [2022, 2023, 2024])")],
+        listed: Annotated[Literal["상장", "비상장", "둘 다"], Field(description="상장 구분 — 상장(코스피·코스닥·코넥스)|비상장(외부감사 대상)|둘 다")] = "둘 다",
+        revenue_min: Annotated[int | None, Field(description="마지막 연도 매출 하한(원, 선택)", ge=0)] = None,
+        revenue_max: Annotated[int | None, Field(description="마지막 연도 매출 상한(원, 선택)", ge=0)] = None,
+        limit: Annotated[int, Field(description="후보 수(기본 30, 상한 100)", ge=1, le=100)] = 30,
+        fs_pref: Annotated[Literal["별도", "연결"], Field(description="재무제표 기준 — 별도(이전가격 기본)|연결. 없으면 다른 쪽으로 대체하고 fs_div에 표시")] = "별도",
+        unlisted_window: Annotated[list[str] | None, Field(description="비상장 탐색 기간 [시작 YYYYMMDD, 끝 YYYYMMDD](3개월 이내, 생략하면 마지막 연도 다음 해 3월 — 12월 결산 감사보고서가 몰리는 달)")] = None,
+        max_calls: Annotated[int, Field(description="이번 실행 OpenDART 호출 상한(기본 300) — 닿으면 멈추고 다시 실행하면 캐시로 이어감", ge=1, le=5000)] = 300) -> dict:
+    from .engine.kr_comparables import candidates as KRC
+    win = tuple(unlisted_window) if unlisted_window else None
+    if win is not None and len(win) != 2:
+        raise ValueError("unlisted_window는 [시작 YYYYMMDD, 끝 YYYYMMDD]")
+    r = KRC.run(industry_codes=industry_codes, years=years, listed=listed, revenue_min=revenue_min, revenue_max=revenue_max,
+                limit=limit, fs_pref=fs_pref, unlisted_window=win, max_calls=max_calls)
     extra = {k: v for k, v in r.items() if k not in ("결과", "근거")}
     return _ok(r["결과"], r["근거"], **extra)
 
@@ -12106,7 +12141,7 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "소급공제": ["loss_carryback_refund"], "결손금 환급": ["loss_carryback_refund"], "결손금 소급": ["loss_carryback_refund"],
     "이월결손금 추적": ["loss_carryforward_ledger"], "결손금 잔액": ["loss_carryforward_ledger"], "결손금 소멸": ["loss_carryforward_ledger"], "이월결손금": ["loss_carryforward_ledger", "loss_carryforward_limit"],
     "해외법인 청산": ["foreign_subsidiary_liquidation", "foreign_exchange_reporting"], "자회사 청산 손실": ["foreign_subsidiary_liquidation"], "투자주식 손실": ["foreign_subsidiary_liquidation"],
-    "정상가격 범위": ["arm_length_range"], "사분위": ["arm_length_range"], "이전가격 조정액": ["arm_length_range"], "비교대상 이익률": ["arm_length_range", "tp_comparable_screen"], "비교대상 선정": ["tp_comparable_screen"], "비교기업": ["tp_comparable_screen"], "특정외국법인 배당": ["cfc_actual_dividend"], "배당간주 실제 배당": ["cfc_actual_dividend"], "특정외국법인 주식 양도": ["cfc_share_disposal"], "통고처분": ["tax_crime_settlement_amount"], "벌금상당액": ["tax_crime_settlement_amount"], "조세범칙": ["tax_crime_settlement_amount"], "스크리닝": ["tp_comparable_screen"], "탈락 사유": ["tp_comparable_screen"], "벤치마크": ["tp_comparable_screen"],
+    "정상가격 범위": ["arm_length_range"], "사분위": ["arm_length_range"], "이전가격 조정액": ["arm_length_range"], "비교대상 이익률": ["arm_length_range", "tp_comparable_screen"], "비교대상 선정": ["tp_comparable_screen"], "비교기업": ["kr_comparable_candidates", "tp_comparable_screen"], "국내 비교기업": ["kr_comparable_candidates"], "비교기업 후보": ["kr_comparable_candidates"], "전자공시 재무": ["kr_comparable_candidates"], "공시 재무제표": ["kr_comparable_candidates"], "감사보고서 재무": ["kr_comparable_candidates"], "특정외국법인 배당": ["cfc_actual_dividend"], "배당간주 실제 배당": ["cfc_actual_dividend"], "특정외국법인 주식 양도": ["cfc_share_disposal"], "통고처분": ["tax_crime_settlement_amount"], "벌금상당액": ["tax_crime_settlement_amount"], "조세범칙": ["tax_crime_settlement_amount"], "스크리닝": ["tp_comparable_screen"], "탈락 사유": ["tp_comparable_screen"], "벤치마크": ["tp_comparable_screen"],
     "마일리지충당부채": ["provision_reserve_ledger"], "포인트충당부채": ["provision_reserve_ledger"], "판매보증충당부채": ["provision_reserve_ledger"],
     "충당부채": ["provision_reserve_ledger"], "유효기간 소멸": ["provision_reserve_ledger"], "마일리지 유보": ["provision_reserve_ledger"],
     "마일리지": ["vat_tax_base_adjustments", "provision_reserve_ledger"], "포인트 결제": ["vat_tax_base_adjustments"], "반품": ["vat_tax_base_adjustments"], "환입": ["vat_tax_base_adjustments"],
@@ -12202,7 +12237,8 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "해외 지주회사 유보소득": ["cfc_deemed_dividend"],
     # 영어 질의(외국 기업·주재원) — 도구 설명 영문 첫 줄과 함께 쓰인다. 공백을 떼고 소문자로 비교
     "corporate income tax": ["corporate_tax"],
-    "transfer pricing": ["arm_length_range", "tp_comparable_screen", "international_transaction_statement"],
+    "transfer pricing": ["arm_length_range", "tp_comparable_screen", "international_transaction_statement", "kr_comparable_candidates"],
+    "comparable companies korea": ["kr_comparable_candidates"], "dart filings": ["kr_comparable_candidates"],
     "arm's length": ["arm_length_range"],
     "thin cap": ["thin_capitalization"],
     "expat": ["expat_cost_recharge"],
