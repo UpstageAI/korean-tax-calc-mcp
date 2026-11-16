@@ -4,6 +4,7 @@
 import re
 
 from . import upstage
+from .related import stake_rows
 
 
 PROMPT = """아래 자료에서 특수관계 판독용 관계표를 뽑는다. 판정은 하지 않는다. 자료에 없는 사람·관계·숫자는 만들지 않는다.
@@ -52,7 +53,7 @@ def normalize(j):
 
 def to_case(j):
     """추출 결과 → related.judge_* 입력."""
-    return {"people": j["people"], "family": [tuple(x) for x in j["family"]], "stakes": [(h, c, float(r)) for h, c, r in j["stakes"]],
+    return {"people": j["people"], "family": [tuple(x) for x in j["family"]], "stakes": stake_rows(j["stakes"]),
             "officers": j.get("officers", {}), "employees": j.get("employees", {}), "livelihood": [tuple(x) for x in j.get("livelihood", [])],
             "influence": [tuple(x) for x in j.get("influence", [])], "group": j.get("group", {}),
             "livelihood_shared": list(j.get("livelihood_shared") or [])}

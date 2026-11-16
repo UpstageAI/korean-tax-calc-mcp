@@ -52,11 +52,13 @@ def normalize_market(market: str) -> tuple[str | None, str | None]:
     return None, None
 
 
-def _ratio(x: float | int | None) -> tuple[float | None, str | None]:
-    """지분율: 0~1 비율. 1보다 크면 퍼센트로 본다."""
+def _ratio(x: float | int | None, name: str = "지분율") -> tuple[float | None, str | None]:
+    """지분율: 0~1 비율. 1보다 크면 퍼센트로 본다(도구 설명의 '0~1 비율(0.015) 또는 %(1.5)'). 퍼센트로 읽어도 100%를 넘으면 입력 오류."""
     if x is None:
         return None, None
     v = float(x)
+    if v > 100.0:
+        raise ValueError(f"{name}={x} — 지분율은 0~1 비율(예: 0.015) 또는 퍼센트(예: 1.5)로 넣으세요. 100%를 넘을 수 없음")
     if v > 1.0:
         return v / 100.0, f"지분율 {x} → {v / 100.0:.4f}(퍼센트로 해석)"
     return v, None
@@ -106,7 +108,10 @@ def major_shareholder(transfer_date: str, market: str, own_ratio=None, own_mcap=
             return 명부
         own_ratio, related_ratio, own_mcap, related_mcap = 명부["own_ratio"], 명부["related_ratio"], 명부["own_mcap"], 명부["related_mcap"]
         해석.append("지분율·시가총액을 주주 명부(total_shares·own_shares·holders·price)에서 계산")
-    own_r, n1 = _ratio(own_ratio); rel_r, n2 = _ratio(related_ratio)
+    if 명부 is not None:   # 명부에서 낸 값은 이미 0~1 비율 — 1을 넘는 값을 퍼센트로 다시 읽지 않는다(holdings_to_inputs가 주식 수 합계를 검증)
+        own_r, n1, rel_r, n2 = own_ratio, None, related_ratio, None
+    else:
+        own_r, n1 = _ratio(own_ratio, "own_ratio"); rel_r, n2 = _ratio(related_ratio, "related_ratio")
     for n in (n1, n2):
         if n:
             해석.append(n)
@@ -182,7 +187,7 @@ def major_shareholder(transfer_date: str, market: str, own_ratio=None, own_mcap=
             if meets(cr, cm):
                 판정, 이유 = "확인 필요", f"최대주주군이면 합산되는 주주({'·'.join(명부['조건부'])})까지 합하면 기준 충족(지분율 {_pct(cr)}) — 주주 1인등의 지분 합계가 그 법인에서 최대인지(is_max_group) 확인 필요"
     if 판정 != "대주주" and post_acquisition_ratio is not None:
-        pr, n3 = _ratio(post_acquisition_ratio)
+        pr, n3 = _ratio(post_acquisition_ratio, "post_acquisition_ratio")
         if n3:
             해석.append(n3.replace("지분율", "취득 후 지분율"))
         if pr >= thr_r:
@@ -311,6 +316,11 @@ def holdings_to_inputs(P: dict, listed: bool, td: date, is_max: bool | None, tot
             rel_shares += sh
         elif dec == "최대주주군이면 합산":
             cond_shares += sh; 조건부.append(row["주주"])
+    listed_sum = own_total + sum(r["주식수"] for r in 주주별)
+    if listed_sum > total_shares:
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"보유 주식 수 합계 {listed_sum:,}주(본인 {own_total:,}주" + (f" + holders {listed_sum - own_total:,}주" if listed_sum > own_total else "")
+                         + f")가 total_shares {int(total_shares):,}주(발행주식 등 합계)보다 많음 — 주식 수나 total_shares를 확인하세요"]}
     out = {"own_ratio": own_total / total_shares, "related_ratio": rel_shares / total_shares, "cond_ratio": cond_shares / total_shares,
            "own_mcap": None, "related_mcap": None, "cond_mcap": None, "판단": 판단, "주주별": 주주별, "조건부": 조건부}
     if price is not None:

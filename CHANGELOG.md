@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.58.1 (2026-11-16)
+
+전 도구 점검(0.57.2 기준, 입력 5,301건)에서 찾은 결함을 고침 — 도구 입구에서 날짜 문자열을 YYYY-MM-DD로 정규화하고, 틀린 값·파이썬 원문 오류·음수 입력을 바로잡음. 세율·연도표·계산식은 그대로(일감몰아주기 음수 세후영업이익 처리만 바꿈), YYYY-MM-DD로 넣던 정상 입력의 결과는 그대로(도구 140개). Claude 작성.
+
+- **왜** — `engine/inputs.py`의 `to_date()`가 `date.fromisoformat`이라 파이썬 3.11부터 `20250101`이 검증을 지나가는데, 엔진은 날짜 문자열을 그대로 비교하거나(`"2025-07-01" > "20250101"`은 거짓) 잘라 써서(`"20241001"[5:7]`은 `"00"`) 값이 조용히 틀렸음(8개 도구). 3.10에서는 같은 입력이 거절돼 파이썬 판마다 동작도 달랐고, strptime을 쓰는 5개 도구는 `time data … does not match format` 원문 오류를 냈음. 그 밖에 KeyError 문구 노출, 음수 증여의제이익, 원 미만 float, 범위 검증 없는 입력이 점검에서 나옴.
+- **날짜 정규화(공용)** — 서버 `_guard`가 모든 계산 도구(엑셀 두 도구·`find_tool` 제외)의 인자를 계산 전에 훑어, 날짜 자리의 `YYYYMMDD`·`YYYY.MM.DD`(`2025. 1. 31.` 포함)·`YYYY/MM/DD`·`YYYY-M-D`·`YYYY년 M월 D일`을 `YYYY-MM-DD`로 바꿈. 날짜 자리는 인자·키 이름으로 알아봄(`…date`·`…_on`·`on`·`…_start`·`…_end`·`due`·`…_due`·`until`·`day`, `…일`·`…시기`·`…기한`·`…일자`·`날짜`) — 목록·딕셔너리 안(예: `movements[].date`, `items[].공급시기`), Pydantic 모델 필드도 같음. 꼴이 맞지 않는 값(연도-기수 `2025-1`, 연월 `2025-06`, 코드·금액)은 건드리지 않음. 꼴은 맞는데 실제 날짜가 아니면(`20250230`) "YYYY-MM-DD 형식의 실제 날짜로(예: 2025-03-31)" 입력 오류. `to_date()`는 판과 무관하게 YYYY-MM-DD만 받음(`engine/inputs.py` `normalize_dates`·`DATE_KEY`, `server.py` `_normalize_call_dates`).
+- **고친 것**
+
+| 번호 | 도구 | 전 | 후 |
+|---|---|---|---|
+| A2 | `depreciation_adjustment` | `fy_start='20250101'`이면 월할 무시(상각범위액 24,000,000) | YYYY-MM-DD와 같은 12,000,000 |
+| A3 | `vat_exempt_use_deemed_supply` | `use_date='20241001'`이면 경과 과세기간 틀림(34,000,000) | 32,000,000 |
+| A4 | `vat_deemed_supply_items` | 취득일·공급일 YYYYMMDD면 과세표준 2,000,000 | 1,500,000 |
+| A5 | `vat_input_tax_deduction` | `공급시기='20210630'`이면 2021.7.1. 경계가 뒤집혀 공제 | 불공제 10,000,000 |
+| A6 | `bad_debt_adjustment` | `date` YYYYMMDD면 시행일 비교가 뒤집혀 손금불산입·유보가 사라짐 | YYYY-MM-DD와 같은 세무조정 |
+| A7 | `other_income_aggregate` | `occurred_on='20160630'`이면 2016.7.1. 경계 뒤집힘 | YYYY-MM-DD와 같은 0 |
+| A8 | `vat_return_general` | `filed_on='20260125'`이면 경감공제 5,000 | 10,000 |
+| A9 | `individual_donation_expense` | `served_on='20240228'`이면 1일 8만원 | 1일 5만원(100,000) |
+| A1 | `retirement_income_tax` | 2016~2019년 퇴직·`income=0`이면 `입력 오류: '연평균과세표준'`(KeyError) | 퇴직소득세 0(종전규정 표시 항목을 0으로 채움). `income`이 음수면 입력 오류 |
+| A10 | `tunnelling_gift` | 세후영업이익 음수 → "과세 — 증여의제이익 합계 -30,000,000원" | 증여의제이익 0, "과세 없음 — 세후영업이익 …원이 0 이하라 증여의제이익 0원" |
+| A11 | `tunnelling_gift_nts` | 증여의제이익 `350000000.00000006`(float) | 원 미만 버린 정수 350,000,000(`exact`로 뜻한 값을 읽은 뒤 버림, rounding 규칙 2) |
+| A12 | `stock_major_shareholder` | 보유 주식(본인+holders)이 발행주식총수보다 많아도 계산, 명부 비율 500%를 5%로 다시 읽음 | 입력 오류(합계 주식 수 표시). 명부에서 낸 비율은 퍼센트로 다시 읽지 않음. `own_ratio` 등 직접 입력은 설명대로 0~1 또는 %(1.5)이되 100%를 넘으면 입력 오류 |
+| A13 | `nonresident_withholding` | `treaty_rate=-0.1` → 음수 세액, `15` → "제한세율 1500%"로 읽고 국내세율 | 0~1 밖이면 입력 오류("15%라면 0.15") — 퍼센트로 바꾸거나 국내세율로 대신 계산하지 않음 |
+| A14 | `invoice_penalty_bundle` | 음수 `supply_amount`가 다른 거래 가산세를 깎음 | 입력 오류 |
+| (b)1 | `minimum_tax_adjustment` | 오류 `문제`가 한 단어(`"코드"`·`"101"`·`"10년"`·`"중소기업"`·`"exclusion_order"`·`"income_deduct"`) | 무엇이 왜 틀렸고 무엇을 넣는지 문장으로(예: "credits 코드 13W carryforward.year=2014 — 이월분 발생 사업연도는 2015~2024 …") |
+| (b)2 | 날짜·숫자 원문 오류 | `Invalid isoformat string: 'bad-date'`, `time data … does not match format`, `could not convert string to float: 'x'`, `'int' object is not iterable` | 자리 이름과 고칠 방법(`due='bad-date' — 날짜로 읽을 수 없음. YYYY-MM-DD …`, `stakes[0]의 지분율 'x' — 숫자가 아님. 0~1 소수로 …`, `dividends['직접']=5 — [배당소득(원), 분모] 두 숫자로 …`). 날짜·숫자 변환 원문 오류는 `_guard`에서 한 번에 바꿈 |
+| (b)4 | 음수 입력 18개 도구 | 음수 금액이 결과의 음수 세액·과세표준으로 번짐 | 음수가 법적으로 의미 없는 입력만 입력 오류(아래) |
+
+- **음수를 막은 입력**(결손금·△유보·환급·차감처럼 음수가 맞는 입력은 그대로)
+  - `vat_simplified_taxpayer` 공급대가·매입 공급대가·카드 발급분 등(겸영 `industries[].supply_incl_vat` 포함), `vat_bad_debt_credit` 대손금액(회수분도 회수한 금액을 양수로 — 회수는 `recovered`), `vat_deemed_input_credit` 매입가액·과세표준·공급가액·재고(`items[]` 포함), `deemed_dividend_bonus_shares` 액면가·보유 주식 수, `unfair_transaction` 시가·거래 단가·수량, `liquidation_income` 환가액(`yubo`의 △유보는 그대로), `business_car_expense` 유지비·감가상각비, `capital_gains_unfair_transaction` 시가·거래가액·낸 세액, `input_tax_recalculation` 매입세액, `common_input_tax` 예정분 공통매입세액·불공제액·공급가액·정산 세액, `bundled_supply_split` 감정가액·기준시가·장부가액, `asset_grant_reserve` 수령액·멸실 자산 장부가액·자산 취득가액, `retirement_allowance_adjustment` 퇴직연금 금액, `tunnelling_gift`·`tunnelling_gift_nts` 매출액·과세제외매출액(특수관계법인 매출 합계가 총 매출액보다 커도 입력 오류), `retirement_income_tax` 퇴직소득금액, `invoice_penalty_bundle` 공급가액.
+  - `income_loss_offset` — 근로·연금·기타·이자·배당 소득금액(`incomes`·`history[].incomes`)과 원천징수세율 적용분. 결손금은 사업소득금액 계산에서 생김(소득세법 제45조제1항) — 사업·부동산임대·주거용임대는 음수 그대로.
+- **원문 확인**(법제처, 조문 MCP 배포본으로 2026-11-16 조회)
+  - 상속세 및 증여세법 제45조의3(2024.9.15. 시행본) 제1항 — 지배주주등이 같은 항 제2호의 "이익"을 증여받은 것으로 보고, 제2호 계산식은 "수혜법인의 세후영업이익 × … 거래비율 × … 보유비율". 시행령 제34조의3제12항(세후영업이익 = 세무조정 반영 영업손익 − 법인세 상당액, × 과세매출비율)·제13항(출자관계별 합산). 세후영업이익이 음수일 때를 따로 정한 문언은 없음 — 영업손실이면 증여받은 것으로 볼 이익이 없어 0으로 처리(짝 도구 `tunnelling_gift_nts`의 종전 처리와 같음). 이 처리를 직접 다룬 해석례는 확인하지 못함.
+  - 소득세법 제48조(2017.1.1. 시행본) 제2항 — 퇴직소득금액이 근속연수공제에 미달하면 퇴직소득금액을 공제액으로 → 퇴직소득 0이면 과세표준·세액 0.
+  - 소득세법 제45조제1항(2025.1.1. 시행본) — 사업소득금액 계산에서 생긴 결손금을 근로·연금·기타·이자·배당소득금액에서 순서대로 공제.
+  - 부가가치세법 제45조제1항 — 대손세액 = 대손금액 × 10/110, 회수한 경우 회수한 대손금액의 대손세액을 매출세액에 더함.
+- **바뀐 동작(호환 주의)** — YYYYMMDD·YYYY/MM/DD 등으로 넣던 날짜가 이제 YYYY-MM-DD와 같은 결과를 냄(전에는 도구에 따라 틀린 값이거나 거절). 결과에 그 날짜를 되돌려 적는 곳은 YYYY-MM-DD로 적힘. 위 음수·범위 입력은 계산 대신 입력 오류. `tunnelling_gift_nts`의 증여의제이익·합계가 정수(값은 같음, 원 미만 버림). 오류 문구가 바뀐 곳: `minimum_tax_adjustment`의 `문제`, `to_date` 오류에 예시 날짜, 파이썬 원문 날짜·숫자 오류.
+- **테스트** — `tests/test_sweep_fixes_1116.py`: 날짜 꼴 정규화(받는 꼴 7가지, 건드리지 않는 값 9가지, 이름으로만 판별), A2~A9 손계산 값 + YYYYMMDD·YYYY.MM.DD·YYYY/MM/DD·`2025. 1. 31.`·`2025년 1월 31일` 다섯 꼴이 YYYY-MM-DD와 같은 결과, **점검 원자료의 날짜가 든 정상 입력 1,132건(80개 도구) 전부를 YYYYMMDD로 바꿔 같은 결과**(`tests/data/date_format_cases_1116.json`), strptime 도구 4개, A1·A10~A14, (b)1·(b)2, 음수 입력 18건과 음수가 맞는 입력 3건. 기대값은 YYYY-MM-DD 입력 결과나 손계산. 날짜를 YYYY/MM/DD로 넣으면 오류라고 보던 기존 테스트 4건은 같은 결과를 보도록 바꿈(실제 날짜가 아니면 오류는 그대로 확인).
+- **점검 재실행** — 날짜 형식 대조(`fmt_sweep.py`, 1,132건): 0.57.2 결과 다름 44건·거절 241건 → 0.58.1 다름 0건·거절 0건. 점검 입력 5,205건(엑셀 두 도구 제외)을 0.58.0과 견주면 결과가 달라진 것은 위 음수·범위 입력, 날짜 꼴 변형, 오류 문구, A1·A10·A11뿐.
+- **한계** — 범위 밖·앞뒤가 안 맞는 날짜, 영문 모드 한글, 문장 잘림, 개발자 표기 오류문, 다른 float 표기, 고정 '확인 필요' 문구는 다음 묶음. 날짜 자리를 이름으로 알아보므로 이름 규칙 밖의 키에 든 날짜는 바꾸지 않음(점검 원자료의 날짜 키는 모두 규칙 안). 음수 검사는 점검에서 음수 세액이 나온 도구와 그 짝 입력만 — 다른 도구의 음수 입력은 이번에 보지 않음.
+
 ## 0.58.0 (2026-11-16)
 
 `withholding_late_payment_penalty`에 세목 입력 `tax`를 더해 원천징수와 함께 특별징수하는 지방소득세의 납부지연가산세(지방세기본법 제56조)를 계산. 기본값(`tax="national"`)의 결과는 종전과 같음(도구 140개 그대로). Claude 작성.

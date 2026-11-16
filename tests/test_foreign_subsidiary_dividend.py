@@ -72,7 +72,9 @@ def test_errors():
     assert "error" in c("foreign_subsidiary_dividend", {**D1, "ownership_ratio": 1.5})
     assert "error" in c("foreign_subsidiary_dividend", {**D1, "dividend": 0})
     assert "error" in c("foreign_subsidiary_dividend", {**D1, "foreign_withholding": -1})
-    assert "error" in c("foreign_subsidiary_dividend", {**D1, "received_on": "2026/06/30"})
+    # 0.58.1: YYYY/MM/DD는 도구 입구에서 YYYY-MM-DD로 정규화(같은 결과), 실제 날짜가 아니면 오류
+    assert c("foreign_subsidiary_dividend", {**D1, "received_on": "2026/06/30"})["결과"] == c("foreign_subsidiary_dividend", {**D1, "received_on": "2026-06-30"})["결과"]
+    assert "error" in c("foreign_subsidiary_dividend", {**D1, "received_on": "2026/06/31"})
     assert "error" in c("foreign_subsidiary_dividend", {**D1, "held_months": 4, "subsidiary_income": 20 * M})   # 소득 ≤ 법인세
 
 

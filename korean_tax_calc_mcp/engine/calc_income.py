@@ -491,7 +491,10 @@ def retirement_tax_transition(income, years, retire_year, years_before_2013=0):
     share = RETIREMENT_NEW_RULE_SHARE[retire_year]
     new = retirement_tax_steps(income, years, retire_year)
     if income <= 0 or years <= 0:
-        return {"개정규정": new, "종전규정": {"정률공제": 0, "근속연수공제": 0, "과세표준": 0, "산출세액": 0}, "개정규정_비율": share, "산출세액": 0}
+        # 퇴직소득금액 0 — 공제는 퇴직소득금액을 한도로 하므로(종전·개정 제48조②) 과세표준·세액 모두 0. 종전규정 표시 항목을 빠짐없이 0으로 채운다.
+        zero = {"정률공제": 0, "근속연수공제": 0, "과세표준": 0, "과세표준_2012이전분": 0, "과세표준_2013이후분": 0,
+                "연평균과세표준": 0, "산출세액_2012이전분": 0, "산출세액_2013이후분": 0, "산출세액": 0}
+        return {"개정규정": new, "종전규정": zero, "개정규정_비율": share, "산출세액": 0}
     rates = RATES[_y(retire_year)]
     flat = _x(income) * 40 / 100
     svc = retirement_service_deduction(years, retire_year)

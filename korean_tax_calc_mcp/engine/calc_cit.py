@@ -816,15 +816,15 @@ def min_tax_adjust(
     문제 = []
     # ── 입력 확인 ──
     if reserve + special_depreciation + exclusion_mt > income_deduct:
-        문제.append("income_deduct")
+        문제.append(f"income_deduct={income_deduct:,} — 손금산입(103)은 그 안에 든 준비금(105) {reserve:,} + 특별상각(106) {special_depreciation:,} + 최저한세 대상 익금불산입·손금산입(114) {exclusion_mt:,}의 합계 이상이어야 함. 103 전체 금액을 넣거나 105·106·114를 확인하세요")
     if nontaxable_mt > nontaxable:
-        문제.append("nontaxable")
+        문제.append(f"nontaxable_mt={nontaxable_mt:,} — 최저한세 대상 비과세(113)는 비과세소득(nontaxable, 112) {nontaxable:,}을 넘을 수 없음. 112에 비과세소득 전체를 넣으세요")
     if income_deduction_mt > income_deduction:
-        문제.append("income_deduction")
+        문제.append(f"income_deduction_mt={income_deduction_mt:,} — 최저한세 대상 소득공제(117)는 소득공제(income_deduction, 116) {income_deduction:,}을 넘을 수 없음. 116에 소득공제 전체를 넣으세요")
     if sme and grace_year != 0:
         문제.append("sme=True면 grace_year는 0이어야 함")
     if not (1 <= months <= 12):
-        문제.append("months")
+        문제.append(f"months={months} — 사업연도 월수는 1~12(1년 미만 사업연도면 그 월수)")
     코드표 = _load_code_table()
     참고코드 = {"183", "189", "1E5"}
     reductions = reductions or []
@@ -835,34 +835,34 @@ def min_tax_adjust(
     for rd in reductions:
         코드 = rd.get("code", "")
         if 코드 not in 코드표:
-            문제.append("코드")
+            문제.append(f"reductions 코드 {코드!r} — 최저한세조정계산서(별지 제4호서식) 감면 코드표에 없는 코드. 서식의 세액감면 코드(예: 중소기업 특별세액감면)로 넣으세요")
             continue
         ct = 코드표[코드]
         if ct["묶음"] not in ("제외감면", "대상감면"):
             if ct["묶음"] == "참고":
-                문제.append("101")
+                문제.append(f"reductions 코드 {코드}({ct['구분']}) — 최저한세조정계산서에 참고로만 적는 코드라 따로 넣지 않음(외국납부세액공제 세부 줄 189·1E5는 101 외국납부세액공제에 합산)")
             else:
                 문제.append(f"{코드}는 세액공제 코드 — reductions가 아니라 credits에 넣을 것(감면 아님)")
             continue
         if 코드 in codes_used:
-            문제.append("코드")
+            문제.append(f"reductions 코드 {코드} 중복 — 같은 코드는 한 번만, 금액을 합쳐 넣으세요")
             continue
         codes_used.add(코드)
         red_codes.append(코드)
     for cr in credits:
         코드 = cr.get("code", "")
         if 코드 not in 코드표:
-            문제.append("코드")
+            문제.append(f"credits 코드 {코드!r} — 최저한세조정계산서(별지 제4호서식) 공제 코드표에 없는 코드. 서식의 세액공제 코드(예: 통합투자세액공제 13W)로 넣으세요")
             continue
         ct = 코드표[코드]
         if ct["묶음"] not in ("제외공제", "대상공제"):
             if ct["묶음"] == "참고":
-                문제.append("101")
+                문제.append(f"credits 코드 {코드}({ct['구분']}) — 최저한세조정계산서에 참고로만 적는 코드라 따로 넣지 않음(외국납부세액공제 세부 줄 189·1E5는 101 외국납부세액공제에 합산)")
             else:
                 문제.append(f"{코드}는 세액감면 코드 — credits가 아니라 reductions에 넣을 것(공제 아님)")
             continue
         if 코드 in codes_used:
-            문제.append("코드")
+            문제.append(f"credits 코드 {코드} 중복 — 같은 코드가 reductions·credits에 두 번 있음. 한 번만, 금액을 합쳐 넣으세요")
             continue
         codes_used.add(코드)
         cred_codes.append(코드)
@@ -871,11 +871,12 @@ def min_tax_adjust(
             cy = cf.get("year")
             ca = cf.get("amount")
             if cy is not None and (ca is None or ca < 0):
-                문제.append("10년")
+                문제.append(f"credits {코드} carryforward(year={cy})의 amount={ca!r} — 이월 세액공제액(0원 이상)을 넣으세요(이월공제기간 10년 안 발생분)")
                 continue
             if cy is not None and (ca is None or ca >= 0):
                 if cy < year - 10 or cy >= year:
-                    문제.append("10년")
+                    문제.append(f"credits {코드} carryforward.year={cy} — 이월분 발생 사업연도는 {year - 10}~{year - 1}(직전 10년 안, 조세특례제한법 제144조①)이어야 함. "
+                                "당기 발생분은 current에 넣으세요")
                 else:
                     # 조세특례제한법 제144조① 이월공제기간 — 2020.12.29. 개정(법률 제17759호) 전: 5년(창업 중소기업 제5조 7년·제10조 10년, 제10조①1호 10년),
                     # 개정 후 10년. 부칙 제35조: 2021.1.1. 이후 신고분부터 / 제51조: 시행 전에 종전 기간이 지난 세액은 종전 규정
@@ -896,12 +897,12 @@ def min_tax_adjust(
         for 코드 in list(codes_used):
             ct = 코드표.get(코드)
             if ct and ct["코드"] in ("13L", "10E", "13M"):
-                문제.append("중소기업")
+                문제.append(f"코드 {ct['코드']}({ct['구분']}) — sme=True(중소기업)인데 최저한세 적용대상 코드. 중소기업이면 적용제외 코드(16A·10D·16B)로, 중소기업이 아니면 sme=False로 넣으세요")
     if not sme:
         for 코드 in list(codes_used):
             ct = 코드표.get(코드)
             if ct and ct["코드"] in ("16A", "10D", "16B"):
-                문제.append("중소기업")
+                문제.append(f"코드 {ct['코드']}({ct['구분']}) — sme=False(중소기업 아님)인데 최저한세 적용제외 코드. 중소기업이 아니면 적용대상 코드(13L·10E·13M)로, 중소기업이면 sme=True로 넣으세요")
     # exclusion_order 검증
     if exclusion_order:
         ex_set = set()
@@ -910,23 +911,23 @@ def min_tax_adjust(
                 항목금액 = {"105": reserve, "106": special_depreciation,
                             "114": exclusion_mt, "113": nontaxable_mt, "117": income_deduction_mt}.get(eo, 0)
                 if 항목금액 <= 0:
-                    문제.append("exclusion_order")
+                    문제.append(f"exclusion_order {eo} — 이 항목 금액이 0이라 배제할 것이 없음. 금액이 있는 항목만 넣으세요")
                 continue
             if eo not in 코드표:
-                문제.append("exclusion_order")
+                문제.append(f"exclusion_order {eo!r} — 코드표에 없는 코드. 105·106·114·113·117 또는 reductions·credits에 넣은 최저한세 대상 코드만")
                 continue
             ct = 코드표[eo]
             if ct["묶음"] not in ("대상감면", "대상공제"):
-                문제.append("exclusion_order")
+                문제.append(f"exclusion_order {eo} — 최저한세 적용 대상이 아닌 코드(적용제외·참고)는 배제 순서에 넣지 않음")
                 continue
             if ct["묶음"] == "대상감면" and eo not in red_codes:
-                문제.append("exclusion_order")
+                문제.append(f"exclusion_order {eo} — reductions에 없는 감면 코드. reductions에 넣은 코드만 순서에 넣으세요")
                 continue
             if ct["묶음"] == "대상공제" and eo not in cred_codes:
-                문제.append("exclusion_order")
+                문제.append(f"exclusion_order {eo} — credits에 없는 공제 코드. credits에 넣은 코드만 순서에 넣으세요")
                 continue
             if eo in ex_set:
-                문제.append("exclusion_order")
+                문제.append(f"exclusion_order {eo} 중복 — 한 번만 넣으세요")
                 continue
             ex_set.add(eo)
     # 음수 검증 (net_income 제외)
@@ -937,16 +938,16 @@ def min_tax_adjust(
                       ("nontaxable_mt", nontaxable_mt), ("exclusion_mt", exclusion_mt),
                       ("income_deduction", income_deduction), ("income_deduction_mt", income_deduction_mt)]:
         if val < 0:
-            문제.append(name)
+            문제.append(f"{name}={val:,} — 음수일 수 없음(0원 이상). 줄어드는 금액은 해당 차감 칸(손금산입 등)에 양수로 넣으세요")
     for rd in reductions:
         if rd.get("amount", 0) < 0:
-            문제.append("감면세액")
+            문제.append(f"reductions {rd.get('code', '')} 감면세액 amount={rd.get('amount')} — 0원 이상으로 넣으세요")
     for cr in credits:
         if cr.get("current", 0) < 0:
-            문제.append("세액공제")
+            문제.append(f"credits {cr.get('code', '')} 당기 세액공제 current={cr.get('current')} — 0원 이상으로 넣으세요")
         for cf in (cr.get("carryforward") or []):
             if cf.get("amount", 0) < 0:
-                문제.append("세액공제")
+                문제.append(f"credits {cr.get('code', '')} 이월 세액공제 amount={cf.get('amount')} — 0원 이상으로 넣으세요")
     if 문제:
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제}
 
