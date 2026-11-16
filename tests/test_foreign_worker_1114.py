@@ -96,7 +96,11 @@ def test_withholding_monthly():
 def test_flat_tool_has_citations_and_limits():
     r = flat(year=2024)
     assert "제18조의2제2항" in r["근거"] and "지방세특례제한법 제106조의2" in r["근거"]
-    assert any("확인 필요" in x for x in r["한계"])
+    assert any("판정하지 않음" in x for x in r["한계"])
+    # 0.59.1: 월 원천징수·사택 줄은 그 입력(monthly_pay·housing_benefit_nontaxable)을 넣었을 때만
+    assert not any("monthly_pay" in x for x in r["한계"]) and not any(x.startswith("사택") for x in r["한계"])
+    r2 = flat(year=2024, monthly_pay=5_000_000, nontaxable_pay=1_000_000, housing_benefit_nontaxable=1_000_000)
+    assert any("확인할 것: monthly_pay" in x for x in r2["한계"]) and any(x.startswith("사택") for x in r2["한계"])
 
 
 def test_input_errors():

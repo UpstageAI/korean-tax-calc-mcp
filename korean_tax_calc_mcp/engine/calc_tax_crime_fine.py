@@ -12,6 +12,8 @@
 import datetime
 from fractions import Fraction
 
+from .rounding import num_text
+
 M = 10_000
 T2_FROM = datetime.date(2019, 2, 12)
 T3_FROM = datetime.date(2026, 2, 27)
@@ -83,7 +85,7 @@ def _amount(key, n, base, vat, prop, liquor, prof):
         t = Fraction(row[col] * M)
         rate = {"가": 1, "나": Fraction(1, 2), "다": Fraction(3, 10)}[act]
         v = t * rate
-        note = f"비고 제1호 {act}목: {kind} {float(liters):g}ℓ 표 금액 {int(t):,}" + (f" × {rate}" if rate != 1 else "")
+        note = f"비고 제1호 {act}목: {kind} {num_text(liters, 3)}ℓ 표 금액 {int(t):,}" + (f" × {rate}" if rate != 1 else "")
         if tax * 3 > 30_000_000:
             v = tax * 3; note = f"주세상당액 {int(tax):,}의 3배가 3천만원 초과 → {int(v):,}(비고 제1호 단서)"
         v = v * (1, 2, 2)[i]
@@ -107,9 +109,9 @@ def _amount(key, n, base, vat, prop, liquor, prof):
     if key == "제9조제2항":
         v = (500, 1000, 1000)[i] * M; return Fraction(v), f"{v:,}원(정액)"
     if key in ("제10조제1항", "제10조제2항"):
-        k = (Fraction(1, 2), 1, 2)[i]; t = b * vat; return t * k, f"공급가액 {int(b):,} × 세율 {float(vat):g} = {int(t):,} × {k}배"
+        k = (Fraction(1, 2), 1, 2)[i]; t = b * vat; return t * k, f"공급가액 {int(b):,} × 세율 {num_text(vat, 6)} = {int(t):,} × {k}배"
     if key == "제10조제3항":
-        k = (1, 2, 3)[i]; t = b * vat; return t * k, f"공급가액 {int(b):,} × 세율 {float(vat):g} = {int(t):,} × {k}배"
+        k = (1, 2, 3)[i]; t = b * vat; return t * k, f"공급가액 {int(b):,} × 세율 {num_text(vat, 6)} = {int(t):,} × {k}배"
     if key == "제10조제4항":
         h1 = _first("제10조제3항", base, vat, prop, liquor, prof)
         k = ((Fraction(3, 2), 3, Fraction(9, 2)) if prof else (1, 2, 3))[i]
@@ -242,7 +244,7 @@ def settlement(offenses, notice_date, act_date=None, table_basis="통고일", _a
                 assert vol.get("type") in ("수정신고", "기한후신고")
                 datetime.date.fromisoformat(vol["due_date"]); datetime.date.fromisoformat(vol["filed_on"])
             except (AssertionError, KeyError, ValueError, TypeError, AttributeError):
-                문제.append(f"offenses[{idx}].voluntary — {{type: 수정신고|기한후신고, due_date: 법정신고기한, filed_on: 신고일, before_investigation: bool, additional_tax_paid: bool}}"); continue
+                문제.append(f"offenses[{idx}].voluntary — {{type: 수정신고|기한후신고, due_date: 법정신고기한, filed_on: 신고일, before_investigation: true 또는 false, additional_tax_paid: true 또는 false}}"); continue
         amt, note = _amount(key, n, base, vat, o.get("property_value"), liquor or {}, bool(o.get("professional")))
         steps = [f"개별기준({OFFENSES[key][0]}, {min(n, 3)}차{' 이상' if n >= 3 else ''}): {note} = {int(amt):,}"]
         cur = amt
@@ -265,7 +267,7 @@ def settlement(offenses, notice_date, act_date=None, table_basis="통고일", _a
         cap, capnote = _cap(key, base, vat, liquor or {}, bool(o.get("professional")))
         capped = False
         if cur > cap:
-            cur, capped = cap, True; steps.append(f"자목: 처벌법 벌금 상한 {int(cap):,}" + (f"({capnote})" if capnote else "") + "을 넘어 상한으로")
+            cur, capped = cap, True; steps.append(f"자목: 처벌법 벌금 상한 {int(cap):,}" + (f"({capnote})" if capnote else "") + "을 넘어 상한으로 함")
         fin = int(cur) // 10 * 10
         steps.append(f"아목: 10원 미만 절사 → {fin:,}")
         row = {"offense": key, "목": OFFENSES[key][0], "차수": min(n, 3), "개별기준": int(amt), "벌금상당액": fin, "상한_적용": capped, "단계": steps}

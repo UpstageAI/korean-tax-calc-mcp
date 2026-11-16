@@ -35,7 +35,7 @@ def exact(x) -> Fraction:
     if isinstance(x, Decimal):
         return Fraction(x)
     if x is None:
-        raise ValueError("값이 없음(None) — 숫자가 필요")
+        raise ValueError("값이 비어 있음 — 숫자를 넣으세요")
     return Fraction(str(x))
 
 

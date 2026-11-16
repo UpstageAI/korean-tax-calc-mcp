@@ -2370,6 +2370,8 @@ def foreign_tax_credit(year, base, base_includes_grossup, method, countries, mon
                          if 총이월배제액 > 0 and year >= 2022 else ""),
         }
 
+    if not 결과.get("확인 필요"):     # 해당 사항이 없으면 빈 '확인 필요' 칸을 내지 않음
+        결과.pop("확인 필요", None)
     근거목록 = list(fta_basis) + list(indirect_basis)
     _seen = set()
     _uniq = []
@@ -2774,7 +2776,7 @@ def dividend_received_deduction(
 
         dv = inv.get("dividend")
         if dv is not None and (isinstance(dv, bool) or not isinstance(dv, int)):
-            problems.append(f"{name}: dividend=int 필요, 현재 {dv}")
+            problems.append(f"{name}: dividend={dv!r} — 원 단위 정수로 넣으세요(예: 1500000 — 쉼표·소수점 없이)")
 
         # 배당 받은 날
         received_on = inv.get("received_on")
@@ -3267,7 +3269,7 @@ def inventory_valuation_adjustment(
         problems.append("items가 비어 있음")
     for i, it in enumerate(items):
         if not isinstance(it, dict):
-            problems.append(f"항목 {i+1}: dict 아님")
+            problems.append(f"항목 {i+1}: {{키: 값}} 꼴의 객체로 넣으세요")
             continue
         cat = it.get("category")
         if cat not in _CATEGORY_LITERALS:
@@ -3285,7 +3287,7 @@ def inventory_valuation_adjustment(
         cr = it.get("change_report")
         if cr is not None:
             if not isinstance(cr, dict):
-                problems.append(f"항목 {i+1}: change_report가 dict 아님")
+                problems.append(f"항목 {i+1}: change_report — {{method: 신고한 평가방법, filed_on: 신고일(YYYY-MM-DD)}} 꼴의 객체로 넣으세요")
             else:
                 cm = cr.get("method")
                 if cm not in _METHOD_LITERALS:
@@ -3300,13 +3302,13 @@ def inventory_valuation_adjustment(
                         problems.append(f"항목 {i+1}: change_report.filed_on='{fo}' 형식 오류")
         bv = it.get("book_value")
         if isinstance(bv, bool) or not isinstance(bv, int) or bv < 0:
-            problems.append(f"항목 {i+1}: book_value=int≥0 필요, 현재 {bv}")
+            problems.append(f"항목 {i+1}: book_value={bv!r} — 0 이상의 원 단위 정수로 넣으세요(예: 1500000 — 쉼표·소수점 없이)")
         vals = it.get("valuations")
         if not isinstance(vals, dict):
-            problems.append(f"항목 {i+1}: valuations=dict 필요")
+            problems.append(f"항목 {i+1}: valuations — 평가방법별 금액(원)을 {{평가방법: 금액}} 꼴의 객체로 넣으세요(예: 총평균법 1000000, 시가 900000)")
         pa = it.get("prior_adjustment")
         if pa is not None and (isinstance(pa, bool) or not isinstance(pa, int)):
-            problems.append(f"항목 {i+1}: prior_adjustment=int 필요, 현재 {pa}")
+            problems.append(f"항목 {i+1}: prior_adjustment={pa!r} — 원 단위 정수로 넣으세요(손실·감소는 음수, 예: -1500000)")
 
     if problems:
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": problems}
@@ -3660,11 +3662,11 @@ def foreign_subsidiary_dividend(args: dict):
 
     # ── 입력 검증 ──────────────────────────────────────────────────────
     if not isinstance(cfc_no_retained, bool):
-        return {"error": "입력 오류: cfc_no_retained_earnings는 bool"}
+        return {"error": "입력 오류: cfc_no_retained_earnings — true 또는 false로 넣으세요"}
     for _k, _v in (("borrowing_interest", borrowing_interest), ("subsidiary_book_value_daily_sum", sub_book_days),
                    ("total_assets_daily_sum", assets_days)):
         if _v is not None and (not isinstance(_v, int) or isinstance(_v, bool) or _v < 0):
-            return {"error": f"입력 오류: {_k}은 원 int≥0"}
+            return {"error": f"입력 오류: {_k} — 0 이상의 원 단위 정수로 넣으세요(예: 1500000 — 쉼표·소수점 없이)"}
     if borrowing_interest and (sub_book_days is None or not assets_days):
         return {"error": "입력 확인 필요 — 계산하지 않음",
                 "문제": ["borrowing_interest(차입금 이자)를 넣으면 subsidiary_book_value_daily_sum(외국자회사 주식 장부가액 일별 잔액 합계)과 "
@@ -3678,25 +3680,25 @@ def foreign_subsidiary_dividend(args: dict):
         if len(received_on) != 10 or received_on[4] != "-" or received_on[7] != "-":
             raise ValueError
     except Exception:
-        return {"error": "입력 오류: received_on은 YYYY-MM-DD 형식이어야 함"}
+        return {"error": "입력 오류: received_on — YYYY-MM-DD 형식의 실제 날짜로 넣으세요(예: 2025-03-31)"}
     if not (0 < ownership <= 1):
         return {"error": "입력 오류: ownership_ratio는 0 초과 1 이하"}
     if not isinstance(held_months, int) or held_months < 0:
-        return {"error": "입력 오류: held_months는 int≥0"}
+        return {"error": "입력 오류: held_months — 0 이상의 정수로 넣으세요(예: 12)"}
     if not isinstance(dividend, int) or dividend <= 0:
-        return {"error": "입력 오류: dividend는 원 int>0"}
+        return {"error": "입력 오류: dividend — 0보다 큰 원 단위 정수로 넣으세요(예: 1500000 — 쉼표·소수점 없이)"}
     if not isinstance(foreign_withholding, int) or foreign_withholding < 0:
-        return {"error": "입력 오류: foreign_withholding은 원 int≥0"}
+        return {"error": "입력 오류: foreign_withholding — 0 이상의 원 단위 정수로 넣으세요(예: 1500000 — 쉼표·소수점 없이)"}
     if not isinstance(hybrid, bool):
-        return {"error": "입력 오류: hybrid는 bool"}
+        return {"error": "입력 오류: hybrid — true 또는 false로 넣으세요"}
     if not isinstance(cfc_low_tax, bool):
-        return {"error": "입력 오류: cfc_low_tax는 bool"}
+        return {"error": "입력 오류: cfc_low_tax — true 또는 false로 넣으세요"}
     if not isinstance(resource_dev, bool):
-        return {"error": "입력 오류: resource_development는 bool"}
+        return {"error": "입력 오류: resource_development — true 또는 false로 넣으세요"}
     if not isinstance(subsidiary_tax, int) or subsidiary_tax < 0:
-        return {"error": "입력 오류: subsidiary_tax은 원 int≥0"}
+        return {"error": "입력 오류: subsidiary_tax — 0 이상의 원 단위 정수로 넣으세요(예: 1500000 — 쉼표·소수점 없이)"}
     if not isinstance(subsidiary_income, int):
-        return {"error": "입력 오류: subsidiary_income은 원 int"}
+        return {"error": "입력 오류: subsidiary_income — 원 단위 정수로 넣으세요(손실·감소는 음수, 예: -1500000)"}
     # 자회사 법인세액·소득금액은 선택 입력 — 둘 다 넣었을 때만 대소를 본다(안 넣으면 간접외국납부세액 없이 계산)
     if _tax_in is not None and _inc_in is not None and subsidiary_income <= subsidiary_tax:
         return {"error": "입력 오류: subsidiary_income(≤ subsidiary_tax) — 간접외국납부세액 계산 불가 (소득 ≤ 법인세)"}
@@ -3864,7 +3866,7 @@ def expat_cost_recharge(args: dict):
         return {"error": "입력 오류: items(목록) 필요"}
     sme_or_midsize = args.get("sme_or_midsize", None)
     if sme_or_midsize is not None and not isinstance(sme_or_midsize, bool):
-        return {"error": "입력 오류: sme_or_midsize는 bool"}
+        return {"error": "입력 오류: sme_or_midsize — true 또는 false로 넣으세요"}
     특례시대 = _파견인건비_특례_시대(year)
 
     귀속허용 = {"본사", "현지법인", "공통"}
@@ -3902,15 +3904,15 @@ def expat_cost_recharge(args: dict):
                     "문제": [f"항목 {i+1}({이름}): 귀속='{귀속}' 은(는) 지원하지 않음 — '본사'|'현지법인'|'공통'"],
                     "허용값": {"귀속": ["본사", "현지법인", "공통"]}}
         if not isinstance(급여, int) or 급여 < 0:
-            return {"error": "입력 오류: 급여는 원 int≥0"}
+            return {"error": "입력 오류: 급여 — 0 이상의 원 단위 정수로 넣으세요(예: 1500000 — 쉼표·소수점 없이)"}
         if not isinstance(사회보험, int) or 사회보험 < 0:
-            return {"error": "입력 오류: 사회보험은 원 int≥0"}
+            return {"error": "입력 오류: 사회보험 — 0 이상의 원 단위 정수로 넣으세요(예: 1500000 — 쉼표·소수점 없이)"}
         if not isinstance(체재비, int) or 체재비 < 0:
-            return {"error": "입력 오류: 체재비는 원 int≥0"}
+            return {"error": "입력 오류: 체재비 — 0 이상의 원 단위 정수로 넣으세요(예: 1500000 — 쉼표·소수점 없이)"}
         if not isinstance(마크업, (int, float)) or 마크업 < 0:
-            return {"error": "입력 오류: 마크업은 소수≥0"}
+            return {"error": "입력 오류: 마크업 — 0 이상의 소수로 넣으세요(예: 5%면 0.05)"}
         if not isinstance(청구액, int) or 청구액 < 0:
-            return {"error": "입력 오류: 청구액은 원 int≥0"}
+            return {"error": "입력 오류: 청구액 — 0 이상의 원 단위 정수로 넣으세요(예: 1500000 — 쉼표·소수점 없이)"}
         if not isinstance(국외근로_개월, int) or not (0 <= 국외근로_개월 <= 12):
             return {"error": "입력 오류: 국외근로_개월은 0~12"}
         if 국외근로_유형 not in 유형허용:
@@ -3929,17 +3931,17 @@ def expat_cost_recharge(args: dict):
             if not (0 <= 공통비율_x <= 1):
                 return {"error": "입력 오류: 공통비율은 0~1"}
         if not isinstance(거주자, bool):
-            return {"error": "입력 오류: 거주자는 bool"}
+            return {"error": "입력 오류: 거주자 — true 또는 false로 넣으세요"}
         완전자회사 = it.get("완전자회사", None)
         현지법인_지급인건비 = it.get("현지법인_지급인건비", None)
         내국법인_지급인건비 = it.get("내국법인_지급인건비", None)
         원천징수 = it.get("근로소득_원천징수", None)
         for _k, _v in (("완전자회사", 완전자회사), ("근로소득_원천징수", 원천징수)):
             if _v is not None and not isinstance(_v, bool):
-                return {"error": f"입력 오류: {_k}는 bool"}
+                return {"error": f"입력 오류: {_k} — true 또는 false로 넣으세요"}
         for _k, _v in (("현지법인_지급인건비", 현지법인_지급인건비), ("내국법인_지급인건비", 내국법인_지급인건비)):
             if _v is not None and (not isinstance(_v, int) or isinstance(_v, bool) or _v < 0):
-                return {"error": f"입력 오류: {_k}는 원 int≥0"}
+                return {"error": f"입력 오류: {_k} — 0 이상의 원 단위 정수로 넣으세요(예: 1500000 — 쉼표·소수점 없이)"}
 
         # 원가
         원가 = 급여 + 사회보험 + 체재비
@@ -4162,37 +4164,45 @@ def corporate_filing_obligations(args: dict):
                 "문제": [f"corp_type='{corp_type}' 은(는) 지원하지 않음 — '주식회사'|'유한회사'"],
                 "허용값": {"corp_type": ["주식회사", "유한회사"]}}
     if not isinstance(revenue, int) or revenue < 0:
-        return {"error": "입력 오류: revenue는 원 int≥0"}
+        return {"error": "입력 오류: revenue — 0 이상의 원 단위 정수로 넣으세요(예: 1500000 — 쉼표·소수점 없이)"}
     if not isinstance(revenue_prev, int) or revenue_prev < 0:
-        return {"error": "입력 오류: revenue_prev는 원 int≥0"}
+        return {"error": "입력 오류: revenue_prev — 0 이상의 원 단위 정수로 넣으세요(예: 1500000 — 쉼표·소수점 없이)"}
     if not isinstance(assets, int) or assets < 0:
-        return {"error": "입력 오류: assets는 원 int≥0"}
+        return {"error": "입력 오류: assets — 0 이상의 원 단위 정수로 넣으세요(예: 1500000 — 쉼표·소수점 없이)"}
     if not isinstance(liabilities, int) or liabilities < 0:
-        return {"error": "입력 오류: liabilities는 원 int≥0"}
+        return {"error": "입력 오류: liabilities — 0 이상의 원 단위 정수로 넣으세요(예: 1500000 — 쉼표·소수점 없이)"}
     if not isinstance(employees, int) or employees < 0:
-        return {"error": "입력 오류: employees는 int≥0"}
+        return {"error": "입력 오류: employees — 0 이상의 정수로 넣으세요(예: 12)"}
     if members is not None and (not isinstance(members, int) or members < 0):
-        return {"error": "입력 오류: members는 int≥0"}
+        return {"error": "입력 오류: members — 0 이상의 정수로 넣으세요(예: 12)"}
     if established_on is not None:
-        if not isinstance(established_on, str) or len(established_on) != 10:
-            return {"error": "입력 오류: established_on은 YYYY-MM-DD"}
+        try:
+            if not isinstance(established_on, str) or len(established_on) != 10:
+                raise ValueError
+            _est = date.fromisoformat(established_on)
+        except ValueError:
+            return {"error": "입력 오류: established_on — YYYY-MM-DD 형식의 실제 날짜로 넣으세요(예: 2025-03-31)"}
+        # 최초 사업연도는 설립등기일에 시작(법인세법 시행령 제4조제1항제1호) — 설립일이 그 사업연도 종료일보다 뒤면 그 사업연도가 있을 수 없음(0.59.1)
+        if _est > fe:
+            return {"error": f"입력 오류: established_on={established_on} — 설립일이 사업연도 종료일({fe.isoformat()}, year={year})보다 뒤. "
+                             "설립 전 사업연도는 없음(법인세법 시행령 제4조제1항) — year·fy_end 또는 설립일을 확인하세요"}
     if not isinstance(reserve_balance, int) or reserve_balance < 0:
-        return {"error": "입력 오류: reserve_balance는 원 int≥0"}
+        return {"error": "입력 오류: reserve_balance — 0 이상의 원 단위 정수로 넣으세요(예: 1500000 — 쉼표·소수점 없이)"}
     if not isinstance(관련물품, int) or 관련물품 < 0:
-        return {"error": "입력 오류: related_goods는 원 int≥0"}
+        return {"error": "입력 오류: related_goods — 0 이상의 원 단위 정수로 넣으세요(예: 1500000 — 쉼표·소수점 없이)"}
     if not isinstance(관련용역, int) or 관련용역 < 0:
-        return {"error": "입력 오류: related_services는 원 int≥0"}
+        return {"error": "입력 오류: related_services — 0 이상의 원 단위 정수로 넣으세요(예: 1500000 — 쉼표·소수점 없이)"}
     if not isinstance(관련무형, int) or 관련무형 < 0:
-        return {"error": "입력 오류: related_intangibles는 원 int≥0"}
+        return {"error": "입력 오류: related_intangibles — 0 이상의 원 단위 정수로 넣으세요(예: 1500000 — 쉼표·소수점 없이)"}
     if not isinstance(상대최대물품, int) or 상대최대물품 < 0:
-        return {"error": "입력 오류: party_max_goods는 원 int≥0"}
+        return {"error": "입력 오류: party_max_goods — 0 이상의 원 단위 정수로 넣으세요(예: 1500000 — 쉼표·소수점 없이)"}
     if not isinstance(상대최대용역, int) or 상대최대용역 < 0:
-        return {"error": "입력 오류: party_max_services는 원 int≥0"}
+        return {"error": "입력 오류: party_max_services — 0 이상의 원 단위 정수로 넣으세요(예: 1500000 — 쉼표·소수점 없이)"}
     if not isinstance(상대최대무형, int) or 상대최대무형 < 0:
-        return {"error": "입력 오류: party_max_intangibles는 원 int≥0"}
+        return {"error": "입력 오류: party_max_intangibles — 0 이상의 원 단위 정수로 넣으세요(예: 1500000 — 쉼표·소수점 없이)"}
     for _nm, _v in (("third_party_goods", 제3자물품), ("third_party_services", 제3자용역), ("third_party_intangibles", 제3자무형)):
         if isinstance(_v, bool) or not isinstance(_v, int) or _v < 0:
-            return {"error": f"입력 오류: {_nm}는 원 int≥0"}
+            return {"error": f"입력 오류: {_nm} — 0 이상의 원 단위 정수로 넣으세요(예: 1500000 — 쉼표·소수점 없이)"}
 
     # ── 외부감사 ───────────────────────────────────────────────────────────
     # 판정 값은 모두 '직전 사업연도' 기준(자산·부채·종업원은 직전 사업연도 말, 매출액은 직전 사업연도) — assets·liabilities·employees·revenue_prev.

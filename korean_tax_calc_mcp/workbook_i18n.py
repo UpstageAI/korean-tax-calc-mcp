@@ -508,6 +508,32 @@ def append_guide(ws, wb, T: Translator, *, form_info: dict[str, str], ren: dict[
     ws.sheet_properties.pageSetUpPr.fitToPage = True
 
 
+# 도구가 시트에 찍는 고정 안내 문장(세법 용어가 아님) — 칸 글 전체가 이 꼴일 때만 영문으로 바꾼다(0.59.1).
+# 사용자가 넣은 글·도구 결과의 설명문·근거 조문은 여기서 바꾸지 않는다.
+_FIXED_EN: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"이 도구 결과에는 판단 항목이 없음 — 계산 값은 '(.+)' 시트"), r"This tool result has no judgement items — values are on the '\1' sheet"),
+    (re.compile(r"\(판단 항목 없음\)"), "(no judgement items)"),
+    (re.compile(r"이번 call로 만든 서식 시트 없음 — 아래 '서식 틀 없음' 줄과 '계산 N' 시트 참고"),
+     "No form sheet was made from these calls — see the 'No form template' rows below and the 'Calc N' sheets"),
+    (re.compile(r"이 도구 결과를 담는 서식 틀이 없음\(법정서식이 없거나 아직 만들지 않음\) — 값은 (.+) 시트"),
+     r"No form template holds this tool result (no statutory form, or not built yet) — values are on the \1 sheet(s)"),
+    (re.compile(r"서식 틀 없음 — ([A-Za-z0-9_]+)"), r"No form template — \1"),
+    (re.compile(r"서식 시트"), "Form sheet"),
+    (re.compile(r"서식 칸용\(내보내기\)"), "For form cells (export)"),
+]
+
+
+def _fixed_phrases(ws) -> None:
+    for row in ws.iter_rows():
+        for c in row:
+            v = c.value
+            if isinstance(v, str) and v and not v.startswith("=") and _HANGUL.search(v):
+                for rx, en in _FIXED_EN:
+                    if rx.fullmatch(v):
+                        c.value = rx.sub(en, v)
+                        break
+
+
 def apply_english(wb, T: Translator, *, layout: str, title: str, form_info: dict[str, str], results: list[dict],
                   guide: bool = True) -> dict[str, str]:
     """완성된 한국어 워크북을 영문 표기로 바꾼다. 돌려주는 값: {옛 시트 이름: 새 시트 이름}.
@@ -529,6 +555,7 @@ def apply_english(wb, T: Translator, *, layout: str, title: str, form_info: dict
                 "이유": f"{NOTES_HEADER} — reason (이유)"})
         elif name in ("목록", "입력·가정"):
             _plain_sheet(ws, T)
+        _fixed_phrases(ws)
     ren = _rename_sheets(wb, form_sheets)
     summary = next((wb[n] for o, n in ren.items() if o == "요약"), None) or (wb["요약"] if "요약" in wb.sheetnames else None)
     if summary is not None and guide:      # guide=False: 통합 문서가 앞 시트를 더한 뒤에 append_guide를 부름

@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.59.1 (2026-11-16)
+
+전 도구 점검(0.57.2 기준) (b) 거칠음 가운데 0.58.1에서 남긴 묶음을 다듬음 — 범위 밖·앞뒤가 안 맞는 날짜, 금액 float·지수 표기, 잘린 문장, 개발자 표기 오류문, 영문 모드 결과 키, 입력과 무관한 고정 '확인 필요'. 세율·연도표·계산식은 그대로이고 점검 입력 5,301건을 0.59.0과 대조해 금액이 달라진 칸 0(도구 140개). Claude 작성.
+
+- **왜** — 날짜 문자열은 스키마를 지나가 설립일이 사업연도 뒤(2027 설립·2024 사업연도)여도 "설립 2년 이내"로 판정하는 등 법적으로 있을 수 없는 입력을 조용히 계산했음. 정수인 금액이 `25000000.0`·`1.0000000016e+16`으로, 지분율·인원이 `1.9e-07%`·`1e+13명`으로 나왔음. `find_tool` 후보 설명이 160자에서 잘려 괄호가 열린 채 끝났고, 오류문이 `급여는 원 int≥0`처럼 타입 표기였음. `lang='en'`인데 결과 JSON 키가 전부 한글이었고, `nonresident_withholding` 등은 모든 쟁점에 같은 '전문가 확인 필요'를 붙였음.
+- **날짜(입력 오류로 막은 것)** — 법적으로 있을 수 없는 조합만.
+
+| 도구 | 막는 입력 | 이유(원문) |
+|---|---|---|
+| `corporate_filing_obligations` | 설립일 > 사업연도 종료일, 실제 날짜가 아닌 설립일(종전엔 조용히 무시) | 최초 사업연도는 설립등기일에 시작(법인세법 시행령 제4조제1항) |
+| `cfc_deemed_dividend` | `fy_end`가 개시연도 `year`보다 앞 | 사업연도는 개시일 뒤에 끝남 |
+| `pension_account_withdrawal` | 개시 신청일이 인출 연도 뒤 | 연금수령은 55세 이후 개시 신청 후 인출(소득세법 시행령 제40조의2제3항제1호) — 그 해 인출은 모두 신청 전 |
+| `withholding_tax` | `paid_date`의 연도 ≠ `year`(지급연도) | 같은 사실을 두 값으로 다르게 줌 |
+| `missing_receipt_disallowance` | `spent_on`이 2016~2026 밖 | 지출일로 고르는 기준금액 표 범위 밖 |
+| `vat_bad_debt_credit` | `period`가 2016년 전, 공급일 > 대손 사유 발생일 | 공급 전에는 그 공급대가 채권이 없음(2026 사유의 2027 확정은 그대로 계산) |
+| `vat_input_tax_deduction` | 공급시기가 과세기간 뒤 | 공급받는 시기가 속하는 과세기간에 공제(부가가치세법 제38조제2항) |
+| `vat_exempt_use_deemed_supply` | 취득일 > 전용일(토지 포함 — 상각 자산은 종전에도 막음) | 취득 전 재화는 면세사업에 쓸 수 없음 |
+| `overseas_account_reporting` | `corrected_on`·`assessed_on`이 신고대상 연도 안 | 다음 연도 6월에 신고(국조법 제53조제1항) |
+| `housing_rental_income` | 등록신청일이 과세연도 뒤인 등록임대 주택 | 그 해에는 등록하지 않은 주택 |
+| `vat_return_general` | `filed_on`이 그 과세기간 시작 전 | 그 과세기간 신고가 있을 수 없음 |
+
+- **날짜(계산하고 주의를 붙인 것)** — `vat_return_general` 신고일이 신고 대상 기간이 끝나기 전(폐업이면 있을 수 있음, 부가가치세법 제48조제1항·제49조제1항), `cfc_deemed_dividend` 사업연도가 1년을 넘는 `fy_end`, `missing_receipt_disallowance` 지출일이 사업연도 밖, `nonbusiness_interest_disallowance` 가지급금·가수금 날짜가 사업연도 뒤(적수 0), `bad_debt_adjustment` 대손 사유일이 사업연도 뒤.
+- **금액 표기** — 서버 `_guard`가 결과의 금액 키(매출·이익·가액·시가총액·단가·적수·세액 등, 비율·율·배수·점수 키 제외) 아래 정수값 float를 int로 바꿈(`engine/rounding.py` `tidy_amounts` — 값은 같음). `stock_major_shareholder` 시가총액은 `exact`로 곱해 원 미만 버림(기준 금액과의 대소는 같음), 지분율 문구는 지수 없이(`0.0001% 미만`), 결과 지분율은 소수 8자리. 문장 속 수는 `num_text`·`pct_text`로(`sme_special_tax_reduction` 인원, `nonresident_withholding` treaty_rate 오류, `tax_crime_settlement_amount` 리터·세율). `unlisted_stock_valuation` 증감자 순손익액 조정 표시는 소수 2자리. 큰 인원(10^13명)은 법정 상한이 없어 막지 않음.
+- **잘린 문장** — `find_tool` 후보의 `설명`·`국문 설명`·`언제`를 괄호 밖 문장·쉼표 경계에서 자르고 `…`(국문 설명은 '언제:' 앞까지, 줄바꿈된 설명을 이어서). 괄호가 덜 닫힌 도구 설명 2개(`overseas_account_reporting`·`capital_gains_unfair_transaction`)를 고침. `integrated_investment_credit` "size='일반'으로" → "… 다시 계산하세요", `tax_crime_settlement_amount` "상한으로" → "상한으로 함".
+- **오류 문구** — `int≥0`·`int>0`·`소수≥0`·`bool`·`dict 아님`·`=int 필요` 꼴을 무엇을 어떤 꼴로 넣는지로(예: "급여 — 0 이상의 원 단위 정수로 넣으세요(예: 1500000 — 쉼표·소수점 없이)", "hybrid — true 또는 false로 넣으세요", 날짜는 예시 날짜 포함). 대상: `expat_cost_recharge`·`foreign_subsidiary_dividend`·`corporate_filing_obligations`·`inventory_valuation_adjustment`·`vat_return_general`·`dividend_received_deduction`·`capital_gains_tax`·`stock_capital_gains_tax`·`unlisted_stock_valuation`·`international_transaction_statement`·`overseas_subsidiary_statement`·`cfc_deemed_dividend`·`vat_supply_timing`·`tp_comparable_screen`·`branch_profits_tax`·`tax_priority_distribution`·`tax_crime_settlement_amount`·`foreign_worker_flat_tax`·`nonresident_capital_gains_withholding`·`export_workbook` 등(오류문 80여 곳).
+- **영문 모드** — `export_workbook`·`verify_workbook`에 `lang='en'`이면 결과 JSON 키를 영어로(`result.file`·`sheets`·`call_count`·`untranslated`, `summary{checked, matched, mismatched, …}`·`checks[{cell, item, verdict, …}]`·`basis`·`limits`), 고정 문구(판정·방식·근거·다음 할 일·한계)도 영어, '국문 — English' 안내는 영어 부분만(`korean_tax_calc_mcp/result_en.py`). 사용자 글·시트 이름·용어집에 없는 라벨은 그대로. 만든 xlsx의 고정 안내 문장 7가지(판단 항목 없음·서식 틀 없음 등)를 영문으로.
+- **고정 '확인 필요'** — `nonresident_withholding` 쟁점·`thin_capitalization` 쟁점의 `판단: 전문가 확인 필요`를 빼고 쟁점별 `확인할 자료` 목록으로(입력으로 정해진 것은 뺌 — treaty_rate를 주면 제한세율 확인 항목 없음, loans를 주면 차입금 종류 항목 없음). `foreign_worker_flat_tax` 한계의 월 원천징수 줄은 `monthly_pay`를, 사택 줄은 사택 제공 이익을 넣었을 때만. `nonresident_capital_gains_withholding` 취득가액 범위 줄은 `acquisition_cost`를 넣었을 때만 '확인할 것'으로. `unlisted_stock_valuation` 판단 항목 이름 '확인 필요' → '확인할 것'. `foreign_tax_credit` 빈 `확인 필요` 칸은 내지 않음. `return_precheck`의 '사실 확인 필요'는 규칙별 확인 목록이고 건수가 입력에 따라 달라 그대로 둠.
+- **바뀐 동작(호환 주의)** — 금액 값은 같음. 키·표기가 바뀐 곳: `lang='en'`의 두 도구 결과 키(국문 모드는 그대로), `nonresident_withholding`·`thin_capitalization` 쟁점의 `판단` 키 → `확인할 자료`, `foreign_tax_credit` 결과에 해당 사항이 없으면 `확인 필요` 키 없음, 정수값 금액이 int(`25000000.0` → `25000000`), `stock_major_shareholder` 시가총액 int·지분율 소수 8자리. 위 날짜 조합은 계산 대신 입력 오류. 기존 테스트 중 바꾼 것: 쟁점 `판단` 단언 3곳, `foreign_worker_flat_tax` 한계 단언 1곳, 영문 `file_note`가 영문 부분만인지 보는 단언 1곳, 2019년 등록임대 단언(2020년 신청일 → 2019년 신청일, 2020년 신청일은 오류 확인), 영문 모드 결과는 `tests/_helpers.call`이 영문 키를 확인한 뒤 종전 국문 키로 되돌려 기존 단언을 그대로 씀.
+- **점검 재실행** — 점검 입력 5,301건을 0.59.0과 0.59.1에 넣어 대조: 금액이 달라진 칸 0, 표기만 바뀐 칸 839(정수값 float → int)·8(소수 꼬리), 계산 → 입력 오류 18건(위 날짜 조합 — 테스트 입력 1건 포함), 그 밖의 결과 변화 없음. 고친 뒤 결과에 남은 것: 금액 키의 정수값 float 0(종전 839 — 원 미만이 있는 3칸(1주당 순손익액·증감자 조정 소수 2자리, 외화금액)은 그대로), 문장 속 지수 표기 0(종전 5, 남은 1건은 코드 `1E5`), 덜 닫힌 괄호 0(종전 51), 오류문 개발자 표기 0(종전 14).
+- **테스트** — `tests/test_rough_outputs_1116.py` 43건: 날짜 조합(막음·주의·정상 경계), 금액 int·지수 없음, 표기 함수, `find_tool` 11개 질의의 괄호·길이, 잘린 판단 문장, 오류문 4건 + 소스 전체 타입 표기 검사, 영문 키(export·verify), 쟁점 확인 목록·조건부 한계.
+- **한계** — 만든 xlsx의 괄호 밖 한글 칸은 점검 입력 5개 기준 1,014 → 1,008칸(2,002칸 중)만 줄임: 남은 것은 용어집에 없는 결과 키·근거 구절 516칸(용어집은 법제처 영문법령에서 확인한 표현만 넣는 방침이라 이번에 늘리지 않음), 사용자 글 288칸(라벨·제목·시트 이름 — 그대로가 맞음), 도구 설명문·값 179칸, 조문 인용 25칸. 아주 작은 비율이 JSON 숫자로 `3e-05`처럼 나오는 것(극단 입력의 면세비율·업무사용비율)은 JSON 숫자 표기라 그대로. `precheck_schema`의 단위 열(`원 (int)`·`bool`)은 오류문이 아닌 입력 스키마 목록이라 그대로. 날짜 검사는 점검에서 걸린 도구와 같은 꼴의 날짜만 — 다른 도구의 날짜 조합은 이번에 보지 않음.
+
 ## 0.59.0 (2026-11-16)
 
 `thin_capitalization`(과소자본 손금불산입)이 차입금별로 계산함 — 이자율 높은 차입금부터 초과분에 배정하고, 국외지배주주 직접 차입분은 배당, 특수관계인·지급보증 차입분은 기타사외유출로 나눔. 새 도구 없음(도구 140개). `loans`를 넣지 않으면 종전 결과와 같음(수취인 법인일 때 키 이름 하나만 바뀜). Claude 작성.

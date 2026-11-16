@@ -983,11 +983,11 @@ def special_tax_credit(
             problems.append(f"지출 {i+1}: person='{pn}'이(가) persons 목록에 없음")
         amt = e.get("amount", 0)
         if isinstance(amt, bool) or not isinstance(amt, int):
-            problems.append(f"지출 {i+1}: amount=int 필요, 현재 {amt}")
+            problems.append(f"지출 {i+1}: amount={amt!r} — 원 단위 정수로 넣으세요(예: 1500000 — 쉼표·소수점 없이)")
             continue
         reb = e.get("reimbursed", 0)
         if isinstance(reb, bool) or not isinstance(reb, int):
-            problems.append(f"지출 {i+1}: reimbursed=int 필요, 현재 {reb}")
+            problems.append(f"지출 {i+1}: reimbursed={reb!r} — 보전받은 금액을 원 단위 정수로 넣으세요(없으면 0)")
             continue
         if reb > amt:
             problems.append(f"지출 {i+1}: reimbursed({e.get('reimbursed', 0)}) > amount({e.get('amount', 0)})")

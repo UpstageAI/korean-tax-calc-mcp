@@ -338,7 +338,7 @@ def overseas_account_reporting(
         try:
             부과일 = date.fromisoformat(assessed_on)
         except (TypeError, ValueError):
-            return _오류([f"assessed_on='{assessed_on}' — YYYY-MM-DD"], {"assessed_on": "YYYY-MM-DD"})
+            return _오류([f"assessed_on='{assessed_on}' — YYYY-MM-DD 형식의 실제 날짜로 넣으세요(예: 2025-03-31)"], {"assessed_on": "YYYY-MM-DD"})
         if 부과일 < date(2016, 1, 1):
             return _오류([f"assessed_on={assessed_on} — 2016.1.1. 이후 부과분만(연도표 범위)"], {"assessed_on": "2016-01-01 이후 또는 생략(현행 기준)"})
         구기준 = 부과일 < date(2025, 2, 28)

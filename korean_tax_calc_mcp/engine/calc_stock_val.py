@@ -188,7 +188,7 @@ def apply_capital_changes(items: list[dict], changes: list[dict], rate: float = 
             months = _months_in_year(fy_start, when) if y == yr else 12
             adj = sign * total * rate * months / 12
             it["순손익액"] = float(it.get("순손익액") or 0) + adj
-            lines.append({"사업연도": y, "구분": f"{kind} {when.isoformat()} {n:,}주 × {amt:,.0f}원", "순손익액 조정": adj,
+            lines.append({"사업연도": y, "구분": f"{kind} {when.isoformat()} {n:,}주 × {amt:,.0f}원", "순손익액 조정": round(adj, 2),   # 표시만 소수 2자리(계산은 adj 그대로 — 0.59.1)
                           "산식": f"{'+' if sign > 0 else '−'} {total:,.0f} × {rate*100:g}% × {months}/12", "근거": "상증법 시행령 제56조⑤, 시행규칙 제17조의3⑥"})
             if y < yr and it.get("주식수"):
                 if base > 0:
@@ -513,13 +513,13 @@ def unlisted_valuation(valuation_date: str, shares: int, incomes: list | None = 
             판단.append({"항목": "하한", "결론": "하한 규정 없는 구간", "근거": floor_basis})
     # 할증
     if is_max_shareholder and sme is None:
-        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["최대주주 할증 판정에 sme(중소기업 여부)가 필요(2023~ 중견기업은 mid_sized)"], "필요 입력": {"sme": "bool"}}
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["최대주주 할증 판정에 sme(중소기업 여부)가 필요(2023~ 중견기업은 mid_sized)"], "필요 입력": {"sme": "true 또는 false"}}
     prem, prem_basis, notes = _premium(vd, is_max_shareholder, ratio_over_50, bool(sme), mid_sized, premium_exclusion)
     final = value * (1 + prem)
     판단.append({"항목": "최대주주 할증", "결론": f"{prem*100:g}% → 1주당 {final:,.2f}원. {prem_basis}", "근거": "상속세 및 증여세법 제63조③, 시행령 제53조"})
     for n in notes:
-        판단.append({"항목": "확인 필요", "결론": n, "근거": "상속세 및 증여세법 제63조③"})
-    판단.append({"항목": "확인 필요", "결론": ("순자산가액 가감(영 제55조·규칙 제17조의2)은 입력한 항목만 반영 — 지급 확정 권리·선급비용·무형자산·미지급 법인세·확정 배당·퇴직급여추계액·충당금·준비금 중 빠진 것이 없는지, 자산별 상증법 평가차액(assets)을 넣었는지 확인" if "순자산가액 산출" in 계산_상세
+        판단.append({"항목": "확인할 것", "결론": n, "근거": "상속세 및 증여세법 제63조③"})   # 입력이 비어 가정한 값(예: ratio_over_50)
+    판단.append({"항목": "확인할 것", "결론": ("순자산가액 가감(영 제55조·규칙 제17조의2)은 입력한 항목만 반영 — 지급 확정 권리·선급비용·무형자산·미지급 법인세·확정 배당·퇴직급여추계액·충당금·준비금 중 빠진 것이 없는지, 자산별 상증법 평가차액(assets)을 넣었는지 확인" if "순자산가액 산출" in 계산_상세
                                          else "순자산가액은 상증법 평가액 기준으로 사용자가 가감(지급 확정 권리 +, 선급비용·무형자산 −, 미지급 법인세·확정 배당·퇴직급여추계액 +, 충당금·준비금 −)을 끝낸 값을 넣어야 함(항목형으로 주면 도구가 적용)") + ". 발행주식총수의 자기주식 포함 여부는 조문에 명시 없음(통칙 확인)", "근거": "상증법 시행령 제55조, 시행규칙 제17조의2"})
     # 1주당 값은 원 단위 정수(원 미만 반올림)로 표시 — 계산은 반올림 전 값으로(할증 후 평가액도 반올림 전 값 × (1+할증률)).
     # 값이 없는 항목(순자산가치만 평가해 순손익가치·가중평균이 없음)은 키를 넣지 않는다.

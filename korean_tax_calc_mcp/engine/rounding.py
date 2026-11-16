@@ -81,3 +81,74 @@ def attach_pay_amount(tool: str, out):
     out.setdefault("끝수", "세액은 원 단위 계산값(원 미만 처리 규정이 없어 최종 금액에서만 버림), 국고에 내거나 돌려받을 때 10원 미만 끝수를 버림 — " + basis
                    + (". 여러 날·여러 건을 한꺼번에 지급하면 소득자별로 더한 뒤 버림(원천세과-240)" if tool == "daily_worker_withholding" else ""))
     return out
+
+
+# ── 결과 표기(값은 그대로, 보이는 꼴만) ──
+# 금액은 원 단위 정수로 보인다. 계산 중 float로 지나온 금액(25000000.0)이 결과에 그대로 나오거나,
+# 아주 큰·작은 수가 지수 표기(1e+13, 1.9e-07)로 문장에 들어가는 일을 막는다.
+import math as _math
+import re as _re
+
+# 금액을 뜻하는 키(결과 dict의 키 이름). 비율·율·배수·점수 키는 아래 _RATIO_KEY가 먼저 걸러 그대로 둔다.
+_AMOUNT_KEY = _re.compile(r"(금액|매출|이익|손익|가액|시가총액|단가|적수|공제대상|문턱|세액|소득|기준시가|가치|원가|비용|자산|부채|자본|배당|이자|한도|과세표준|"
+                          r"납부|환급|청구|급여|수입|지출|잔액|원\)?$|액$)")
+_RATIO_KEY = _re.compile(r"(율|률|비율|비중|%|배수|배$|ratio|rate|점수|계수|지수|개월|년수|연수|일수|주식수|인원|명$)", _re.IGNORECASE)
+
+
+def tidy_number(v):
+    """정수값인 float(25000000.0)를 int로. 그 밖의 값은 그대로."""
+    if isinstance(v, float) and not isinstance(v, bool) and _math.isfinite(v) and v.is_integer():
+        return int(v)
+    return v
+
+
+def tidy_amounts(obj, _amount: bool = False, _key: str = ""):
+    """결과에서 금액 키 아래의 정수값 float를 int로 바꾼 사본(값은 같음 — 25000000.0 → 25000000).
+    가장 가까운 키가 비율·율·배수·점수면 그대로 두고, 그 위 어느 키가 금액을 뜻하면 금액으로 본다."""
+    if isinstance(obj, dict):
+        out, changed = {}, False
+        for k, v in obj.items():
+            ks = str(k)
+            amt = (_amount or bool(_AMOUNT_KEY.search(ks))) and not _RATIO_KEY.search(ks)
+            nv = tidy_amounts(v, amt, ks)
+            changed |= nv is not v
+            out[k] = nv
+        return out if changed else obj
+    if isinstance(obj, list):
+        items = [tidy_amounts(v, _amount, _key) for v in obj]
+        return items if any(a is not b for a, b in zip(items, obj)) else obj
+    if _amount and isinstance(obj, float):
+        return tidy_number(obj)
+    return obj
+
+
+def num_text(x, digits: int = 2) -> str:
+    """사람이 읽는 수(지수 표기 없이) — 정수면 1,000,000, 아니면 소수 digits자리까지(끝 0 지움)."""
+    if isinstance(x, bool):
+        return str(x)
+    try:
+        f = float(x)
+    except (TypeError, ValueError):
+        return str(x)
+    if not _math.isfinite(f):
+        return str(x)
+    if f.is_integer():
+        return f"{int(f):,}"
+    s = f"{f:,.{digits}f}".rstrip("0").rstrip(".")
+    if s in ("0", "-0"):
+        return f"{'-' if f < 0 else ''}0.{'0' * (digits - 1)}1 미만"
+    return s
+
+
+def pct_text(ratio, digits: int = 4) -> str:
+    """비율(0.015) → '1.5%'. 소수 digits자리까지, 지수 표기 없이. 0이 아닌데 그 자리에서 0이 되면 '0.0001% 미만'."""
+    try:
+        f = float(ratio) * 100
+    except (TypeError, ValueError):
+        return str(ratio)
+    if not _math.isfinite(f):
+        return str(ratio)
+    s = f"{f:,.{digits}f}".rstrip("0").rstrip(".")
+    if s in ("0", "-0") and f != 0:
+        return f"{'-' if f < 0 else ''}0.{'0' * (digits - 1)}1% 미만"
+    return (s if s != "-0" else "0") + "%"

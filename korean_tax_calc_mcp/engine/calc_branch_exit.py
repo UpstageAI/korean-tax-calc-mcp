@@ -143,7 +143,7 @@ def _d(s, name):
     try:
         return date.fromisoformat(str(s))
     except ValueError:
-        raise ValueError(f"{name}는 YYYY-MM-DD")
+        raise ValueError(f"{name}={s!r} — YYYY-MM-DD 형식의 실제 날짜로 넣으세요(예: 2025-03-31)")
 
 
 def _split_tax(groups: list) -> dict:

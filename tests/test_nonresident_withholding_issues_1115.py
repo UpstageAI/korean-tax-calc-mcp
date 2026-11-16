@@ -147,7 +147,7 @@ def test_royalty_issue_lines(extra):
     own = [it for it in r["쟁점"] if it.get("구분") in KINDS]
     assert [it["구분"] for it in own] == KINDS
     for it in own:
-        assert "\n" not in it["쟁점"] and len(it["쟁점"]) <= 260 and it["참고"] and it["판단"] == "전문가 확인 필요"
+        assert "\n" not in it["쟁점"] and len(it["쟁점"]) <= 260 and it["참고"] and it["확인할 자료"] and "판단" not in it   # 0.59.1: 고정 '전문가 확인 필요' 대신 쟁점별 확인할 자료
     assert "판단_경로" not in r and "판단_경로" not in r["결과"]      # 판단 순서는 조문 MCP에 둠
 
 
