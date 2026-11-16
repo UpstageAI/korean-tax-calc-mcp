@@ -3358,50 +3358,120 @@ def bad_debt_allowance(receivables: WON, loss_rate: Annotated[float, Field(descr
     return _ok(C.bad_debt_allowance(receivables, loss_rate, set_amount, prior_disallowed), "법인세법 제34조, 시행령 제61조②")
 
 
+class ThinCapLoan(BaseModel):
+    model_config = {"extra": "forbid"}
+    name: str | None = None              # 차입금 이름(결과 표시용)
+    kind: str                            # 직접(제22조제2항제1호) | 특수관계인(제2호) | 보증(제3호) — 영문 direct·related·guarantee도 받음
+    rate: float                          # 연 이자율(소수)
+    jeoksu: int | None = None            # 차입금 적수(일별 잔액 합계, 원·일)
+    average_balance: int | None = None   # 적수 ÷ 연중 일수(원)
+    balance: int | None = None           # 잔액(원) — 사업연도 중 변동 없다고 보고 계산
+    borrowed_on: str | None = None       # 차입일 YYYY-MM-DD — 같은 이자율 차입금의 순서(늦은 것부터)
+    interest: int | None = None          # 그 차입금의 사업연도 지급이자(원, 선택 — 대조용)
+
+
+def _thin_cap_recalc(amount, recipient_type, country, interest_treaty_rate, dividend_treaty_rate, 근거):
+    """배당 처분액의 원천징수 재계산 — 개인은 소득세, 법인은 법인세 차액(0.59.0)."""
+    interest_wh = I.nonresident_withholding("이자", amount, recipient_type, country, interest_treaty_rate)
+    dividend_wh = I.nonresident_withholding("배당", amount, recipient_type, country, dividend_treaty_rate)
+    diff_income = dividend_wh["원천징수세액"] - interest_wh["원천징수세액"]
+    diff_local = dividend_wh["지방소득세"] - interest_wh["지방소득세"]
+    return {
+        "대상 금액(손금불산입 이자)": amount,
+        "이자 기준 원천징수세액": interest_wh["원천징수세액"],
+        "이자 기준 지방소득세": interest_wh["지방소득세"],
+        "배당 기준 원천징수세액": dividend_wh["원천징수세액"],
+        "배당 기준 지방소득세": dividend_wh["지방소득세"],
+        ("법인세 차액" if recipient_type == "법인" else "소득세 차액"): diff_income,
+        "지방소득세 차액": diff_local,
+        "근거": 근거,
+    }
+
+
 @mcp.tool(annotations=CALC)
 @_guard
 def thin_capitalization(equity: WON,
-                        borrowings: WON,
-                        total_interest: WON,
+                        borrowings: Annotated[int | None, Field(description="국외지배주주등 차입금 합계(원). loans를 넣으면 생략(넣으면 loans 평균잔액 합계와 대조)", ge=0)] = None,
+                        total_interest: Annotated[int | None, Field(description="그 차입금의 지급이자 총액(원). loans를 넣으면 생략(넣으면 loans의 interest 합계와 대조)", ge=0)] = None,
                         ratio: Annotated[float | int, Field(description="적용 배수(기본적으로 2, 금융업 등 업종 배수는 별도 확인)")] = 2,
                         year: YEAR = 2026,
                         recipient_residence_country: Annotated[str | None, Field(description="수취인 거주지국(ISO 2자 코드 또는 국명). 지정 시 배당 처분에 따른 원천징수 재계산 제공")] = None,
                         interest_treaty_rate: Annotated[float | None, Field(description="이자 조세조약 제한세율(소수, 예: 0.12 = 12%). 생략 시 국내세율 적용")] = None,
                         dividend_treaty_rate: Annotated[float | None, Field(description="배당 조세조약 제한세율(소수, 예: 0.15 = 15%). 생략 시 국내세율 적용")] = None,
-                        recipient_type: Annotated[Literal['개인', '법인'], Field(description="수취인 구분 — 개인(비거주자) / 법인(외국법인)")] = '개인') -> dict:
+                        recipient_type: Annotated[Literal['개인', '법인'], Field(description="수취인 구분 — 개인(비거주자) / 법인(외국법인)")] = '개인',
+                        loans: Annotated[list[ThinCapLoan] | None, Field(description="차입금별 목록(선택) [{name?, kind: '직접'(국외지배주주 차입)|'특수관계인'(국외지배주주의 특수관계인 차입)|'보증'(국외지배주주 지급보증 제3자 차입), rate: 연 이자율(소수), jeoksu(차입금 적수, 원·일) | average_balance(적수 ÷ 연중 일수) | balance(잔액 — 변동 없다고 보고 계산) 중 하나, borrowed_on?: 차입일 YYYY-MM-DD(같은 이자율이면 필수), interest?: 지급이자(대조용)}]. 넣으면 이자율 높은 차입금부터 초과분에 배정하고 직접분 배당·나머지 기타사외유출로 나눔")] = None,
+                        days_in_year: Annotated[int | None, Field(description="연중 일수(선택, loans 계산용). 생략 시 역년 사업연도로 보고 365일(윤년 366일)", ge=1, le=366)] = None) -> dict:
     """Thin capitalization: non-deductible interest on excess debt from foreign controlling shareholders (과소자본).
-    과소자본 손금불산입(국제조세조정에 관한 법률 제22조, 2020 사업연도까지 제14조). 언제: 국외지배주주로부터 차입한 금액이 출자금액의 기준 배수(기본 2배)를 초과할 때 초과분 지급이자를 손금불산입한다.
-입력: 국외지배주주 출자금액(원) → equity, 차입금액(원) → borrowings, 지급이자 총액(원) → total_interest, 적용 배수(기본 2) → ratio, 사업연도(2016~2026) → year, 수취인 거주지국 → recipient_residence_country, 이자 조세조약 제한세율(소수) → interest_treaty_rate, 배당 조세조약 제한세율(소수) → dividend_treaty_rate, 수취인 구분(개인/법인) → recipient_type.
-결과: 초과차입금·손금불산입 이자·처분(배당/기타사외유출), recipient_residence_country 지정 시 원천징수 재계산 결과 포함, 근거(그해 조문 — 2021년부터 국제조세조정에 관한 법률 제22조·시행령 제46조~제50조, 2020년까지 전부개정 전 제14조·시행령 제24조~제26조). Thin capitalization disallowance."""
-    base = C.thin_capitalization(equity, borrowings, total_interest, ratio, year)
+    과소자본 손금불산입(국제조세조정에 관한 법률 제22조, 2020 사업연도까지 제14조). 언제: 국외지배주주로부터 차입한 금액이 출자금액의 기준 배수(기본 2배, 금융업 6배)를 초과할 때 초과분 지급이자를 손금불산입한다. 직접 차입·지급보증 차입이 섞여 있거나 이자율이 다른 차입금이 여럿이면 loans로 차입금별로 넣는다.
+입력: 국외지배주주 출자금액(원) → equity, 차입금액(원) → borrowings, 지급이자 총액(원) → total_interest, 적용 배수(기본 2) → ratio, 사업연도(2016~2026) → year, 수취인 거주지국 → recipient_residence_country, 이자 조세조약 제한세율(소수) → interest_treaty_rate, 배당 조세조약 제한세율(소수) → dividend_treaty_rate, 수취인 구분(개인/법인) → recipient_type, 차입금별 목록 → loans(이때 borrowings·total_interest 생략), 연중 일수 → days_in_year.
+출자금액(equity): 사업연도 종료일 현재 max(자산 − 부채(충당금 포함, 미지급 법인세 제외), 납입자본금) × 국외지배주주 납입자본금비율(시행령 제47조, 2020년까지 구 시행령 제25조제3항). 사업연도 중 자본이 변동했으면 나누어 계산한 적수 ÷ 연중 일수를 넣는다.
+loans 없이: 손금불산입 이자 = 지급이자 × 초과차입금 ÷ 총차입금(평균 이자율), 처분은 전부 배당으로 봄(종전 계산).
+loans로: 초과차입금적수 = 차입금 적수 합계 − 출자금액 적수 × 배수를 이자율 높은 차입금부터(같은 이자율이면 차입일이 늦은 것부터, 2021년부터는 이자율·차입일이 모두 같으면 적수 비율 안분) 채우고 차입금별 손금불산입 이자 = 배정 적수 × 이자율 ÷ 연중 일수(시행령 제48조, 시행규칙 별지 제24호서식(갑); 2020년까지 구 시행령 제25조제1항). 처분은 직접 차입분 배당, 특수관계인·지급보증 차입분 기타사외유출(시행령 제49조, 2020년까지 구 시행령 제25조제6항). 세무조정 항목을 함께 돌려줌(income_adjustment_total에 그대로).
+결과: 초과차입금·손금불산입 이자·처분(배당/기타사외유출), loans를 넣으면 차입금별 배정·배당/기타사외유출 처분액·세무조정, recipient_residence_country 지정 시 배당 처분액의 원천징수 재계산(수취인 법인이면 '법인세 차액', 개인이면 '소득세 차액'), 근거(그해 조문 — 2021년부터 국제조세조정에 관한 법률 제22조·시행령 제46조~제50조, 2020년까지 전부개정 전 제14조·시행령 제24조~제26조). 다루지 않음: 소득 대비 과다이자(제24조) 금액, 정상 차입조건 증명(제22조제4항)에 따른 제외. Thin capitalization disallowance."""
     법조, 영조 = C.thin_cap_basis(year)
+    from .engine.calc_income import _load_issues
+    if loans:
+        return _thin_cap_by_loans(equity, borrowings, total_interest, ratio, year, recipient_residence_country,
+                                  interest_treaty_rate, dividend_treaty_rate, recipient_type, loans, days_in_year)
+    if borrowings is None or total_interest is None:
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": ["borrowings·total_interest가 필요 — 또는 loans(차입금별 목록)를 넣는다"]}
+    base = C.thin_capitalization(equity, borrowings, total_interest, ratio, year)
     result = {"결과": base, "근거": f"국제조세조정에 관한 법률 {법조}, 시행령 {영조}"}
 
     # 쟁점 부착 (issues.json에서 읽음, 하드코딩 금지)
-    from .engine.calc_income import _load_issues
     result["쟁점"] = _load_issues().get("thin_capitalization", [])
     if recipient_residence_country:
         disallowed_interest = base["손금불산입 이자"]
         if disallowed_interest > 0:
-            # 이자 기준 원천징수 (기존 이자소득 처분 가정)
-            interest_wh = I.nonresident_withholding("이자", disallowed_interest, recipient_type,
-                                                    recipient_residence_country, interest_treaty_rate)
-            # 배당 기준 원천징수 (국조법 제22조② 배당 처분)
-            dividend_wh = I.nonresident_withholding("배당", disallowed_interest, recipient_type,
-                                                    recipient_residence_country, dividend_treaty_rate)
-            diff_income = dividend_wh["원천징수세액"] - interest_wh["원천징수세액"]
-            diff_local = dividend_wh["지방소득세"] - interest_wh["지방소득세"]
-            result["결과"]["원천징수 재계산"] = {
-                "대상 금액(손금불산입 이자)": disallowed_interest,
-                "이자 기준 원천징수세액": interest_wh["원천징수세액"],
-                "이자 기준 지방소득세": interest_wh["지방소득세"],
-                "배당 기준 원천징수세액": dividend_wh["원천징수세액"],
-                "배당 기준 지방소득세": dividend_wh["지방소득세"],
-                "소득세 차액": diff_income,
-                "지방소득세 차액": diff_local,
-                "근거": f"국조법 {법조} {'②' if 법조 == '제22조' else '①'} 배당 처분 → 소득세법 제119조 2호 / 법인세법 제93조 2호 배당소득",
-            }
+            # 이자 기준 원천징수 (기존 이자소득 처분 가정) vs 배당 기준 원천징수 (국조법 제22조② 배당 처분)
+            result["결과"]["원천징수 재계산"] = _thin_cap_recalc(
+                disallowed_interest, recipient_type, recipient_residence_country, interest_treaty_rate, dividend_treaty_rate,
+                f"국조법 {법조} {'②' if 법조 == '제22조' else '①'} 배당 처분 → 소득세법 제119조 2호 / 법인세법 제93조 2호 배당소득")
     return result
+
+
+def _thin_cap_by_loans(equity, borrowings, total_interest, ratio, year, country, interest_treaty_rate,
+                       dividend_treaty_rate, recipient_type, loans, days_in_year):
+    """thin_capitalization의 loans 경로(0.59.0) — 이자율 순 배정, 직접·특수관계인·보증 처분 분리."""
+    from .engine.calc_income import _load_issues
+    items = [(l if isinstance(l, ThinCapLoan) else ThinCapLoan.model_validate(l)).model_dump() for l in loans]
+    r = C.thin_capitalization_loans(equity, items, ratio, year, days_in_year)
+    if "error" in r:
+        return r
+    res, B, 주의 = r["결과"], r["근거표"], list(r["주의"])
+    문제 = []
+    if borrowings is not None and borrowings != round(res["총차입금(평균잔액)"]):
+        문제.append(f"borrowings={borrowings:,} — loans 평균잔액 합계 {round(res['총차입금(평균잔액)']):,}와 다름. loans를 넣으면 borrowings는 생략한다")
+    if total_interest is not None:
+        ints = [i["interest"] for i in items]
+        if any(v is None for v in ints):
+            문제.append("total_interest를 넣었는데 interest가 없는 차입금이 있음 — loans를 넣으면 total_interest는 생략하거나 차입금마다 interest를 넣는다")
+        elif sum(ints) != total_interest:
+            문제.append(f"total_interest={total_interest:,} — loans의 interest 합계 {sum(ints):,}와 다름")
+    if 문제:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제}
+    old = year <= 2020
+    주의.insert(0, C.thin_cap_order_note(year))
+    주의.append(("정상적인 차입 규모·조건임을 증명한 차입금의 이자는 이 규정을 적용하지 않음(" +
+               ("구 국제조세조정에 관한 법률 제14조제3항" if old else "국제조세조정에 관한 법률 제22조제4항, 시행령 제51조") +
+               ") — 이 도구는 증명 여부를 판단하지 않음" + ("" if old else ". 차입금 배수가 비교대상배수를 넘으면 그 배수를 기준배수로 보고 시행령 제48조를 준용(시행령 제51조제2항) — 그때는 ratio에 비교대상배수를 넣는다")))
+    세무조정 = [a for a in (
+        _adj("과소자본 지급이자(국외지배주주 차입분)", "손금불산입", res["배당 처분"], "배당", f"{B['법']}, {B['처분']}"),
+        _adj("과소자본 지급이자(특수관계인·지급보증 차입분)", "손금불산입", res["기타사외유출 처분"], "기타사외유출", f"{B['법']}, {B['처분']}"),
+    ) if a["금액"]]
+    if country and res["배당 처분"] > 0:
+        res["원천징수 재계산"] = _thin_cap_recalc(
+            res["배당 처분"], recipient_type, country, interest_treaty_rate, dividend_treaty_rate,
+            f"배당 처분액(국외지배주주 직접 차입분)만 — {B['처분']}. 이미 원천징수한 이자 세액과 상계({B['상계']}"
+            + ("" if old else ", 납부·환급 신청은 시행령 제52조") + ") → "
+            + ("법인세법 제93조제2호" if recipient_type == "법인" else "소득세법 제119조제2호") + " 배당소득")
+        if res["기타사외유출 처분"]:
+            주의.append("기타사외유출 처분분(특수관계인·지급보증 차입분)은 배당으로 보지 않아 원천징수 재계산에 넣지 않음")
+    elif country and res["기타사외유출 처분"] and not res["배당 처분"]:
+        주의.append("손금불산입액이 모두 기타사외유출 처분분(특수관계인·지급보증 차입분)이라 배당 원천징수 재계산 없음")
+    return _ok(res, f"{B['법']}, {B['배정']}, {B['처분']}",
+               계산=r["계산"], 세무조정=세무조정, 주의=주의, 쟁점=_load_issues().get("thin_capitalization", []))
 
 
 @mcp.tool(annotations=CALC)
