@@ -221,6 +221,10 @@ mcp = MCPServer(
                  "도구 결과는 한국어로 나오지만, 답변은 사용자가 질문한 언어로 작성한다(국문 용어는 괄호로 병기). Tool results are in Korean; always answer in the language the user asked in, keeping key Korean terms in parentheses. "
                  + AUDIT_INSTRUCTIONS)
 CALC = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
+# 조회만 하되 외부(법제처·Upstage API)를 부를 수 있는 도구
+CALC_OPEN = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=True)
+# 작업 폴더에 파일을 저장하는 도구(엑셀) — 읽기 전용이 아님. 기존 자료를 지우지는 않음
+WRITES_FILE = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
 YEAR = Annotated[int, Field(description="사업연도·귀속연도(2016~2026)", ge=2016, le=2026)]
 WON = Annotated[int, Field(description="금액(원)", ge=0)]
 
@@ -4266,7 +4270,7 @@ def earned_income_gross_pay(year: YEAR,
 
 
 # ───────── 세무조사 판정 도구 11개 ─────────
-@mcp.tool(description="""Related party test between two persons under national tax, corporate tax and gift tax acts (특수관계 판정).
+@mcp.tool(annotations=CALC_OPEN, description="""Related party test between two persons under national tax, corporate tax and gift tax acts (특수관계 판정).
 두 당사자의 특수관계 여부·호수를 국세기본법·법인세법·상증법 기준으로 판정한다. 언제: 세무조사·증여의제 검토에서 두 사람·법인 간 특수관계와 적용 호수를 확인할 때.
 입력: 당사자 a(이름) → a, 당사자 b(이름) → b, 사실관계 시점(YYYY-MM-DD, 필수) → on, people={이름: {구분: "개인"|"법인"}} → people, family=[[a, b, "부모자녀"|"배우자"]] → family, stakes=[[보유자, 법인, 지분율(0~1)]] → stakes, officers={법인: [이름]} → officers, employees={법인: [이름]} → employees, livelihood=[[부양자, 피부양자]] → livelihood, 생계를 함께하는 친족 사실관계 [{친족, 상대방, 주민등록_동일세대, 동거_사실, 생활비_공동부담, 독립생계_소득, 경제적_지원, 별거_사유, 별도_임대차, 별거_증빙_유형, 연말정산_부양가족_등록, 수입_상대방계좌_입금, 혼인_독립가구}] → livelihood_shared, influence=[[사실상 영향력자, 법인]] → influence, group={기업집단: [계열회사]} → group, group_exempt={법인: 공정위 통지 내용} → group_exempt, 법령 인용 포함 여부 → with_citation.
 생계를 함께하는 친족(국기령 제1조의2제2항제3호, 법인령 제2조제8항제3호 — 2019.2.12.~2023.12.31. 제2조제5항제3호, 그 전 제87조제1항제3호): 전제는 상대방이 다른 당사자 본인의 임원·사용인(같은 법인 동료는 아님) 또는 생계유지자, 친족이 기준일 친족 범위(2023.3.1.부터 4촌 혈족·3촌 인척) 안. 1차 기준은 동거 불요·생활비 공동 부담: 생활비 공동부담, 무소득+정기송금, 수입이 상대방 계좌로 입금이면 생계 공동 / 안정 소득+따로 거주 또는 별도 세대+생활비 각자+지원 없음, 제3자 지원(금융자료), 혼인 독립 가구+주소 다름(소득 없으면 제외)이면 생계 별도 / 주민등록 동일세대는 객관 자료(진술서만은 안 됨)로 반증해야 하고, 동일세대+소득만·동거만·부양가족 공제 이력이면 생계 공동 추정(인정되는 증빙 안내) / 그 밖은 입력 확인 필요(확인할 항목·필요 자료). 상증법에는 이 항목 없음.
@@ -4296,7 +4300,7 @@ def related_judge(a: Annotated[str, Field(description='당사자 a(이름)')], b
         return {"error": "입력 확인 필요 — 판정하지 않음", "문제": [str(e)]}
 
 
-@mcp.tool(description="""Kinship degree check between two individuals and family scope for tax purposes (친족관계).
+@mcp.tool(annotations=CALC, description="""Kinship degree check between two individuals and family scope for tax purposes (친족관계).
 두 개인의 친족관계(혈족·인척 촌수, 배우자)와 기준일 친족 범위 해당 여부. 언제: 두 사람이 친족인지, 국세기본법·상증법상 친족 범위에 들어가는지 확인할 때.
 입력: 당사자 a(이름) → a, 당사자 b(이름) → b, 기준일(YYYY-MM-DD) → on, family=[[a, b, "부모자녀"|"배우자"]] → family(related_judge와 동일 형식).
 결과: 관계(촌수·배우자)·기준일·친족 범위·국기법 친족 여부·상증법 친족(사돈 포함) 여부. 두 개인의 친족관계(혈족·인척 촌수, 배우자)와 기준일 친족 범위 해당 여부를 확인한다.""")
@@ -4311,7 +4315,7 @@ def kinship_check(a: Annotated[str, Field(description='당사자 a(이름)')], b
             "국기법_친족": _R.is_kin(fam, a, b, "국기", on), "상증법_친족(사돈 포함)": _R.is_kin(fam, a, b, "상증", on)}
 
 
-@mcp.tool(description="""Direct and indirect ownership ratio of a holder in a corporation, incl. circular holdings (간접 보유비율).
+@mcp.tool(annotations=CALC, description="""Direct and indirect ownership ratio of a holder in a corporation, incl. circular holdings (간접 보유비율).
 보유자→법인 직접·간접 보유비율(경로별 곱 합산, 순환출자 반영). 언제: 일감몰아주기·지배주주 판정에서 특정인이 법인에 얼마나 간접 보유하는지 계산할 때.
 입력: 보유자(이름) → holder, 대상 법인(이름) → target, stakes=[[보유자, 법인, 지분율(0~1)]] → stakes(직접보유비율, related_judge와 동일).
 결과: 직접비율·경로별 비율·합계·순환출자 여부, 근거(상증법 시행령 제34조의3제2항 — 2020.2.10.까지는 제34조의2제2항). 보유자→법인 직접·간접 보유비율을 계산한다(간접은 단계별 직접보유비율의 곱, 경로별 합산, 순환출자는 단계별 모두 반영).""")
@@ -4324,7 +4328,7 @@ def ownership_ratio(holder: Annotated[str, Field(description='보유자(이름)'
             "합계": sum(r for _, r in ps), "순환출자": _R.has_cycle(st)}
 
 
-@mcp.tool(description="""Controlling shareholder test for beneficiary corporation in intra-group transfer gift tax (지배주주 판정).
+@mcp.tool(annotations=CALC, description="""Controlling shareholder test for beneficiary corporation in intra-group transfer gift tax (지배주주 판정).
 수혜법인의 지배주주 판정(상증법 시행령 제34조의3제1항). 언제: 일감몰아주기 증여의제이익 계산에서 수혜법인의 지배주주가 누구인지 판정할 때.
 입력: 수혜법인(이름) → corp, people={이름: {구분: "개인"|"법인"}} → people, family=[[a, b, "부모자녀"|"배우자"]] → family, stakes=[[보유자, 법인, 지분율(0~1)]] → stakes(related_judge와 동일 형식).
 기준일: 수혜법인 사업연도 종료일 → on. 최대주주등을 묶는 친족 범위가 2023.2.28.까지 6촌 혈족·4촌 인척, 2023.3.1.부터 4촌 혈족·3촌 인척(국세기본법 시행령 제1조의2제1항).
@@ -4376,7 +4380,7 @@ def _tunnel_basis(on):
 
 
 
-@mcp.tool(description="""Gift tax: deemed gift profit from intra-group business transfer, simplified formula (일감몰아주기 증여의제이익).
+@mcp.tool(annotations=CALC, description="""Gift tax: deemed gift profit from intra-group business transfer, simplified formula (일감몰아주기 증여의제이익).
 일감몰아주기 증여의제이익(상증법 제45조의3, 제10항 과세제외매출액 직접 입력, 제14항·제15항 미반영). 언제: 일감몰아주기 검토에서 증여의제이익을 간단히 계산할 때(국세청 신고안내 전체 산식은 tunnelling_gift_nts 사용).
 입력: 수혜자(이름) → beneficiary, 기업 규모(중소|중견|일반) → size, 총 매출액 → sales_total, sales_by_corp={거래처 법인: 매출액} → sales_by_corp, 세후영업이익 → after_tax_op_profit, people={이름: {구분: "개인"|"법인"}} → people, family=[[a, b, "부모자녀"|"배우자"]] → family, stakes=[[보유자, 법인, 지분율(0~1)]] → stakes, 제10항·제14항 과세제외매출액 → excluded_sales.
 사업연도: 수혜법인 사업연도 종료일 → fiscal_year_end(개시일 → fiscal_year_start). 2017.12.31. 이전 종료분은 종전 계산식(일반: 정상거래비율의 1/2인 15% 초과 거래비율 × 3% 초과 보유비율, 중소·중견: 정상거래비율 초과 × 10% 초과), 중견 정상거래비율은 2017년 개시 사업연도부터 40%(그 전 50%). 2018.1.1. 이후 종료분은 현행식. 친족 범위는 2023.2.28.까지 6촌 혈족·4촌 인척. 2016~2026 종료 사업연도만 지원.
@@ -4406,7 +4410,7 @@ def tunnelling_gift(beneficiary: Annotated[str, Field(description='수혜자(이
     return r
 
 
-@mcp.tool(description="""Gift tax: deemed gift profit from intra-group business transfer, NTS 2026 filing guide formula (일감몰아주기 증여의제이익).
+@mcp.tool(annotations=CALC, description="""Gift tax: deemed gift profit from intra-group business transfer, NTS 2026 filing guide formula (일감몰아주기 증여의제이익).
 일감몰아주기 증여의제이익 — 국세청 2026 신고안내 산식(세후영업이익 제12항, 출자관계별 추가 과세제외 제14항제1호·제3호, 한계보유 제13항, 배당공제 제15항). 언제: 국세청 신고안내 공식에 따라 일감몰아주기 증여의제이익을 정확히 계산할 때.
 입력: 기업 규모(중소|중견|일반) → size, 수혜법인(이름, 고정) → '수혜법인', 세후영업이익 제12항(원) → op_income, 과세표준(원) → taxable_income, 법인세 산출세액(원) → tax, 총 매출액(원) → sales_total, sales_by_corp={거래처 법인: 매출액(원)} → sales_by_corp, relations={관계명: 보유비율(소수)}(예: {'직접':0.2,'A경유':0.18}) → relations, 기본 과세제외매출액(제10항, 원) → base_excluded, holdings_in_related={특관법인: 지배주주등 보유비율(소수)} → holdings_in_related, indirect_corp_of={관계명: 그 경로 간접출자법인} → indirect_corp_of, excluded_by_corp={특관법인: 제10항 과세제외액(원)} → excluded_by_corp, dividends={관계명: [배당소득(원), 분모]}(제15항) → dividends, 토지등 양도소득 법인세(차감, 원) → land_tax, 공제·감면세액(차감, 원) → credits, 미환류소득 법인세(원, tax에 포함이 맞음) → unreturned_tax.
 사업연도: 수혜법인 사업연도 종료일 → fiscal_year_end(개시일 → fiscal_year_start). 2017.12.31. 이전 종료분은 종전 비율·계산식(일반 15% 초과 × 3% 초과, 중소·중견 정상거래비율 초과 × 10% 초과, 중견 정상거래비율 2016년 개시분까지 50%), 2018.1.1. 이후 종료분은 현행식. 제12항·제14항·제15항 산식은 2026 신고안내 기준 그대로라 과거 사업연도는 당시 서식과 대조 필요. 2016~2026 종료 사업연도만 지원.
@@ -4445,7 +4449,7 @@ def tunnelling_gift_nts(size: Annotated[str, Field(description="기업 규모('�
     return r
 
 
-@mcp.tool(description="""Related party provision location in effect on a given date for citation (특수관계인 범위 조문).
+@mcp.tool(annotations=CALC_OPEN, description="""Related party provision location in effect on a given date for citation (특수관계인 범위 조문).
 특수관계인 범위 조문이 기준일에 어느 법령에 있었는지 확인. 언제: 특수관계 판정 결과를 근거로 인용할 때 해당 기준일 시행 조문의 위치를 확인한다.
 입력: 법령 구분(국기|법인|상증) → law, 기준일(YYYY-MM-DD) → on. 예: law='법인', on='2019-02-11' → 법인세 시행령 제87조제1항.
 결과: 법령명·조항·원문·기준일. 특수관계인 범위 조문이 기준일에 어디 있었는지 확인한다(law=국기|법인|상증).""")
@@ -4456,7 +4460,7 @@ def related_provision_at(law: Annotated[str, Field(description="법령 구분('�
     return {"법령": name, "조항": jo, "원문": head, "기준일": on}
 
 
-@mcp.tool(description="""Relationship table extraction from shareholder, family and officer PDF documents (관계표 추출).
+@mcp.tool(annotations=CALC_OPEN, description="""Relationship table extraction from shareholder, family and officer PDF documents (관계표 추출).
 주주명부·가족관계·임원명단 PDF에서 관계표(people/family/stakes/officers)를 추출한다. 언제: 세무조사·의료법인 친족확인 등에서 PDF 문서에 있는 관계표를 도구 입력으로 정리할 때.
 입력: PDF 파일 경로 → pdf_path.
 결과: people·family·stakes·officers 추출 결과(초안) + AI 생성 표시(필요 시). related_judge에 넣기 전에 사람이 확인한다. UPSTAGE_API_KEY 없이도 pypdf 로컬 추출 후 정리 가능(기본), 키 설정 시 Document Parse + Solar Pro 4로 더 정교한 표 추출. 주주명부·가족관계·임원명단 PDF에서 관계표를 뽑는다.""")
@@ -4466,7 +4470,7 @@ def extract_relations(pdf_path: Annotated[str, Field(description="PDF 파일 경
     return _add_ai_mark(related_intake.from_pdf(pdf_path))
 
 
-@mcp.tool(description="""Gift tax intra-group business transfer PDF review: extract tables and compute deemed gift (일감몰아주기 PDF 검토).
+@mcp.tool(annotations=CALC_OPEN, description="""Gift tax intra-group business transfer PDF review: extract tables and compute deemed gift (일감몰아주기 PDF 검토).
 일감몰아주기 검토 자료 PDF → 표 추출 → 코드가 지배주주·출자관계·증여의제이익 계산. 언제: PDF로 된 일감몰아주기 검토 자료에서 관계표를 추출해 tunnelling_gift_nts 입력으로 정리할 때.
 입력: PDF 파일 경로 → pdf_path.
 결과: 지배주주·출자관계·증여의제이익 계산 결과(초안) + AI 생성 표시(필요 시). 자료의 사업연도를 읽어 그 사업연도 규정으로 계산(2017.12.31. 이전 종료분은 종전 계산식), 못 읽으면 2018.1.1. 이후 규정으로 계산하고 '확인 필요'에 표시. UPSTAGE_API_KEY 없이도 pypdf 로컬 추출 후 정리 가능(기본), 키 설정 시 Document Parse + Solar Pro 4로 더 정교한 표 추출. 결과는 사람 확인. 일감몰아주기 검토 자료 PDF에서 표를 뽑는다.""")
@@ -4476,7 +4480,7 @@ def tunnelling_from_pdf(pdf_path: Annotated[str, Field(description="PDF 파일 �
     return _add_ai_mark(tunnel_intake.from_pdf(pdf_path))
 
 
-@mcp.tool(description="""Tax return precheck: list of suspected errors before a tax audit (신고서 사전검토).
+@mcp.tool(annotations=CALC, description="""Tax return precheck: list of suspected errors before a tax audit (신고서 사전검토).
 신고서 사전검토(조사 착수 전 오류 의심 목록). 언제: 세무조사 착수 전에 신고서 값으로 오류 의심 항목을 미리 점검할 때. 입력: data={입력키: 값}, tax=법인|부가|소득(생략 시 전체) — 입력키는 precheck_schema로 먼저 확인.
 연도: 소득은 "귀속연도"(2016~2026), 부가는 "신고.과세기간"('YYYY-1'|'YYYY-2', 2016-1~2026-2)을 넣어야 그 연도 시행 규정(세율·공제·비과세 한도·감면 요건·공제율·이자율)으로 판정 — 없거나 범위 밖이면 연도에 따라 달라지는 규칙은 자료 부족.
 결과: 오류 의심·이상 없음·자료 부족·사실 확인 필요.""")
@@ -4485,7 +4489,7 @@ def return_precheck(data: Annotated[dict, Field(description='신고서 입력키
     return _precheck_run(data, tax)
 
 
-@mcp.tool(description="""Tax return precheck input schema: keys, units and required fields (사전검토 입력스키마).
+@mcp.tool(annotations=CALC, description="""Tax return precheck input schema: keys, units and required fields (사전검토 입력스키마).
 신고서 사전검토 입력스키마. 언제: return_precheck·영어로 된 신고서 PDF 도구 입력 전에 어떤 키를 넣어야 하는지 확인할 때. 입력: tax=법인|부가|소득. 결과: 각 입력키의 의미·단위·필수 여부를 목록으로 반환한다.""")
 @_guard
 def precheck_schema(tax: Annotated[Literal["법인", "부가", "소득"], Field(description="사전검토 세목('법인'|'부가'|'소득')")] ) -> dict:
@@ -4523,7 +4527,7 @@ def _infer_unit(desc: str) -> str:
     return "문맥 참조"
 
 
-@mcp.tool(description="""Corporate tax return PDF precheck: extract forms and list suspected errors (법인세 신고서 PDF 사전검토).
+@mcp.tool(annotations=CALC_OPEN, description="""Corporate tax return PDF precheck: extract forms and list suspected errors (법인세 신고서 PDF 사전검토).
 법인세 신고서 PDF(별지 1·3·50호) → 표 추출 → 사전검토(오류 의심 목록). 언제: 법인세 신고서 PDF에서 값을 추출해 return_precheck 입력으로 정리할 때.
 입력: PDF 파일 경로 → pdf_path.
 결과: 오류 의심·이상 없음·자료 부족·사실 확인 필요 목록 + 서식 간 대사·세액 체인 재계산 + AI 생성 표시(필요 시). UPSTAGE_API_KEY 없이도 pypdf 로컬 추출 후 return_precheck 입력으로 정리 가능(기본), 키 설정 시 Document Parse + Solar Pro 4로 더 정교한 표 추출. 법인세 신고서 PDF에서 표를 추출해 사전검토한다.""")
@@ -10460,7 +10464,7 @@ for _tool_name, _tool in list(mcp._tool_manager._tools.items()):
     _meta.arg_model = _new_model
 
 # ── export_workbook: 계산 근거 엑셀 내보내기(본문은 tools_export.py) ────────────────
-@mcp.tool(annotations=CALC)
+@mcp.tool(annotations=WRITES_FILE)
 @_guard
 def export_workbook(
     title: Annotated[str, Field(description="문서 제목 — 파일명 기본값")],
@@ -10517,7 +10521,7 @@ def export_workbook(
 
 
 # ── verify_workbook: 직접 만든 통합 문서의 금액 칸을 계산 도구 결과와 대조(본문은 workbook_verify.py) ────────
-@mcp.tool(annotations=CALC)
+@mcp.tool(annotations=WRITES_FILE)
 @_guard
 def verify_workbook(
     path: Annotated[str, Field(description="대조할 통합 문서(.xlsx)의 절대 경로 — 원본은 고치지 않음")],
