@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "korean-tax-calc-mcp"
-version = "0.60.1"
+version = "0.61.0"
 description = "Korea (South Korea) tax calculator MCP server (142 tools) — corporate, income and VAT tax, non-resident withholding, foreign worker flat tax, branch and exit tax, transfer pricing, tax adjustments and statutory-form Excel, with statute citations. 한국 세금 계산·세무조정 MCP"
 readme = "README.md"
 requires-python = ">=3.10"

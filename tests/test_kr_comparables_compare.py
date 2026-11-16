@@ -6,8 +6,17 @@ import os
 
 import pytest
 
-from korean_tax_calc_mcp.engine.kr_comparables import (DEFAULT_RULES, STATUS_NONE, STATUS_OK, STATUS_UNKNOWN, compare_many,
-                                                      compare_profile, empty_profile, validate_profile, value)
+from korean_tax_calc_mcp.engine.kr_comparables import (STATUS_NONE, STATUS_OK, STATUS_UNKNOWN, compare_many as _cm,
+                                                      compare_profile as _cp, empty_profile, validate_profile, value)
+from kr_example_rules import EX_RULES
+
+
+def compare_profile(t, c, rules=None):          # 예시 기준값을 rules로 넘김(도구에는 관행 기본값 없음)
+    return _cp(t, c, {**EX_RULES, **(rules or {})})
+
+
+def compare_many(t, cs, rules=None):
+    return _cm(t, cs, {**EX_RULES, **(rules or {})})
 
 GOLD = json.load(open(os.path.join(os.path.dirname(__file__), "data", "kr_comparables_gold.json"), encoding="utf-8"))["companies"]
 
@@ -50,18 +59,19 @@ PROFILES = {g["corp_name"]: profile_from_gold(g) for g in GOLD}
 
 # 손으로 적용한 예상 종합 판정
 EXPECT_RESELLER = {
-    "(주)휴맥스": "제외 후보", "모바일어플라이언스 주식회사": "제외 후보", "(주)유니트론텍": "포함 후보", "(주)누리플렉스": "포함 후보",
+    "(주)휴맥스": "제외 후보", "모바일어플라이언스 주식회사": "제외 후보", "(주)유니트론텍": "포함 후보", "(주)누리플렉스": "사람 확인",   # 0.61.0: 원재료 재고 유무만 다름(K5)
     "오브젠 주식회사": "제외 후보", "(주)엠로": "제외 후보", "(주)한컴": "제외 후보", "(주)밸로프": "제외 후보",
     "명성엘엔텍": "제외 후보", "북두엔지니어링": "제외 후보", "남양씨피엠": "제외 후보", "대주기공": "제외 후보",
-    "상신코퍼레이션": "포함 후보", "애보트메디칼코리아": "포함 후보", "케이엘페트로": "제외 후보", "천하자동차": "제외 후보",
+    "상신코퍼레이션": "포함 후보", "애보트메디칼코리아": "포함 후보", "케이엘페트로": "사람 확인", "천하자동차": "사람 확인",     # 0.61.0: 재고만(K1)·유형자산만(K2) 다름
     "디티씨": "제외 후보", "세창": "제외 후보", "행담도개발": "제외 후보", "참트레이딩": "사람 확인",
 }
 EXPECT_CONTRACT_MFG = {
-    "(주)휴맥스": "제외 후보", "모바일어플라이언스 주식회사": "제외 후보", "(주)유니트론텍": "제외 후보", "(주)누리플렉스": "제외 후보",
+    "(주)휴맥스": "사람 확인", "모바일어플라이언스 주식회사": "사람 확인",       # 0.61.0: 유형자산만 다름(K2)
+    "(주)유니트론텍": "제외 후보", "(주)누리플렉스": "제외 후보",
     "오브젠 주식회사": "제외 후보", "(주)엠로": "제외 후보", "(주)한컴": "제외 후보", "(주)밸로프": "제외 후보",
-    "명성엘엔텍": "포함 후보", "북두엔지니어링": "포함 후보", "남양씨피엠": "포함 후보", "대주기공": "제외 후보",
+    "명성엘엔텍": "포함 후보", "북두엔지니어링": "포함 후보", "남양씨피엠": "포함 후보", "대주기공": "사람 확인",   # 특수관계 매출 42%(I2)
     "상신코퍼레이션": "제외 후보", "애보트메디칼코리아": "제외 후보", "케이엘페트로": "제외 후보", "천하자동차": "제외 후보",
-    "디티씨": "제외 후보", "세창": "제외 후보", "행담도개발": "제외 후보", "참트레이딩": "제외 후보",
+    "디티씨": "제외 후보", "세창": "제외 후보", "행담도개발": "제외 후보", "참트레이딩": "사람 확인",     # 매출 구성 불명(M0)
 }
 
 
@@ -99,19 +109,20 @@ def test_contract_mfg(name):
 def test_counts():
     a = compare_many(TESTED_RESELLER, list(PROFILES.values()))
     b = compare_many(TESTED_CONTRACT_MFG, list(PROFILES.values()))
-    assert a["counts"] == {"포함 후보": 4, "사람 확인": 1, "제외 후보": 15}
-    assert b["counts"] == {"포함 후보": 3, "사람 확인": 0, "제외 후보": 17}
-    assert "기본값" in a["note"] and a["rules_used"] == DEFAULT_RULES
+    assert a["counts"] == {"포함 후보": 3, "사람 확인": 4, "제외 후보": 13}
+    assert b["counts"] == {"포함 후보": 3, "사람 확인": 4, "제외 후보": 13}
+    assert "rules로 받은 기준만" in a["note"] and all(a["rules_used"][k] == v for k, v in EX_RULES.items())
 
 
 def test_item_detail_examples():
     r = compare_profile(TESTED_RESELLER, PROFILES["(주)누리플렉스"])
     assert r["items"]["revenue_mix"]["verdict"] == "가까움"          # 상품 0.712, 차이 0.188
-    assert r["items"]["raw_material"]["verdict"] == "다름"           # 원재료 재고 있음(보조 항목 — 종합에는 영향 없음)
+    assert r["items"]["raw_material"]["verdict"] == "다름" and r["reasons"][0].startswith("[K5]")   # 원재료 재고 유무만 다름 → 사람 확인
     r = compare_profile(TESTED_RESELLER, PROFILES["케이엘페트로"])
-    assert r["items"]["inventory"]["verdict"] == "다름" and "재고 다름" in r["reasons"]
+    assert r["items"]["inventory"]["verdict"] == "다름" and r["overall"] == "사람 확인" and r["reasons"][0].startswith("[K1]")
     r = compare_profile(TESTED_CONTRACT_MFG, PROFILES["대주기공"])
-    assert r["items"]["ppe"]["verdict"] == "다름"                      # 0.138 < 0.175, 차이 0.21 > 0.05
+    assert r["items"]["ppe"]["verdict"] == "다름" and r["reasons"][0].startswith("[K2]")
+    assert r["overall"] == "사람 확인" and any(x.startswith("[I2]") for x in r["reasons"])
     r = compare_profile(TESTED_RESELLER, PROFILES["참트레이딩"])
     assert r["items"]["revenue_mix"]["verdict"] == "불명" and any("특수관계 매출" in x for x in r["independence"])
 
@@ -171,7 +182,7 @@ def test_rules_adjustable():
     assert compare_profile(TESTED_RESELLER, c)["items"]["revenue_mix"]["verdict"] == "가까움"
     r = compare_profile(TESTED_RESELLER, c, rules={"mix_max_diff": 0.10})
     assert r["items"]["revenue_mix"]["verdict"] == "다름" and r["overall"] == "제외 후보" and r["rules_used"]["mix_max_diff"] == 0.10
-    assert DEFAULT_RULES["mix_max_diff"] == 0.20  # 기본값은 바뀌지 않음
+    assert EX_RULES["mix_max_diff"] == 0.20  # 넘긴 값은 바뀌지 않음
 
 
 # ---------- 불명 처리 ----------
@@ -179,7 +190,9 @@ def test_unknown_vs_none_status():
     # 불명-없음(계정 없음)은 0으로 비교, 불명-못찾음은 불명
     c = _cand(adv=None)
     c["advert_ratio"] = value(0.0, STATUS_NONE, account="광고선전비", note="판관비 내역에 계정 없음")
-    assert compare_profile(TESTED_RESELLER, c)["items"]["advert"]["verdict"] == "다름"   # 0 vs 2%(차이 2%p > 1%p)
+    assert compare_profile(TESTED_RESELLER, c)["items"]["advert"]["verdict"] == "가까움"   # 0 vs 2%(차이 2%p ≤ 3%p)
+    c["advert_ratio"] = value(0.0, STATUS_NONE, account="광고선전비", note="판관비 내역에 계정 없음")
+    assert compare_profile(TESTED_RESELLER | {"advert_ratio": 0.04}, c)["items"]["advert"]["verdict"] == "다름"   # 0 vs 4%
     c["advert_ratio"] = value(None, STATUS_UNKNOWN)
     assert compare_profile(TESTED_RESELLER, c)["items"]["advert"]["verdict"] == "불명"
     c = _cand()
@@ -188,8 +201,11 @@ def test_unknown_vs_none_status():
 
 
 def test_core_unknown_needs_review():
-    c = _cand(); c["inv_to_sales"] = value()
-    assert compare_profile(TESTED_RESELLER, c)["overall"] == "사람 확인"
+    c = _cand(); c["mix_merchandise"] = value()              # 핵심(매출 구성) 불명
+    r = compare_profile(TESTED_RESELLER, c)
+    assert r["overall"] == "사람 확인" and r["reasons"][0].startswith("[M0]")
+    c = _cand(); c["inv_to_sales"] = value()                 # 재고는 핵심 아님 — 불명 1개면 포함
+    assert compare_profile(TESTED_RESELLER, c)["overall"] == "포함 후보"
 
 
 def test_many_unknown_needs_review():
@@ -200,17 +216,25 @@ def test_many_unknown_needs_review():
 
 
 def test_core_diff_beats_unknown():
-    c = _cand(ppe=0.5); c["inv_to_sales"] = value()
+    c = _cand(merch=0.3); c["inv_to_sales"] = value()
     assert compare_profile(TESTED_RESELLER, c)["overall"] == "제외 후보"
+    c = _cand(ppe=0.5, inv=0.6)                              # 재고·유형자산 둘 다 다름 → 제외 후보(K3)
+    r = compare_profile(TESTED_RESELLER, c)
+    assert r["overall"] == "제외 후보" and r["reasons"][0].startswith("[K3]")
+    r = compare_profile(TESTED_RESELLER, _cand(ppe=0.5))       # 하나만 → 사람 확인(K2)
+    assert r["overall"] == "사람 확인" and r["reasons"][0].startswith("[K2]")
 
 
 def test_independence():
     c = _cand(max_shareholder_pct=value(50.0))
     r = compare_profile(TESTED_RESELLER, c)
-    assert r["overall"] == "제외 후보" and "법정 하한" in r["independence"][0]
+    assert r["overall"] == "제외 후보" and "법정 준용" in r["independence"][0]
     assert compare_profile(TESTED_RESELLER, _cand(max_shareholder_pct=value(49.99)))["overall"] == "포함 후보"
-    assert compare_profile(TESTED_RESELLER, _cand(related_sales_ratio=value(0.25)))["overall"] == "사람 확인"
-    assert compare_profile(TESTED_RESELLER, _cand(related_sales_ratio=value(0.2499)))["overall"] == "포함 후보"
+    assert compare_profile(TESTED_RESELLER, _cand(related_sales_ratio=value(0.20)))["overall"] == "사람 확인"
+    assert compare_profile(TESTED_RESELLER, _cand(related_sales_ratio=value(0.1999)))["overall"] == "포함 후보"
+    r = compare_profile(TESTED_RESELLER, _cand(related_purchase_ratio=value(0.53)))      # 매입 의존도 — 사람 확인, 법정 판정 아님
+    assert r["overall"] == "사람 확인" and "법정 특수관계 판정 아님" in r["reasons"][0]
+    assert compare_profile(TESTED_RESELLER, _cand(related_sales_ratio=value(0.22)), rules={"related_sales_review": 0.25})["overall"] == "포함 후보"   # 예전 이름
 
 
 def test_schema_guards():

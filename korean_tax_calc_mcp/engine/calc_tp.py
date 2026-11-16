@@ -22,17 +22,69 @@ def _fr(x):
 
 
 def _quantile(xs, q, method):
-    """xs 정렬됨. inclusive: 위치 (n−1)q(엑셀 QUARTILE.INC), exclusive: 위치 (n+1)q − 1(엑셀 QUARTILE.EXC, n≥3)."""
+    """xs 정렬됨. nts(기본): 아래 설명. excel_inc(별칭 inclusive): 위치 (n−1)q(엑셀 QUARTILE.INC — 0.60.x까지 기본), exclusive: 위치 (n+1)q − 1(엑셀 QUARTILE.EXC, n≥3).
+    us: 미국 26 CFR §1.482-1(e)(2)(iii)(C) — 보간 없이, 값 이하인 결과가 q 이상이 되는 가장 작은 값.
+        그 값 이하인 결과가 정확히 q이면 그 값과 다음 값의 평균(중위값은 q=1/2로 같은 규칙, §1.482-1(e)(3)).
+    nts: 국조법 기본통칙 8-15…1(국세청 「외국법인 및 외국인투자기업 납세안내」 2026, 인쇄 272~273쪽) — 아래 사분위 위치 (n+2)/4,
+        위 사분위 위치 (3n+2)/4. 위치가 정수면 그 값, 소수면 관례대로 인접 두 값의 평균."""
     n = len(xs)
-    pos = (n - 1) * q if method == "inclusive" else (n + 1) * q - 1
+    if method == "nts":
+        if q not in (Fraction(1, 4), Fraction(3, 4)):
+            return _quantile(xs, q, "excel_inc")       # 통칙은 아래·위 사분위 위치만 정함 — 중위값은 보통 중앙값
+        pos = Fraction(n + 2, 4) if q == Fraction(1, 4) else Fraction(3 * n + 2, 4)   # 1부터 센 위치
+        lo = max(1, min(n, int(pos)))
+        if pos == lo:
+            return xs[lo - 1]
+        return (xs[lo - 1] + xs[min(n, lo + 1) - 1]) / 2   # 소수 위치면 관례상 인접 두 값 평균
+    if method == "us":
+        for i in range(1, n + 1):
+            frac = Fraction(i, n)
+            if frac >= q:
+                return (xs[i - 1] + xs[i]) / 2 if frac == q and i < n else xs[i - 1]
+        return xs[-1]
+    pos = (n + 1) * q - 1 if method == "exclusive" else (n - 1) * q       # excel_inc·inclusive
     if pos <= 0: return xs[0]
     if pos >= n - 1: return xs[-1]
     lo = int(pos)
     return xs[lo] + (xs[lo + 1] - xs[lo]) * (pos - lo)
 
 
+QM_ALIASES = {"inclusive": "excel_inc", "nts_rule_8_15": "nts"}
+QM_BASIS = "국조법 기본통칙 8-15…1 — 현행 통칙은 조문 MCP에서 확인"
+QM_LABEL = {"excel_inc": "엑셀 QUARTILE.INC — 위치 (n−1)×q 선형보간(0.60.x까지 기본)", "exclusive": "위치 (n+1)×q−1 선형보간(엑셀 QUARTILE.EXC)",
+            "us": "미국 26 CFR §1.482-1(e)(2)(iii)(C) — 보간 없이 그 값 이하가 25%·50%·75% 이상이 되는 가장 작은 값(정확히 같으면 다음 값과 평균)",
+            "nts": "국조법 기본통칙 8-15…1 — 아래 사분위 위치 (n+2)/4, 위 사분위 위치 (3n+2)/4, 소수 위치면 인접 두 값 평균(관례), 중위값은 가운데 값(짝수면 두 값 평균)"}
+QM_ALL = ("nts", "nts_rule_8_15", "excel_inc", "inclusive", "exclusive", "us")
+
+
+def norm_qm(m):
+    return QM_ALIASES.get(m, m)
+
+
+def median_of(xs, m):
+    return _quantile(xs, Fraction(1, 2), "us" if m == "us" else "excel_inc")
+
+
+def method_info(m, n):
+    m = norm_qm(m)
+    return {"방식": m, "설명": QM_LABEL[m], "n": n, "근거": QM_BASIS if m == "nts" else
+            ("26 CFR §1.482-1(e)(2)(iii)(C)" if m == "us" else "엑셀 함수 — 국조법령·통칙 근거 아님(이전 결과 재현용)"), "조정점": "중위값"}
+
+
+def quartile_sensitivity(xs, t):
+    """같은 비교대상으로 세 방식(국세청 통칙·엑셀 INC·미국식) 사분위 범위 — 사용하지 않은 방식은 민감도로."""
+    xs = sorted(xs)
+    out = {}
+    for m, nm in (("nts", "국세청 통칙 8-15…1(기본)"), ("excel_inc", "엑셀 QUARTILE.INC"), ("us", "미국식 26 CFR §1.482-1(e)(2)(iii)(C)")):
+        q1, q3 = _quantile(xs, Fraction(1, 4), m), _quantile(xs, Fraction(3, 4), m)
+        med = median_of(xs, m)
+        out[m] = {"이름": nm, "제1사분위": float(q1), "중위값": float(med), "제3사분위": float(q3),
+                  **({"범위_안": q1 <= t <= q3} if t is not None else {})}
+    return out
+
+
 def arm_length_range(comparables, tested_value, base_amount=None, range_type="사분위", point="중위값", point_value=None,
-                     tested_is_resident=None, higher_is_more_income=True, quartile_method="inclusive", year=None):
+                     tested_is_resident=None, higher_is_more_income=True, quartile_method="nts", year=None):
     문제 = []
     vals, names = [], []
     if not isinstance(comparables, list) or len(comparables) < 2:
@@ -54,8 +106,8 @@ def arm_length_range(comparables, tested_value, base_amount=None, range_type="�
         문제.append("point — '중위값'·'평균값'·'직접입력'")
     if point == "직접입력" and (isinstance(point_value, bool) or not isinstance(point_value, (int, float))):
         문제.append("point_value — point='직접입력'이면 기준점 값(숫자) 필요")
-    if quartile_method not in ("inclusive", "exclusive"):
-        문제.append("quartile_method — 'inclusive'(엑셀 QUARTILE.INC) 또는 'exclusive'(QUARTILE.EXC)")
+    if quartile_method not in QM_ALL:
+        문제.append("quartile_method — 'nts'(국조법 기본통칙 8-15…1, 기본) · 'excel_inc'(엑셀 QUARTILE.INC, 0.60.x까지 기본 — 'inclusive'도 같음) · 'exclusive'(QUARTILE.EXC) · 'us'(미국 26 CFR §1.482-1(e)(2)(iii)(C), 보간 없음)")
     if base_amount is not None and (isinstance(base_amount, bool) or not isinstance(base_amount, (int, float)) or base_amount < 0):
         문제.append("base_amount — 지표의 분모 금액(원, 0 이상): 매출액 대비 이익률이면 매출액, 원가 대비면 원가")
     if year is not None and not (isinstance(year, int) and YEAR_MIN <= year <= YEAR_MAX):
@@ -68,7 +120,8 @@ def arm_length_range(comparables, tested_value, base_amount=None, range_type="�
     A = ERA.RANGE[ERA.era(year)]
     xs = sorted(vals)
     n = len(xs)
-    median = _quantile(xs, Fraction(1, 2), "inclusive")
+    quartile_method = norm_qm(quartile_method)
+    median = median_of(xs, quartile_method)
     mean = sum(xs) / n
     q1 = _quantile(xs, Fraction(1, 4), quartile_method)
     q3 = _quantile(xs, Fraction(3, 4), quartile_method)
@@ -80,7 +133,8 @@ def arm_length_range(comparables, tested_value, base_amount=None, range_type="�
                                 + f" {float(lo):.4%} ~ {float(hi):.4%}"),
            "근거": A["범위"] + ((" — 사분위 범위: 조문에는 없고 거래가격 조정신고서(시행규칙 별지 제1호서식, 2022.3.18. 시행규칙부터) 작성방법 10이 정상사분위범위 기재를 전제, 계산법은 정하지 않음(OECD 지침 3.57)" if (year or 2026) >= 2022 else " — 사분위로 좁히는 방법은 국조법령에 없음(OECD 지침 3.57의 통계적 도구)") if range_type == "사분위" else "")}]
     결과 = {"비교대상_수": n, "최솟값": float(xs[0]), "제1사분위": float(q1), "중위값": float(median), "제3사분위": float(q3), "최댓값": float(xs[-1]),
-           "평균값": float(mean), "범위": {"종류": range_type, "하한": float(lo), "상한": float(hi)}, "분석대상_값": float(t), "범위_안": inside}
+           "평균값": float(mean), "범위": {"종류": range_type, "하한": float(lo), "상한": float(hi)}, "분석대상_값": float(t), "범위_안": inside,
+           "사분위_방식": method_info(quartile_method, n)}
     if inside:
         결과.update({"조정_필요": False, "차이": 0.0, "조정액": 0})
         판단.append({"항목": "판정", "결론": f"분석대상 값 {float(t):.4%}이 범위 안 — 조정하지 않음", "근거": A["범위"] + ", OECD 지침 3.60"})
@@ -112,11 +166,12 @@ def arm_length_range(comparables, tested_value, base_amount=None, range_type="�
         {"항목": "제외할 수 있는 거래", "내용": "거래 당사자가 임의로 조작해 정상적인 거래로 볼 수 없는 거래는 비교가능한 거래로 선택하지 않을 수 있음", "근거": A["제외"]},
         {"항목": "이익률 자료의 한계", "내용": "공시 재무제표나 데이터베이스에서 얻은 이익률만으로는 기능·위험·거래 조건·규모가 비슷한지 확인할 수 없음 — 탐색 조건, 단계별 탈락 사유, 차이 조정을 문서로 남겨야 비교대상으로 설명할 수 있음", "근거": A["이익률"]},
         {"항목": "과세당국의 재산정", "내용": "과세당국은 다른 비교대상이나 산출방법으로 정상가격을 다시 산정할 수 있음 — 한 출처에 기대지 말고 내부 거래·공시 자료·데이터베이스 등 여러 출처로 맞춰 봄", "근거": A["재산정"]}]
-    out = {"결과": 결과, "비교대상_확인": 비교대상_확인, "계산": {"비교대상_정렬": [{"이름": nm, "값": float(v)} for v, nm in sorted(zip(vals, names))],
-                             "사분위_계산법": ("위치 (n−1)×q 선형보간(엑셀 QUARTILE.INC)" if quartile_method == "inclusive" else "위치 (n+1)×q−1 선형보간(엑셀 QUARTILE.EXC)")},
+    out = {"결과": 결과, "사분위_민감도": quartile_sensitivity(xs, t), "비교대상_확인": 비교대상_확인, "계산": {"비교대상_정렬": [{"이름": nm, "값": float(v)} for v, nm in sorted(zip(vals, names))],
+                             "사분위_계산법": QM_LABEL[quartile_method],
+                             "비교대상_수": n, "조정점": "중위값" if point == "중위값" else point},
            "판단": 판단, "근거": A["근거"],
            "주의": ["비교대상이 적절한지(비교가능성, 차이 조정, 손실·극단값 처리)는 판단하지 않음 — 입력한 값으로 범위와 차이만 계산. 후보 목록을 거르는 일은 tp_comparable_screen",
-                  "사분위 계산법(포함형·배제형)과 기준점(중위값 등)은 국조법령이 특정하지 않음 — 2022.3.18. 시행규칙부터 거래가격 조정신고서는 정상사분위범위 기재를 전제함. 선택 이유를 보고서(개별기업보고서 Ⅱ-10·Ⅱ-15)에 밝혀야 함",
+                  "사분위 계산법과 기준점(중위값 등)은 국조법령이 특정하지 않음 — 기본은 국세청 기본통칙 8-15…1(위치 (n+2)/4·(3n+2)/4, quartile_method='nts'), 엑셀 QUARTILE.INC('excel_inc')·미국식('us')은 사분위_민감도에 함께. 2022.3.18. 시행규칙부터 거래가격 조정신고서는 정상사분위범위 기재를 전제함. 선택 이유를 보고서(개별기업보고서 Ⅱ-10·Ⅱ-15)에 밝혀야 함",
                   *(["2019년까지 개시한 과세연도: 구 시행령 제6조④⑤는 정상가격 범위를 과세당국의 과세조정 판정에 쓰는 것으로만 정함 — 거주자의 신고에 쓰는 문언은 2020.1.1. 이후 개시 과세연도부터(대통령령 제30405호 부칙 제2조)"] if ERA.era(year) == ERA.ERA_OLD else []),
                   "사분위 값은 계산법에 따라 달라짐 — 과세당국·상대방이 쓴 계산법과 같은지 확인",
                   "조정액은 차이 × base_amount(지표의 분모)로 본 금액 — 다년도 평균 지표를 썼으면 연도별 배분은 따로"]}

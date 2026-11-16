@@ -7,6 +7,7 @@ import json
 import pytest
 
 from korean_tax_calc_mcp import server as S
+from kr_example_rules import EX_RULES
 from korean_tax_calc_mcp.engine.kr_comparables import candidates as C
 from korean_tax_calc_mcp.engine.kr_comparables import revenue_mix as RM
 from korean_tax_calc_mcp.engine.kr_comparables.dart import DartClient
@@ -28,7 +29,7 @@ def pipeline(tmp_path, monkeypatch):
     monkeypatch.setattr(C, "DartClient", functools.partial(DartClient, transport=tr, interval=0, sleep=lambda s: None))
     monkeypatch.setattr(RM, "solar_http", _gold_solar)
     cand = S.kr_comparable_candidates(industry_codes=["46"], years=[2024], listed="둘 다", limit=10)
-    cmp_ = S.kr_comparable_profile_compare(tested=TESTED, candidates=cand)
+    cmp_ = S.kr_comparable_profile_compare(tested=TESTED, candidates=cand, rules=EX_RULES)
     return cand, cmp_, tr
 
 
@@ -54,14 +55,14 @@ def test_candidates_to_compare(pipeline):
     got = {name[k]: v["종합"] for k, v in by.items()}
     # 1단계 손 판정과 같음 — 유니트론텍은 매출 행이 원문 유형 칸 없이 '재화'로 분류됐지만 매출원가가 상품매출원가뿐이라 회계 기준으로 상품
     assert got == {"(주)유니트론텍": "포함 후보", "(주)휴맥스": "제외 후보", "상신코퍼레이션": "포함 후보",
-                   "애보트메디칼코리아": "포함 후보", "케이엘페트로": "제외 후보"}
-    assert r["사람_확인_목록"] == []
+                   "애보트메디칼코리아": "포함 후보", "케이엘페트로": "사람 확인"}      # 0.61.0: 케이엘페트로 재고만 다름(K1)
+    assert [x["company_name"] for x in r["사람_확인_목록"]] == ["주식회사 케이엘페트로"]   # 재고만 다름(K1)
     u = next(p for p in cand["결과"]["후보_프로필"] if p["company_name"] == "(주)유니트론텍")
     assert u["mix_coverage"]["evidence"]["accounting"]["source"] == "매출원가 상품:제품"
     assert all(x["reason"].startswith("회계 기준 배분") for x in u["mix_coverage"]["evidence"]["rows"] if x["category"] == "goods")
     assert {d["company_id"] for d in r["manual_decisions_초안"]} == {k for k, v in by.items() if v["종합"] == "제외 후보"}
     assert all(d["decision"] == "reject" and d["reason"] and "초안" in d["상태"] for d in r["manual_decisions_초안"])
-    assert r["사용_기준"]["mix_max_diff"] == 0.20
+    assert r["사용_기준"]["mix_max_diff"]["값"] == 0.20 and r["사용_기준"]["independence_legal_pct"]["구분"] == "법정 준용"
 
 
 def test_end_to_end_quartiles(pipeline):
@@ -75,27 +76,29 @@ def test_end_to_end_quartiles(pipeline):
                                  search_log={"db": "OpenDART", "steps": ["업종 46", "프로필 비교"]})
     assert "error" not in scr, scr
     res = scr["결과"]
-    expected_ids = {cc for cc, g in GOLD.items() if g["corp_name"] in ("(주)유니트론텍", "상신코퍼레이션", "애보트메디칼코리아")}
-    assert res["후보_수"] == 5 and res["최종_수"] == 3
+    expected_ids = {cc for cc, g in GOLD.items() if g["corp_name"] in ("(주)유니트론텍", "상신코퍼레이션", "애보트메디칼코리아", "케이엘페트로")}
+    assert res["후보_수"] == 5 and res["최종_수"] == 4
     assert {x["company_id"] for x in scr["최종_비교대상"]} == expected_ids
-    # 영업이익률(원문 대조 정답 값) 사분위 — inclusive
-    oms = [_om(cc) for cc in expected_ids]
+    # 영업이익률(원문 대조 정답 값) 사분위 — 기본 국세청 통칙 8-15…1, n=4: 위치 1.5·3.5 → 1·2번째 평균, 3·4번째 평균
+    oms = sorted(_om(cc) for cc in expected_ids)
     rng = res["범위"]
-    assert rng["계산법"] == "inclusive"
-    assert rng["제1사분위%"] == pytest.approx(_q_inclusive(oms, 0.25) * 100, abs=5e-4)
+    assert rng["계산법"] == "nts"
+    assert rng["제1사분위%"] == pytest.approx((oms[0] + oms[1]) / 2 * 100, abs=5e-4)
     assert rng["중위값%"] == pytest.approx(_q_inclusive(oms, 0.5) * 100, abs=5e-4)
-    assert rng["제3사분위%"] == pytest.approx(_q_inclusive(oms, 0.75) * 100, abs=5e-4)
+    assert rng["제3사분위%"] == pytest.approx((oms[2] + oms[3]) / 2 * 100, abs=5e-4)
+    ex = res["사분위_민감도"]["excel_inc"]
+    assert ex["제1사분위%"] == pytest.approx(_q_inclusive(oms, 0.25) * 100, abs=5e-4)
     assert res["분석대상_값%"] == pytest.approx(3.0) and res["범위_안"] is True
     # 제외 후보는 사람 판단(S12)으로 탈락 사유표에 남는다
     m = json.dumps(scr["탈락_매트릭스"], ensure_ascii=False)
-    assert m.count("수동 탈락: 프로필 비교") == 2
+    assert m.count("수동 탈락: 프로필 비교") == 1
     # 다음 단계(arm_length_range)에 그대로 넣을 입력이 나온다
     alr = scr["arm_length_range_입력"]
-    assert len(alr["comparables"]) == 3 and alr["tested_value"] == pytest.approx(0.03)
+    assert len(alr["comparables"]) == 4 and alr["tested_value"] == pytest.approx(0.03)
     ar = S.arm_length_range(**{k: v for k, v in alr.items() if not k.endswith("_안내")})
     assert "error" not in ar, ar
-    assert ar["결과"]["제1사분위"] == pytest.approx(_q_inclusive(oms, 0.25), abs=1e-6)
-    assert ar["결과"]["제3사분위"] == pytest.approx(_q_inclusive(oms, 0.75), abs=1e-6)
+    assert ar["결과"]["제1사분위"] == pytest.approx((oms[0] + oms[1]) / 2, abs=1e-6)
+    assert ar["결과"]["제3사분위"] == pytest.approx((oms[2] + oms[3]) / 2, abs=1e-6)
     assert ar["결과"]["범위_안"] is True and ar["결과"]["조정액"] == 0
 
 def test_compare_input_guards():

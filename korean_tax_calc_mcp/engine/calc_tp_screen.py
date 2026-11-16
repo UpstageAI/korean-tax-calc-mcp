@@ -9,13 +9,14 @@
   시행규칙 별지 제1호서식(거래가격 조정신고서) 작성방법 10 — 2022.3.18. 시행규칙부터 비교대상 수익성지표 값의 '정상사분위범위' 기재.
 - 2016~2020 사업연도: 구 법 제5조①, 구 영 제4조(지표)·제5조(선택 기준)·제6조(분석 절차·범위·다년도), 구 시행규칙 제2조·제2조의2.
 - 특수관계(독립성의 법정 하한): 법 제2조①3호, 영 제2조② — 의결권 있는 주식 50% 이상 직·간접 소유.
-- 기준값(25%·3%·5%·25%·75%·손실 2개 연도·1.5×IQR)은 법령·OECD 지침 어디에도 숫자가 없는 실무 관행값 — 모두 바꿀 수 있고 결과에 [관행]으로 표시한다.
+- 관행 기준값(독립성 %, 연구개발·광고 상한, 손실 연도 수, 이상치 배수 등)은 이 도구에 두지 않는다(0.61.0~) — screens로 받은 값만 적용하고 [관행]으로 표시.
+  값·출처는 조문 MCP transfer_pricing_guide. screens가 없으면 법정 기준(S1a 50%, 둘 이상)만.
 """
 import csv
 import os
 from fractions import Fraction
 
-from .calc_tp import _quantile
+from .calc_tp import _quantile, quartile_sensitivity, QM_ALL, norm_qm, median_of, method_info
 
 SCREEN_NAMES = {
     "S1a": "독립성(법정 하한 50%)", "S1b": "독립성(관행)", "S2": "자료 충분성", "S3": "업종 코드", "S4": "규모",
@@ -23,24 +24,32 @@ SCREEN_NAMES = {
     "S10": "해당 부문 비중", "S11": "특수 상황", "S12": "정성 판단(사람)", "S13": "이상치",
 }
 FUNNEL_ORDER = ["S1a", "S1b", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12"]
+# 선정 기준 키 — 관행·우리 규칙 값은 두지 않는다(None = 그 기준 끔). 값은 조문 MCP transfer_pricing_guide(비교대상 선정 기준)가 주는 것을 screens로 받는다.
+# 이 도구가 스스로 적용하는 것은 법정 기준뿐: S1a 최대주주 50% 이상(법정 준용), 비교대상 둘 이상(시행령 제15조⑤).
 DEFAULT_SCREENS = {
-    "independence_pct": 25, "independence_bvd_reject": ["C", "D", "U"],
-    "industry_codes": None,                     # None이면 S3를 적용하지 않음
-    "size_min": None, "size_max": None,         # 평균 매출(입력 통화). None이면 S4 끔
-    "loss_years": 2, "crisis_exception": False,
-    "rnd_max": 0.03, "adv_max": 0.05, "wc_band": None, "related_max": 0.25, "segment_min": 0.75,
-    "special_flags": ["start_up", "bankruptcy", "restructuring", "merger", "delisted"],
-    "outlier_k": 1.5, "op_tolerance": 0.005,
+    "independence_pct": None,                   # 최대주주 지분 % 상한(50 이하) — S1b
+    "independence_bvd_reject": None,            # 데이터베이스 독립성 지표 중 탈락 등급 목록(예: ["C","D","U"]) — S1b
+    "industry_codes": None,                     # 업종 코드 목록 — S3
+    "size_min": None, "size_max": None,         # 평균 매출(입력 통화) — S4
+    "loss_years": None, "crisis_exception": False,   # 분석 연도 중 영업손실 연도 수 — S5
+    "loss_action": "review",                    # S5에 걸리면: review(사람 확인) / exclude(탈락)
+    "require_all_years": False,                 # True면 분석 연도 모두에 자료가 있어야 함 — S2
+    "rnd_max": None, "adv_max": None,           # 연구개발비/매출·광고선전비/매출 상한(소수) — S6·S7
+    "wc_band": None,                            # 운전자본/매출 차이 표시 폭(소수) — S8
+    "related_max": None, "segment_min": None,   # 특수관계 매출/매출 상한·해당 부문 비중 하한(소수) — S9·S10
+    "special_flags": None,                      # 탈락시킬 special_flag 값 목록 — S11
+    "outlier_k": None,                          # 이상치 표시 IQR 배수 — S13(표시만)
+    "sample_min": None, "spread_ratio": None,   # 표본·편차 경고(표시만)
+    "op_tolerance": 0.005,                      # 영업이익 대사 허용 오차(매출 대비) — 데이터 검산용, 선정 기준 아님
 }
-PRACTICE = {"independence_pct": "[관행] 25%는 데이터베이스 독립성 지표 구간을 따른 실무값 — 국조법령 근거 없음",
-            "rnd_max": "[관행] OECD 3.43이 무형자산 관련 기준을 예로 들지만 숫자는 없음",
-            "adv_max": "[관행] 마케팅 무형자산이 없는 분석대상일 때의 실무값",
-            "related_max": "[관행] 비교대상 이익률이 특수관계 거래로 왜곡될 가능성",
-            "segment_min": "[관행] 시행규칙 제6조③(재무정보를 합리적 수준까지 세분화) 취지",
-            "loss_years": "[관행] OECD 3.64~3.65(단순 기능은 오래 손실을 내지 않음, 손실은 추가 검토 계기)",
-            "outlier_k": "[관행] 1.5×IQR 표시 — OECD 3.59·3.66(동떨어진 값은 신뢰성 의심), 자동 탈락하지 않음"}
+PRACTICE_KEYS = [k for k in DEFAULT_SCREENS if k not in ("crisis_exception", "loss_action", "require_all_years", "op_tolerance")]
+NO_PRACTICE = "관행 기준 미적용 — 조문 MCP transfer_pricing_guide(비교대상 선정 기준)의 값을 screens로 넣으세요. 지금은 법정 기준(최대주주 50% 이상, 비교대상 둘 이상)만 적용"
+SCREEN_NOTE = {"independence_pct": "[관행] 최대주주 지분 상한", "rnd_max": "[관행] 연구개발비/매출 상한", "adv_max": "[관행] 광고선전비/매출 상한",
+               "related_max": "[관행] 특수관계 매출 상한", "segment_min": "[관행] 해당 부문 비중 하한",
+               "loss_years": "[관행] 손실 연도 수 — loss_action=review면 사람 확인, exclude면 탈락", "outlier_k": "[관행] 이상치 표시, 자동 탈락하지 않음"}
 PLI = {"OM": "매출액 대비 거래순이익(영 제8조①1호)", "ROA": "자산 대비 거래순이익(영 제8조①2호)",
        "NCP": "매출원가·영업비용 대비 거래순이익(영 제8조①3호)", "BERRY": "영업비용 대비 매출총이익(영 제8조①4호)"}
+SRC_COLS = ("rcept_no", "fs_div", "accounting_standard", "collected_at", "source")   # 개별기업보고서 Ⅱ-12 출처 칸
 NUM_COLS = ["revenue", "cogs", "opex", "operating_profit", "total_assets", "inventory", "receivables", "payables",
             "rnd_expense", "advertising_expense", "related_party_revenue", "max_shareholder_pct", "relevant_segment_share", "employees"]
 
@@ -165,6 +174,7 @@ def _parse(rows):
         if rec.get("revenue") is not None and rec["revenue"] < 0:
             문제.append(f"{cid} {y} — 매출이 음수")
         c = companies.setdefault(cid, {"company_id": cid, "years": {}, "meta": {}})
+        rec["_src"] = {k: str(r[k]).strip() for k in SRC_COLS if r.get(k) not in (None, "")}
         c["years"][y] = rec
         for k in ("company_name", "country", "industry_code", "currency", "bvd_independence", "special_flag",
                   "manual_decision", "manual_reason", "evidence", "reviewer", "accounting_standard", "fiscal_year_end"):
@@ -193,19 +203,26 @@ def _screen_company(c, years, sc, tested):
     m, yd = c["meta"], c["years"]
     out = {}
     sh = m.get("max_shareholder_pct") or Fraction(0)
-    out["S1a"] = ("탈락", f"최대주주 {float(sh):.0f}% ≥ 50% — 법정 특수관계 수준(법 제2조①3호·영 제2조②), 끌 수 없음") if sh >= 50 else ("통과", "")
+    out["S1a"] = ("탈락", f"최대주주 {float(sh):.0f}% ≥ 50% — [법정 준용] 거래 당사자 간 특수관계 기준(법 제2조①3호·영 제2조②)을 비교대상에 준용, 특수관계기업 간 거래 자료는 비교대상 불가(기본통칙 8-0…1), 끌 수 없음") if sh >= 50 else ("통과", "")
     ind = (m.get("bvd_independence") or "").upper()
     lim = sc["independence_pct"]
+    if lim is None and sc["independence_bvd_reject"]:
+        lim = 50
     if lim is None:
         out["S1b"] = ("건너뜀", "꺼짐")
     elif sh >= 50:
         out["S1b"] = ("통과", "S1a에서 처리")
-    elif sh >= lim or ind in [x.upper() for x in sc["independence_bvd_reject"]]:
+    elif sh >= lim or ind in [x.upper() for x in (sc["independence_bvd_reject"] or [])]:
         out["S1b"] = ("탈락", f"독립성 지표 {ind or '-'}·최대주주 {float(sh):.0f}% — 관행 기준 {lim}%")
     else:
         out["S1b"] = ("통과", "")
     have = [y for y in years if y in yd and yd[y].get("revenue") is not None and yd[y].get("operating_profit") is not None]
-    out["S2"] = ("통과", "") if len(have) == len(years) else ("탈락", f"분석 연도 {len(years)}개 중 {len(have)}개만 매출·영업이익 있음")
+    if len(have) == len(years):
+        out["S2"] = ("통과", "")
+    elif sc.get("require_all_years") or not have:
+        out["S2"] = ("탈락", f"분석 연도 {len(years)}개 중 {len(have)}개만 매출·영업이익 있음")
+    else:
+        out["S2"] = ("표시", f"분석 연도 {len(years)}개 중 {len(have)}개({', '.join(map(str, have))})만 자료 — 있는 연도로 평균(연도별 비교기업 갱신 허용)")
     codes = sc["industry_codes"]
     if codes:
         code = m.get("industry_code", "")
@@ -236,8 +253,14 @@ def _screen_company(c, years, sc, tested):
         if sc["loss_years"] is None:
             out["S5"] = ("건너뜀", "꺼짐")
         elif losses >= sc["loss_years"]:
-            out["S5"] = (("검토 필요", f"영업손실 {losses}개 연도 — 경제위기 손실기업 예외(영 제15조⑦) 적용 여부 검토") if sc["crisis_exception"]
-                         else ("탈락", f"분석 연도 중 {losses}개 연도 영업손실"))
+            if sc["crisis_exception"]:
+                out["S5"] = ("검토 필요", f"[L2] 영업손실 {losses}개 연도 — 경제위기 손실기업 예외(영 제15조⑦) 적용 여부 검토")
+            elif sc.get("loss_action") == "exclude":
+                out["S5"] = ("탈락", f"[L2] 분석 연도 중 {losses}개 연도 영업손실")
+            else:
+                out["S5"] = ("검토 필요", f"[L2] 분석 연도 {len(have)}개 중 {losses}개 연도 영업손실 — 사람 확인(손실만으로 제외하지 않음, OECD 3.64~3.65)")
+        elif losses:
+            out["S5"] = ("표시", f"[L1] 영업손실 {losses}개 연도 — 표시만")
         else:
             out["S5"] = ("통과", "")
         for key, field, lim_key, label in (("S6", "rnd_expense", "rnd_max", "연구개발비/매출"), ("S7", "advertising_expense", "adv_max", "광고선전비/매출"),
@@ -264,7 +287,7 @@ def _screen_company(c, years, sc, tested):
         else:
             out["S10"] = ("통과", "") if seg >= Fraction(str(sc["segment_min"])) else ("탈락", f"해당 부문 비중 {float(seg) * 100:.0f}% < {sc['segment_min'] * 100:g}%")
     flag = (m.get("special_flag") or "").strip()
-    out["S11"] = ("탈락", f"특수 상황: {flag}") if flag and flag.lower() in [f.lower() for f in sc["special_flags"]] else ("통과", "")
+    out["S11"] = ("탈락", f"특수 상황: {flag}") if flag and flag.lower() in [f.lower() for f in (sc["special_flags"] or [])] else (("표시", f"특수 상황 {flag} — 기준(special_flags) 없음, 사람 확인") if flag else ("통과", ""))
     return out
 
 
@@ -295,13 +318,17 @@ def _run(companies, tested, years, tested_years, pli, averaging, sc, decisions, 
         rows[cid] = res
     final = [cid for cid, r in rows.items() if not any(s == "탈락" for s, _ in r.values())]
     vals = {}
+    def yrs(cid):
+        yd = companies[cid]["years"]
+        have = [y for y in years if y in yd and yd[y].get("revenue") is not None and yd[y].get("operating_profit") is not None]
+        return years if sc.get("require_all_years") else have
     for cid in final:
-        v = _avg(companies[cid]["years"], years, pli, averaging)
+        v = _avg(companies[cid]["years"], yrs(cid), pli, averaging)
         if v is None:
             rows[cid]["S2"] = ("탈락", f"{pli} 계산에 필요한 항목 없음")
             continue
         if wca:
-            wc = _wc_ratio(companies[cid]["years"], years)
+            wc = _wc_ratio(companies[cid]["years"], yrs(cid))
             if wc is None or tested.get("_wc") is None:
                 rows[cid]["S8"] = ("탈락", "운전자본 조정을 하는데 재고·매출채권·매입채무 자료 없음")
                 continue
@@ -312,16 +339,19 @@ def _run(companies, tested, years, tested_years, pli, averaging, sc, decisions, 
     if len(final) >= 2:
         xs = sorted(vals[c] for c in final)
         q1, q3 = _quantile(xs, Fraction(1, 4), qmethod), _quantile(xs, Fraction(3, 4), qmethod)
-        k = Fraction(str(sc["outlier_k"]))
-        out_ids = [c for c in final if vals[c] > q3 + k * (q3 - q1) or vals[c] < q1 - k * (q3 - q1)]
+        out_ids = []
+        if sc.get("outlier_k") is not None:
+            k = Fraction(str(sc["outlier_k"]))
+            out_ids = [c for c in final if vals[c] > q3 + k * (q3 - q1) or vals[c] < q1 - k * (q3 - q1)]
         for c in final:
-            rows[c]["S13"] = ("표시", f"지표 {_pct(vals[c])}% — {sc['outlier_k']}×IQR 밖, 자동 탈락하지 않음(빼려면 수동 탈락에 사유)") if c in out_ids else ("통과", "")
+            rows[c]["S13"] = (("표시", f"지표 {_pct(vals[c])}% — {sc['outlier_k']}×IQR 밖, 자동 탈락하지 않음(빼려면 수동 탈락에 사유)") if c in out_ids
+                              else ("통과", "") if sc.get("outlier_k") is not None else ("건너뜀", "꺼짐"))
         if use_outlier_exclusion and out_ids:
             final = [c for c in final if c not in out_ids]
             xs = sorted(vals[c] for c in final)
             q1, q3 = _quantile(xs, Fraction(1, 4), qmethod), _quantile(xs, Fraction(3, 4), qmethod)
         if len(final) >= 2:
-            stats = {"n": len(final), "min": xs[0], "q1": q1, "med": _quantile(xs, Fraction(1, 2), "inclusive"), "q3": q3, "max": xs[-1],
+            stats = {"n": len(final), "min": xs[0], "q1": q1, "med": median_of(xs, qmethod), "q3": q3, "max": xs[-1],
                      "outliers": out_ids}
     tv = _avg(tested["years"], tested_years, pli, averaging if len(tested_years) > 1 else "weighted")
     return rows, final, vals, stats, tv
@@ -329,14 +359,15 @@ def _run(companies, tested, years, tested_years, pli, averaging, sc, decisions, 
 
 def comparable_screen(rows=None, file_path=None, column_map=None, tested_party=None, analysis_years=None, tested_year=None,
                       pli="OM", averaging="weighted", tested_years=None, screens=None, manual_decisions=None, search_log=None,
-                      quartile_method="inclusive", wca=None, multi_year_reason=None, op_source="reported", fx=None, sensitivity=True):
+                      quartile_method="nts", wca=None, multi_year_reason=None, op_source="reported", fx=None, sensitivity=True):
     문제 = []
     if pli not in PLI:
         문제.append(f"pli — {', '.join(PLI)} 중 하나")
     if averaging not in ("weighted", "simple"):
         문제.append("averaging — 'weighted'(Σ분자/Σ분모, 기본) 또는 'simple'(연도별 지표의 산술평균)")
-    if quartile_method not in ("inclusive", "exclusive"):
-        문제.append("quartile_method — 'inclusive' 또는 'exclusive'")
+    if quartile_method not in QM_ALL:
+        문제.append("quartile_method — 'nts'(국조법 기본통칙 8-15…1, 기본) · 'excel_inc'(엑셀 QUARTILE.INC, 0.60.x까지 기본 — 'inclusive'도 같음) · 'exclusive'(QUARTILE.EXC) · 'us'(26 CFR §1.482-1(e)(2)(iii)(C), 보간 없음)")
+    quartile_method = norm_qm(quartile_method)
     if op_source not in ("reported", "recalc"):
         문제.append("op_source — 'reported'(보고 영업이익) 또는 'recalc'(매출−매출원가−판관비)")
     if not isinstance(analysis_years, list) or not analysis_years or not all(isinstance(y, int) for y in analysis_years):
@@ -355,6 +386,8 @@ def comparable_screen(rows=None, file_path=None, column_map=None, tested_party=N
         문제.append(f"screens.independence_pct={sc['independence_pct']} — 50 이하(50% 이상 소유는 법정 특수관계, 법 제2조①3호·영 제2조②: 이보다 느슨하게 둘 수 없음)")
     if sc["loss_years"] is not None and (not isinstance(sc["loss_years"], int) or isinstance(sc["loss_years"], bool) or sc["loss_years"] < 1):
         문제.append(f"screens.loss_years={sc['loss_years']!r} — 1 이상의 정수(손실 연도 수), 끄려면 비워 두세요(null)")
+    if sc.get("loss_action") not in ("review", "exclude"):
+        문제.append(f"screens.loss_action={sc.get('loss_action')!r} — 'review'(사람 확인, 기본) 또는 'exclude'(탈락)")
     if wca is not None and (not isinstance(wca, dict) or not isinstance(wca.get("rate"), (int, float)) or not str(wca.get("rate_basis", "")).strip()):
         문제.append("wca — {rate: 이자율(소수), rate_basis: 금리 근거(예: 'USD 1년 SOFR + 스프레드')} — 근거 없는 금리로는 조정하지 않음")
     decisions = {}
@@ -427,10 +460,19 @@ def comparable_screen(rows=None, file_path=None, column_map=None, tested_party=N
         경고.append("search_log 없음 — 데이터베이스 이름·추출일·검색 단계별 조건과 남은 수를 넣지 않으면 앞단 탐색 과정을 재현할 수 없음(개별기업보고서 Ⅱ-12)")
 
     if len(final) < 2:
-        return {"error": "비교대상이 둘 미만 — 정상가격 범위를 산정할 수 없음(시행령 제15조⑤: 둘 이상의 거래)",
+        return {**({"안내": NO_PRACTICE} if not any(sc.get(k) not in (None, [], "") for k in PRACTICE_KEYS) else {}),
+                "error": "비교대상이 둘 미만 — 정상가격 범위를 산정할 수 없음(시행령 제15조⑤: 둘 이상의 거래)",
                 "탈락_매트릭스": _matrix(companies, rows_res), "깔때기": _funnel(companies, rows_res), "경고": 경고, "영업이익_대사": 대사}
     if len(final) <= 3:
-        경고.append(f"최종 비교대상 {len(final)}개 — 사분위 범위의 의미가 약함([관행], OECD 3.57)")
+        경고.append(f"최종 비교대상 {len(final)}개 — 사분위 범위의 의미가 약할 수 있음(OECD 3.57)")
+    spread = stats["q3"] - stats["q1"]
+    if (sc.get("sample_min") and len(final) < sc["sample_min"]) or (sc.get("spread_ratio") and stats["med"] != 0 and spread > Fraction(str(sc["spread_ratio"])) * abs(stats["med"])):
+        경고.append(f"[우리 규칙] 표본 {len(final)}개, 사분위 폭 {_pct(spread)}%p(중위값 {_pct(stats['med'])}%) — 표본이 {sc.get('sample_min')}개 미만이거나 폭이 중위값의 {sc.get('spread_ratio')}배보다 크면 "
+                  "편차 원인을 분석하고 영업 특성이 비슷한 비교대상 추가를 검토(판례는 조문 MCP transfer_pricing_cases)")
+    t_loss = [y for y in tested_years if (tested["years"].get(y) or {}).get("operating_profit") is not None and tested["years"][y]["operating_profit"] < 0]
+    if sc.get("loss_years") is not None and sc.get("loss_action") == "exclude" and t_loss:
+        경고.insert(0, f"분석대상이 {t_loss}년 영업손실인데 손실 후보를 일괄 제외(loss_action=exclude) — 분석대상 손실 원인을 분석하고 손실 후보 중 비교 가능한 기업이 있는지 "
+                      "사람이 확인(판례는 조문 MCP transfer_pricing_cases)")
     inside = stats["q1"] <= tv <= stats["q3"]
     시나리오 = []
     if sensitivity:
@@ -444,16 +486,18 @@ def comparable_screen(rows=None, file_path=None, column_map=None, tested_party=N
                          "분석대상%": _pct(t2), "범위_안": s2["q1"] <= t2 <= s2["q3"]})
         scen("A 기본")
         if sc["independence_pct"] is not None and sc["independence_pct"] < 50:
-            scen("B 독립성 관행 기준 끔(법정 50%만)", sc={"independence_pct": None})
+            scen("B 독립성 관행 기준 끔(법정 50%만)", sc={"independence_pct": None, "independence_bvd_reject": None})
         if sc["loss_years"] is not None:
-            scen("C 손실기업 포함", sc={"loss_years": None})
+            if sc.get("loss_action") == "exclude":
+                scen("C 손실기업 포함", sc={"loss_years": None})
+            else:
+                scen("C 지속 손실기업 제외", sc={"loss_action": "exclude"})
         if len(analysis_years) > 1:
             last = max(analysis_years)
             if last in tested["years"]:
                 scen(f"D {last} 단년(기준도 그 해 자료로 다시 적용)", years=[last], tyears=[last])
-        if wca is None and tested["_wc"] is not None:
-            scen("E 운전자본 조정 5%(예시 금리)", wca={"rate": 0.05})
-        scen("F 사분위 계산법 " + ("exclusive" if quartile_method == "inclusive" else "inclusive"), qm="exclusive" if quartile_method == "inclusive" else "inclusive")
+        for alt in [m for m in ("nts", "excel_inc", "us") if m != quartile_method]:
+            scen(f"F 사분위 계산법 {alt}", qm=alt)
         if stats["outliers"]:
             scen("G 이상치 제외", excl=True)
         if len({s.get("범위_안") for s in 시나리오 if "범위_안" in s}) > 1:
@@ -462,49 +506,121 @@ def comparable_screen(rows=None, file_path=None, column_map=None, tested_party=N
     final_rows = []
     for cid in sorted(final, key=lambda c: vals[c]):
         c = companies[cid]
+        have = [y for y in analysis_years if y in c["years"] and c["years"][y].get("revenue") is not None and c["years"][y].get("operating_profit") is not None]
+        wcr = _wc_ratio(c["years"], have)
         final_rows.append({"company_id": cid, "이름": c["meta"].get("company_name"), "국가": c["meta"].get("country"), "업종": c["meta"].get("industry_code"),
                            "연도별": {y: {"매출": float(c["years"][y]["revenue"]), "영업이익": float(c["years"][y]["operating_profit"]),
-                                        "지표%": _pct(_avg(c["years"], [y], pli, "weighted"))} for y in analysis_years},
+                                        "지표%": _pct(_avg(c["years"], [y], pli, "weighted")),
+                                        "출처_접수번호": c["years"][y]["_src"].get("rcept_no") or c["years"][y]["_src"].get("source") or "입력 없음",
+                                        "재무제표_구분": {"OFS": "별도", "CFS": "연결"}.get(c["years"][y]["_src"].get("fs_div"), c["years"][y]["_src"].get("fs_div") or "입력 없음"),
+                                        "회계기준": c["years"][y]["_src"].get("accounting_standard") or c["meta"].get("accounting_standard") or "입력 없음",
+                                        "수집_기준_시점": c["years"][y]["_src"].get("collected_at") or (search_log or {}).get("collected_at") or "입력 없음"} for y in have},
+                           "자료_연도": have,
                            ("가중평균%" if averaging == "weighted" else "평균%"): _pct(vals[cid]),
-                           "운전자본/매출%": _pct(_wc_ratio(c["years"], analysis_years))})
-    결과 = {"후보_수": len(companies), "최종_수": len(final), "지표": {"종류": pli, "뜻": PLI[pli], "평균방식": averaging, "연도": analysis_years},
+                           "운전자본/매출%": _pct(wcr) if wcr is not None else None})
+    결과 = {**({"안내": NO_PRACTICE} if not any(sc.get(k) not in (None, [], "") for k in PRACTICE_KEYS) else {}), "후보_수": len(companies), "최종_수": len(final), "지표": {"종류": pli, "뜻": PLI[pli], "평균방식": averaging, "연도": analysis_years},
           "범위": {"제1사분위%": _pct(stats["q1"]), "중위값%": _pct(stats["med"]), "제3사분위%": _pct(stats["q3"]), "최솟값%": _pct(stats["min"]),
-                 "최댓값%": _pct(stats["max"]), "계산법": quartile_method}, "분석대상_값%": _pct(tv), "범위_안": inside,
-          "이상치_표시": stats["outliers"]}
+                 "최댓값%": _pct(stats["max"]), "계산법": quartile_method, "계산법_설명": _QM_NAME[quartile_method], "n": stats["n"], "조정점": "중위값",
+                 "근거": method_info(quartile_method, stats["n"])["근거"]}, "분석대상_값%": _pct(tv), "범위_안": inside,
+          "이상치_표시": stats["outliers"],
+          "연도별_범위": _yearly(companies, final, analysis_years, tested, pli, quartile_method),
+          "사분위_민감도": {m: {"이름": x["이름"], "제1사분위%": _pct(x["제1사분위"]), "중위값%": _pct(x["중위값"]), "제3사분위%": _pct(x["제3사분위"]), "범위_안": x["범위_안"]}
+                       for m, x in quartile_sensitivity([vals[c] for c in final], tv).items()},
+          "사람_확인": [{"company_id": cid, "이름": companies[cid]["meta"].get("company_name"), "사유": why}
+                    for cid in final for k, (st, why) in rows_res[cid].items() if st == "검토 필요"]}
+    multi_ok = len(analysis_years) > 1 and isinstance(multi_year_reason, dict) and multi_year_reason.get("code") in (1, 2, 3) and str(multi_year_reason.get("text", "")).strip()
+    if len(analysis_years) == 1:
+        결과["주_결과"] = "범위(단년)"
+    elif multi_ok:
+        결과["주_결과"] = "범위(다년 — multi_year_reason 입력, 서식 Ⅱ-11) · 단년_범위 함께"
+    else:
+        결과["주_결과"] = "단년_범위(서식 Ⅱ-11: 다년도는 수행한 경우에만 사유 기재 — 사유가 없어 단년을 주 결과로)"
+    결과["단년_범위"] = 결과["연도별_범위"].get(tested_year, f"{tested_year}년이 분석 연도에 없음")
+    v0 = None
+    if wca:
+        r0, f0, v0, s0, t0 = _run(companies, tested, analysis_years, tested_years, pli, averaging, sc, decisions, quartile_method, None)
+        결과["조정_전_범위"] = ({"제1사분위%": _pct(s0["q1"]), "중위값%": _pct(s0["med"]), "제3사분위%": _pct(s0["q3"]), "n": s0["n"], "분석대상_값%": _pct(t0),
+                            "범위_안": s0["q1"] <= t0 <= s0["q3"]} if s0 else "비교대상 둘 미만")
+        결과["조정_후_범위"] = "범위(운전자본 조정 후)"
     alr = {"comparables": [{"이름": companies[c]["meta"].get("company_name", c), "값": float(vals[c])} for c in sorted(final, key=lambda c: vals[c])],
            "tested_value": float(tv), "quartile_method": quartile_method, "tested_is_resident": tested_party["is_resident"],
            "base_amount_안내": "다년 평균 지표를 썼으면 어느 해 매출(지표 분모)을 곱할지 정해서 base_amount로 넣음 — 연도별 배분은 따로"}
     if tested_year >= 2021:
         alr["year"] = tested_year
-    부록 = {"탐색_조건": {"search_log": search_log, "적용_기준": _criteria(sc, analysis_years, pli, averaging, quartile_method)},
+    부록 = {"탐색_조건": {"search_log": search_log, "적용_기준": _criteria(sc, analysis_years, pli, averaging, quartile_method, screens)},
           "단계별_탈락": _funnel(companies, rows_res), "최종_비교대상_재무_요약": final_rows,
           "차이_조정": ({"운전자본_조정": "단순형: 조정 지표 = 지표 − 이자율 × (비교대상 운전자본/매출 − 분석대상 운전자본/매출)", "이자율": wca["rate"],
-                     "이자율_근거": wca["rate_basis"], "분석대상_운전자본/매출%": _pct(tested["_wc"])} if wca else "하지 않음 — 차이가 지표에 영향을 주면 합리적으로 조정해야 함(영 제15조④)"),
+                     "이자율_근거": wca["rate_basis"], "분석대상_운전자본/매출%": _pct(tested["_wc"]), "한계": WCA_LIMIT,
+                     "적용_쪽": "비교대상(비교대상 지표를 분석대상 운전자본 수준에 맞춰 조정 — 분석대상 값은 그대로)",
+                     "조정_전후": [{"이름": companies[c]["meta"].get("company_name", c), "조정_전%": _pct(v0[c]) if v0 and c in v0 else None, "조정_후%": _pct(vals[c])}
+                               for c in sorted(final, key=lambda c: vals[c])]} if wca else "하지 않음 — 차이가 지표에 영향을 주면 합리적으로 조정해야 함(영 제15조④)"),
           "다년도_사유": multi_year_reason,
-          "개별기업보고서_연결": {"Ⅱ-11": "다년도 분석 사유(multi_year_reason)", "Ⅱ-12": "탐색 조건·단계별 탈락·최종 비교대상 재무 요약",
-                           "Ⅱ-13": "차이 조정", "Ⅱ-15": "범위·분석대상 값·판정"}}
+          "사람_판단": [{"company_id": cid, "이름": companies[cid]["meta"].get("company_name") if cid in companies else None, "결정": d.get("decision"), "사유": d.get("reason"),
+                     "근거": d.get("evidence"), "검토자": d.get("reviewer")} for cid, d in decisions.items()],
+          "Ⅱ-8_지표_선정_이유": tested_party.get("pli_reason") or "입력 필요 — tested_party.pli_reason(지표 선정 이유·선정하지 않은 방법의 이유)",
+          "Ⅱ-9_분석대상_선정_이유": tested_party.get("selection_reason") or "입력 필요 — tested_party.selection_reason(분석대상 선정 이유)",
+          "개별기업보고서_연결": {"Ⅱ-11": "다년도 분석 사유(multi_year_reason)", "Ⅱ-12": "탐색 조건·단계별 탈락·최종 비교대상 재무 요약(행별 접수번호·연결/별도·회계기준·수집 기준 시점)·사람 판단", "Ⅱ-8": "Ⅱ-8_지표_선정_이유", "Ⅱ-9": "Ⅱ-9_분석대상_선정_이유",
+                           "Ⅱ-13": "차이 조정(적용 쪽·조정 전후 값)", "Ⅱ-15": "범위·분석대상 값·판정"}}
     판단 = [{"항목": "선정", "결론": f"후보 {len(companies)}개 중 {len(final)}개 선정", "근거": "시행규칙 제7조①5호·7호(외부 비교대상 수집·선정)" if tested_year >= 2021 else "구 시행규칙 제2조의2"},
           {"항목": "범위", "결론": f"{PLI[pli]} 사분위 범위 {_pct(stats['q1'])}% ~ {_pct(stats['q3'])}%, 분석대상 {_pct(tv)}% → " + ("범위 안" if inside else "범위 밖"),
            "근거": ("시행령 제15조⑤⑥, 시행규칙 별지 제1호서식 작성방법 10(정상사분위범위)" if tested_year >= 2022 else "시행령 제15조⑤⑥" if tested_year >= 2021 else "구 시행령 제6조④⑤")}]
     return {"결과": 결과, "탈락_매트릭스": _matrix(companies, rows_res), "최종_비교대상": final_rows, "민감도": 시나리오,
             "arm_length_range_입력": alr, "보고서_부록": 부록, "영업이익_대사": 대사, "경고": 경고, "판단": 판단, "근거": _basis(tested_year),
             "주의": ["데이터베이스 검색(모집단·업종·키워드)과 회사별 기능·거래단계 비교는 이 도구가 하지 않음 — 정성 판단은 manual_decisions에 사유와 함께",
-                   "기준값은 [법정](특수관계 50%, 둘 이상)과 [관행](나머지)으로 나뉨 — [관행] 값은 바꿀 수 있고 선택 이유를 보고서에 적어야 함",
+                   "이 도구가 스스로 적용하는 기준은 법정(최대주주 50% 이상, 둘 이상)뿐 — [관행] 기준은 screens로 넣은 값만 적용(값·출처는 조문 MCP transfer_pricing_guide), 선택 이유를 보고서에 적어야 함",
                    "운전자본 조정 식은 OECD 이전가격지침(2022) 3장 부속서 예시와 같음 — 조정 지표 = 비교대상 지표 + (분석대상 (매출채권+재고−매입채무)/매출 − 비교대상 같은 비율) × 이자율(부속서 문단 6·7, 2026-11-15 원문 대조). "
                    "부속서와 다른 점: 부속서는 지표의 분모에 맞춰 운전자본 수준을 재라고 함(문단 6 a) — 이 도구는 지표가 원가·영업비용 기준이어도 매출 대비로 잼. 부속서 예시는 연도별 기말 잔액, 이 도구는 분석 연도 합계 비율(기말이 연중 수준을 대표하지 않으면 평균 — 문단 8). "
                    "이자율은 분석대상 당사자와 같은 시장의 상업적 기업에 적용되는 이자율(대개 상업 대출 금리), 운전자본이 음수면 다른 이자율이 맞을 수 있음(문단 8). 조정은 신뢰성을 높일 때만(문단 1, 3.50·3.52)",
+                   WCA_LIMIT,
+                   "연도별_범위를 함께 보고 연도마다 같은 기준을 쓸 것 — 다년도 분석 요건·경정 범위는 조문 MCP에서 확인",
                    "과세당국은 다른 데이터베이스·다른 검색으로 다시 산정할 수 있음(법 제7조①, 제16조⑦)"]}
 
 
-def _criteria(sc, years, pli, averaging, qm):
-    out = [{"기준": "S1a 독립성", "값": "최대주주 50% 이상 탈락", "성격": "[법정] 법 제2조①3호·영 제2조②"}]
+WCA_LIMIT = ("운전자본 조정은 재고·매출채권·매입채무 수준 차이만 조정함 — 품목·거래단계·마케팅 기능 차이는 해소하지 못하므로 별도 근거·조정이 필요"
+             "(판례는 조문 MCP transfer_pricing_cases)")
+
+
+_QM_NAME = {"excel_inc": "excel_inc(엑셀 QUARTILE.INC, 위치 (n−1)q 보간 — 0.60.x까지 기본)", "exclusive": "exclusive(QUARTILE.EXC)",
+            "us": "us(26 CFR §1.482-1(e)(2)(iii)(C), 보간 없음)",
+            "nts": "nts(국조법 기본통칙 8-15…1 — 위치 (n+2)/4·(3n+2)/4, 소수 위치면 인접 두 값 평균)"}
+
+
+def _yearly(companies, final, years, tested, pli, qm):
+    """연도별 사분위 범위 — 그해 자료가 있는 최종 비교대상만(연도별로 비교기업이 달라도 됨)."""
+    out = {}
+    for y in years:
+        xs = []
+        for cid in final:
+            yd = companies[cid]["years"]
+            if y in yd:
+                v = _avg(yd, [y], pli, "weighted")
+                if v is not None:
+                    xs.append(v)
+        xs.sort()
+        tvy = _avg(tested["years"], [y], pli, "weighted") if y in tested["years"] else None
+        if len(xs) < 2:
+            out[y] = {"n": len(xs), "범위": "비교대상 둘 미만"}
+            continue
+        q1, q3 = _quantile(xs, Fraction(1, 4), qm), _quantile(xs, Fraction(3, 4), qm)
+        med = median_of(xs, qm)
+        out[y] = {"n": len(xs), "제1사분위%": _pct(q1), "중위값%": _pct(med), "제3사분위%": _pct(q3),
+                  "분석대상%": _pct(tvy) if tvy is not None else None, "범위_안": (q1 <= tvy <= q3) if tvy is not None else None}
+    return out
+
+
+def _criteria(sc, years, pli, averaging, qm, given=None):
+    given = set(given or {})
+    src = lambda k: "사용자 입력" if k in given else "입력 없음 — 꺼짐(값·출처는 조문 MCP transfer_pricing_guide)"
+    out = [{"기준": "S1a 독립성", "값": "최대주주 50% 이상 탈락", "성격": "[법정 준용] 법 제2조①3호·영 제2조②(거래 당사자 간 기준을 비교대상에 준용)", "입력": "법정 — 항상 적용"}]
     for k, label in (("independence_pct", "S1b 독립성"), ("loss_years", "S5 지속 손실(연도 수)"), ("rnd_max", "S6 연구개발비/매출 상한"),
                      ("adv_max", "S7 광고선전비/매출 상한"), ("related_max", "S9 특수관계 매출 상한"), ("segment_min", "S10 해당 부문 비중 하한"), ("outlier_k", "S13 이상치 IQR 배수")):
-        out.append({"기준": label, "값": sc[k] if sc[k] is not None else "꺼짐", "성격": PRACTICE.get(k, "[관행]")})
-    out += [{"기준": "S3 업종 코드", "값": sc["industry_codes"] or "꺼짐", "성격": "[관행] 데이터베이스 검색 조건 재확인"},
-            {"기준": "S4 규모(평균 매출)", "값": [sc["size_min"], sc["size_max"]], "성격": "[관행] OECD 3.43"},
-            {"기준": "S11 특수 상황", "값": sc["special_flags"], "성격": "[관행] OECD 3.43"},
-            {"기준": "지표·기간", "값": f"{pli} {averaging} {years}, 사분위 {qm}", "성격": "영 제8조①, 시행규칙 제9조"}]
+        out.append({"기준": label, "값": sc[k] if sc[k] is not None else "꺼짐", "성격": SCREEN_NOTE.get(k, "[관행]"), "입력": src(k)})
+    out += [{"기준": "S3 업종 코드", "값": sc["industry_codes"] or "꺼짐", "성격": "[관행] 데이터베이스 검색 조건 재확인", "입력": src("industry_codes")},
+            {"기준": "S4 규모(평균 매출)", "값": [sc["size_min"], sc["size_max"]], "성격": "[관행]", "입력": src("size_min") if "size_min" in given else src("size_max")},
+            {"기준": "S11 특수 상황", "값": sc["special_flags"] or "꺼짐", "성격": "[관행]", "입력": src("special_flags")},
+            {"기준": "지표·기간", "값": f"{pli} {averaging} {years}, 사분위 {qm}", "성격": "영 제8조①, 시행규칙 제9조"},
+            {"기준": "표본·편차 경고", "값": [sc["sample_min"], sc["spread_ratio"]], "성격": "[우리 규칙] 표시만",
+             "입력": "사용자 입력" if {"sample_min", "spread_ratio"} & given else "입력 없음 — 꺼짐"}]
     return out
 
 
