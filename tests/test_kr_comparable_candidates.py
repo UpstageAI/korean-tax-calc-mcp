@@ -194,10 +194,101 @@ def test_consecutive_errors_stop(env):
     def boom(url, timeout=60):
         raise OSError("down")
     dc = _client(boom)
-    with pytest.raises(DartStop):
+    with pytest.raises(DartStop, match="연속 오류 5회"):
         for i in range(10):
             dc.get("company.json", {"corp_code": f"{i:08d}"})
-    assert dc.calls == 5
+    assert dc.calls == 5 * 4            # 요청 5건 × (처음 1 + 재시도 3)
+
+
+# ---------- 재시도(일시 오류만, 1·2·4초) ----------
+class Flaky:
+    def __init__(self, fails, exc):
+        self.n, self.fails, self.exc, self.inner = 0, fails, exc, Transport()
+
+    def __call__(self, url, timeout=60):
+        self.n += 1
+        if self.n <= self.fails:
+            raise self.exc(url)
+        return self.inner(url)
+
+
+def _http_error(code):
+    import urllib.error
+    return lambda url: urllib.error.HTTPError(url, code, f"HTTP {code}", {}, None)
+
+
+def test_retry_then_success(env):
+    waits = []
+    tr = Flaky(2, lambda url: TimeoutError("timed out " + url))
+    dc = DartClient(key=FAKE_KEY, transport=tr, interval=0, sleep=waits.append)
+    d = dc.get("company.json", {"corp_code": "00879020"})
+    assert d["status"] == "000" and dc.calls == 3 and dc.retries == 2 and waits == [1.0, 2.0]
+    assert dc._day_count() == 3                       # 재시도도 하루 상한에 셈
+
+
+def test_retry_exhausted(env):
+    waits = []
+    tr = Flaky(99, lambda url: ConnectionResetError("reset " + url))
+    dc = DartClient(key=FAKE_KEY, transport=tr, interval=0, sleep=waits.append)
+    d = dc.get("company.json", {"corp_code": "00879020"})
+    assert d["status"] == "NET" and dc.calls == 4 and waits == [1.0, 2.0, 4.0]
+    assert "재시도 후 실패" in d["message"] and FAKE_KEY not in d["message"] and dc._consec == 1
+
+
+@pytest.mark.parametrize("code,calls", [(500, 4), (503, 4), (429, 4), (404, 1), (401, 1)])
+def test_retry_only_transient_http(env, code, calls):
+    tr = Flaky(99, _http_error(code))
+    dc = DartClient(key=FAKE_KEY, transport=tr, interval=0, sleep=lambda s: None)
+    assert dc.get("company.json", {"corp_code": "00879020"})["status"] == "NET"
+    assert dc.calls == calls
+
+
+def test_no_retry_on_020_and_013(env):
+    n = {"k": 0}
+
+    def t020(url, timeout=60):
+        n["k"] += 1
+        return json.dumps({"status": "020", "message": "한도 초과"}).encode()
+    dc = _client(t020)
+    with pytest.raises(DartStop, match="020"):
+        dc.get("company.json", {"corp_code": "00000001"})
+    assert n["k"] == 1 and dc.retries == 0
+    dc = _client(lambda url, timeout=60: json.dumps({"status": "013", "message": "없음"}).encode())
+    assert dc.get("company.json", {"corp_code": "00000002"})["status"] == "013" and dc.calls == 1
+
+
+def test_retry_counts_toward_run_cap(env):
+    tr = Flaky(99, lambda url: TimeoutError("t"))
+    dc = DartClient(key=FAKE_KEY, transport=tr, interval=0, sleep=lambda s: None, max_calls=2)
+    with pytest.raises(DartStop, match="호출 상한"):
+        dc.get("company.json", {"corp_code": "00879020"})
+    assert dc.calls == 2
+
+
+def test_solar_timeout_falls_back_to_rules(env, monkeypatch):
+    calls = {"n": 0}
+
+    def slow(body, key):
+        calls["n"] += 1
+        raise TimeoutError("read timed out")
+    monkeypatch.setattr(RM, "_sleep", lambda s: None)
+    r = run(Transport(), upstage_key="u" * 20, solar_http=slow)["결과"]
+    assert r["정확도_낮음"] is True and any("정확도 낮음" in m for m in r["매출_분류_방법"])
+    assert r["후보_수"] == 5 and calls["n"] % 4 == 0 and r["호출"]["오류"]
+    assert "u" * 20 not in json.dumps(r, ensure_ascii=False)
+
+
+def test_solar_retry_then_success(env, monkeypatch):
+    calls = {"n": 0}
+
+    def flaky(body, key):
+        calls["n"] += 1
+        if calls["n"] % 3:                 # 요청마다 두 번 실패 후 성공
+            raise TimeoutError("t")
+        return _gold_solar(body, key)
+    monkeypatch.setattr(RM, "_sleep", lambda s: None)
+    r = run(Transport(), upstage_key="u" * 20, solar_http=flaky)["결과"]
+    assert r["정확도_낮음"] is False and any("Solar" in m for m in r["매출_분류_방법"])
 
 
 def test_status_020_stops(env):

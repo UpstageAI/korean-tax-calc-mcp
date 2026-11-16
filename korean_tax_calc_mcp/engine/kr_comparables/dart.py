@@ -14,6 +14,7 @@ import os
 import re
 import ssl
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -23,6 +24,18 @@ KEY_GUIDE = ("OpenDART 인증키가 없습니다 — 환경변수 DART_API_KEY�
              "OpenDART 이용약관상 인증키는 발급받은 본인만 쓸 수 있습니다(제3자 이용 금지).")
 DEFAULT_DAILY_CAP = 2000
 MIN_INTERVAL = 0.35
+RETRIES = 3                  # 일시 오류(연결 끊김·시간 초과·HTTP 5xx·429)만 최대 3회 재시도
+BACKOFF = (1.0, 2.0, 4.0)    # 재시도 간격(초) — 점점 늘림
+
+
+def transient(e):
+    """다시 부르면 나아질 수 있는 오류인지 — HTTP 5xx·429, 연결 끊김·시간 초과. 그 밖의 HTTP 4xx는 아님."""
+    code = getattr(e, "code", None)
+    if isinstance(code, int):
+        return code == 429 or code >= 500
+    if isinstance(e, (urllib.error.URLError, TimeoutError, ConnectionError, OSError)):
+        return True
+    return False
 
 
 class DartStop(Exception):
@@ -66,7 +79,8 @@ class DartClient:
         self.daily_cap = int(daily_cap if daily_cap is not None else os.environ.get("KR_COMPARABLES_DAILY_CAP", DEFAULT_DAILY_CAP))
         self.interval = interval
         self.sleep = sleep
-        self.calls = 0          # 이번 실행에서 실제로 부른 수
+        self.calls = 0          # 이번 실행에서 실제로 부른 수(재시도 포함)
+        self.retries = 0
         self.cache_hits = 0
         self.errors = []        # 키 가린 오류 문구
         self._consec = 0
@@ -88,6 +102,12 @@ class DartClient:
         with open(self._day_file(), "w") as f:
             json.dump({"n": n}, f)
 
+    def _check_caps(self):
+        if self.calls >= self.max_calls:
+            raise DartStop(f"이번 실행 호출 상한({self.max_calls}건)에 닿아 멈췄습니다 — 다시 실행하면 캐시로 이어서 진행합니다.")
+        if self._day_count() >= self.daily_cap:
+            raise DartStop(f"오늘 호출 상한({self.daily_cap}건, KR_COMPARABLES_DAILY_CAP)에 닿아 멈췄습니다 — 내일 다시 실행하면 캐시로 이어집니다.")
+
     def _path(self, endpoint, params, binary):
         p = dict(sorted(params.items()))
         h = hashlib.sha1((endpoint + json.dumps(p, ensure_ascii=False)).encode()).hexdigest()[:16]
@@ -105,28 +125,32 @@ class DartClient:
             return raw if binary else json.loads(raw.decode("utf-8"))
         if not self.key:
             raise DartStop(KEY_GUIDE)
-        if self.calls >= self.max_calls:
-            raise DartStop(f"이번 실행 호출 상한({self.max_calls}건)에 닿아 멈췄습니다 — 다시 실행하면 캐시로 이어서 진행합니다.")
-        if self._day_count() >= self.daily_cap:
-            raise DartStop(f"오늘 호출 상한({self.daily_cap}건, KR_COMPARABLES_DAILY_CAP)에 닿아 멈췄습니다 — 내일 다시 실행하면 캐시로 이어집니다.")
-        wait = self.interval - (time.time() - self._last)
-        if wait > 0:
-            self.sleep(wait)
         url = BASE + endpoint + "?" + urllib.parse.urlencode({"crtfc_key": self.key, **params})
-        self.calls += 1
-        self._day_add()
         raw, err = None, None
-        for attempt in range(2):
+        for attempt in range(1 + RETRIES):
+            self._check_caps()          # 재시도도 호출 수·하루 상한에 셈
+            wait = self.interval - (time.time() - self._last)
+            if wait > 0:
+                self.sleep(wait)
+            self.calls += 1
+            self._day_add()
             try:
                 raw = self.transport(url)
                 err = None
-                break
-            except Exception as e:  # 네트워크 오류 — 메시지에서 키를 가린다
+            except Exception as e:      # 메시지에서 키를 가린다
                 err = mask(f"{type(e).__name__}: {e}", self.key)
-                self.sleep(1.0)
-        self._last = time.time()
+                self._last = time.time()
+                if not transient(e):
+                    break               # 4xx(429 제외)·키 오류 등은 재시도해도 같음
+                if attempt < RETRIES:
+                    self.retries += 1
+                    self.sleep(BACKOFF[attempt])
+                continue
+            self._last = time.time()
+            break
         if err:
-            return self._fail({"status": "NET", "message": err})
+            tries = f" (일시 오류로 {RETRIES}회 재시도 후 실패)" if self.retries and attempt == RETRIES else ""
+            return self._fail({"status": "NET", "message": err + tries})
         if binary:
             if raw[:2] != b"PK":
                 txt = raw[:400].decode("utf-8", "replace")

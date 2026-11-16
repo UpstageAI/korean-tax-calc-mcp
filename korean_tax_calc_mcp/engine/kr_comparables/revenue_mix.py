@@ -9,10 +9,13 @@ import hashlib
 import json
 import os
 import re
+import time
 import urllib.request
 
 from .statements import title_sections, txt, unit_of
-from .dart import cache_dir, mask, _ssl_ctx
+from .dart import BACKOFF, RETRIES, cache_dir, mask, transient, _ssl_ctx
+
+_sleep = time.sleep   # 테스트에서 바꿔 끼움
 
 CATS = ("product", "merchandise", "service", "sw_license", "platform_fee", "other")
 KO = {"제품": "product", "상품": "merchandise", "용역": "service", "SW·라이선스": "sw_license", "플랫폼·중개수수료": "platform_fee", "기타": "other"}
@@ -224,8 +227,17 @@ def classify_solar(labels, ctx, key, http=None, stat=None):
             d = json.load(open(f, encoding="utf-8"))
             stat["solar_cached"] = stat.get("solar_cached", 0) + 1
         else:
-            d = (http or solar_http)(body, key)
-            stat["solar_calls"] = stat.get("solar_calls", 0) + 1
+            d = None
+            for attempt in range(1 + RETRIES):       # 일시 오류만 재시도(1·2·4초), 다 실패하면 아래 except → 규칙 분류
+                stat["solar_calls"] = stat.get("solar_calls", 0) + 1
+                try:
+                    d = (http or solar_http)(body, key)
+                    break
+                except Exception as e:
+                    if not transient(e) or attempt == RETRIES:
+                        raise
+                    stat["solar_retries"] = stat.get("solar_retries", 0) + 1
+                    _sleep(BACKOFF[attempt])
             with open(f, "w", encoding="utf-8") as fh:
                 json.dump(d, fh, ensure_ascii=False)
         j = json.loads(re.search(r"\{.*\}", d["choices"][0]["message"]["content"], re.S).group(0))
