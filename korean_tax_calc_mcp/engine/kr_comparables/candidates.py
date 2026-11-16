@@ -18,6 +18,7 @@ from . import statements as ST
 from .statements import title_sections as F_title_sections
 from . import revenue_mix as RM
 from .dart import DartClient, DartStop, KEY_ENV, KEY_GUIDE, mask
+from .index import CorpIndex
 from .schema import STATUS_NONE, empty_profile, value
 
 LIMIT_MAX = 100
@@ -337,8 +338,10 @@ def _segment_rows(sec):
     """원문 절의 사업부문·매출 표 행 — 라벨 칸이 있고 금액 또는 비중(%) 칸이 있는 행 → [(라벨, 금액·비중 글자)]."""
     out = []
     for tb in re.findall(r"<TABLE[^>]*>(.*?)</TABLE>", sec, re.S):
-        head = re.sub(r"\s", "", re.sub(r"<[^>]+>", " ", tb[:3000]))
-        if not re.search(r"매출|비중|비율|금액", head):
+        trs = re.findall(r"<TR[^>]*>(.*?)</TR>", tb, re.S)
+        head = re.sub(r"\s", "", re.sub(r"<[^>]+>", " ", " ".join(trs[:2])))
+        # 매출·매출비중 표만 — 머리에 매출/매출액/비중과 사업부문·품목·제품 라벨이 있고, 지분·출자 표(종속회사 지분율 등)는 뺀다
+        if not (re.search(r"매출|비중", head) and re.search(r"사업부문|부문|품목|제품|구분|사업", head)) or re.search(r"지분|출자|소유|주식|의결권", head):
             continue
         for tr in re.findall(r"<TR[^>]*>(.*?)</TR>", tb, re.S):
             cells = [re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", c)).strip() for c in re.findall(r"<T[DEHU][^>]*>(.*?)</T[DEHU]>", tr, re.S)]
@@ -488,7 +491,7 @@ def _profile_unlisted(R, corp, name, code, rows, parsed, docs, last):
 
 
 def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=None, limit=30, fs_pref="별도",
-        unlisted_window=None, max_calls=300, client=None, solar_http=None, upstage_key=None):
+        unlisted_window=None, max_calls=300, client=None, solar_http=None, upstage_key=None, build_index_only=False):
     """반환 {'결과': ..., '근거': [...], '주의': [...]} 또는 키 없음 안내."""
     key = os.environ.get(KEY_ENV, "")
     if client is None and not key:
@@ -503,22 +506,34 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
     dc = client or DartClient(key=key, max_calls=max_calls)
     up_key = upstage_key if upstage_key is not None else os.environ.get("UPSTAGE_API_KEY", "")
     R = _Run(dc, up_key, solar_http)
+    IX = CorpIndex()
     found, cand_rows, profiles, stop, skipped, short = [], [], [], None, [], []
     prog = {"left": None}
+    pools = []
     try:
         corps = _corp_list(dc)
-        pools = []
         if listed in ("상장", "둘 다"):
             pools.append(("상장", sorted((c for c in corps if c["stock_code"]), key=lambda c: c["corp_code"])))
         if listed in ("비상장", "둘 다"):
-            pools.append(("비상장", _unlisted_pool(dc, years, unlisted_window)))
+            y = max(years) + 1
+            bgn, end = unlisted_window or (f"{y}0301", f"{y}0331")
+            pools.append(("비상장", IX.pool(dc, bgn, end)))
         for pi, (kind, pool) in enumerate(pools):
-            for ci, c in enumerate(pool):
-                prog["left"] = (len(pool) - ci) + sum(len(x[1]) for x in pools[pi + 1:])
-                if len(found) >= limit:
+            # 색인에 있는 회사부터(업종을 색인으로 먼저 거름), 그다음 색인에 없는 회사(기업개황을 불러 색인에 쌓음)
+            ordered = [c for c in pool if IX.get(c["corp_code"])] + [c for c in pool if not IX.get(c["corp_code"])]
+            for ci, c in enumerate(ordered):
+                prog["left"] = sum(1 for x in ordered[ci:] if not IX.get(x["corp_code"])) + sum(
+                    1 for p_ in pools[pi + 1:] for x in p_[1] if not IX.get(x["corp_code"]))
+                if len(found) >= limit and not build_index_only:
                     break
-                info = dc.get("company.json", {"corp_code": c["corp_code"]})
-                if info.get("status") != "000":
+                ix = IX.get(c["corp_code"])
+                if ix:
+                    info = {"status": "000", "corp_name": ix["n"], "induty_code": ix["i"], "acc_mt": ix["a"], "corp_cls": ix["c"]}
+                else:
+                    info = dc.get("company.json", {"corp_code": c["corp_code"]})
+                    if info.get("status") == "000":
+                        IX.put(c["corp_code"], info)
+                if info.get("status") != "000" or build_index_only:
                     continue
                 cls = info.get("corp_cls")
                 if (kind == "상장" and cls not in ("Y", "K", "N")) or (kind == "비상장" and cls != "E"):
@@ -540,6 +555,14 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
                 profiles.append(prof)
     except DartStop as e:
         stop = mask(str(e), key)
+    IX.save()
+    pool_cut = stop and listed in ("비상장", "둘 다") and not any(k == "비상장" for k, _ in pools)
+    if stop and prog["left"] is None:
+        prog["left"] = sum(1 for _, pool in pools for c in pool if not IX.get(c["corp_code"]))
+    ix_n = ix_N = 0
+    for kind, pool in pools:
+        a, b = IX.progress(pool)
+        ix_n, ix_N = ix_n + a, ix_N + b
     method = sorted(R.methods)
     low_acc = any("정확도 낮음" in m for m in method)
     result = {
@@ -554,9 +577,16 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
                  "Solar_캐시": R.stat.get("solar_cached", 0), "오류": [mask(x, key) for x in dc.errors[:10]] + [mask(x, key) for x in R.stat.get("solar_errors", [])[:5]]},
         "멈춤": stop or "",
         "남은_회사_수": (prog["left"] if stop else 0),
-        "이어서": ("같은 입력으로 다시 부르면 캐시에 쌓인 결과는 다시 부르지 않고 남은 회사부터 이어서 계속합니다." if stop else ""),
-        "입력": {"industry_codes": prefixes, "years": years, "listed": listed, "revenue_min": revenue_min, "revenue_max": revenue_max, "limit": limit, "fs_pref": fs_pref},
+        "이어서": ("같은 입력으로 다시 부르면 캐시에 쌓인 결과는 다시 부르지 않고 남은 회사부터 이어서 계속합니다."
+                   + (" 비상장 모집단(공시 목록)을 모으는 중에 멈춰 남은 수에 비상장은 아직 빠져 있습니다." if pool_cut else "") if stop else ""),
+        "입력": {"industry_codes": prefixes, "years": years, "listed": listed, "revenue_min": revenue_min, "revenue_max": revenue_max, "limit": limit,
+                 "fs_pref": fs_pref, "build_index_only": build_index_only},
+        "색인": {"버전": IX.data["version"], "갱신": IX.data["updated"], "색인된_회사": len(IX.data["corps"]),
+                 "모집단_색인": f"{ix_n}/{ix_N}", "완료": ix_N > 0 and ix_n == ix_N, "비상장_모집단_일수": len(IX.data["days"]),
+                 "안내": ("" if ix_N and ix_n == ix_N else f"색인 {ix_n}/{ix_N} — 같은 입력으로 다시 부르면 이어서 계속(하루 상한 KR_COMPARABLES_DAILY_CAP 안에서)")},
     }
+    if build_index_only:
+        result["후보_수"] = 0
     notes = ["후보 프로필은 숫자 신호와 근거(접수번호·계정)입니다 — 비교대상 적정성 판단은 kr_comparable_profile_compare·사람 검토로.",
              "값 상태: 확보 / 불명-없음(원문에 계정 없음 → 0으로 봄) / 불명-못찾음(0인지 모름).",
              "비상장 최대주주 지분은 OpenDART API로 얻을 수 없어 불명 — 감사보고서 주석의 주주 현황을 사람이 확인."]
@@ -568,24 +598,6 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
     basis = ["OpenDART 개발가이드(공시정보·정기보고서 주요정보·재무정보·공시서류원본파일)", "국조법 시행령 제2조②(특수관계 — 지분 50%)",
              "국조칙 비교가능성 분석요소 — 기능·자산·위험(프로필 지표는 판단 보조)"]
     return {"결과": result, "근거": basis, "주의": notes}
-
-
-def _unlisted_pool(dc, years, window):
-    y = max(years) + 1
-    bgn, end = window or (f"{y}0301", f"{y}0331")
-    seen, out = set(), []
-    page, total_page = 1, 1
-    while page <= total_page and page <= 50:
-        d = dc.get("list.json", {"bgn_de": bgn, "end_de": end, "pblntf_ty": "F", "corp_cls": "E", "page_no": str(page), "page_count": "100"})
-        if d.get("status") != "000":
-            break
-        total_page = int(d.get("total_page") or 1)
-        for r in d.get("list", []):
-            if "감사보고서" in r["report_nm"] and r["corp_code"] not in seen:
-                seen.add(r["corp_code"])
-                out.append({"corp_code": r["corp_code"], "corp_name": r["corp_name"], "stock_code": ""})
-        page += 1
-    return out
 
 
 def _one(R, kind, corp, info, years, fs_pref, rmin, rmax):
