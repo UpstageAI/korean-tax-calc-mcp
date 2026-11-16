@@ -39,6 +39,7 @@ from .engine import calc_official_price as OP
 from .engine import calc_building as BL
 from .engine import calc_donation_ind as DI
 from .engine import calc_deadline as DL
+from .engine import calc_local_withholding_penalty as LWP
 from .engine.exact import floor_won as _floor_won, trunc_won as _trunc_won, exact as _exact
 from .engine import inputs as _chk
 from .engine import calc_batch0300 as B
@@ -2009,11 +2010,12 @@ def withholding_late_payment_penalty(unpaid_tax: WON,
                                      paid_on: Annotated[str, Field(description="납부고지 후 실제 납부일(YYYY-MM-DD) — notice_due와 함께")] = "",
                                      dunning_fee: Annotated[int, Field(ge=0, description="독촉에 드는 비용(원, 제47조의5제1항제4호·영 제27조의4제3항 등기우편 요금) — 개정 규정의 고지 후분에만")] = 0,
                                      notice_amount: Annotated[int | None, Field(ge=0, description="납부고지서별·세목별 세액(원, 제5항 소액 기준: 2021.12.31.까지의 날 100만원, 2022.1.1.부터의 날 150만원 — 법률 제18586호 부칙 제7조) — 생략하면 미납세액 + 고지 전 가산세")] = None,
-                                     accrued_on: Annotated[str | None, Field(description="납세의무 성립일 = 소득을 지급한 날(YYYY-MM-DD, 선택). 2020.1.1. 전이면 종전 규정(3% + 고지일까지 일수분, 10% 한도). 생략하면 법정납부기한이 2020.1.10. 이전인 경우 2019년 성립분으로 봄")] = None) -> dict:
+                                     accrued_on: Annotated[str | None, Field(description="납세의무 성립일 = 소득을 지급한 날(YYYY-MM-DD, 선택). 2020.1.1. 전이면 종전 규정(3% + 고지일까지 일수분, 10% 한도). 생략하면 법정납부기한이 2020.1.10. 이전인 경우 2019년 성립분으로 봄")] = None,
+                                     tax: Annotated[Literal["national", "local"], Field(description="세목 — 'national'(기본, 원천징수한 소득세·법인세: 국세기본법 제47조의5) 또는 'local'(함께 특별징수한 지방소득세: 지방세기본법 제56조). 'local'이면 unpaid_tax에 미납 지방소득세액을 넣고, accrued_on(원천징수한 날)은 2024.1.1. 전후 규정을 가름")] = "national") -> dict:
     """Withholding tax late payment penalty tax: 3% plus daily portion, 50% cap (원천징수 납부지연가산세).
     원천징수 등 납부지연가산세(국세기본법 제47조의5제1항) — 미납세액 3% + 일수분(고지 전 10% 한도) + 납부고지 후분, 전체 50% 한도. 언제: 원천징수의무자(납세조합·부가가치세 대리납부자 포함)가 원천징수세액을 법정납부기한까지 내지 않았거나 적게 냈을 때.
 입력: 미납·과소납부 세액(원) → unpaid_tax, 법정납부기한(YYYY-MM-DD) → due, 고지 전 납부일 또는 납부고지일(YYYY-MM-DD) → until,
-  납부고지가 있었으면 지정납부기한(납부고지서에 따른 납부기한) → notice_due, 실제 납부일 → paid_on, 독촉비용(원) → dunning_fee, 납부고지서별·세목별 세액(원, 생략 가능) → notice_amount.
+  납부고지가 있었으면 지정납부기한(납부고지서에 따른 납부기한) → notice_due, 실제 납부일 → paid_on, 독촉비용(원) → dunning_fee, 납부고지서별·세목별 세액(원, 생략 가능) → notice_amount, 세목(국세 national·지방소득세 특별징수분 local) → tax.
 계산: 1호 미납세액 × 3% + 2호 미납세액 × 일수 × 1일 이율(시행령 제27조의4: 1만분의 3 → 2019.2.12.부터 10만분의 25 → 2022.2.15.부터 10만분의 22, 기간 안분), 1호 + 2호(고지 전)는 미납세액의 10% 한도.
   2호 일수: until이 2026.7.1. 이후면 개정(법률 제21212호) — 법정납부기한 다음 날부터 납부고지일(고지 전 납부면 납부일)의 전날까지. 그 전이면 종전 — 납부일까지, 고지가 있으면 '납부고지일부터 납부고지서에 따른 납부기한까지' 제외라 고지일 전날까지.
   고지 후(지정납부기한 다음 날부터 납부일): 지정납부기한이 2026.6.30. 이전에 지났으면 종전 규정(법률 제21212호 부칙 제4조) — 2호 일수분(납부일까지, 제4항 5년 한도),
@@ -2022,9 +2024,17 @@ def withholding_late_payment_penalty(unpaid_tax: WON,
   연도: 2020.1.1. 전 납세의무 성립분(지급일 기준, 법률 제16841호 부칙 제21조)은 종전 규정 — 3% + 납부기한 다음 날부터 자진납부일 또는 납세고지일까지 일수분, 10% 한도. 고지 후분은 구 국세징수법 가산금 대상이라 계산하지 않음.
   제5항 소액 기준: 2021.12.31.까지의 날은 100만원 미만, 2022.1.1.부터의 날은 150만원 미만 — 지정납부기한이 2021년 이전이고 고지세액이 100만원 이상 150만원 미만이면 2021.12.31.까지의 날만 고지 후분을 계산(법률 제18586호 부칙 제7조).
   일반 납부지연가산세(제47조의4, 3% 없음·한도 없음)는 late_payment_penalty.
+지방소득세 특별징수분(tax='local', 지방세기본법 제56조 — 국세 가산세의 10%로 어림하지 않고 따로 계산): 미납 지방소득세 × 3% + 일수분(법정납부기한 다음 날부터 자진납부일 또는 납세고지일까지, 끝날 포함), 합계 10% 한도.
+  1일 이율(지방세기본법 시행령 제34조): 1만분의 3 → 2019.1.1.부터 10만분의 25(그 전에 납부기한이 지난 분은 종전 이율 — 대통령령 제29436호 부칙 제2조) → 2022.6.7.부터 10만분의 22(기간 안분 — 대통령령 제32665호 부칙 제2조). 국세와 바뀐 날·경과조치가 다르다.
+  2024.1.1. 이후 원천징수분(법률 제17768호 부칙 제6조)은 납세고지서에 따른 납부기한 뒤 2호의2(세액 × 1만분의 66, 그 납부기한이 2025.1.1. 이후) + 3호(1개월이 지날 때마다 월 1만분의 66, 60개월 한도, 납세고지서별·세목별 45만원 미만 제외)를 더하고 전체 50% 한도.
+  그 전 원천징수분의 고지 후분은 지방세징수법 가산금·중가산금이라 계산하지 않음. dunning_fee는 쓰지 않음. 결과에 기간별 이율·끝수 근거(지방세기본법 제59조)를 적는다.
 지원 안 함: 제3항 적용 제외(주한미군·국가·지방자치단체 등) 판단, 고지 후 일부 납부(분할 납부) — 미납세액 전부를 paid_on에 낸 것으로 계산.
 until이 due와 같은 날(기한 당일 납부)이면 가산세 0. due가 토·일·공휴일이면 주의(국세기본법 제5조제1항 기한 연장은 자동 반영 안 함 — 다음 영업일을 due로).
-결과: 가산세·3%분·일수분·10% 한도·일수·고지후분(종전 일수분 또는 개정 3호)·경과 개월·독촉비용·50% 한도·적용 규정, 근거(국세기본법 제47조의5, 시행령 제27조의4, 법률 제21212호 부칙). Withholding late-payment penalty (3% + daily, 10% cap before notice; after notice daily (old) or monthly 0.67% (from 2026-07-01); 50% overall cap)."""
+결과: 가산세·3%분·일수분·10% 한도·일수·고지후분(종전 일수분 또는 개정 3호)·경과 개월·독촉비용·50% 한도·적용 규정, 근거(국세기본법 제47조의5, 시행령 제27조의4, 법률 제21212호 부칙). Withholding late-payment penalty (3% + daily, 10% cap before notice; after notice daily (old) or monthly 0.67% (from 2026-07-01); 50% overall cap). Set tax='local' for the local income tax collected together with the withholding (Framework Act on Local Taxes Art. 56)."""
+    if tax == "local":
+        return _local_withholding_penalty(unpaid_tax, due, until, notice_due, paid_on, dunning_fee, notice_amount, accrued_on)
+    if tax != "national":
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"tax={tax!r} — 'national'(국세) 또는 'local'(지방소득세 특별징수분)만"]}
     try:
         d0, d1 = _chk.to_date("due", due), _chk.to_date("until", until)
         nd = _chk.to_date("notice_due", notice_due) if notice_due else None
@@ -2132,6 +2142,122 @@ until이 due와 같은 날(기한 당일 납부)이면 가산세 0. due가 토·
         주의 = [주의, 경계] if 주의 else 경계
     if 주의:
         out["주의"] = 주의
+    return out
+
+def _local_withholding_penalty(unpaid_tax, due, until, notice_due, paid_on, dunning_fee, notice_amount, accrued_on):
+    """withholding_late_payment_penalty(tax='local') — 지방소득세 특별징수 납부지연가산세(지방세기본법 제56조). 원문·해석 기준은 engine.calc_local_withholding_penalty."""
+    try:
+        d0, d1 = _chk.to_date("due", due), _chk.to_date("until", until)
+        nd = _chk.to_date("notice_due", notice_due) if notice_due else None
+        pd = _chk.to_date("paid_on", paid_on) if paid_on else None
+    except ValueError as e:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [str(e)]}
+    문제 = []
+    if d1 < d0:
+        문제.append(f"until={until} — 법정납부기한 due={due}보다 앞 날짜(기한 안 납부면 가산세 없음 — 기한 당일 납부는 until=due로 넣으면 가산세 0)")
+    if d0 < date(2016, 1, 1):
+        문제.append(f"due={due} — 2016.1.1. 이후 법정납부기한만 지원(그 전 시행본은 확인하지 못함 — 계산하지 않음)")
+    pre2024 = d0 <= date(2024, 1, 10)
+    성립일_추정 = accrued_on is None and date(2023, 12, 31) < d0 <= date(2024, 1, 10)
+    if accrued_on is not None:
+        try:
+            ad = _chk.to_date("accrued_on", accrued_on)
+            pre2024 = ad < LWP.NEW_LAW_DATE
+            if ad > d0:
+                문제.append(f"accrued_on={accrued_on} — 납세의무 성립일(원천징수한 날)이 법정납부기한 due={due}보다 뒤일 수 없음")
+        except ValueError as e:
+            문제.append(str(e))
+    if (nd is None) != (pd is None):
+        문제.append("notice_due(납세고지서에 따른 납부기한)와 paid_on(고지 후 납부일)은 함께 — 고지 없이 납부했으면 둘 다 비우고 until=납부일")
+    if nd is not None and nd < d1:
+        문제.append(f"notice_due={notice_due} — 납세고지일 until={until}보다 앞일 수 없음")
+    if nd is not None and pd is not None and pd < d1:
+        문제.append(f"paid_on={paid_on} — 납세고지일 until={until}보다 앞(고지 전 납부면 until=납부일, notice_due·paid_on 비움)")
+    if dunning_fee:
+        문제.append("dunning_fee — 독촉비용은 국세(국세기본법 제47조의5제1항제4호)에만 있음. tax='local'에서는 비움")
+    if notice_amount is not None and nd is None:
+        문제.append("notice_amount — 납세고지가 있을 때만(notice_due와 함께)")
+    if 문제:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제}
+    세목 = "지방소득세 특별징수분"
+    한계 = ["특별징수의무·납부기한(지방세법 제103조의13·제103조의29)과 가산세를 부과하지 않는 경우(제103조의14 단서·제103조의29제4항 단서: 국가·지방자치단체 등, 제103조의13제3항 과부족 가감분), "
+          "감면(지방세기본법 제57조)은 korean-tax-mcp law_article로 확인 — 이 도구는 주어진 세액·날짜로 금액만 계산",
+          "미납세액 전부를 한 번에 낸 것으로 계산(분할 납부 미지원). 법정납부기한 2016.1.1. 전은 시행본을 확인하지 못해 계산하지 않음"]
+    주의 = []
+    why = DL.nonbusiness(d0)
+    if why:
+        주의.append(f"납부기한 {due}은(는) {why} — 납부기한이 토요일·일요일·공휴일이면 그 다음 날이 기한(지방세기본법 제24조제1항). "
+                  "계산은 입력한 due 그대로이니, 연장된 기한으로 보려면 due를 그 다음 영업일로 넣으세요")
+    if d1 == d0 and nd is None:
+        결과 = {"세목": 세목, "가산세": 0, "3%분": 0, "일수분": 0, "한도_10%": _floor_won(unpaid_tax, 0.10), "한도_적용": False, "일수": 0,
+              "고지후분": 0, "고지후_일수": 0, "경과_개월": 0, "독촉비용": 0, "한도_50%": None if pre2024 else _floor_won(unpaid_tax, 0.50), "50%한도_적용": False,
+              "적용_규정": {"고지 전": "해당 없음(기한 안 납부)", "고지 후": None}, "2호의2분": 0, "3호분": 0, "기간별_이율": [], "끝수": LWP.ROUNDING}
+        out = _ok(결과, "지방세기본법 제56조 — 법정납부기한까지 납부하면 가산세 없음", 산식="기한 당일 납부 — 가산세 0")
+        out["판단"] = [{"항목": "납부일", "결론": f"납부일 {until} = 법정납부기한 {due} — 미납·과소납부 아님, 가산세 0", "근거": "지방세기본법 제56조"}]
+        out["한계"] = 한계
+        if 주의:
+            out["주의"] = 주의 if len(주의) > 1 else 주의[0]
+        return out
+    r = LWP.local_withholding_penalty(unpaid_tax, d0, d1, nd, pd, notice_amount, pre2024=pre2024)
+    기간 = [{"기간": f"{s['시작']}~{s['끝']}", "일수": s["일수"], "이율": s["이율_표기"], "근거": s["근거"]} for s in r["기간별_이율"]]
+    일수식 = " + ".join(f"{unpaid_tax:,} × {s['일수']}일 × {s['이율_표기'][3:]}" for s in r["기간별_이율"]) or "0"
+    산식 = f"min({unpaid_tax:,} × 3% + {일수식}, {unpaid_tax:,} × 10%)"
+    성립 = ("accrued_on " + accrued_on) if accrued_on is not None else f"법정납부기한 {due} 기준으로 봄"
+    판단 = []
+    if pre2024:
+        근거 = ["지방세기본법 제56조(2023.12.31.까지 시행본 — 특별징수납부 등 불성실가산세: 3% + 일수분, 10% 한도. 2017.3.27.까지 제53조의5)",
+              "법률 제17768호 부칙 제1조제5호·제6조(2024.1.1. 전 납세의무 성립분은 종전 규정)"]
+        판단.append({"항목": "적용 규정", "결론": f"2024.1.1. 전 원천징수분({성립}) — 종전 규정: 3% + 납부기한 다음 날부터 "
+                   + ("납세고지일(2017.3.28.~2023 시행본 문언은 부과결정일)" if nd else "자진납부일") + f"까지 {r['일수']}일분, 합계 10% 한도. 50% 한도·2호의2·3호 없음",
+                   "근거": "지방세기본법 제56조(종전), 법률 제17768호 부칙 제6조, 제34조제2항제1호(특별징수하는 지방소득세는 원천징수하는 때 성립)"})
+        if nd is not None:
+            주의.append("납세고지 후 체납분은 지방세징수법의 가산금(체납 지방세의 3%, 제30조)·중가산금(월 1만분의 75, 제31조) 대상 — 이 도구는 계산하지 않음")
+    else:
+        근거 = ["지방세기본법 제56조제1항(1호 3% + 2호 일수분, 1호·2호 10% 한도, 전체 50% 한도 — 법률 제17768호, 2024.1.1. 시행)"]
+        판단.append({"항목": "적용 규정", "결론": f"2024.1.1. 이후 원천징수분({성립}) — 2호 일수 {r['일수']}일: 법정납부기한 다음 날부터 "
+                   + ("납세고지일" if nd else "자진납부일") + "까지",
+                   "근거": "지방세기본법 제56조제1항제1호·제2호, 법률 제17768호 부칙 제6조, 제34조제2항제1호"})
+        if r["고지후_규정"]:
+            근거.append("지방세기본법 제56조제1항제2호의2(법률 제20629호, 2025.1.1. 시행)·제3호·제2항, 시행령 제34조제2항(월 1만분의 66)")
+            if r["2호의2_적용"]:
+                판단.append({"항목": "2호의2", "결론": f"{r['2호의2분']:,}원 — 납세고지서에 따른 납부기한까지 내지 않은 세액 × 1만분의 66",
+                           "근거": "지방세기본법 제56조제1항제2호의2, 법률 제20629호 부칙 제3조"})
+                산식 += f" + {unpaid_tax:,} × 0.66%"
+            else:
+                _alt = _floor_won(unpaid_tax, 0.0066)
+                판단.append({"항목": "2호의2", "결론": "적용 안 함 — 납세고지서에 따른 납부기한이 2025.1.1. 전(2호의2는 2025.1.1. 시행)",
+                           "근거": "법률 제20629호 부칙 제1조·제3조, 지방세기본법 제34조제1항제12호라목(2호의2분은 그 납부기한이 경과하는 때 성립)"})
+                주의.append("2호의2(세액 × 1만분의 66)는 '2025.1.1. 이후 특별징수 납부지연가산세를 부과하는 경우부터'(법률 제20629호 부칙 제3조) — 납세고지서에 따른 납부기한이 "
+                          f"2025.1.1. 전이라 넣지 않았음. 2025.1.1. 이후 부과로 보아 넣는다면 {_alt:,}원이 더해짐(50% 한도 안에서). 해석례는 확인하지 못함 — 관할 지방자치단체에 확인")
+            if r["소액_제외"]:
+                판단.append({"항목": "3호", "결론": f"적용 안 함 — 납세고지서별·세목별 세액 {r['납세고지서_세액']:,}원 < 45만원" + ("" if notice_amount is not None else "(미납세액 + 고지 전 가산세로 봄 — 다르면 notice_amount)"),
+                           "근거": "지방세기본법 제56조제2항"})
+            else:
+                판단.append({"항목": "3호", "결론": f"{r['3호분']:,}원 — 납세고지서에 따른 납부기한이 지난 날부터 경과 {r['경과_개월']}개월 × 월 1만분의 66(1개월 미만은 없음, 60개월 한도)",
+                           "근거": "지방세기본법 제56조제1항제3호, 시행령 제34조제2항"})
+                산식 += f" + {unpaid_tax:,} × {r['경과_개월']}개월 × 0.66%"
+        if nd:
+            산식 = f"min({산식}, {unpaid_tax:,} × 50%)"
+    if any("부칙 제2조" in s["근거"] for s in r["기간별_이율"]):
+        근거.append("지방세기본법 시행령 제34조, " + "·".join(b for b, k in (("대통령령 제29436호 부칙 제2조", "제29436호 부칙"), ("대통령령 제32665호 부칙 제2조", "제32665호 부칙"))
+                                               if any(k in s["근거"] for s in r["기간별_이율"])))
+    else:
+        근거.append("지방세기본법 시행령 제34조(1일 이율)")
+    근거.append("지방세법 제103조의14·제103조의29제4항(특별징수 의무불이행 가산세는 지방세기본법 제56조에 따라 산출 — 비거주자·외국법인분은 제103조의18제2항·제103조의52제2항으로 준용)")
+    if d0 == date(2018, 12, 31):
+        주의.append("법정납부기한이 2018.12.31. — 가산세 부과 사유가 2019.1.1.(대통령령 제29436호 시행일)에 발생한 것으로 보아 10만분의 25로 계산. "
+                  "시행 전 사유 발생으로 보면 종전 1만분의 3(부칙 제2조) — 해석례는 확인하지 못함")
+    if 성립일_추정:
+        주의.append("법정납부기한이 2024.1.10. 이전이라 2023년 원천징수분으로 보고 종전 규정 적용 — 2024년에 원천징수한 분이면 accrued_on에 원천징수한 날을 넣는다")
+    결과 = {"세목": 세목, "가산세": r["가산세"], "3%분": r["3%분"], "일수분": r["일수분"], "한도_10%": r["한도_10%"], "한도_적용": r["한도_적용"], "일수": r["일수"],
+          "고지후분": r["고지후분"], "고지후_일수": 0, "경과_개월": r["경과_개월"], "독촉비용": 0, "한도_50%": r["한도_50%"], "50%한도_적용": r["50%한도_적용"],
+          "적용_규정": {"고지 전": "종전(2023년 이전 원천징수분)" if pre2024 else "개정(2024.1.1. 이후 원천징수분)", "고지 후": r["고지후_규정"]},
+          "2호의2분": r["2호의2분"], "3호분": r["3호분"], "기간별_이율": 기간, "끝수": LWP.ROUNDING}
+    out = _ok(결과, ", ".join(근거), 산식=산식)
+    out["판단"] = 판단
+    out["한계"] = 한계
+    if 주의:
+        out["주의"] = 주의 if len(주의) > 1 else 주의[0]
     return out
 
 
@@ -11610,6 +11736,8 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "원천징수 가산세": ["withholding_late_payment_penalty"], "원천징수납부 불성실": ["withholding_late_payment_penalty"],
     "원천세 가산세": ["withholding_late_payment_penalty"], "원천세 납부지연": ["withholding_late_payment_penalty"],
     "제47조의5": ["withholding_late_payment_penalty"],
+    "지방소득세 가산세": ["withholding_late_payment_penalty"], "특별징수 납부지연": ["withholding_late_payment_penalty"],
+    "특별징수 가산세": ["withholding_late_payment_penalty"],
     "세금계산서": ["invoice_penalty", "vat_input_tax_deduction"], "공통매입세액": ["common_input_tax", "vat_common_input_allocation", "input_tax_recalculation"],
     "면세전용": ["vat_exempt_use_deemed_supply"], "간주공급": ["vat_deemed_supply_items", "vat_exempt_use_deemed_supply"],
     "세무조정 다년도": ["tax_adjustment_schedule"], "유보 잔액": ["tax_adjustment_schedule", "provision_reserve_ledger"], "소득금액조정합계표": ["tax_adjustment_schedule"],

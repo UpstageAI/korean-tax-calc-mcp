@@ -77,7 +77,7 @@ flowchart LR
 
 [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp)는 조문·부칙·해석·판례를 찾는 짝 서버입니다. 같이 두면 **근거 찾기 → 계산 → 서식**이 한 대화에서 이어지고, 이 서버의 `find_tool`도 계산 도구가 없는 질문(월세·연금계좌 세액공제, 주식 양도 등)에 바로 부를 조문 호출값을 돌려줍니다.
 
-새 버전으로 바로 바꾸려면 `uvx --refresh korean-tax-calc-mcp`(uvx는 받은 버전을 캐시합니다). 특정 버전 고정은 `uvx korean-tax-calc-mcp@0.57.2`.
+새 버전으로 바로 바꾸려면 `uvx --refresh korean-tax-calc-mcp`(uvx는 받은 버전을 캐시합니다). 특정 버전 고정은 `uvx korean-tax-calc-mcp@0.58.0`.
 
 선택 키: `LAW_OC`(세무조사 판정 도구 2개의 법제처 조문 조회), `UPSTAGE_API_KEY`(PDF 표 추출), `VWORLD_KEY`(부동산 공시가격 조회).
 
@@ -375,7 +375,7 @@ flowchart LR
 | `vat_bad_debt_credit` | 대손세액공제(회수하면 매출세액 가산) |
 | `underreporting_penalty` | 과소신고가산세 |
 | `late_payment_penalty` | 납부지연가산세 |
-| `withholding_late_payment_penalty` | 원천징수 납부지연가산세(국세기본법 제47조의5, 3%+일할, 한도) |
+| `withholding_late_payment_penalty` | 원천징수 납부지연가산세(국세기본법 제47조의5, 3%+일할, 한도). `tax="local"`이면 함께 특별징수한 지방소득세분(지방세기본법 제56조) |
 | `invoice_penalty` | 세금계산서 가산세 |
 | `invoice_penalty_bundle` | 세금계산서 가산세 묶음 — 한 거래에 가산세 사유가 여럿일 때 중복 배제(부가가치세법 제60조② 후문·⑨) 후 합계 |
 | `assessment_limitation` | 부과제척기간 |

@@ -640,6 +640,8 @@ def _spec(tool: str, args: dict, data: dict, label) -> dict:
         return _spec_nonresident(args, data)
     if tool == "withholding_late_payment_penalty":
         res = data.get("결과") if isinstance(data.get("결과"), dict) else {}
+        if args.get("tax") == "local":   # 지방소득세 특별징수분(지방세기본법 제56조): 국세용 수식 틀(국세 이율·근거)을 쓰지 않고 도구 값을 옮긴다
+            return _spec_generic(args, data, label, steps_ok=False, plain_note="tool_value_no_layout")
         sp = _spec_wh_penalty(args, data) or _spec_wh_penalty_notice(args, data)
         if sp:
             return sp
