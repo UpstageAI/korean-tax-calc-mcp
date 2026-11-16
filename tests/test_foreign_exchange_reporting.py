@@ -82,7 +82,10 @@ def test_errors():
     assert "error" in r and "허용값" in r
     assert "error" in c("foreign_exchange_reporting", {"event": "금전대여", "ownership_ratio_after": 1.0, "amount_usd": 1, "event_date": "2026-01-01"})
     assert "error" in c("foreign_exchange_reporting", {"event": "신설출자", "ownership_ratio_after": 1.0, "amount_usd": -1, "event_date": "2026-01-01"})
-    assert "error" in c("foreign_exchange_reporting", {"event": "신설출자", "ownership_ratio_after": 1.0, "amount_usd": 1, "event_date": "2026/01/01"})
+    # 0.58.1: YYYY/MM/DD 등은 도구 입구에서 YYYY-MM-DD로 정규화 — 거절하지 않고 같은 결과(실제 날짜가 아니면 오류)
+    _a = {"event": "신설출자", "ownership_ratio_after": 1.0, "amount_usd": 1}
+    assert c("foreign_exchange_reporting", {**_a, "event_date": "2026/01/01"})["결과"] == c("foreign_exchange_reporting", {**_a, "event_date": "2026-01-01"})["결과"]
+    assert "error" in c("foreign_exchange_reporting", {**_a, "event_date": "2026/02/30"})
 
 
 def test_find_tool_surfaces_tool():

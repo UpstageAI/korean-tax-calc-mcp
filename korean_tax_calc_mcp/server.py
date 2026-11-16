@@ -655,6 +655,67 @@ _EXCEL_TAIL = ("계산 근거·보고용 Excel은 직접 짠다(구성은 자유
 _NO_EXCEL_TAIL = frozenset({"export_workbook", "verify_workbook", "find_tool"})
 
 
+_PY_DATE_ERR = re.compile(r"Invalid isoformat string: '([^']*)'|time data '([^']*)' does not match format")
+_PY_NUM_ERR = re.compile(r"could not convert string to float: '([^']*)'|invalid literal for int\(\) with base 10: '([^']*)'")
+
+
+def _arg_path(a: tuple, k: dict, value: str) -> str:
+    """인자 안에서 value 문자열이 처음 나오는 자리(예: 'items[0].date'). 못 찾으면 ''."""
+    def walk(o, p):
+        if isinstance(o, str):
+            return p if o == value else None
+        if isinstance(o, dict):
+            items = o.items()
+        elif isinstance(o, (list, tuple)):
+            items = ((f"[{i}]", v) for i, v in enumerate(o))
+        else:
+            return None
+        for kk, v in items:
+            sub = f"{p}{kk}" if str(kk).startswith("[") else (f"{p}.{kk}" if p else str(kk))
+            hit = walk(v, sub)
+            if hit:
+                return hit
+        return None
+    return walk(dict(k), "") or walk(list(a), "args") or ""
+
+
+def _friendly_error(e: Exception, a: tuple, k: dict) -> str:
+    """파이썬 원문 오류(날짜·숫자 변환)를 무엇이 틀렸고 무엇을 넣으면 되는지로 바꾼다. 해당 없으면 원래 문구."""
+    msg = str(e)
+    m = _PY_DATE_ERR.search(msg)
+    if m:
+        v = m.group(1) if m.group(1) is not None else m.group(2)
+        where = _arg_path(a, k, v)
+        return f"{where + '=' if where else '날짜 '}{v!r} — 날짜로 읽을 수 없음. YYYY-MM-DD 형식의 실제 날짜로 넣으세요(예: 2025-03-31)"
+    m = _PY_NUM_ERR.search(msg)
+    if m:
+        v = m.group(1) if m.group(1) is not None else m.group(2)
+        where = _arg_path(a, k, v)
+        return f"{where + '=' if where else '숫자 자리에 '}{v!r} — 숫자가 아님. 금액은 원 단위 숫자, 비율은 0~1 소수(예: 30%면 0.3)로 넣으세요"
+    return msg
+
+
+_NO_DATE_NORMALIZE = frozenset({"export_workbook", "verify_workbook", "find_tool"})   # 자유 형식 표·파일·검색어 — 값을 그대로 둔다
+
+
+def _normalize_call_dates(name: str, sig, a: tuple, k: dict) -> tuple[tuple, dict]:
+    """도구 입구 날짜 정규화 — 날짜 자리(이름으로 판별)의 YYYYMMDD·YYYY.MM.DD·YYYY/MM/DD·'YYYY년 M월 D일'을 YYYY-MM-DD로.
+    위치 인자는 매개변수 이름에 묶어 본다. 실제 날짜가 아니면 ValueError(고칠 방법 포함)."""
+    if name in _NO_DATE_NORMALIZE:
+        return a, k
+    if a and sig is not None and not any(p.kind is p.VAR_POSITIONAL for p in sig.parameters.values()):
+        try:
+            bound = sig.bind_partial(*a, **k)
+        except TypeError:
+            bound = None
+        if bound is not None:
+            names = list(bound.arguments)
+            pos = names[:len(a)]
+            new_pos = tuple(_chk.normalize_dates(v, n, bool(_chk.DATE_KEY.search(n))) for v, n in zip(a, pos))
+            return new_pos, _chk.normalize_date_args(k)
+    return a, _chk.normalize_date_args(k)
+
+
 def _guard(fn):
     import functools
     import inspect
@@ -665,6 +726,10 @@ def _guard(fn):
 
     @functools.wraps(fn)
     def w(*a, **k):
+        try:
+            a, k = _normalize_call_dates(fn.__name__, sig, a, k)
+        except ValueError as e:
+            return {"error": f"입력 오류: {e}"}
         key = (fn.__name__, _call_key(fn.__name__, a, k))
         count = _CALL_MEMO.get(key, 0) + 1
         _CALL_MEMO[key] = count
@@ -679,7 +744,7 @@ def _guard(fn):
         except _NoYearTable as e:
             r = {"error": str(e), "주의": "연도표 없는 해는 추정 계산하지 않음"}
         except (ValueError, KeyError, TypeError) as e:
-            r = {"error": f"입력 오류: {e}"}
+            r = {"error": f"입력 오류: {_friendly_error(e, a, k)}"}
         except Exception as e:
             # Pydantic ValidationError 등 프레임워크 검증 오류 — 문제 필드명을 결과에 포함
             msg = str(e)
@@ -1296,6 +1361,9 @@ wholly_owned_capital_increase=True이고 시가가 액면 미만(액면=0 포함
   예외 — transaction_type이 무상이전·채무면제, 무수익자산, 출연금대납, 자본거래면 국제거래라도 법인세법 제52조(국조령 제4조)로 종전처럼 판정."""
     _e = _range_err(("year", year))
     if _e: return _e
+    _e = _neg_err(("market_price", market_price, "시가(단가)"), ("actual_price", actual_price, "실제 거래 단가"), ("quantity", quantity, "수량"))
+    if _e:
+        return _e
     law = F.related_party_law(foreign_related, transaction_type, year)
     gap = abs(market_price - actual_price) * quantity; base = market_price * quantity
     if law["적용"] == "국조법":
@@ -2328,6 +2396,29 @@ def invoice_penalty(supply_amount: WON, kind: Annotated[Literal["가공", "지�
 # - 같은 deal에서 지연발급(②1)·지연전송·미전송(②3·4)이 있으면 그 deal의 매출처별합계표_*(⑥)는 0(⑨2호)
 
 
+def _neg_err(*items) -> dict | None:
+    """음수가 법적으로 의미 없는 금액·수량 입력 검사. items=(이름, 값, 뜻) — 음수면 고칠 방법을 말하는 오류(결손금·환급·차감처럼
+    음수가 맞는 입력은 여기에 넣지 않는다). 숫자가 아닌 값은 건드리지 않는다(각 도구의 기존 검증 몫)."""
+    bad = [f"{n}={v:,} — {what}은(는) 음수일 수 없음. 0 이상으로 넣으세요"
+           for n, v, what in items if isinstance(v, (int, float)) and not isinstance(v, bool) and v < 0]
+    return {"error": "입력 확인 필요 — 계산하지 않음", "문제": bad} if bad else None
+
+
+def _rows(lst):
+    """[(i, dict)] — 목록 인자에서 dict 항목만."""
+    return [(i, x) for i, x in enumerate(lst or []) if isinstance(x, dict)]
+
+
+def _nonneg_int(v) -> bool:
+    """정수로 읽히는 0 이상의 값인지(문자열 숫자 포함, bool 제외)."""
+    if isinstance(v, bool):
+        return False
+    try:
+        return int(v) >= 0
+    except (TypeError, ValueError):
+        return False
+
+
 @mcp.tool(annotations=CALC)
 @_guard
 def invoice_penalty_bundle(items: Annotated[list, Field(description="[{deal(거래 이름), kind(invoice_penalty의 kind와 같은 값), supply_amount, supplied_on?, issued_on?(가공 세금계산서등 발급·수취일 — kind='가공'은 issued_on 또는 supplied_on 필수)}] — 같은 거래(deal) 안에서 중복 배제 적용")]) -> dict:
@@ -2350,6 +2441,11 @@ def invoice_penalty_bundle(items: Annotated[list, Field(description="[{deal(거�
                 and not (_it.get("issued_on") or _it.get("supplied_on"))]
     if _no_date:
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": _no_date}
+    # 공급가액은 음수일 수 없음(단건 invoice_penalty의 supply_amount도 0 이상) — 음수 항목이 다른 거래 가산세를 깎지 않게 막는다
+    _neg = [f"items[{_i}].supply_amount={_it.get('supply_amount')!r} — 공급가액은 음수일 수 없음. 0원 이상의 정수(원)로 넣으세요"
+            for _i, _it in enumerate(items or []) if isinstance(_it, dict) and not _nonneg_int(_it.get("supply_amount", 0))]
+    if _neg:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": _neg}
     from .engine.calc_vat import invoice_penalties
 
     # 종류별 분류 (중복 배제용)
@@ -2779,6 +2875,11 @@ def nonresident_withholding(income_kind: Annotated[Literal["이자", "배당", "
   service_location은 인적용역 소득에서만 의미, 그 외 소득에는 무시. Non-resident/foreign corporation withholding tax on Korean-source income."""
     _e = _range_err(("year", year))
     if _e: return _e
+    if treaty_rate is not None and not (0 <= treaty_rate <= 1):
+        hint = f" — {treaty_rate:g}%라면 {treaty_rate / 100:g}" if 1 < treaty_rate <= 100 else ""
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"treaty_rate={treaty_rate:g} — 조세조약 제한세율은 0~1 소수로 넣으세요(예: 15%면 0.15){hint}. "
+                         "퍼센트 숫자를 소수로 바꾸거나 국내세율로 대신 계산하지 않음"]}
     r = I.nonresident_withholding(income_kind, amount, recipient_type, residence_country, treaty_rate, bond_interest, related_party,
                                   treaty_includes_local_tax, service_location, year, net_of_tax, payer_bears_local_tax,
                                   treaty_covered_taxes_article)
@@ -2892,6 +2993,9 @@ def retirement_income_tax(income: Annotated[int, Field(description="퇴직소득
 연도: 근속연수공제는 2023.1.1. 이후 퇴직 개정표(100만·200만·250만·300만), 2022년까지는 구표(30만·50만·80만·120만). 기본세율은 퇴직한 해 표.
 결과: 퇴직소득세(산출세액)와 계산 단계 — 근속연수공제·환산급여·환산급여공제·퇴직소득과세표준·환산산출세액, 산식, 근거(소득세법 제48조·제55조제2항). Retirement income tax (근속연수공제·환산급여 방식)."""
     _chk.int_range("years_of_service", years_of_service, 1, 60, "근속연수(1년 미만의 기간은 1년으로 보아 올려 넣음, 소득세법 제48조① 괄호) ")
+    if income < 0:
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"income={income:,} — 퇴직소득금액은 음수가 될 수 없음(비과세를 뺀 퇴직급여 합계, 0원 이상). 퇴직급여가 없으면 0을 넣으세요"]}
     if years_before_2013 > years_of_service:
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"years_before_2013={years_before_2013} — 근속연수 {years_of_service}년 이내"]}
     if retire_year < 2020:
@@ -3110,6 +3214,9 @@ def business_car_expense(year: YEAR, upkeep: Annotated[int, Field(description="�
 기준일: 번호판 요건(영 제50조의2제4항 단서)은 2024.1.1. 이후 지출하는 관련비용부터(대통령령 제34266호 부칙 제7조). 사업연도가 2024.1.1.을 걸치면 그 뒤 지출분만 업무사용금액 0원 —
   share_from_2024가 없으면 사업연도 일수로 안분. 날짜가 없으면 사업연도 표(2024 개시부터)로 보고 2023 사업연도면 주의를 붙임.
 결과: 업무사용비율·손금불산입·감가상각 한도 등, 근거(법인세법 제27조의2, 시행령 제50조의2)."""
+    _e = _neg_err(("upkeep", upkeep, "유지비"), ("depreciation", depreciation, "세법상 감가상각비"), ("booked_depreciation", booked_depreciation, "장부상 감가상각비"))
+    if _e:
+        return _e
     if log_kept and business_ratio is None:
         return {"error": "입력 확인 필요 — 계산하지 않음",
                 "문제": ["log_kept=True(운행기록부 작성)면 business_ratio(운행기록상 업무사용비율, 소수 0~1) 필요 — 운행기록부를 쓰지 않았으면 log_kept=False"]}
@@ -3440,6 +3547,14 @@ def vat_deemed_input_credit(period: Annotated[str, Field(description="과세기�
 결과: 공제대상 매입가액·의제매입세액·공제율·한도율·한도액(과세표준 × 한도율, 한도 없으면 null)·한도 적용 매입가액·과세비율·단계별 계산(입력한 단계만), 근거(부가가치세법 제42조, 시행령 제81조·제84조 — 공제율은 2017년까지 시행령 제84조제1항 표, 2018년부터 법 제42조제1항 표, 한도는 시행령 제84조제2항)."""
     from .engine.calc_vat import deemed_input, deemed_input_rate, deemed_input_limit_ratio
 
+    _e = _neg_err(("purchase", purchase, "공제대상 매입가액"), ("base", base, "과세표준"), ("purchase_total", purchase_total, "면세농산물 등 총 구입액"),
+                  ("freight_included", freight_included, "운반비"), ("used_taxable", used_taxable, "과세사업 사용액"), ("used_exempt", used_exempt, "면세사업 사용액"),
+                  ("ending_inventory_common", ending_inventory_common, "기말재고"), ("taxable_supply", taxable_supply, "과세 공급가액"),
+                  ("exempt_supply", exempt_supply, "면세 공급가액"),
+                  *[(f"items[{_i}].{_k}", _x.get(_k), "매입가액·관세 과세가격·관세") for _i, _x in _rows(items)
+                    for _k in ("purchase_price", "customs_value", "customs_duty")])
+    if _e:
+        return _e
     # items와 purchase/purchase_total 동시 입력 거부
     if items is not None and (purchase > 0 or purchase_total > 0):
         return {"error": "입력 확인 필요 — 계산하지 않음",
@@ -3730,6 +3845,14 @@ def vat_simplified_taxpayer(supply_incl_vat: Annotated[int, Field(description="�
     세금계산서 미수취 가산세 0.5%는 2021.7.1. 이후 공급받은 분만. 카드 발행세액공제는 2021.6.30.까지 음식점업·숙박업 2.6%(food_lodging), 그 밖 1.3%. 연 한도 2017년까지 500만원, 2018년부터 1,000만원.
     year=2021은 상·하반기가 섞이므로 매입·카드·미수취 금액이 있으면 2021.6.30.까지분을 *_before_202107에 넣어야 한다. 업종별 부가가치율도 2021.7.1.에 바뀌었으므로 2021년은 industries로 상·하반기를 나눠 넣는다.
 결과: 과세표준·납부세액·매입공제·카드공제·가산세·공제합계·예정부과세액 공제·차가감 납부세액(음수면 환급세액)·환급세액·납부의무 면제 여부·면제_판정_공급대가·환산_개월수·단계별 계산, 근거(부가가치세법 제46조·제63조·제68조의2·제69조)."""
+    _e = _neg_err(("supply_incl_vat", supply_incl_vat, "공급대가"), ("invoice_purchase_incl_vat", invoice_purchase_incl_vat, "세금계산서 등 수취 매입 공급대가"),
+                  ("mileage_supply_incl_vat", mileage_supply_incl_vat, "마일리지 결제분 공급대가"),
+                  ("card_cash_receipt_supply_incl_vat", card_cash_receipt_supply_incl_vat, "카드·현금영수증 발급분 공급대가"),
+                  ("no_invoice_purchase_incl_vat", no_invoice_purchase_incl_vat, "세금계산서 미수취 매입 공급대가"),
+                  ("prior_year_supply_incl_vat", prior_year_supply_incl_vat, "직전 연도 공급대가"),
+                  *[(f"industries[{_i}].supply_incl_vat", _x.get("supply_incl_vat"), "업종별 공급대가") for _i, _x in _rows(industries)])
+    if _e:
+        return _e
     from .engine.calc_vat import simplified_exempt_threshold
 
     # ── 2021.7.1. 전후 구분(법률 제17653호 부칙 제8조·제10조·제12조: 2021.7.1. 전에 공급하거나 공급받은 분은 종전 규정) ──
@@ -3946,6 +4069,9 @@ def vat_bad_debt_credit(bad_debt_incl_vat: Annotated[int, Field(description="대
   저당권 설정 여부 → mortgage(기본 False), 공급일 → supply_date, 신고 과세기간 → period.
 결과: 대손세액, 대손확정일, 공제_과세기간, 공제가능, 구분, 회수, 근거. 대손 사유·확정일이 없으면 "대손 사유·확정일을 확인하지 않음" 문장 추가.
 엑셀(export_workbook): 공제분은 별지 제19호서식(1) 2., 회수분은 신고서 (8) 대손세액 가감에 가산(공제분은 △). VAT bad debt credit."""
+    _e = _neg_err(("bad_debt_incl_vat", bad_debt_incl_vat, "대손금액(회수분이면 회수한 대손금액 — 회수는 recovered=True로 표시)"))
+    if _e:
+        return _e
     if not supply_receivable:
         return _ok({"대손세액": 0, "구분": "대상 아님", "회수": bool(recovered), "공급_대가_채권_여부": False},
                    "부가가치세법 제45조① — 재화·용역의 공급 대가가 아닌 채권은 대손세액공제 대상 아님")
@@ -4448,7 +4574,7 @@ def kinship_check(a: Annotated[str, Field(description='당사자 a(이름)')], b
 @_guard
 def ownership_ratio(holder: Annotated[str, Field(description='보유자(이름)')], target: Annotated[str, Field(description='대상 법인(이름)')],
                     stakes: Annotated[list, Field(description='직접보유비율 목록 [[보유자, 법인, 지분율(0~1)]]. 예: [["김갑", "㈜대한", 0.30]]')]) -> dict:
-    st = [(h, c, float(r)) for h, c, r in stakes]
+    st = _R.stake_rows(stakes)
     ps = _R.paths(st, holder, target)
     return {"직접": _R.direct(st, holder, target), "경로": [{"경로": " → ".join(p), "비율": r} for p, r in ps],
             "합계": sum(r for _, r in ps), "순환출자": _R.has_cycle(st)}
@@ -4470,7 +4596,7 @@ def dominant_shareholder(corp: Annotated[str, Field(description='수혜법인(�
             on = _chk.to_date("on", on).isoformat()
         except ValueError as ex:
             return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [str(ex)]}
-    who, why = _R.dominant_shareholder(people, [tuple(x) for x in family], [(h, c, float(r)) for h, c, r in stakes], corp, on or "2099-12-31")
+    who, why = _R.dominant_shareholder(people, [tuple(x) for x in family], _R.stake_rows(stakes), corp, on or "2099-12-31")
     out = {"지배주주": who, "판정": why}
     if on:
         blood, inlaw = _R.kin_limits(on)
@@ -4496,6 +4622,32 @@ def _tunnel_fy(fiscal_year_end, fiscal_year_start):
     if st is not None and st > e:
         return None, None, [], {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"fiscal_year_start={fiscal_year_start}가 fiscal_year_end={fiscal_year_end}보다 뒤"]}
     return e.isoformat(), (st.isoformat() if st else None), [], None
+
+
+def _tunnel_sales_err(sales_total, sales_by_corp, excluded) -> dict | None:
+    """매출액은 음수일 수 없고, 특수관계법인 매출 합계는 총 매출액을 넘을 수 없음(특수관계법인거래비율 = 특관매출 ÷ 총매출, 법 제45조의3①1호가목)."""
+    sbc = sales_by_corp if isinstance(sales_by_corp, dict) else {}
+    e = _neg_err(("sales_total", sales_total, "총 매출액"), (excluded[0], excluded[1], "과세제외매출액"),
+                 *[(f"sales_by_corp[{k!r}]", v, "특수관계법인 매출액") for k, v in sbc.items()])
+    if e:
+        return e
+    tot = sum(v for v in sbc.values() if isinstance(v, (int, float)) and not isinstance(v, bool))
+    if isinstance(sales_total, (int, float)) and tot > sales_total:
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"sales_by_corp 합계 {tot:,.0f}원이 sales_total {sales_total:,.0f}원보다 큼 — 특수관계법인 매출은 총 매출액의 일부입니다. 두 금액을 확인하세요"]}
+    return None
+
+
+def _tunnel_dividends(dividends) -> dict:
+    """dividends={관계명: [배당소득(원), 분모]} 검증 — 숫자 하나만 넣으면('직접': 5) 파이썬 원문 오류 대신 고칠 방법을 말한다."""
+    out = {}
+    for k, v in (dividends or {}).items():
+        ok = isinstance(v, (list, tuple)) and len(v) == 2 and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in v)
+        if not ok:
+            raise ValueError(f"dividends[{k!r}]={v!r} — [배당소득(원), 분모] 두 숫자로 넣으세요(예: {{\"직접\": [10000000, 300000000]}}). "
+                             "분모는 시행령 제34조의3제15항 산식(배당가능이익 × 보유비율 등)")
+        out[k] = tuple(v)
+    return out
 
 
 def _tunnel_basis(on):
@@ -4526,7 +4678,10 @@ def tunnelling_gift(beneficiary: Annotated[str, Field(description='수혜자(이
     on, fs, notes, err = _tunnel_fy(fiscal_year_end, fiscal_year_start)
     if err:
         return err
-    r = _R.tunnelling(people, [tuple(x) for x in family], [(h, c, float(r)) for h, c, r in stakes], beneficiary,
+    _e = _tunnel_sales_err(sales_total, sales_by_corp, ("excluded_sales", excluded_sales))
+    if _e:
+        return _e
+    r = _R.tunnelling(people, [tuple(x) for x in family], _R.stake_rows(stakes), beneficiary,
                       sales_total, sales_by_corp, after_tax_op_profit, size, excluded_sales, on=on, fiscal_start=fs)
     r["근거"] = _tunnel_basis(on)
     if fiscal_year_end:
@@ -4562,9 +4717,12 @@ def tunnelling_gift_nts(size: Annotated[str, Field(description="기업 규모('�
     on, fs, notes, err = _tunnel_fy(fiscal_year_end, fiscal_year_start)
     if err:
         return err
+    _e = _tunnel_sales_err(sales_total, sales_by_corp, ("base_excluded", base_excluded))
+    if _e:
+        return _e
     r = _R.tunnelling_nts("수혜법인", size, op_income, taxable_income, tax, sales_total, sales_by_corp, relations,
                           base_excluded=base_excluded, holdings_in_related=holdings_in_related, indirect_corp_of=indirect_corp_of,
-                          dividends={k: tuple(v) for k, v in (dividends or {}).items()},
+                          dividends=_tunnel_dividends(dividends),
                           excluded_by_corp=excluded_by_corp,
                           land_tax=land_tax, credits=credits, unreturned_tax=unreturned_tax, on=on, fiscal_start=fs)
     r["근거"] = _tunnel_basis(on)
@@ -5596,6 +5754,10 @@ def deemed_dividend_bonus_shares(
   재원 어휘에 없으면 'error' 반환(계산하지 않음).
   상환주식_주식발행초과금(이익잉여금으로 상환된 상환주식의 주식발행액면초과액)은 2024.2.29. 이후 자본에 전입하는 분부터 과세(법인세법 시행령 제12조제1항제5호, 2024.2.29. 부칙 제4조) — 그 전 전입분은 의제배당 아님.
   재평가적립금을 일부만 전입하면 1% 토지분은 전입액 × (1% 토지 재평가차액 ÷ 재평가차액 전체)로 나눠 넣을 것(법인세법 시행령 제12조제4항, 소득세법 시행령 제27조제5항)."""
+    _e = _neg_err(("par_value", par_value, "1주당 액면가"),
+                  *[(f"shareholders[{_i}].shares", _x.get("shares"), "보유 주식 수") for _i, _x in _rows(shareholders)])
+    if _e:
+        return _e
     source = source.strip()
     if source not in _NON_TAXABLE_SOURCES and source not in _TAXABLE_SOURCES and source not in _TAXABLE_SOURCES_GU_FALSE:
         return {"error": f"지원하지 않는 재원 '{source}' — facts_vocab.json '의제배당_잉여금자본전입.판단.재원별' 허용값 확인 필요",
@@ -7478,6 +7640,14 @@ def common_input_tax(year: YEAR,                     period: Annotated[str, Fiel
         사용면적·공급가액이 확정된 과세기간 확정신고 때 정산(영 제82조, 별지 제22호 서식 (15)~(19)란).
     결과: 판단·계산·결과(공제매입세액·추가_매출세액)·산식·근거. 계산의 실지귀속_공제는 기존 계산 키 유지.
       settlements가 있으면 결과.정산_가산또는공제((19) 합계, +면 납부세액 가산·공제매입세액 감소)와 서식_표."""
+    _e = _neg_err(("prior_nondeductible", prior_nondeductible, "예정신고 때 불공제한 공통매입세액"),
+                  ("prior_common_input_tax", prior_common_input_tax, "예정신고 기간의 공통매입세액"),
+                  *[(f"supplies.{_s}.{_k}", ((supplies or {}).get(_s) or {}).get(_k), "공급가액") for _s in ("예정", "확정")
+                    if isinstance(supplies, dict) and isinstance(supplies.get(_s), dict) for _k in ("taxable", "exempt")],
+                  *[(f"settlements[{_i}].{_k}", _x.get(_k), "정산 대상 세액") for _i, _x in _rows(settlements)
+                    for _k in ("총공통매입세액", "기불공제", "이미공제세액")])
+    if _e:
+        return _e
     return _common_input_tax_impl(year, period, filing, supplies, new_business, prior_nondeductible, prior_period_supplies, common_asset_sales, ledger, prior_common_input_tax, settlements)
 
 
@@ -7502,6 +7672,9 @@ def input_tax_recalculation(asset_type: Annotated[str, Field(description="자산
         bundle이 주어지면 내부에서 bundled_supply_split과 같은 규칙으로 건물 공급가액을 안분해 부가가치세를 input_tax로 쓴다.
         input_tax와 bundle 둘 다 주면 error.
     결과: 이력(기간별 비율·기준비율·변동·재계산 여부·경과과세기간수·세액)·결과(당기_납부세액_가산·매입세액, 건물_매입세액은 건물·구축물일 때만 주는 옛 이름 — 매입세액을 쓸 것)·판단(안분 기준)·근거."""
+    _e = _neg_err(("input_tax", input_tax, "매입세액 총액"))
+    if _e:
+        return _e
     _e = _range_err(("acquired.year", (acquired or {}).get("year") if isinstance(acquired, dict) else None), *[(f"ratios[{_i}].year", _r.get("year")) for _i, _r in enumerate(ratios or []) if isinstance(_r, dict)])
     if _e:
         return _e
@@ -7732,6 +7905,11 @@ def bundled_supply_split(total_price: WON,
       장부가액 {building, land} → book_value, 다른 자산 → other_assets,
       감정평가일·공급시기 → appraisal_date·supply_date, 건물 과세 비율 → building_taxable_ratio.
     결과: 판단·결과(건물_공급가액(과세분)·토지_가액·부가가치세, 해당 시 기타자산·과세표준_합계·건물_면세분)·산식·근거."""
+    _e = _neg_err(*[(f"{_n}.{_k}", _v.get(_k), "감정가액·기준시가·장부가액") for _n, _v in (("appraisal", appraisal), ("standard_value", standard_value), ("book_value", book_value))
+                    if isinstance(_v, dict) for _k in ("building", "land")],
+                  *[(f"other_assets[{_i}].{_k}", _x.get(_k), "다른 자산의 가액") for _i, _x in _rows(other_assets) for _k in ("book_value", "standard_value", "appraisal")])
+    if _e:
+        return _e
     _e = _range_err(("supply_date", supply_date))
     if _e:
         return _e
@@ -8034,6 +8212,11 @@ def retirement_allowance_adjustment(
     결과: 세무조정(구분·조정 손금불산입/손금산입·금액·소득처분 유보/△유보), 소득금액_순영향, 계산(세무상 잔액·한도). 입력이 모자라거나 장부 증감이 맞지 않으면 error.
     확정기여형 전환: 설정 전 계상 퇴직급여충당금(시행규칙 제31조제2항)은 allowance.dc_conversion={prior_estimate_total: 직전 사업연도말 재직자 전원 추계액, prior_estimate_dc: 그중 해당 사업연도 확정기여형 설정자 추계액}으로 계산하거나 {amount}로 직접 입력(확정급여형 퇴직연금이 없어도 됨), related_disallowed(그 몫과 관련된 부인액)는 기초 부인누계에서 제외(별지 제32호서식 작성방법 2·3).
     설정 전 근무기간분 부담금으로 지출해 충당금과 상계한 금액은 dc_conversion.paid(paid_cash에 포함)로 넣으면 설정 전 충당금에서 먼저 지출한 것으로 봄(법인세과-1032, 2009.9.21.). 한계: 그 몫과 관련된 부인액의 추인 시기는 계산하지 않음."""
+    _e = _neg_err(*[(f"pension.{_k}", pension.get(_k), "퇴직연금 금액") for _k in ("asset_closing", "asset_opening", "deposited", "prior_deducted",
+                                                                              "book_paid", "book_provision", "dc_transferred_allowance")]
+                  if isinstance(pension, dict) else [])
+    if _e:
+        return _e
     return _retirement_allowance_adjustment_impl(year, allowance, prior_disallowed, estimate, salary, succeeded_disallowed, conversion_fund, pension)
 
 
@@ -9838,6 +10021,13 @@ def income_loss_offset(
           추계 여부 → estimated, 금융소득 분리과세분 → financial_flat_rate, 사업소득 상세 → business(선택),
           이전 연도 이력 → history(선택, carryforwards와 상호 배제).
     결과: 공제 후 소득금액·종합소득금액·이월결손금(다음 연도)·공제 내역·소멸·이력_계산·근거."""
+    # 결손금은 사업소득(부동산임대 포함)에서만 생김(소득세법 제45조제1항) — 근로·연금·기타·이자·배당 소득금액은 음수가 될 수 없음
+    _src = [("", incomes)] + [(f"history[{_i}].", _h.get("incomes")) for _i, _h in _rows(history)]
+    _e = _neg_err(("financial_flat_rate", financial_flat_rate, "원천징수세율 적용 이자·배당 합계"),
+                  *[(f"{_p}incomes.{_k}", (_inc or {}).get(_k), f"{_k}소득금액(결손금은 사업소득에서만 생김, 소득세법 제45조제1항)")
+                    for _p, _inc in _src if isinstance(_inc, dict) for _k in ("근로", "연금", "기타", "이자", "배당")])
+    if _e:
+        return _e
     return K.income_loss_offset(year=year, incomes=incomes, carryforwards=carryforwards,
                                 estimated=estimated, financial_flat_rate=financial_flat_rate,
                                 business=business, history=history)
@@ -9899,6 +10089,10 @@ def asset_grant_reserve(
     국고보조금·공사부담금·보험차익 일시상각충당금·압축기장충당금 세무조정. 언제: 국고보조금·공사부담금·보험차익으로 사업용자산을 취득·개량한 법인의 손금산입·충당금 상계·처분 계산.
 입력: 사업연도 → year, 재원 구분 → kind, 수령액 → received, 자산별 내역 → assets(취득·개량가액·사용액·상각·처분·충당금 등).
 결과: 손금산입 한도·충당금 설정금액·상계액·처분 익금·사용계획·미사용·기말 잔액·소득금액 순영향·세무조정·근거. 일시상각충당금·압축기장충당금 계산."""
+    _e = _neg_err(("received", received, "수령액"), ("lost_book_value", lost_book_value, "멸실·손괴 자산 장부가액"),
+                  *[(f"assets[{_i}].{_k}", _x.get(_k), "자산 취득가액·사용액") for _i, _x in _rows(assets) for _k in ("cost", "used")])
+    if _e:
+        return _e
     return C.asset_grant_reserve(
         kind=kind, received=received, assets=assets,
         lost_book_value=lost_book_value, receipt_year=receipt_year,
@@ -10326,6 +10520,10 @@ def liquidation_income(
     청산소득금액(법인세법 제79조). 언제: 법인이 해산·청산할 때 청산소득금액을 계산한다.
 입력: 환가 총액(원) 또는 [{항목, 금액}] → assets_realized, 부채 상환액(원) → liabilities_paid, 자본금(원) → capital, 자본잉여금+이익잉여금(원) → surplus, 세무상 유보 잔액(원, △유보는 음수) → yubo, 이월결손금 잔액(원) → carryforward_loss, 2년 이내 자본전입 잉여금(원) → capitalized_surplus_2y, 환급 법인세(원) → refund_tax.
 결과: 청산소득금액·계산(잔여재산가액·자기자본총액·결손금_상계·자본금·잉여금)·판단, 근거(법인세법 제79조)."""
+    _e = _neg_err(*([("assets_realized", assets_realized, "환가 총액")] if not isinstance(assets_realized, list) else
+                    [(f"assets_realized[{_i}].금액", _x.get("금액"), "자산 환가액") for _i, _x in _rows(assets_realized)]))
+    if _e:
+        return _e
     # 환가 총액
     if isinstance(assets_realized, list):
         환가총액 = sum(int(a.get("금액", 0) or 0) for a in assets_realized)
@@ -11679,6 +11877,11 @@ def capital_gains_unfair_transaction(
     결과: [저가고가] 부당행위계산·차액·차액비율(정수 만분율)·기준_3억_충족·기준_5퍼센트_충족·조정후_양도가액|조정후_취득가액.
       [증여후양도] 증여자_직접양도_간주·수증자_세액합계·증여자_직접양도세액·적용제외_사유.
     """
+    _e = _neg_err(("market_value", market_value, "시가"), ("price", price, "거래가액"), ("donee_gift_tax", donee_gift_tax, "수증자가 낸 증여세"),
+                  ("donee_capital_gains_tax", donee_capital_gains_tax, "수증자가 낸 양도소득세"),
+                  ("donor_direct_capital_gains_tax", donor_direct_capital_gains_tax, "증여자가 직접 양도했을 때의 양도소득세"))
+    if _e:
+        return _e
     r = B.capital_gains_unfair_transaction(
         mode=mode, transaction=transaction, market_value=market_value, price=price,
         related_party=related_party, counterparty_is_corporation=counterparty_is_corporation,

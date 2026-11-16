@@ -7,7 +7,28 @@
   stakes:  [(보유자, 법인, 지분율 0~1)]     — 직접보유비율(자기주식 제외 기준)
   officers:{법인: [임원 이름]}
 """
+import math
 from collections import defaultdict
+
+from ...engine.exact import exact
+
+
+def stake_rows(stakes, name="stakes"):
+    """도구 입력 stakes=[[보유자, 법인, 지분율]] → [(보유자, 법인, float)]. 꼴이 틀리면 고칠 방법을 말하는 ValueError
+    (파이썬 원문 'could not convert string to float'를 그대로 내보내지 않음)."""
+    out = []
+    for i, s in enumerate(stakes or []):
+        if not isinstance(s, (list, tuple)) or len(s) != 3:
+            raise ValueError(f"{name}[{i}]={s!r} — [보유자, 법인, 지분율] 세 값으로 넣으세요(예: [\"김갑\", \"㈜대한\", 0.3])")
+        h, c, r = s
+        try:
+            if isinstance(r, bool):
+                raise TypeError
+            r = float(r)
+        except (TypeError, ValueError):
+            raise ValueError(f"{name}[{i}]의 지분율 {r!r} — 숫자가 아님. 직접보유비율을 0~1 소수로 넣으세요(예: 30%면 0.3)") from None
+        out.append((h, c, r))
+    return out
 
 
 # ── 친족 (국세기본법 시행령 제1조의2①, 상증령 제2조의2①1호) ──
@@ -260,11 +281,19 @@ def tunnelling(people, family, stakes, beneficiary, sales_total, sales_by_corp, 
                 first = k.split("→")[0]
                 up = sales_by_corp.get(first, 0) / sales_total if first in rel_sales and sales_total else 0
                 if up: adj[k] = (ratio - up) / ratio  # 상증령(당시) 제34조의2⑩ 상향매출 조정
-        gain = {k: round(profit * ex_ratio * v * adj.get(k, 1)) for k, v in net.items() if v > 0}
+        # 세후영업이익이 0 이하면 계산식 값이 0 이하 — 법 제45조의3①이 증여받은 것으로 보는 것은 같은 항 제2호의 '이익'이라
+        # 영업손실이면 이전된 이익이 없으므로 0(tunnelling_nts의 max(…, 0)과 같은 처리)
+        gain = {k: max(round(profit * ex_ratio * v * adj.get(k, 1)), 0) for k, v in net.items() if v > 0}
         res["주주별"].append({"주주": p, "출자관계": rel, "한계차감후": net, "증여의제이익": gain,
                            "산식": f"{round(profit):,} × {ex_ratio:.4%} × 출자관계별(보유비율−한계)", "소계": sum(gain.values())})
         res["합계"] += sum(gain.values())
-    res["결론"] = f"과세 — 증여의제이익 합계 {res['합계']:,}원(증여시기: 수혜법인 사업연도 종료일, 법 ③)" if res["합계"] else "과세 대상 주주 없음(한계보유비율 이하)"
+    if res["합계"]:
+        res["결론"] = f"과세 — 증여의제이익 합계 {res['합계']:,}원(증여시기: 수혜법인 사업연도 종료일, 법 ③)"
+    elif profit <= 0 and res["주주별"]:
+        res["결론"] = (f"과세 없음 — 세후영업이익 {round(profit):,}원이 0 이하라 증여의제이익 0원"
+                     "(법 제45조의3①은 같은 항 제2호의 '이익'을 증여받은 것으로 봄 — 영업손실이면 이익이 없음)")
+    else:
+        res["결론"] = "과세 대상 주주 없음(한계보유비율 이하)"
     res["미반영"] = ["⑭항 출자관계별 과세제외매출액 가산", "⑮항 배당소득 공제", "⑫항 세후영업이익 세무조정 계산(입력값 사용)"]
     return res
 
@@ -679,7 +708,7 @@ def tunnelling_nts(beneficiary, size, op_income, taxable_income, tax, sales_tota
         if dividends and rel in dividends:
             d, denom = dividends[rel]
             ded = __import__("math").floor(d * gain / denom) if denom else 0  # 원 미만 절사(책자 작성사례[2])
-        g = max(gain - ded, 0)
+        g = math.floor(max(exact(gain) - ded, 0))   # 원 미만 버림(engine/rounding.py 규칙 2) — 부동소수 오차(350000000.00000006)는 exact가 뜻한 값으로
         out[rel] = {"과세제외매출액": excl, "특수관계법인거래비율": ratio, "과세매출비율": 1 - excl / sales_total,
                     "세후영업이익": profit, "보유비율(한계차감후)": net_hold.get(rel, 0), "증여의제이익": g, "배당공제": ded}
         total += g

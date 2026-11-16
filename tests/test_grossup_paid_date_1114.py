@@ -40,8 +40,10 @@ def test_hint_when_no_paid_date_in_boundary_year():
 
 
 def test_bad_paid_date():
+    # 0.58.1: YYYY/MM/DD는 도구 입구에서 정규화 — 같은 결과. 실제 날짜가 아니면 오류
     r = S.financial_income_aggregate(2023, [{"kind": "상장법인현금배당", "amount": 5 * M, "paid_date": "2024/01/15"}])
-    assert "error" in r
+    assert r["결과"] == S.financial_income_aggregate(2023, [{"kind": "상장법인현금배당", "amount": 5 * M, "paid_date": "2024-01-15"}])["결과"]
+    assert "error" in S.financial_income_aggregate(2023, [{"kind": "상장법인현금배당", "amount": 5 * M, "paid_date": "2024/01/32"}])
 
 
 def test_dividend_tax_credit_follows():
