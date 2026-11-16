@@ -1457,6 +1457,194 @@ def thin_capitalization(equity, borrowings, total_interest, ratio=2, year=None):
     }
 
 
+# ── 과소자본: 차입금별 계산(0.59.0) ──────────────────────────────────────────
+# 원문(조문 MCP law_article로 대조, 2026-11-16):
+#  · 2021 사업연도부터: 국조법 제22조제2항(1호 국외지배주주 차입, 2호 그 특수관계인 차입, 3호 지급보증 제3자 차입)·제6항(높은 이자율부터),
+#    시행령 제48조제1항(초과차입금적수 × 각 차입금 이자율)·제2항(높은 이자율 → 같은 이자율이면 차입시기가 늦은 것 → 둘 다 같으면 차입금 비율로 안분),
+#    제49조(1호분 배당, 2호·3호분 기타사외유출), 제50조제1항(금융업 6배), 시행규칙 별지 제24호서식(갑) 손금불산입액 = 이자율 × 차입금 적수 ÷ 연중 일수.
+#  · 2016~2020 사업연도: 구 국조법 제14조제1항, 구 시행령 제25조제1항(이자율 높은 차입금부터, 같은 이자율이면 차입시기가 늦은 것부터 —
+#    이자율과 차입시기가 모두 같은 경우의 규정은 없음)·제6항(처분), 구 시행령 제26조(금융업 6배).
+THIN_CAP_KINDS = {"직접": "직접", "국외지배주주": "직접", "direct": "직접",
+                  "특수관계인": "특수관계인", "related": "특수관계인", "related_party": "특수관계인",
+                  "보증": "보증", "지급보증": "보증", "guarantee": "보증", "guaranteed": "보증"}
+
+
+def thin_cap_loans_basis(year):
+    """사업연도 → 차입금별 계산 근거 문자열 묶음."""
+    if year is not None and year <= 2020:
+        return {"법": "구 국제조세조정에 관한 법률 제14조제1항", "배정": "구 시행령 제25조제1항",
+                "처분": "구 시행령 제25조제6항", "상계": "구 국제조세조정에 관한 법률 제14조제4항",
+                "배수": "구 시행령 제26조", "출자금액": "구 시행령 제25조제3항·제4항"}
+    return {"법": "국제조세조정에 관한 법률 제22조제2항·제6항", "배정": "시행령 제48조제1항·제2항",
+            "처분": "시행령 제49조", "상계": "국제조세조정에 관한 법률 제22조제5항",
+            "배수": "시행령 제50조제1항", "출자금액": "시행령 제47조"}
+
+
+def thin_cap_order_note(year):
+    """제22조(구 제14조)와 소득 대비 과다이자(제24조, 구 제15조의2)의 관계 — 연도별 원문."""
+    if year is None or year >= 2021:
+        return ("소득 대비 과다 지급이자(국제조세조정에 관한 법률 제24조)도 적용되면 둘 중 손금불산입액이 큰 것 하나만 적용, 같으면 제22조"
+                "(같은 법 제26조제1항) — 이 도구는 제24조 금액을 계산하지 않음")
+    if year >= 2019:
+        return ("소득 대비 과다이자비용(구 국제조세조정에 관한 법률 제15조의2, 2019.1.1. 이후 개시 과세연도분부터 — 법률 제17651호 부칙 제6조)도 "
+                "적용되면 둘 중 큰 것 하나만 적용, 같으면 제14조(구 같은 법 제16조제1항) — 이 도구는 그 금액을 계산하지 않음")
+    return "2018 사업연도까지는 소득 대비 과다이자비용 규정(구 제15조의2)이 적용되지 않음(법률 제17651호 부칙 제6조: 2019.1.1. 이후 개시 과세연도분부터)"
+
+
+def thin_capitalization_loans(equity, loans, ratio=2, year=None, days_in_year=None):
+    """차입금별 과소자본 손금불산입. loans = [{name?, kind, rate, jeoksu | average_balance | balance, borrowed_on?, interest?}]
+    → {"결과", "계산", "주의"} 또는 {"error", "문제"}. 금액은 Fraction으로 계산하고 차입금별 손금불산입액은 원 미만 버림."""
+    from fractions import Fraction as Fr
+    from calendar import isleap
+    from .inputs import to_date
+
+    문제, 주의 = [], []
+    if not loans:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["loans가 비어 있음 — 차입금을 1건 이상 넣는다"]}
+    if days_in_year is not None and int(days_in_year) <= 0:
+        문제.append(f"days_in_year={days_in_year} — 1 이상")
+    D = int(days_in_year) if days_in_year else (366 if (year and isleap(year)) else 365)
+    rows = []
+    for n, l in enumerate(loans):
+        tag = f"loans[{n}]" + (f"({l.get('name')})" if l.get("name") else "")
+        n_err = len(문제)
+        kind_in = l.get("kind")
+        kind = THIN_CAP_KINDS.get(str(kind_in).strip()) if kind_in is not None else None
+        if kind is None:
+            문제.append(f"{tag}.kind={kind_in!r} — 허용값: '직접'(제2항제1호 국외지배주주로부터 차입), '특수관계인'(제2호), '보증'(제3호 지급보증 제3자 차입)")
+        rate = l.get("rate")
+        if rate is None or not (0 < float(rate) < 1):
+            문제.append(f"{tag}.rate={rate!r} — 연 이자율을 소수로(예: 0.05 = 5%), 0 초과 1 미만")
+        given = [k for k in ("jeoksu", "average_balance", "balance") if l.get(k) is not None]
+        if len(given) != 1:
+            문제.append(f"{tag} — jeoksu(차입금 적수, 원·일)·average_balance(적수 ÷ 연중 일수)·balance(잔액) 중 하나만 넣는다(받은 것: {given or '없음'})")
+        elif int(l[given[0]]) < 0:
+            문제.append(f"{tag}.{given[0]} — 음수 불가")
+        if l.get("interest") is not None and int(l["interest"]) < 0:
+            문제.append(f"{tag}.interest — 음수 불가")
+        bd = None
+        if l.get("borrowed_on"):
+            try:
+                bd = to_date(f"{tag}.borrowed_on", l["borrowed_on"])
+            except ValueError as e:
+                문제.append(str(e))
+        if len(문제) > n_err:
+            continue
+        src = given[0]
+        S = Fr(int(l[src])) if src == "jeoksu" else Fr(int(l[src])) * D
+        rows.append({"순번": n, "이름": l.get("name") or f"차입금{n + 1}", "구분": kind,
+                     "이자율": Fr(str(rate)), "이자율_표시": float(rate), "차입일": bd, "적수": S, "입력": src,
+                     "interest": None if l.get("interest") is None else int(l["interest"])})
+    if 문제:
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제}
+
+    # 같은 이자율 차입금은 차입시기가 있어야 순서를 정할 수 있음(영 제48조②, 구 영 제25조①)
+    by_rate = {}
+    for r in rows:
+        by_rate.setdefault(r["이자율"], []).append(r)
+    no_date = [r["이름"] for g in by_rate.values() if len(g) > 1 for r in g if r["차입일"] is None]
+    if no_date:
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"같은 이자율 차입금 {no_date} — borrowed_on(차입일)이 필요. 같은 이자율이면 차입시기가 늦은 차입금부터 초과분에 넣음"
+                       f"({thin_cap_loans_basis(year)['배정']})"]}
+    if any(r["입력"] == "balance" for r in rows):
+        주의.append("balance(잔액)로 넣은 차입금은 사업연도 중 잔액 변동이 없다고 보고 적수 = 잔액 × 연중 일수로 계산 — "
+                  "변동이 있으면 jeoksu(일별 잔액 합계) 또는 average_balance(적수 ÷ 연중 일수)를 넣는다")
+    if any(r["입력"] == "jeoksu" for r in rows) and not days_in_year:
+        주의.append(f"연중 일수를 {D}일(역년 사업연도)로 봄 — 사업연도가 역년과 다르거나 1년이 아니면 days_in_year를 넣는다")
+
+    old = year is not None and year <= 2020
+    B = thin_cap_loans_basis(year)
+    # 순서: 이자율 높은 것 → 차입일 늦은 것 → (같으면) 묶음
+    rows_sorted = sorted(rows, key=lambda r: (-r["이자율"], -(r["차입일"].toordinal() if r["차입일"] else 0), r["순번"]))
+    groups = []
+    for r in rows_sorted:
+        if groups and groups[-1][0]["이자율"] == r["이자율"] and groups[-1][0]["차입일"] == r["차입일"]:
+            groups[-1].append(r)
+        else:
+            groups.append([r])
+    tie_groups = [g for g in groups if len(g) > 1]
+    if tie_groups and old:
+        주의.append("이자율과 차입시기가 모두 같은 차입금 " + str([[r["이름"] for r in g] for g in tie_groups]) +
+                  " — 2020 사업연도까지의 구 시행령 제25조제1항에는 이 경우의 순서 규정이 없음(차입금 비율 안분은 2021.2.17. 전부개정 시행령 제48조제2항에서 둠). "
+                  "입력 순서대로 배정함 — 확인 필요")
+    total_S = sum(r["적수"] for r in rows)
+    eq_S = Fr(int(equity)) * D
+    limit_S = eq_S * Fr(str(ratio))
+    excess_S = max(Fr(0), total_S - limit_S)
+
+    remaining = excess_S
+    rank = 0
+    for g in groups:
+        if old or len(g) == 1:
+            for r in g:
+                rank += 1
+                a = min(r["적수"], remaining)
+                r["배정"], r["순위"] = a, rank
+                remaining -= a
+        else:
+            rank += 1
+            gs = sum(r["적수"] for r in g)
+            take = min(gs, remaining)
+            for r in g:
+                r["배정"] = take * r["적수"] / gs if gs else Fr(0)
+                r["순위"] = rank
+            remaining -= take
+    from math import floor
+    out_rows, 배당, 기타 = [], 0, 0
+    for r in rows:
+        amt = floor(r["배정"] * r["이자율"] / D)
+        disp = ("배당" if r["구분"] == "직접" else "기타사외유출") if amt else "해당없음"
+        if r["구분"] == "직접":
+            배당 += amt
+        else:
+            기타 += amt
+        row = {"이름": r["이름"], "구분": {"직접": "국외지배주주 차입(제1호)", "특수관계인": "국외지배주주의 특수관계인 차입(제2호)",
+                                       "보증": "국외지배주주 지급보증 제3자 차입(제3호)"}[r["구분"]] if not old else
+               {"직접": "국외지배주주 차입", "특수관계인": "국외지배주주의 특수관계인 차입", "보증": "국외지배주주 지급보증 제3자 차입"}[r["구분"]],
+               "이자율": r["이자율_표시"], "차입일": r["차입일"].isoformat() if r["차입일"] else None,
+               "차입금 적수": int(r["적수"]) if r["적수"].denominator == 1 else float(r["적수"]),
+               "배정 순위": r["순위"],
+               "초과차입금적수 배정": int(r["배정"]) if r["배정"].denominator == 1 else round(float(r["배정"]), 2),
+               "손금불산입 이자": amt, "소득처분": disp}
+        if r["interest"] is not None:
+            row["지급이자(입력)"] = r["interest"]
+            if amt > r["interest"]:
+                주의.append(f"{r['이름']}: 손금불산입 이자 {amt:,}원이 입력한 지급이자 {r['interest']:,}원보다 큼 — 이자율·적수 입력 확인")
+        out_rows.append(row)
+    total = 배당 + 기타
+    처분 = ("배당·기타사외유출" if 배당 and 기타 else "배당" if 배당 else "기타사외유출" if 기타 else "해당없음")
+    as_int = lambda x: int(x) if x.denominator == 1 else float(x)
+    결과 = {
+        "출자금액": int(equity),
+        "연중 일수": D,
+        "총차입금(평균잔액)": as_int(total_S / D),
+        "적용배수": ratio,
+        "한도차입금": as_int(limit_S / D),
+        "초과차입금(평균잔액)": as_int(excess_S / D),
+        "차입금 적수 합계": as_int(total_S),
+        "출자금액 적수": as_int(eq_S),
+        "초과차입금적수": as_int(excess_S),
+        "손금불산입 이자": total,
+        "배당 처분": 배당,
+        "기타사외유출 처분": 기타,
+        "처분": 처분,
+        "차입금별": out_rows,
+        "근거": f"{B['법']}, {B['배정']}, {B['처분']}" + ("" if old else ", 시행규칙 별지 제24호서식(갑)"),
+    }
+    계산 = {
+        "산식": "초과차입금적수 = 차입금 적수 합계 − 출자금액 적수 × 배수. 이자율 높은 차입금부터(같은 이자율이면 차입일이 늦은 것부터"
+              + (", 이자율·차입일이 모두 같으면 차입금 적수 비율로 안분" if not old else "") +
+              ") 초과차입금적수를 채우고, 차입금별 손금불산입 이자 = 배정 적수 × 이자율 ÷ 연중 일수(원 미만 버림)",
+        "출자금액": "equity를 사업연도 종료일 현재 출자금액(" + B["출자금액"] + ": 자산 − 부채(충당금 포함, 미지급 법인세 제외)와 납입자본금 중 큰 금액 × 국외지배주주 납입자본금비율)으로 보고 × 연중 일수로 적수 환산. "
+                  "사업연도 중 증자·감자 등으로 자본이 변동했으면 나누어 계산한 적수 ÷ 연중 일수를 넣는다",
+        "처분": f"제1호(국외지배주주 직접) 차입분 배당, 제2호(특수관계인)·제3호(지급보증 제3자) 차입분 기타사외유출({B['처분']})",
+    }
+    if tie_groups and not old:
+        계산["안분"] = "이자율과 차입일이 모두 같은 차입금 " + str([[r["이름"] for r in g] for g in tie_groups]) + "은 차입금 적수 비율로 안분(시행령 제48조제2항)"
+    return {"결과": 결과, "계산": 계산, "주의": 주의, "근거표": B}
+
+
 def depreciation_adjustment(year, method, acquisition_cost, booked_depreciation,
                             useful_life=None, rate=None, asset_class=None,
                             accumulated_dep_begin=None, accumulated_dep_end=None,
