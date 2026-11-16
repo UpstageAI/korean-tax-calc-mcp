@@ -311,7 +311,8 @@ def tables_in(sec):
     return [(m.group(2), sec[max(0, m.start() - 1500):m.start()] + m.group(0)) for m in re.finditer(r"<TABLE([^>]*)>(.*?)</TABLE>", sec, re.S)]
 
 
-INV = {"원재료": r"^(원재료|원자재|부재료)", "재공품": r"^(재공품|반제품)", "제품": r"^제품$", "상품": r"^(상품|미착상품)$", "저장품": r"^저장품"}
+INV = {"원재료": r"^(유동)?(원재료|원자재|부재료)", "재공품": r"^(유동)?(재공품|반제품)", "제품": r"^(유동)?제품(\(\*\))?$",
+       "상품": r"^(유동)?(상품|미착상품)(\(\*\))?$", "저장품": r"^(유동)?저장품"}
 
 
 def inventory_items(rows):
@@ -373,3 +374,44 @@ def related_sales(s, is_bizrep, revenue):
     if re.search(r"거래(내역)?(은|는|이|가)?없", plain):
         return 0.0, "특수관계자 거래 없음 문장"
     return None, "매출 열 못 찾음"
+
+
+# ---------------- 제품·상품 회계 신호 ----------------
+COGS_PAT = {"merch": r"^(상품매출원가|상품원가|상품판매원가|상품매출원가합계)$", "product": r"^(제품매출원가|제품원가|제품판매원가|제품매출원가합계)$",
+            "service": r"^(용역매출원가|용역원가|공사원가|공사매출원가|서비스원가|서비스매출원가|임대원가|운송원가)$"}
+INV_MERCH = r"^(유동)?(상품|미착상품)(\(\*\))?$"
+INV_PROD = r"^(유동)?(제품|재공품|반제품|원재료|부재료|원자재|미착원재료)(\(\*\))?$"
+
+
+def _first(rows, pat):
+    for lab, c, p in rows:
+        if re.match(pat, lab) and c and "충당금" not in lab:
+            return c[0], lab
+    return None, ""
+
+
+def goods_signals(cogs_rows, inv_rows, cogs_total=None, rcept_no=None):
+    """매출원가 내역(상품·제품·용역)과 재고 구성(상품 / 제품·재공품·원재료)으로 재화 매출의 상품 비율 m을 정한다.
+    반환 {'merch_ratio': m|None, 'source', 'values', 'goods_cost_share': (상품+제품 원가)/매출원가|None, 'rcept_no'}."""
+    cm, lm = _first(cogs_rows, COGS_PAT["merch"])
+    cp, lp = _first(cogs_rows, COGS_PAT["product"])
+    cs, ls = _first(cogs_rows, COGS_PAT["service"])
+    out = {"merch_ratio": None, "source": "", "values": {}, "goods_cost_share": None, "rcept_no": rcept_no}
+    if (cm or 0) > 0 or (cp or 0) > 0:
+        a, b = max(cm or 0, 0), max(cp or 0, 0)
+        out.update(merch_ratio=a / (a + b), source="매출원가 상품:제품", values={lm or "상품매출원가": cm, lp or "제품매출원가": cp, **({ls: cs} if cs is not None else {})})
+        base = cogs_total if cogs_total else (a + b + max(cs or 0, 0) if cs is not None else None)
+        if base:
+            out["goods_cost_share"] = min(1.0, (a + b) / base)
+        return out
+    first = {}
+    for lab, c, p in inv_rows:                     # 같은 표가 당기·전기로 되풀이되므로 라벨마다 처음 값만
+        if c and "충당금" not in lab and lab not in first:
+            first[lab] = c[0]
+    im = sum(max(v, 0) for lab, v in first.items() if re.match(INV_MERCH, lab))
+    ip = sum(max(v, 0) for lab, v in first.items() if re.match(INV_PROD, lab))
+    if im + ip > 0:
+        out.update(merch_ratio=im / (im + ip), source="재고 상품:제품·재공품·원재료", values={"상품 재고": im, "제품·재공품·원재료 재고": ip})
+    if cs is not None and cogs_total and cs >= 0:
+        out["goods_cost_share"] = max(0.0, 1 - cs / cogs_total) if out["merch_ratio"] is not None else None
+    return out

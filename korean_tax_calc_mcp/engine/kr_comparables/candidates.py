@@ -15,6 +15,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 from . import statements as ST
+from .statements import title_sections as F_title_sections
 from . import revenue_mix as RM
 from .dart import DartClient, DartStop, KEY_ENV, KEY_GUIDE, mask
 from .schema import STATUS_NONE, empty_profile, value
@@ -173,7 +174,11 @@ def _profile_listed(R, corp, name, code, rows, fin_items, last, cls_ctx):
     extra = {"rnd": None, "adv": None}
     if s:
         rows_mix, tinfo = RM.listed_rows(s)
-        _mix(R, p, rows_mix, tinfo, rev, brc, True, cls_ctx, items_cfs=(corp, last["year"]))
+        api_cogs = [(ST.norm(i.get("account_nm")), [ST.amt(i.get("thstrm_amount"))], []) for i in items
+                    if i.get("sj_div") in ("IS", "CIS") and ST.amt(i.get("thstrm_amount")) is not None]
+        sig = _signals(s, True, api_cogs, [], last.get("cogs"), brc)
+        ov = _overview(s, name)
+        _mix(R, p, rows_mix, tinfo, rev, brc, True, ov["ctx"] or cls_ctx, items_cfs=(corp, last["year"]), signals=sig, ctx_problems=ov["problems"])
         sga = _rows_from_sections(s, True, r"판매비\s*와?\s*(일반)?관리비|판매비및관리비") + _rows_from_sections(s, True, r"비용의\s*성격")
         sga_detail = any(re.match(r"^(급여|복리후생비|지급수수료|감가상각비)", l) for l, c, pr in sga)
         for k, pat, fld, lab in (("rnd", RND, "rnd_ratio", "연구개발비"), ("adv", ADV, "advert_ratio", "광고선전비·판매촉진비")):
@@ -212,13 +217,127 @@ def _max_shareholder(h):
     return f(top.get("trmend_posesn_stock_qota_rt")), L[0].get("rcept_no")
 
 
-def _mix(R, p, rows_mix, tinfo, rev, rc, listed, ctx, items_cfs=None):
+CTX_SKIP = re.compile(r"참고하시기|참조하시기|참고\s*바랍니다|참조\s*바랍니다|을\s*참고|를\s*참고|을\s*참조|를\s*참조|목\s*차|기재하였습니다|기재되어\s*있습니다")
+CTX_MAX, CTX_HEAD = 4000, 1500
+_NUMCELL = re.compile(r"^[\s\d,.()%△\-－+]*$")
+
+
+def _sentences(text):
+    return [x.strip() for x in re.split(r"(?<=[다요])\.\s*|(?<=니다)\s+(?=[가-힣A-Z(])", text) if len(x.strip()) >= 8]
+
+
+def _plain_section(sec):
+    """절 HTML → 글. 숫자가 대부분인 표 행은 뺀다(설명 글이 든 표 행은 남김)."""
+    def tr(m):
+        cells = [re.sub(r"<[^>]+>", " ", c).strip() for c in re.findall(r"<T[DEHU][^>]*>(.*?)</T[DEHU]>", m.group(0), re.S)]
+        cells = [c for c in cells if c]
+        num = sum(1 for c in cells if _NUMCELL.match(c))
+        return " " if cells and num * 2 >= len(cells) else " " + " ".join(cells) + " "
+    sec = re.sub(r"<TITLE[^>]*>.*?</TITLE>", " ", sec, flags=re.S)
+    sec = re.sub(r"<TR[^>]*>.*?</TR>", tr, sec, flags=re.S)
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", sec)).replace("&nbsp;", " ").strip()
+
+
+def _company_core(name):
+    return re.sub(r"\(주\)|㈜|주식회사|\s", "", name or "")
+
+
+def _overview(s, name=None):
+    """사업보고서 '1. 사업의 개요' 추출 + 검사. 반환 {'ctx', 'raw', 'truncated', 'problems'}.
+    ctx: 절 전체(목차·'~ 참고' 안내 문장·숫자 표 행 제외) 4,000자까지, 더 길면 앞 1,500자 + 회사가 주어인 문장('당사는'·'회사는'·'연결회사'·회사명).
+    raw: 원문 절 글(태그만 뺌) — 사람 대조·검사용."""
+    secs = F_title_sections(s)
+    sec = next((s[a:b] for a, b, t in secs if re.match(r"^\s*1\s*\.\s*(\([^)]*\))?\s*사업의\s*개요", t)), None)
+    if sec is None:
+        m = re.search(r"<TITLE[^>]*>\s*I{1,2}\.\s*사업의\s*내용\s*</TITLE>", s)
+        if not m:
+            return {"ctx": "", "raw": "", "truncated": False, "problems": ["사업의 개요 절 없음"]}
+        end = re.search(r"<TITLE[^>]*>\s*2\s*\.\s*주요\s*제품", s[m.end():])
+        sec = s[m.end(): m.end() + (end.start() if end else 30000)]
+    raw = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", re.sub(r"<TITLE[^>]*>.*?</TITLE>", " ", sec, flags=re.S))).replace("&nbsp;", " ").strip()
+    sents = [x for x in _sentences(_plain_section(sec)) if not CTX_SKIP.search(x)]
+    text = ". ".join(sents)
+    core = _company_core(name or (re.search(r"<COMPANY-NAME[^>]*>(.*?)</COMPANY-NAME>", s[:20000]) or [None, ""])[1])
+    truncated = len(text) > CTX_MAX
+    if not truncated:
+        ctx = text
+    else:
+        head = text[:CTX_HEAD]
+        # 문장 앞 60자 안(앞의 '나. 회사의 현황 (1) 영업개황' 같은 소제목 뒤)에 회사가 주어로 나오는 문장
+        subj = re.compile(r"(당사는|당사의|당사가|회사는|연결회사|연결실체|" + (re.escape(core) + r"(는|은|의|가)" if core else "_없음_") + r")")
+        out, n, consumed = [], len(head), 0
+        for x in sents:
+            consumed += len(x) + 2
+            if consumed <= CTX_HEAD:
+                continue
+            if subj.search(x[:60]):
+                if n + len(x) + 2 > CTX_MAX:
+                    break
+                out.append(x)
+                n += len(x) + 2
+        ctx = head + (" … " + ". ".join(out) if out else "")
+    return {"ctx": ctx, "raw": raw, "truncated": truncated, "problems": overview_problems(ctx, raw, core)}
+
+
+def overview_problems(ctx, raw, core=""):
+    """추출 실패 유형 자동 검사."""
+    p = []
+    if re.search(r"[·.‥…ㆍ]{6,}|-{6,}", ctx) or re.search(r"목\s*차", ctx[:200]):
+        p.append("목차를 잡음(점선·쪽 번호)")
+    if len(ctx) < 200 and len(raw) >= len(ctx) + 200:
+        p.append(f"추출 {len(ctx)}자 < 200자인데 원문 절은 {len(raw)}자")
+    if not ctx:
+        p.append("추출 결과 없음")
+    if re.search(r"(^|\s)[2-9]\s*\.\s*(주요\s*제품|원재료|생산\s*및\s*설비|매출\s*및\s*수주|위험\s*관리|주요\s*계약|연구\s*개발\s*활동|기타\s*참고)", ctx):
+        p.append("다른 절까지 넘어감('2. 주요 제품' 등)")
+    who = r"당사|지배회사|연결회사|연결실체|회사는" + ("|" + re.escape(core) if core else "")
+    if re.search(who, raw) and not re.search(who, ctx):
+        p.append("회사(지배회사) 설명 문장이 빠짐")
+    body = re.sub(r"\s", "", ctx)
+    if body and sum(ch.isdigit() or ch in ",.%()" for ch in body) / len(body) > 0.4:
+        p.append("표 숫자만 남음")
+    return p
+
+
+def _context(s, biz, name=None):
+    """회사 맥락(모델 입력). 상장: 사업의 개요(_overview). 비상장: 감사보고서 주석 회사 개요 문장 그대로."""
+    if biz:
+        return _overview(s, name)["ctx"]
+    t = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", s)).replace("&nbsp;", " ")
+    i = t.find("주석", t.find("(첨부)") + 1 if "(첨부)" in t else 0)
+    for pat in (r"일\s*반\s*사\s*항", r"회\s*사\s*의\s*개\s*요", r"당사의\s*개요"):
+        m = re.search(pat, t[i:]) if i >= 0 else None
+        if m:
+            seg = t[i + m.end(): i + m.end() + 1500]
+            end = re.search(r"\s\(?2\)?\s*[.)]\s*[가-힣]|\s2\s*\.\s*[가-힣]", seg)
+            return seg[: end.start() if end else 800].strip()[:800]
+    return ""
+
+
+def _signals(s, biz, stmt_cogs_rows, stmt_inv_rows, cogs_total, rc):
+    cogs_rows = list(stmt_cogs_rows) + _rows_from_sections(s, biz, r"매출\s*원가|영업\s*비용|비용의\s*성격")
+    inv_rows = list(stmt_inv_rows) + _rows_from_sections(s, biz, r"재고\s*자산")
+    return ST.goods_signals(cogs_rows, inv_rows, cogs_total, rc)
+
+
+def _mix(R, p, rows_mix, tinfo, rev, rc, listed, ctx, items_cfs=None, signals=None, ctx_problems=None):
     if not rows_mix:
         p["mix_coverage"] = value(note=tinfo.get("note", "매출 하위 행 없음"))
         return
+    if listed and ctx_problems and any(not (len(r) > 4 and r[4]) for r in rows_mix):
+        # 사업의 개요 추출 실패 — 모델에 넘기지 않고 매출 구성은 사람 확인
+        why = "사업의 개요 추출 실패(" + "; ".join(ctx_problems) + ") — 사람 확인"
+        tot = sum(r[1] for r in rows_mix)
+        p["mix_coverage"] = value(tot / rev, rcept_no=rc, note=why) if rev else value(note=why)
+        for k in RM.CATS:
+            p["mix_" + k] = value(note=why)
+        p["mix_coverage"]["evidence"]["rows"] = [{"label": r[0], "amount": r[1], "category": "", "reason": "분류 안 함(사업의 개요 추출 실패)"} for r in rows_mix]
+        R.methods.add("분류 안 함(사업의 개요 추출 실패)")
+        return
     cls, method = RM.classify(rows_mix, ctx, listed, R.upstage_key, R.solar_http, R.stat)
     R.methods.add(method)
-    sh, tot = RM.mix_shares(rows_mix, cls)
+    al = RM.allocate(rows_mix, cls, signals)
+    sh, tot = al["shares"], al["total"]
     covs = {"별도": tot / rev} if rev else {}
     if listed and items_cfs and (not covs or not (0.8 <= covs["별도"] <= 1.2)):
         d = R.dc.get("fnlttSinglAcntAll.json", {"corp_code": items_cfs[0], "bsns_year": str(items_cfs[1]), "reprt_code": "11011", "fs_div": "CFS"})
@@ -228,11 +347,25 @@ def _mix(R, p, rows_mix, tinfo, rev, rc, listed, ctx, items_cfs=None):
                 covs["연결"] = tot / rc_rev
     basis, cov = min(covs.items(), key=lambda kv: abs(kv[1] - 1)) if covs else (None, None)
     ok = cov is not None and 0.8 <= cov <= 1.2
-    note = f"{method}; 기준 매출 {basis}; " + ";".join(f"{k}={v}" for k, v in tinfo.items() if k != "note")
+    note = f"{method}; 기준 매출 {basis}; " + ";".join(f"{k}={v}" for k, v in tinfo.items() if k != "note") + (f"; {al['goods_alloc']}" if al["goods_alloc"] else "")
     p["mix_coverage"] = value(cov, rcept_no=rc, note=note) if cov is not None else value(note="매출 없음")
     for k in RM.CATS:
-        p["mix_" + k] = value(sh.get(k, 0.0), rcept_no=rc, note=method) if ok else value(note=f"커버리지 {cov:.2f} 범위 밖" if cov is not None else "커버리지 없음")
-    p["mix_coverage"]["evidence"]["rows"] = [{"label": r[0], "amount": r[1], "category": cls[i][0], "reason": cls[i][1]} for i, r in enumerate(rows_mix)]
+        if not ok:
+            p["mix_" + k] = value(note=f"커버리지 {cov:.2f} 범위 밖" if cov is not None else "커버리지 없음")
+        elif al["conflict"]:
+            p["mix_" + k] = value(note=al["conflict"] + " — 사람 확인")
+        elif k in al["unknown"]:
+            p["mix_" + k] = value(note=al["goods_alloc"] + " — 사람 확인")
+        else:
+            src = "회계 기준 배분" if (k in ("product", "merchandise") and al["goods_alloc"].startswith("회계")) else method
+            p["mix_" + k] = value(sh.get(k, 0.0), rcept_no=rc, note=src)
+    ev = p["mix_coverage"]["evidence"]
+    ev["rows"] = [{"label": r[0], "amount": r[1], "category": cls[i][0],
+                   "reason": ("회계 기준 배분(모델·규칙: 재화) " if cls[i][0] == RM.GOODS and al["goods_alloc"].startswith("회계") else "") + cls[i][1]}
+                  for i, r in enumerate(rows_mix)]
+    ev["accounting"] = signals or {}
+    if al["conflict"]:
+        ev["conflict"] = al["conflict"]
 
 
 def _profile_unlisted(R, corp, name, code, rows, parsed, docs, last):
@@ -268,7 +401,8 @@ def _profile_unlisted(R, corp, name, code, rows, parsed, docs, last):
     p["related_sales_ratio"] = value(r, rcept_no=rc, account=why) if r is not None else value(note=why)
     p["max_shareholder_pct"] = value(note="비상장 — OpenDART 최대주주 현황 API는 사업보고서 제출 회사만")
     if col == 0:
-        _mix(R, p, RM.unlisted_rows(is_), {}, rev, rc, False, f"{name} 업종코드 {code}")
+        sig = _signals(s, False, is_, bs, last.get("cogs"), rc)
+        _mix(R, p, RM.unlisted_rows(is_), {}, rev, rc, False, _context(s, False) or f"{name} 업종코드 {code}", signals=sig)
     else:
         p["mix_coverage"] = value(note="마지막 연도 감사보고서 없음(다음 해 보고서 전기 열) — 매출 구성 생략")
     return p, extra

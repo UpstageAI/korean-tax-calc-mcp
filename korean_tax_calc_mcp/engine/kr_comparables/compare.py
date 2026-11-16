@@ -78,11 +78,23 @@ def compare_profile(tested, cand, rules=None):
     # 1 매출 구성
     cov = _num(cand.get("mix_coverage"), False)
     share = _num(cand.get("mix_" + tested["main_category"]), False)
+    bound = None
     if share is None or cov is None or not (r["coverage_min"] - EPS <= cov <= r["coverage_max"] + EPS):
         v = UNK
+        # 제품·상품 배분만 불명이고 나머지 갈래가 확보면 상한(1 − 나머지 합)으로도 판정할 수 있다
+        if share is None and cov is not None and r["coverage_min"] - EPS <= cov <= r["coverage_max"] + EPS and tested["main_category"] in ("product", "merchandise"):
+            others = [k for k in ("service", "sw_license", "platform_fee", "other")]
+            vals = [_num(cand.get("mix_" + k), False) for k in others]
+            if all(x is not None for x in vals):
+                bound = max(0.0, 1 - sum(vals))
+                if bound < tested["main_share"] - r["mix_max_diff"] - EPS:
+                    v = DIFF
     else:
         v = NEAR if abs(share - tested["main_share"]) <= r["mix_max_diff"] + EPS else DIFF
-    items["revenue_mix"] = {"verdict": v, "candidate": share, "tested": tested["main_share"], "coverage": cov,
+    mcell = cand.get("mix_" + tested["main_category"])
+    mnote = mcell.get("note", "") if isinstance(mcell, dict) and v == UNK else (
+        f"제품·상품 배분은 불명이나 상한 {bound:.0%}로도 차이가 큼" if bound is not None else "")
+    items["revenue_mix"] = {"verdict": v, "candidate": share, "tested": tested["main_share"], "coverage": cov, "note": mnote,
                             "rule": f"{tested['main_category']} 비중 차이 ≤ {r['mix_max_diff']:.0%}p, 커버리지 {r['coverage_min']}~{r['coverage_max']}"}
     # 2 재고
     if tested.get("inventory_basis", "ratio") == "raw_material":
@@ -127,9 +139,12 @@ def compare_profile(tested, cand, rules=None):
         if overall == "포함 후보":
             overall = "사람 확인"
         items["revenue_mix"]["review"] = indep_note
-    reasons = [f"{ITEMS[k]} {items[k]['verdict']}" for k in CORE if items[k]["verdict"] != NEAR] + indep
+    reasons = [f"{ITEMS[k]} {items[k]['verdict']}" + (f" — {items[k]['note']}" if items[k].get("note") else "") for k in CORE if items[k]["verdict"] != NEAR] + indep
     if items["revenue_mix"].get("review"):
         reasons.append(items["revenue_mix"]["review"])
+    unk = [ITEMS[k] for k, x in items.items() if x["verdict"] == UNK and k not in CORE]
+    if overall == "사람 확인" and all_v.count(UNK) >= r["unknown_review_count"]:
+        reasons.append(f"불명 {all_v.count(UNK)}개(" + ", ".join([ITEMS[k] for k in CORE if items[k]["verdict"] == UNK] + unk) + ")")
     return {"company_id": cand.get("company_id"), "company_name": cand.get("company_name"), "items": items,
             "independence": indep or ["문제 없음" if ms is not None else "최대주주 지분 불명"], "overall": overall,
             "reasons": reasons or ["핵심 항목 가까움"], "rules_used": r}
@@ -142,7 +157,7 @@ def _unverified_mix(cand):
     if not rows:
         return None, []
     tot = sum(abs(x.get("amount") or 0) for x in rows)
-    bad = [x for x in rows if not str(x.get("reason", "")).startswith("원문")]
+    bad = [x for x in rows if not str(x.get("reason", "")).startswith(("원문", "회계 기준 배분"))]
     if not tot:
         return None, []
     return sum(abs(x.get("amount") or 0) for x in bad) / tot, [str(x.get("label", ""))[:30] for x in bad]

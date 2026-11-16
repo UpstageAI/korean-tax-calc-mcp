@@ -82,7 +82,8 @@ def _gold_solar(body, key):
     assert key == "u" * 20
     labels = re.findall(r"^id=(\d+): (.*)$", content, re.M)
     lab2cat = {r["label"]: r["category"] for g in GOLD.values() if g["revenue_mix"]["status"] == "확보" for r in g["revenue_mix"]["rows"]}
-    ko = {v: k for k, v in RM.KO.items()}
+    ko = {"product": "재화", "merchandise": "재화", "service": "용역", "sw_license": "SW·라이선스", "platform_fee": "플랫폼·중개수수료", "other": "기타"}
+    assert "제조 여부" in content and "회사 맥락" in content       # 제품/상품은 모델에 묻지 않음
     rows = [{"id": int(i), "category": ko.get(lab2cat.get(l, "other"), "기타"), "reason": "테스트"} for i, l in labels]
     for _, l in labels:
         assert not re.search(r"\d{1,3}(,\d{3}){2,}", l)   # 금액이 들어가지 않음
@@ -119,8 +120,18 @@ def test_revenue_mix_and_profile_match_gold(env):
         mix = g["revenue_mix"]
         main = mix["main_category"]
         assert p["mix_coverage"]["status"] == "확보", p["company_name"]
-        assert p["mix_" + main]["value"] == pytest.approx(mix["main_share"], abs=1e-3), (p["company_name"], main)
-        rows = p["mix_coverage"]["evidence"]["rows"]
+        ev = p["mix_coverage"]["evidence"]
+        rows = ev["rows"]
+        goods = [x for x in rows if x["category"] == "goods"]
+        if goods:   # 모델은 '재화'까지만 — 제품/상품은 회계 비율로 배분
+            m, tot = ev["accounting"]["merch_ratio"], sum(x["amount"] for x in rows)
+            G = sum(x["amount"] for x in goods)
+            assert all(x["reason"].startswith("회계 기준 배분") for x in goods)
+            assert p["mix_merchandise"]["value"] == pytest.approx(G * m / tot, rel=1e-9)
+            assert p["mix_product"]["value"] == pytest.approx(G * (1 - m) / tot, rel=1e-9)
+            assert p["mix_product"]["note"] == "회계 기준 배분" and ev["accounting"]["rcept_no"] == ev["rcept_no"]
+        else:       # 원문 계정명(제품매출·상품매출) — 정답 그대로
+            assert p["mix_" + main]["value"] == pytest.approx(mix["main_share"], abs=1e-3), (p["company_name"], main)
         assert sorted(x["amount"] for x in rows) == sorted(x["amount"] for x in mix["rows"])   # 금액은 원문 그대로
         v = g["values"]
         assert p["ppe_ratio"]["value"] == pytest.approx(v["ppe"] / v["total_assets"], rel=1e-9)
@@ -128,6 +139,11 @@ def test_revenue_mix_and_profile_match_gold(env):
         assert p["inv_to_sales"]["evidence"]["rcept_no"] == p["rcept_no"]
     listed = [p for p in r["후보_프로필"] if p["listed"]]
     assert len(listed) == 2 and all(p["max_shareholder_pct"]["status"] == "확보" for p in listed)
+    by = {p["company_name"]: p for p in listed}
+    u = by["(주)유니트론텍"]          # 매출원가에 상품만(상품매출원가) — 원문 숫자로 상품
+    assert u["mix_coverage"]["evidence"]["accounting"]["source"] == "매출원가 상품:제품" and u["mix_merchandise"]["value"] == pytest.approx(0.998, abs=1e-3)
+    h = by["(주)휴맥스"]              # 재고 상품 26억 : 제품·원재료 171억 → 제품 위주
+    assert h["mix_coverage"]["evidence"]["accounting"]["source"].startswith("재고") and h["mix_product"]["value"] > 0.8
     assert all(p["max_shareholder_pct"]["status"] == "불명-못찾음" for p in r["후보_프로필"] if not p["listed"])
 
 

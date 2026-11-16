@@ -184,10 +184,13 @@ def unlisted_rows(is_rows):
 
 
 # ---------------- 분류 ----------------
-RULES = [("product", r"^(제품|제품매출|제품매출액)$|제품|제조"), ("merchandise", r"^(상품|상품매출|상품매출액)$|상품"),
-         ("sw_license", r"소프트웨어|SW|S/W|라이선스|라이센스|솔루션|게임|SaaS|로열티|사용료"),
+# 모델·규칙은 '재화'까지만 정한다 — 제품/상품(누가 만들었나)은 회계 숫자(매출원가·재고 구성)로 나눈다.
+GOODS = "goods"
+KO5 = {"재화": GOODS, "용역": "service", "SW·라이선스": "sw_license", "플랫폼·중개수수료": "platform_fee", "기타": "other"}
+RULES = [("sw_license", r"소프트웨어|SW|S/W|라이선스|라이센스|솔루션|게임|SaaS|로열티|사용료"),
          ("platform_fee", r"수수료|플랫폼|중개|결제|광고"),
-         ("service", r"용역|서비스|유지보수|공사|임대|운송|SI|컨설팅|구축|정비|관리비")]
+         ("service", r"용역|서비스|유지보수|공사|임대|운송|SI|컨설팅|구축|정비|관리비"),
+         (GOODS, r"제품|상품|제조|판매|장비|부품|기기|재화")]
 
 
 def classify_rules(labels):
@@ -199,11 +202,12 @@ def classify_rules(labels):
     return out
 
 
-PROMPT = """다음은 한국 회사 공시의 매출 행 이름 목록이다(금액은 주지 않는다). 각 행을 아래 6개 중 하나로 분류하라.
-제품=자기가 제조한 물리적 재화 / 상품=사서 되파는 재화 / 용역=SI·컨설팅·유지보수·공사·운영 대행·임대 등 서비스 제공 /
+PROMPT = """다음은 한국 회사 공시의 매출 행 이름 목록이다(금액은 주지 않는다). 회사 맥락(사업의 개요)을 참고해 각 행을 아래 5개 중 하나로 분류하라.
+재화=물건(제품이든 상품이든)을 파는 매출 / 용역=SI·컨설팅·유지보수·공사·운영 대행·임대·운송 등 서비스 제공 /
 SW·라이선스=소프트웨어·게임·솔루션 판매나 사용료, SaaS, 로열티 / 플랫폼·중개수수료=플랫폼·앱·결제·중개 수수료, 광고 매출 / 기타.
-JSON만 출력: {"rows":[{"id":0,"category":"제품|상품|용역|SW·라이선스|플랫폼·중개수수료|기타","reason":"20자 이내"}]}
-회사 업종 참고: {ctx}
+제조 여부(제품인지 상품인지)는 판단하지 말 것 — 물건 판매면 모두 '재화'.
+JSON만 출력: {"rows":[{"id":0,"category":"재화|용역|SW·라이선스|플랫폼·중개수수료|기타","reason":"20자 이내"}]}
+회사 맥락: {ctx}
 행:
 """
 
@@ -215,18 +219,20 @@ def solar_http(body, key):
 
 
 def classify_solar(labels, ctx, key, http=None, stat=None):
-    """Solar 분류(캐시). 실패하면 None(호출한 쪽이 규칙 분류로 대체)."""
+    """Solar 분류(캐시). 실패·상한이면 None(호출한 쪽이 규칙 분류로 대체)."""
     text = "\n".join(f"id={i}: {l}" for i, l in enumerate(labels))
-    body = {"model": SOLAR_MODEL, "messages": [{"role": "user", "content": PROMPT.replace("{ctx}", ctx[:200]) + text}], "temperature": 0}
+    body = {"model": SOLAR_MODEL, "messages": [{"role": "user", "content": PROMPT.replace("{ctx}", ctx[:4100]) + text}], "temperature": 0}
     d_dir = os.path.join(cache_dir(), "solar")
     os.makedirs(d_dir, exist_ok=True)
-    f = os.path.join(d_dir, "v1_" + hashlib.sha1(json.dumps(body, ensure_ascii=False).encode()).hexdigest()[:16] + ".json")
+    f = os.path.join(d_dir, "v2_" + hashlib.sha1(json.dumps(body, ensure_ascii=False).encode()).hexdigest()[:16] + ".json")
     stat = stat if stat is not None else {}
     try:
         if os.path.exists(f):
             d = json.load(open(f, encoding="utf-8"))
             stat["solar_cached"] = stat.get("solar_cached", 0) + 1
         else:
+            if stat.get("solar_cap") is not None and stat.get("solar_calls", 0) >= stat["solar_cap"]:
+                raise RuntimeError("Solar 호출 상한")
             d = None
             for attempt in range(1 + RETRIES):       # 일시 오류만 재시도(1·2·4초), 다 실패하면 아래 except → 규칙 분류
                 stat["solar_calls"] = stat.get("solar_calls", 0) + 1
@@ -241,7 +247,7 @@ def classify_solar(labels, ctx, key, http=None, stat=None):
             with open(f, "w", encoding="utf-8") as fh:
                 json.dump(d, fh, ensure_ascii=False)
         j = json.loads(re.search(r"\{.*\}", d["choices"][0]["message"]["content"], re.S).group(0))
-        return {int(x["id"]): (KO.get(x.get("category"), "other"), (x.get("reason") or "")[:40]) for x in j.get("rows", [])}
+        return {int(x["id"]): (KO5.get(x.get("category"), "other"), (x.get("reason") or "")[:40]) for x in j.get("rows", [])}
     except Exception as e:
         stat.setdefault("solar_errors", []).append(mask(f"{type(e).__name__}: {e}", key))
         return None
@@ -252,7 +258,7 @@ FIX = [(r"^(제품|제품매출|제품매출액)$", "product"), (r"^(상품|상�
 
 
 def classify(rows, ctx, listed, upstage_key=None, http=None, stat=None):
-    """rows → ({i: (갈래, 근거)}, 방법). 비상장의 표준 계정명은 코드로 바로 정함."""
+    """rows → ({i: (갈래, 근거)}, 방법). 갈래에 'goods'(재화 — 뒤에서 회계 숫자로 제품/상품 배분)가 있을 수 있다."""
     cls, need = {}, []
     for i, r in enumerate(rows):
         if listed and len(r) > 4 and r[4]:
@@ -270,15 +276,43 @@ def classify(rows, ctx, listed, upstage_key=None, http=None, stat=None):
         if got is None:
             got, method = classify_rules(labels), "규칙(정확도 낮음)"
         else:
-            method = "Solar(solar-pro4, 행 이름만)"
+            method = "Solar(solar-pro4, 행 이름 + 회사 맥락, 재화까지만)"
         for j, i in enumerate(need):
             cls[i] = got.get(j, ("other", "분류 누락"))
     return cls, method
 
 
-def mix_shares(rows, cls):
+GOODS_GAP = 0.50   # 모델이 본 재화 비중과 회계상 재화 원가 비중 차이가 이보다 크면 엇갈림
+
+
+def allocate(rows, cls, signals):
+    """행 분류 + 회계 신호 → 비중·상태.
+    반환 {'shares': {갈래: 비중}, 'unknown': [불명 갈래], 'conflict': 문구|None, 'goods_alloc': 문구, 'total': 합계}.
+    모델·규칙이 '재화'로 본 행 합계 G를 회계 비율 m(상품 몫)으로 나눔 — 상품 G·m, 제품 G·(1−m). m이 없으면 제품·상품 불명."""
     tot = sum(r[1] for r in rows)
-    amt = {}
+    amt = {k: 0 for k in CATS}
+    goods = 0
     for i, r in enumerate(rows):
-        amt[cls[i][0]] = amt.get(cls[i][0], 0) + r[1]
-    return ({k: amt.get(k, 0) / tot for k in CATS} if tot else {}), tot
+        c = cls[i][0]
+        if c == GOODS:
+            goods += r[1]
+        else:
+            amt[c] = amt.get(c, 0) + r[1]
+    res = {"shares": {}, "unknown": [], "conflict": None, "goods_alloc": "", "total": tot}
+    if not tot:
+        return res
+    m = (signals or {}).get("merch_ratio")
+    if goods:
+        if m is None:
+            res["unknown"] = ["product", "merchandise"]
+            res["goods_alloc"] = "제품/상품 배분 불명 — 원문 매출유형도 회계 신호(매출원가 상품:제품·재고 구성)도 없음"
+        else:
+            amt["merchandise"] += goods * m
+            amt["product"] += goods * (1 - m)
+            res["goods_alloc"] = f"회계 기준 배분 — 재화 매출 {goods / tot:.0%}를 {signals.get('source')} 비율(상품 {m:.0%})로 나눔"
+    res["shares"] = {k: amt[k] / tot for k in CATS}
+    gc = (signals or {}).get("goods_cost_share")
+    model_goods = (goods + sum(r[1] for i, r in enumerate(rows) if cls[i][0] in ("product", "merchandise"))) / tot
+    if gc is not None and abs(model_goods - gc) > GOODS_GAP:
+        res["conflict"] = f"엇갈림 — 매출 행 분류상 재화 {model_goods:.0%} vs 회계상 재화 원가 {gc:.0%}({signals.get('source')})"
+    return res

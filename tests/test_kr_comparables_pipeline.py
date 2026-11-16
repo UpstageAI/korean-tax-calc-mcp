@@ -52,11 +52,13 @@ def test_candidates_to_compare(pipeline):
     by = {x["company_id"]: x for x in r["비교표"]}
     name = {cc: g["corp_name"] for cc, g in GOLD.items()}
     got = {name[k]: v["종합"] for k, v in by.items()}
-    # 1단계 손 판정과 같되, 유니트론텍은 원문 유형 칸이 없는 매출 행을 모델로 분류(99.8%) → 사람 확인
-    assert got == {"(주)유니트론텍": "사람 확인", "(주)휴맥스": "제외 후보", "상신코퍼레이션": "포함 후보",
+    # 1단계 손 판정과 같음 — 유니트론텍은 매출 행이 원문 유형 칸 없이 '재화'로 분류됐지만 매출원가가 상품매출원가뿐이라 회계 기준으로 상품
+    assert got == {"(주)유니트론텍": "포함 후보", "(주)휴맥스": "제외 후보", "상신코퍼레이션": "포함 후보",
                    "애보트메디칼코리아": "포함 후보", "케이엘페트로": "제외 후보"}
-    rv = r["사람_확인_목록"][0]
-    assert any("매출 행 분류 확인 필요" in x for x in rv["사유"]) and rv["매출_행"] and rv["근거"]["매출 구성"]["rcept_no"]
+    assert r["사람_확인_목록"] == []
+    u = next(p for p in cand["결과"]["후보_프로필"] if p["company_name"] == "(주)유니트론텍")
+    assert u["mix_coverage"]["evidence"]["accounting"]["source"] == "매출원가 상품:제품"
+    assert all(x["reason"].startswith("회계 기준 배분") for x in u["mix_coverage"]["evidence"]["rows"] if x["category"] == "goods")
     assert {d["company_id"] for d in r["manual_decisions_초안"]} == {k for k, v in by.items() if v["종합"] == "제외 후보"}
     assert all(d["decision"] == "reject" and d["reason"] and "초안" in d["상태"] for d in r["manual_decisions_초안"])
     assert r["사용_기준"]["mix_max_diff"] == 0.20
@@ -65,7 +67,6 @@ def test_candidates_to_compare(pipeline):
 def test_end_to_end_quartiles(pipeline):
     cand, cmp_, _ = pipeline
     r = cmp_["결과"]
-    # 사람 확인: 검토자가 유니트론텍의 매출 행(반도체·디스플레이 재판매)을 원문으로 확인하고 포함 — 따로 넣을 판단 없음
     # 제외 후보 초안: 검토자가 사유를 확인하고 reviewer를 채워 확정
     decisions = [{k: v for k, v in d.items() if k != "상태"} | {"reviewer": "검토자"} for d in r["manual_decisions_초안"]]
     rows = cand["결과"]["후보_행"]                       # 후보 도구 출력 그대로
