@@ -10,7 +10,7 @@
 
 **Korean tax calculations for AI agents — code, not guesses.**
 
-AI models often get tax arithmetic wrong. This server computes Korean corporate, income, VAT, withholding, international, inheritance and gift tax — and the tax adjustments behind them — in code, and attaches the statutory basis to every result. 142 tools, rate and limit tables for 2016–2026; for a year without a table it stops instead of guessing. It covers foreign companies, expats and Korean subsidiaries (foreign worker flat tax, non-resident withholding, branch profits tax, exit tax and more). Ask in English: every tool description starts with an English line, and `find_tool` takes English queries. Results can be exported to a review workbook laid out as the statutory forms.
+AI models often get tax arithmetic wrong. This server computes Korean corporate, income, VAT, withholding, international, inheritance and gift tax — and the tax adjustments behind them — in code, and attaches the statutory basis to every result. 141 tools, rate and limit tables for 2016–2026; for a year without a table it stops instead of guessing. It covers foreign companies, expats and Korean subsidiaries (foreign worker flat tax, non-resident withholding, branch profits tax, exit tax and more). Ask in English: every tool description starts with an English line, and `find_tool` takes English queries. Results can be exported to a review workbook laid out as the statutory forms.
 
 > Not tax advice. Results show sources and computations for review; confirm filings and appeals with a tax professional. Only the 3 PDF tools and the optional revenue-row classification in the Korean comparable candidates tool use generative AI, and their results say so — [full notices](#disclaimer)
 
@@ -105,7 +105,7 @@ Optional keys: `LAW_OC` (law.go.kr lookups in two audit tools), `UPSTAGE_API_KEY
 
 Requirements and year-specific judgments (credit eligibility, arm's-length methods, permanent establishment) belong to the companion server [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp). This server computes from amounts that meet the requirements and points to the statute check in its output.
 
-Of the 142 tools, the 138 other than the 3 PDF tools and the Korean comparable candidates tool run in code without generative AI; two of them (price lookups) only fetch public data from KRX and VWORLD. The 3 PDF tools and the candidates tool use Upstage only when `UPSTAGE_API_KEY` is set (the candidates tool fetches OpenDART filings and, without the key, classifies revenue rows by name rules).
+Of the 141 tools, the 137 other than the 3 PDF tools and the Korean comparable candidates tool run in code without generative AI; two of them (price lookups) only fetch public data from KRX and VWORLD. The 3 PDF tools and the candidates tool use Upstage only when `UPSTAGE_API_KEY` is set (the candidates tool fetches OpenDART filings and, without the key, classifies revenue rows by name rules).
 
 </details>
 
@@ -238,7 +238,7 @@ Form templates were built by checking cell layout against the official form PDFs
 </details>
 
 <details>
-<summary><b>All tools (142)</b></summary>
+<summary><b>All tools (141)</b></summary>
 
 Click a group to expand its tools.
 
@@ -425,7 +425,7 @@ Click a group to expand its tools.
 
 </details>
 <details>
-<summary><b>Tax audit checks</b> (9)</summary>
+<summary><b>Tax audit checks</b> (8)</summary>
 
 | Tool | What it does |
 |---|---|
@@ -435,7 +435,6 @@ Click a group to expand its tools.
 | `dominant_shareholder` | dominant shareholder |
 | `tunnelling_gift` | tunnelling gift |
 | `tunnelling_gift_nts` | tunnelling gift (NTS formula) |
-| `related_provision_at` | related-party article location |
 | `return_precheck` | return pre-check |
 | `precheck_schema` | pre-check input schema |
 

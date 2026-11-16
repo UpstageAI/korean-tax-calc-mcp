@@ -236,7 +236,7 @@ def test_dotted_key_and_same_call_runs_once(made, monkeypatch):
 
 def test_description_and_registration():
     tools = {t.name: t for t in S.mcp._tool_manager.list_tools()}
-    assert len(tools) == 142
+    assert len(tools) == 141
     d = tools["verify_workbook"].description
     first = d.splitlines()[0]
     assert first.startswith("After saving an Excel workbook (.xlsx file or spreadsheet — workings or a report) you built yourself, call this tool (직접 만든 엑셀 검산)") and "언제:" in d and "입력:" in d

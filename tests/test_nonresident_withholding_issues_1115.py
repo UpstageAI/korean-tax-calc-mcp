@@ -154,7 +154,7 @@ def test_royalty_issue_lines(extra):
 def test_royalty_issue_contents():
     r = c("nonresident_withholding", {**US, "treaty_rate": 0.15, "year": 2026})
     q = {it.get("구분"): it["쟁점"] for it in r["쟁점"]}
-    assert "2021두59908" in q["국내 미등록 특허"] and "royalty_withholding_guide" in q["국내 미등록 특허"]
+    assert "2021두59908" not in q["국내 미등록 특허"] and "royalty_withholding_guide" in q["국내 미등록 특허"]   # 판례는 조문 MCP
     assert "income_kind" in q["소득 구분·세율"] and "treaty_withholding_rates" in q["소득 구분·세율"]
     assert "제98조의6제3항" in q["조약 적용 절차"] and "2월 말일" in q["조약 적용 절차"] and "5년" in q["조약 적용 절차"]
     d = q["납부·신고 기한"]

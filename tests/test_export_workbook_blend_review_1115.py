@@ -169,7 +169,7 @@ def test_step_formula_rules():
 SAMPLES = json.loads((pathlib.Path(__file__).parent / "data" / "blend_sweep_calls.json").read_text(encoding="utf-8"))
 # 표본 호출이 없는 도구: 결과가 표 모양이 아니거나(안내·검색·PDF·시세 조회·관계 판정) export_workbook 자신
 NO_SAMPLE = {"dominant_shareholder", "export_workbook", "verify_workbook", "extract_relations", "kinship_check", "official_property_price", "ownership_ratio",
-             "precheck_schema", "related_judge", "related_provision_at", "return_precheck", "return_precheck_pdf", "stock_price_lookup",
+             "precheck_schema", "related_judge", "return_precheck", "return_precheck_pdf", "stock_price_lookup",
              "tunnelling_from_pdf", "tunnelling_gift", "tunnelling_gift_nts",
              "kr_comparable_candidates"}   # OpenDART 키·네트워크가 필요한 도구
 

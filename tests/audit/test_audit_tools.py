@@ -85,29 +85,24 @@ def test_return_precheck_call():
     assert isinstance(r, dict)
 
 
-# ── 2. 관련 조문 시점 조회: LAW_OC 없으면 네트워크 호출 skip ──
-def test_related_provision_at_call():
-    """related_provision_at: LAW_OC 있을 때만 법제처 API 호출.
-    LAW_OC가 없으면 스킨 — 공개 패키지에서 제3자 서버로 키 전송을 막기 위함."""
-    if not os.environ.get("LAW_OC", "").strip():
-        pytest.skip("LAW_OC 미설정 — 법제처 API 호출 생략 (제3자 서버 전송 방지)")
-    names = _list_tool_names()
-    assert "related_provision_at" in names
-    r = _call_tool("related_provision_at", law="국기", on="2024-01-01")
-    assert "법령" in r
+# ── 2. 특수관계 조문 시점 위치: 도구(related_provision_at)는 조문 MCP로 옮김(find_article·law_article의 as_of) ──
+# related_judge의 '적용조문'이 쓰는 내부 함수 cite_at은 계산 MCP에 그대로 — 고정 이동표 회귀를 함수로 직접 검증.
+def test_related_provision_at_tool_removed():
+    """조문 위치·원문 조회는 조문 MCP 몫 — 계산 MCP 도구 목록에 없어야 함."""
+    assert "related_provision_at" not in _list_tool_names()
 
 
-# ── 2b. SPEC a1d 회귀 테스트: related_provision_at 고정 이동표 ──
+# ── 2b. SPEC a1d 회귀 테스트: cite_at 고정 이동표 ──
 # a1c에서 확인한 조문 이동표를 LAW_OC 미설정(고정 이동표 경로)으로 재검증.
-# 각 테스트는 monkeypatch로 LAW_OC를 지우고 related._CITE_CACHE.clear() 후 호출.
 def _call_provision_at_no_law_oc(law, on):
-    """LAW_OC를 monkeypatch로 제거한 상태에서 related_provision_at 호출 → 고정 이동표 결과."""
+    """LAW_OC를 지운 상태에서 cite_at 호출 → 고정 이동표 결과."""
     import korean_tax_calc_mcp.audit.agents.related as related
     related._CITE_CACHE.clear()
     orig = os.environ.get("LAW_OC")
     os.environ.pop("LAW_OC", None)
     try:
-        return _call_tool("related_provision_at", law=law, on=on)
+        name, jo, _ = related.cite_at(law, on)
+        return {"법령": name, "조항": jo}
     finally:
         if orig is not None:
             os.environ["LAW_OC"] = orig
@@ -351,10 +346,10 @@ def test_return_precheck_pdf_solar_cloud():
 
 
 # ── 4. list_tools 이름 집합 검증 ──
-def test_list_tools_has_11_audit_tools():
-    """list_tools 결과( 전체에서 audit 도구 11개가 모두含まれ 있는지 확인."""
+def test_list_tools_has_10_audit_tools():
+    """list_tools 결과( 전체에서 audit 도구 10개가 모두含まれ 있는지 확인."""
     expected = {"related_judge", "kinship_check", "ownership_ratio", "dominant_shareholder",
-                "related_provision_at", "tunnelling_gift", "tunnelling_gift_nts",
+                "tunnelling_gift", "tunnelling_gift_nts",
                 "tunnelling_from_pdf", "return_precheck", "return_precheck_pdf", "extract_relations"}
     names = set(_list_tool_names())
     assert expected <= names, f"audit 도구 누락: {sorted(expected - names)}"

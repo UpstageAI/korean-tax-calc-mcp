@@ -1,5 +1,5 @@
 """_guard를 새로 붙인 도구 — 잘못된 입력이 예외가 아니라 {"error": ...} dict로 돌아오는지.
-bad_debt_allowance(입력이 모두 스키마 제약)·precheck_schema(Literal만)·related_provision_at(자유 문자열, LAW_OC 없으면 고정표)·
+bad_debt_allowance(입력이 모두 스키마 제약)·precheck_schema(Literal만)·
 return_precheck(규칙이 잘못된 값을 자료 부족으로 흡수)는 검증 경로가 없어 제외."""
 import pytest
 

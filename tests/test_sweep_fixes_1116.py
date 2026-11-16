@@ -152,7 +152,7 @@ with open(os.path.join(HERE, "data", "date_format_cases_1116.json"), encoding="u
 
 
 def test_sweep_date_cases_cover_tools():
-    assert len(_SWEEP) == 1132 and len({c["tool"] for c in _SWEEP}) == 80
+    assert len(_SWEEP) == 1124 and len({c["tool"] for c in _SWEEP}) == 79
 
 
 @pytest.mark.parametrize("i", range(len(_SWEEP)))

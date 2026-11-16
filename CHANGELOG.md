@@ -6,7 +6,7 @@
 1. **관행 기준값 제거.** `tp_comparable_screen`(독립성 25%·연구개발 3%·광고 5%·특수관계 매출 25%·부문 75%·손실 2개 연도·1.5×IQR·탈락 등급·특수 상황 목록)과 `kr_comparable_profile_compare`(매출 구성 20%p·0.5~2배 등)는 이제 관행·우리 규칙 기본값이 없음. `screens`·`rules`로 받은 값만 적용하고(값·출처는 조문 MCP `transfer_pricing_guide` '비교대상 선정 기준'), 없으면 법정 기준(최대주주 50% 이상, 비교대상 둘 이상, 특수관계 거래 의존 50% 이상 → 사람 확인)만 적용 — 결과 첫 줄 `안내`에 "관행 기준 미적용". 이전 결과 재현은 README의 예시값을 `screens`·`rules`로 넣음.
 2. **기본 사분위 방식 변경(이전: 엑셀 QUARTILE.INC) — 이전 결과 재현은 `quartile_method="excel_inc"`.** `arm_length_range`·`tp_comparable_screen` 기본이 국조법 기본통칙 8-15…1(아래 사분위 위치 (n+2)/4, 위 사분위 위치 (3n+2)/4, 소수 위치면 인접 두 값 평균, 현행 통칙은 조문 MCP에서 확인). n=3·7·11은 같고 나머지는 범위가 같거나 넓음.
 
-계산 MCP는 숫자 추출·비교·사분위까지, 판단 기준·판례는 조문 MCP(korean-tax-mcp)로 나눔(도구 142개). Claude 작성.
+계산 MCP는 숫자 추출·비교·사분위까지, 판단 기준·판례는 조문 MCP(korean-tax-mcp)로 나눔. 판단 문장 10곳과 조문 조회 도구 1개도 조문 MCP로 넘김(도구 142 → 141). Claude 작성.
 
 - **사분위** — `quartile_method`: `nts`(기본)·`excel_inc`(`inclusive`도 같음)·`exclusive`·`us`(26 CFR §1.482-1(e)(2)(iii)(C)). 결과에 `사분위_방식`(방식·n·근거·조정점), `사분위_민감도`(통칙·엑셀 INC·미국식), `tp_comparable_screen` 민감도에 다른 두 방식.
 - **기준값 입력** — `rules` 키·단위·예시를 도구 설명에(조문 MCP가 그대로 넘길 수 있게). `사용_기준`·`적용_기준`에 값마다 법정·법정 준용·관행·우리 규칙 구분과 입력 여부. 법정 기준은 `rules`로 바꿀 수 없음. `tests/test_role_boundary_rules.py`가 선정 모듈에 관행 기준값 상수가 다시 생기면 실패.
@@ -16,6 +16,17 @@
 - **프로필 비교 항목** — 판관비/매출(`sga_ratio`), 품목 키워드(`product_keywords` ↔ 후보 사업 설명 `business_desc`·매출 행), 기능 질문(`own_marketing`·`bears_inventory_risk`), 재고·유형자산·원재료 조합 사유 코드(K1~K5).
 - **특수관계·지분 추출** — 감사보고서 특수관계자 주석의 매입 비중(`related_purchase_ratio`), 임원 겸직·지배기업·자금·기업집단·사용료 문장(`control_signals`, 표시만), 비상장 주주 현황·지배기업 지분율(`owner_pct`, 근거 문장). 비상장 지분은 지분만으로 제외하지 않고 사람 확인. 실질 지배 질문을 사람 확인 목록에. "법정 특수관계 판정 아님 — 판단은 조문 MCP".
 - **경고·서식 칸** — 표본·편차 경고(`screens.sample_min`·`spread_ratio`, 표시만), 운전자본 조정 한계 문구, 운전자본 조정 시 조정 전 범위·회사별 조정 전후 값·적용 쪽(Ⅱ-13), 부록 재무 요약의 행별 접수번호·연결/별도·회계기준·수집 기준 시점과 사람 판단 목록(Ⅱ-12), 지표·분석대상 선정 이유(Ⅱ-8·Ⅱ-9, `tested_party.pli_reason`·`selection_reason`). 민감도의 "운전자본 조정 5%(예시 금리)" 시나리오는 뺌(고정 금리).
+
+**판단 문장·조문 조회 도구를 조문 MCP로 이동**
+
+판단 문장과 조문 조회 도구 1개를 조문 MCP(korean-tax-mcp)로 넘김 — 계산 MCP는 계산만. 계산 결과 숫자는 그대로(기록된 호출 1,388건 전후 대조, 금액 변화 0). 도구 141개. Claude 작성.
+
+- **도구 제거 `related_provision_at`**(기준일의 특수관계 조문 위치·원문 조회) — 조문 MCP `find_article(keyword='특수관계인의 범위', law_name=시행령, as_of=기준일)`·`law_article(as_of)`로 같은 일을 함(법인세법 시행령 2019.2.12. 이후는 keyword='법 제2조제12호'). `related_judge`의 '적용조문'이 쓰는 내부 함수 `cite_at`은 그대로이고, 고정 이동표 회귀 테스트는 함수로 직접 검증. 도구 수 142 → 141(README·README-EN·llms.txt·server.json·pyproject, 도구 수 테스트).
+- **판단 문장 줄임** — "무엇이 숫자를 바꾸는지" 한 줄 + 판단 근거를 볼 조문 MCP 도구 이름:
+  - `sme_special_tax_reduction`·`sme_status` 위탁제조·위탁생산 업종: 결정례 문장을 빼고 `sme_tax_incentives_guide(industry='위탁제조')`의 '중소기업 특별세액감면' 업종 주의·업종 분류 주의 안내(같은 내용이 이미 있음).
+  - `nonresident_withholding` 사용료 쟁점 '국내 미등록 특허': 판례 문장을 빼고 `royalty_withholding_guide` 안내(이미 있음).
+  - 어휘 '뇌물' 근거: 판례 대신 국세기본법 제45조의2제2항 + 조문 MCP `other_income_guide(income_item='뇌물')`.
+- **역할 경계 기준선**(tests/test_role_boundary.py) 낮춤: engine/calc_incentive.py 8 → 4, data/facts_vocab.json 1 → 0, engine/nonresident_issues.py 1 → 0.
 
 ## 0.60.1 (2026-11-17)
 

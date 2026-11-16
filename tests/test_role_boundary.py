@@ -13,13 +13,11 @@ CASE_NO = re.compile(r"[0-9]{2,4}(?:두|구합|누)[0-9]{2,6}|조심[0-9]{4}[가
 # 0.60.0 기준선(파일별 판례 번호 개수). 늘리지 말 것 — 판단은 조문 MCP로.
 BASELINE = {
     "server.py": 7,
-    "data/facts_vocab.json": 1,
-    "engine/calc_incentive.py": 8,
+    "engine/calc_incentive.py": 4,   # 0.60.0 8 → 위탁제조 결정례를 조문 MCP sme_tax_incentives_guide로 안내해 4
     "engine/calc_vat.py": 9,
     "engine/calc_nominee.py": 2,
-    "engine/nonresident_issues.py": 1,
     "engine/calc_tax_priority.py": 3,
-}
+}   # data/facts_vocab.json·engine/nonresident_issues.py는 0(조문 MCP other_income_guide·royalty_withholding_guide)
 
 
 def _counts():

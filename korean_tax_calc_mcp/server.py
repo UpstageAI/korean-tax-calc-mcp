@@ -4704,12 +4704,12 @@ def earned_income_gross_pay(year: YEAR,
     return _earned_income_gross_pay_impl(year, items)
 
 
-# ───────── 세무조사 판정 도구 11개 ─────────
+# ───────── 세무조사 판정 도구 10개 ─────────
 @mcp.tool(annotations=CALC_OPEN, description="""Related party test between two persons under national tax, corporate tax and gift tax acts (특수관계 판정).
 두 당사자의 특수관계 여부·호수를 국세기본법·법인세법·상증법 기준으로 판정한다. 언제: 세무조사·증여의제 검토에서 두 사람·법인 간 특수관계와 적용 호수를 확인할 때.
 입력: 당사자 a(이름) → a, 당사자 b(이름) → b, 사실관계 시점(YYYY-MM-DD, 필수) → on, people={이름: {구분: "개인"|"법인"}} → people, family=[[a, b, "부모자녀"|"배우자"]] → family, stakes=[[보유자, 법인, 지분율(0~1)]] → stakes, officers={법인: [이름]} → officers, employees={법인: [이름]} → employees, livelihood=[[부양자, 피부양자]] → livelihood, 생계를 함께하는 친족 사실관계 [{친족, 상대방, 주민등록_동일세대, 동거_사실, 생활비_공동부담, 독립생계_소득, 경제적_지원, 별거_사유, 별도_임대차, 별거_증빙_유형, 연말정산_부양가족_등록, 수입_상대방계좌_입금, 혼인_독립가구}] → livelihood_shared, influence=[[사실상 영향력자, 법인]] → influence, group={기업집단: [계열회사]} → group, group_exempt={법인: 공정위 통지 내용} → group_exempt, 법령 인용 포함 여부 → with_citation.
 생계를 함께하는 친족(국기령 제1조의2제2항제3호, 법인령 제2조제8항제3호 — 2019.2.12.~2023.12.31. 제2조제5항제3호, 그 전 제87조제1항제3호): 전제는 상대방이 다른 당사자 본인의 임원·사용인(같은 법인 동료는 아님) 또는 생계유지자, 친족이 기준일 친족 범위(2023.3.1.부터 4촌 혈족·3촌 인척) 안. 1차 기준은 동거 불요·생활비 공동 부담: 생활비 공동부담, 무소득+정기송금, 수입이 상대방 계좌로 입금이면 생계 공동 / 안정 소득+따로 거주 또는 별도 세대+생활비 각자+지원 없음, 제3자 지원(금융자료), 혼인 독립 가구+주소 다름(소득 없으면 제외)이면 생계 별도 / 주민등록 동일세대는 객관 자료(진술서만은 안 됨)로 반증해야 하고, 동일세대+소득만·동거만·부양가족 공제 이력이면 생계 공동 추정(인정되는 증빙 안내) / 그 밖은 입력 확인 필요(확인할 항목·필요 자료). 상증법에는 이 항목 없음.
-결과: 특수관계 여부·적용 호수와 근거 조문(기준일 시행 법령 위치), 근거, 생계를_함께하는_친족(결론·사유·결정·해석 번호). 두 당사자의 특수관계 여부와 적용 호수를 국세기본법·법인세법·상증법 기준으로 판정한다(두 사람·법인 간 특수관계와 적용 호수 확인).""")
+결과: 특수관계 여부·적용 호수와 근거 조문(기준일 시행 법령 위치), 근거, 생계를_함께하는_친족(결론·사유·결정·해석 번호). 특수관계 조문의 기준일 위치·원문만 필요하면 조문 MCP(korean-tax-mcp) find_article(keyword='특수관계인의 범위', law_name=시행령, as_of=기준일)·law_article(as_of). 두 당사자의 특수관계 여부와 적용 호수를 국세기본법·법인세법·상증법 기준으로 판정한다(두 사람·법인 간 특수관계와 적용 호수 확인).""")
 @_guard
 def related_judge(a: Annotated[str, Field(description='당사자 a(이름)')], b: Annotated[str, Field(description='당사자 b(이름)')],
                   on: Annotated[str, Field(description='사실관계 시점 YYYY-MM-DD(필수, 친족 범위·조문 위치가 시점마다 다름)')],
@@ -4914,17 +4914,6 @@ def tunnelling_gift_nts(size: Annotated[str, Field(description="기업 규모('�
     if notes:
         r["주의"] = notes
     return r
-
-
-@mcp.tool(annotations=CALC_OPEN, description="""Related party provision location in effect on a given date for citation (특수관계인 범위 조문).
-특수관계인 범위 조문이 기준일에 어느 법령에 있었는지 확인. 언제: 특수관계 판정 결과를 근거로 인용할 때 해당 기준일 시행 조문의 위치를 확인한다.
-입력: 법령 구분(국기|법인|상증) → law, 기준일(YYYY-MM-DD) → on. 예: law='법인', on='2019-02-11' → 법인세 시행령 제87조제1항.
-결과: 법령명·조항·원문·기준일. 특수관계인 범위 조문이 기준일에 어디 있었는지 확인한다(law=국기|법인|상증).""")
-@_guard
-def related_provision_at(law: Annotated[str, Field(description="법령 구분('국기'|'법인'|'상증')")],
-                         on: Annotated[str, Field(description="기준일 YYYY-MM-DD")]) -> dict:
-    name, jo, head = _R.cite_at(law, on)
-    return {"법령": name, "조항": jo, "원문": head, "기준일": on}
 
 
 @mcp.tool(annotations=CALC_OPEN, description="""Relationship table extraction from shareholder, family and officer PDF documents (관계표 추출).
