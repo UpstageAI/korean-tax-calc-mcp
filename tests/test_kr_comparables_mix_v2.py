@@ -130,56 +130,69 @@ def test_solar_prompt_goods_only(monkeypatch, tmp_path):
     assert got[0][0] == "goods" and got[1][0] == "other"    # 5갈래 밖 답은 기타
 
 
-# ---------- 회사 맥락: '1. 사업의 개요' 절 전체(4,000자까지), 길면 앞 1,500자 + 회사가 주어인 문장 ----------
+# ---------- 회사 맥락: '1. 사업의 개요' 절(문장 + 표 행) 4,000자까지, 넘으면 회사 블록·회사 주어 문장·사업부문표 먼저 ----------
 FX = os.path.join(os.path.dirname(__file__), "data", "kr_comparables_fixtures")
 OV = {"혜인": "20250320001279", "제이씨현시스템": "20250312000813", "정원엔시스": "20250317000308", "카스": "20250321001962",
-      "케이사인": "20250317000254", "데이타솔루션": "20250312000588", "웹케시": "20250314001644"}
+      "케이사인": "20250317000254", "데이타솔루션": "20250312000588", "웹케시": "20250314001644",
+      "한글과컴퓨터": "20250319000886", "세중": "20250321001670"}
+
+
+def _ov(name):
+    return C._overview(open(os.path.join(FX, f"overview_{OV[name]}.xml"), encoding="utf-8").read())
 
 
 def _ctx(name):
-    return C._context(open(os.path.join(FX, f"overview_{OV[name]}.xml"), encoding="utf-8").read(), True)
+    return _ov(name)["ctx"]
 
 
 @pytest.mark.parametrize("name,phrases", [
     ("혜인", ["공식 딜러쉽 계약", "공급하고 있습니다"]),
-    ("제이씨현시스템", ["IT제품 등을 판매, 리스"]),
-    ("정원엔시스", ["제조사로부터 IT 관련 H/W 및 S/W 물품을 공급받아", "유통", "총판사"]),      # '총판사'는 뒤쪽 단락
-    ("웹케시", ["B2B 핀테크 서비스 제공 기업"]),                                            # 서비스 회사 — 단어 목록이 아니라 절 전체라 들어감
+    ("제이씨현시스템", ["IT제품 등을 판매, 리스", "IT제품 판매 | 제이씨현시스템㈜ | 컴퓨터기기, 통합배선솔루션, 드론, VR기기 판매 및 리스사업 | 216,364 | 92.04%"]),
+    ("정원엔시스", ["제조사로부터 IT 관련 H/W 및 S/W 물품을 공급받아", "유통", "총판사"]),       # '총판사'는 뒤쪽 단락
+    ("웹케시", ["B2B 핀테크 서비스 제공 기업"]),                                             # 서비스 회사
+    ("한글과컴퓨터", ["SW | 제품/상품/기타", "171,209", "제조 | 제품/상품 | 소방용호흡기", "103,702"]),   # 제조 부문 행
+    ("세중", ["PLM사업부는 Siemens PLM Software의 총판"]),                                    # 업계 현황뿐인 절에서 회사 설명 문장
+    ("카스", ["카스는 각국의 인증"]),
+    ("케이사인", ["당사는 아래의 사업을 영위"]),
+    ("데이타솔루션", ["당사는 통계분석 S/W 사업, 스토리지 사업, SI 사업을 영위"]),
 ])
-def test_context_keeps_function_sentences(name, phrases):
-    c = _ctx(name)
-    assert 0 < len(c) <= 4000
+def test_context_keeps_company_and_segment_info(name, phrases):
+    ov = _ov(name)
+    c = ov["ctx"]
+    assert 0 < len(c) <= C.CTX_MAX and ov["problems"] == [], (name, ov["problems"])
     for ph in phrases:
         assert ph in c, (name, ph)
-    assert "참고하시기" not in c and "참조하시기" not in c
+    assert "참고하시기" not in c and "참조하시기" not in c and "SECTION" not in c
 
 
-@pytest.mark.parametrize("name,start,company", [
-    ("카스", "가. 업계의 현황", "카스는 각국의 인증"),
-    ("케이사인", "가. 업계의 현황", "당사는 아래의 사업을 영위"),
-    ("데이타솔루션", "가. 시장의 현황", "당사는 통계분석 S/W 사업, 스토리지 사업, SI 사업을 영위"),
-])
-def test_context_reaches_company_sentences_after_industry_intro(name, start, company):
-    c = _ctx(name)
-    assert c.startswith(start) and company in c and len(c) <= 4000
+def test_long_section_puts_company_first_and_never_cuts_sentence():
+    ov = _ov("데이타솔루션")                       # 앞 3,800자가 IT 시장 연혁인 절
+    c = ov["ctx"]
+    assert ov["truncated"] and c.startswith("당사는 통계분석") and len(c) <= C.CTX_MAX
+    assert re.search(r"(다|음|함)\.$", c.split("\n")[-1]) or " | " in c.split("\n")[-1]
+    assert "물적분할" in c                          # '나. 회사의 현황' 블록의 회사 설명
 
 
-def test_long_section_head_plus_company_subject_sentences():
-    c = _ctx("데이타솔루션")                       # 절이 4,000자를 넘는 경우
-    head, rest = c.split(" … ", 1)
-    assert len(head) == C.CTX_HEAD and len(c) <= C.CTX_MAX
-    sents = C._sentences(rest)
-    assert sents
-    for sent in sents:
-        assert re.search(r"당사|회사|데이타솔루션", sent[:60]), sent[:60]
-
-
-def test_context_drops_numeric_rows_and_guidance():
+def test_table_rows_kept_only_numeric_rows_dropped():
     doc = ("<DOCUMENT><TITLE>1. 사업의 개요</TITLE><P>당사는 계측기를 수입해 판매합니다. 자세한 내용은 '2. 주요 제품'을 참고하시기 바랍니다.</P>"
-           "<TABLE><TR><TD>구분</TD><TD>2024년</TD></TR><TR><TD>매출</TD><TD>1,234,567</TD></TR><TR><TD>사업부문</TD><TD>계측기 유통</TD></TR></TABLE>"
-           "<TITLE>2. 주요 제품</TITLE></DOCUMENT>")
-    c = C._context(doc, True)
-    assert "수입해 판매" in c and "계측기 유통" in c and "1,234,567" not in c and "참고하시기" not in c
+           "<TABLE><TR><TD>사업부문</TD><TD>매출액</TD><TD>비중</TD></TR><TR><TD>계측기 유통</TD><TD>1,234,567</TD><TD>90.1%</TD></TR>"
+           "<TR><TD>1,234,567</TD><TD>90.1%</TD></TR></TABLE><TITLE>2. 주요 제품</TITLE></DOCUMENT>")
+    ov = C._overview(doc)
+    c = ov["ctx"]
+    assert "수입해 판매" in c and "계측기 유통 | 1,234,567 | 90.1%" in c and "참고하시기" not in c
+    assert c.count("1,234,567") == 1 and ov["problems"] == []      # 라벨 없는 숫자 행만 빠짐
+
+
+def test_checks_catch_old_defects():
+    """고친 검사가 예전 규칙의 결함을 잡는지 — 사업부문표 손실·회사 설명 빠짐·문장 중간 잘림."""
+    jc = _ov("제이씨현시스템")
+    old_ctx = jc["ctx"].replace("IT제품 판매 | 제이씨현시스템㈜ | 컴퓨터기기, 통합배선솔루션, 드론, VR기기 판매 및 리스사업 | 216,364 | 92.04% | -\n", "")
+    seg = [("IT제품 판매", "216,364")]
+    assert any("사업부문표 손실" in x for x in C.overview_problems(old_ctx, jc["raw"], "제이씨현시스템", seg))
+    sj = _ov("세중")
+    head_only = sj["raw"][:1500]
+    probs = C.overview_problems(head_only, sj["raw"], "세중", [], True)
+    assert any("회사 설명 빠짐" in x for x in probs) and any("문장 중간" in x for x in probs)
 
 
 def test_context_sent_to_model(monkeypatch, tmp_path):

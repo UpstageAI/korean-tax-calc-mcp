@@ -218,34 +218,64 @@ def _max_shareholder(h):
 
 
 CTX_SKIP = re.compile(r"참고하시기|참조하시기|참고\s*바랍니다|참조\s*바랍니다|을\s*참고|를\s*참고|을\s*참조|를\s*참조|목\s*차|기재하였습니다|기재되어\s*있습니다")
-CTX_MAX, CTX_HEAD = 4000, 1500
-_NUMCELL = re.compile(r"^[\s\d,.()%△\-－+]*$")
+CTX_MAX = 4000
 
 
 def _sentences(text):
     return [x.strip() for x in re.split(r"(?<=[다요])\.\s*|(?<=니다)\s+(?=[가-힣A-Z(])", text) if len(x.strip()) >= 8]
 
 
-def _plain_section(sec):
-    """절 HTML → 글. 숫자가 대부분인 표 행은 뺀다(설명 글이 든 표 행은 남김)."""
-    def tr(m):
-        cells = [re.sub(r"<[^>]+>", " ", c).strip() for c in re.findall(r"<T[DEHU][^>]*>(.*?)</T[DEHU]>", m.group(0), re.S)]
-        cells = [c for c in cells if c]
-        num = sum(1 for c in cells if _NUMCELL.match(c))
-        return " " if cells and num * 2 >= len(cells) else " " + " ".join(cells) + " "
-    sec = re.sub(r"<TITLE[^>]*>.*?</TITLE>", " ", sec, flags=re.S)
-    sec = re.sub(r"<TR[^>]*>.*?</TR>", tr, sec, flags=re.S)
-    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", sec)).replace("&nbsp;", " ").strip()
-
-
 def _company_core(name):
     return re.sub(r"\(주\)|㈜|주식회사|\s", "", name or "")
 
 
+IND_HEAD = re.compile(r"업계|시장|산업")
+CO_HEAD = re.compile(r"회사의\s*현황|회사\s*현황|사업의\s*개황|영업\s*개황|사업\s*부문|회사의\s*개요|당사의|회사의\s*개황|사업\s*현황|영업\s*현황|회사의\s*사업")
+TOP_HEAD = re.compile(r"^\s*([가-하])\s*\.\s*")
+
+
+def _units(sec):
+    """절 HTML → 단위 목록 [{'t': 글, 'kind': 'sent'|'row', 'block': 'industry'|'company'|'other'}] (문서 순서).
+    표는 행마다 '셀 | 셀'로 남기고, 라벨 칸 없이 숫자만 있는 행만 뺀다. '가. 업계의 현황' 같은 소제목으로 블록을 나눈다."""
+    sec = re.sub(r"<TITLE[^>]*>.*?</TITLE>", " ", sec, flags=re.S)
+    units, block = [], "other"
+    for m in re.finditer(r"<TABLE[^>]*>.*?</TABLE>|<P[^>]*>.*?</P>|<[^>]+>|[^<]+", sec, re.S):
+        piece = m.group(0)
+        if piece.startswith("<") and not piece.startswith(("<TABLE", "<P")):
+            continue                              # 그 밖의 태그(SECTION·IMG 등)는 건너뜀
+        if piece.startswith("<TABLE"):
+            for tr in re.findall(r"<TR[^>]*>(.*?)</TR>", piece, re.S):
+                cells = [re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", c)).replace("&nbsp;", " ").strip()
+                         for c in re.findall(r"<T[DEHU][^>]*>(.*?)</T[DEHU]>", tr, re.S)]
+                cells = [c for c in cells if c]
+                if cells and any(re.search(r"[가-힣A-Za-z]", c) for c in cells):
+                    units.append({"t": " | ".join(cells), "kind": "row", "block": block})
+            continue
+        text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", piece)).replace("&nbsp;", " ").strip()
+        if not text:
+            continue
+        mh = TOP_HEAD.match(text)
+        if mh:
+            title = text[mh.end(): mh.end() + 25]
+            block = "industry" if IND_HEAD.search(title) else ("company" if CO_HEAD.search(title) else "other")
+        if len(text) < 60 and not re.search(r"(다|음|함|요|됨|임)\.?$", text):
+            units.append({"t": text, "kind": "head", "block": block})   # 소제목 줄
+            continue
+        for x in _sentences(text):
+            if CTX_SKIP.search(x):
+                continue
+            if len(x) < 30 and not re.search(r"(다|음|함|요|됨|임)\.?$", x):
+                units.append({"t": x, "kind": "head", "block": block})   # 문단 안에 붙은 소제목 조각('나. 조직도' 등)
+                continue
+            x = x if re.search(r"[.!?]$", x) else (x + "." if re.search(r"(다|음|함|요|됨|임)$", x) else x)
+            units.append({"t": x, "kind": "sent", "block": block})
+    return units
+
+
 def _overview(s, name=None):
     """사업보고서 '1. 사업의 개요' 추출 + 검사. 반환 {'ctx', 'raw', 'truncated', 'problems'}.
-    ctx: 절 전체(목차·'~ 참고' 안내 문장·숫자 표 행 제외) 4,000자까지, 더 길면 앞 1,500자 + 회사가 주어인 문장('당사는'·'회사는'·'연결회사'·회사명).
-    raw: 원문 절 글(태그만 뺌) — 사람 대조·검사용."""
+    ctx: 절의 문장과 표 행('셀 | 셀', 숫자만 있는 행 제외)을 4,000자까지 문서 순서대로. 넘으면 회사 블록('회사의 현황'·'영업개황'·'사업부문' 등)·
+    회사가 주어인 문장·사업부문표 행을 먼저 채우고, 남는 자리에 업계·시장 현황 블록 앞부분을 채운다. 문장·행 중간에서 자르지 않는다."""
     secs = F_title_sections(s)
     sec = next((s[a:b] for a, b, t in secs if re.match(r"^\s*1\s*\.\s*(\([^)]*\))?\s*사업의\s*개요", t)), None)
     if sec is None:
@@ -255,44 +285,93 @@ def _overview(s, name=None):
         end = re.search(r"<TITLE[^>]*>\s*2\s*\.\s*주요\s*제품", s[m.end():])
         sec = s[m.end(): m.end() + (end.start() if end else 30000)]
     raw = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", re.sub(r"<TITLE[^>]*>.*?</TITLE>", " ", sec, flags=re.S))).replace("&nbsp;", " ").strip()
-    sents = [x for x in _sentences(_plain_section(sec)) if not CTX_SKIP.search(x)]
-    text = ". ".join(sents)
     core = _company_core(name or (re.search(r"<COMPANY-NAME[^>]*>(.*?)</COMPANY-NAME>", s[:20000]) or [None, ""])[1])
-    truncated = len(text) > CTX_MAX
+    units = _units(sec)
+    total = sum(len(u["t"]) + 1 for u in units)
+    truncated = total > CTX_MAX
     if not truncated:
-        ctx = text
+        keep = list(range(len(units)))
     else:
-        head = text[:CTX_HEAD]
-        # 문장 앞 60자 안(앞의 '나. 회사의 현황 (1) 영업개황' 같은 소제목 뒤)에 회사가 주어로 나오는 문장
-        subj = re.compile(r"(당사는|당사의|당사가|회사는|연결회사|연결실체|" + (re.escape(core) + r"(는|은|의|가)" if core else "_없음_") + r")")
-        out, n, consumed = [], len(head), 0
-        for x in sents:
-            consumed += len(x) + 2
-            if consumed <= CTX_HEAD:
+        subj = re.compile(SUBJ + ("|" + re.escape(core) if core else ""))
+        seg = re.compile(r"\d{1,3}(,\d{3})+|\d+(\.\d+)?\s*%")
+        prio = [k for k, u in enumerate(units) if u["block"] != "industry" or subj.search(u["t"]) or (u["kind"] == "row" and seg.search(u["t"]))]
+        keep, n = [], 0
+        for k in prio:
+            L = len(units[k]["t"]) + 1
+            if n + L <= CTX_MAX:
+                keep.append(k)
+                n += L
+        for k, u in enumerate(units):          # 남는 자리에 업계·시장 현황 앞부분(이어진 앞쪽만)
+            if k in keep or u["block"] != "industry":
                 continue
-            if subj.search(x[:60]):
-                if n + len(x) + 2 > CTX_MAX:
-                    break
-                out.append(x)
-                n += len(x) + 2
-        ctx = head + (" … " + ". ".join(out) if out else "")
-    return {"ctx": ctx, "raw": raw, "truncated": truncated, "problems": overview_problems(ctx, raw, core)}
+            L = len(u["t"]) + 1
+            if n + L > CTX_MAX:
+                break
+            keep.append(k)
+            n += L
+        keep.sort()
+    # 뒤에 붙은 내용이 없는 소제목(맨 끝·건너뛴 단위 앞)은 뺀다
+    kept, nxt_ok = [], False                # 뒤에서부터: 바로 뒤에 내용(문장·표 행)이 이어지는 소제목만 남김
+    for i in range(len(keep) - 1, -1, -1):
+        k = keep[i]
+        if units[k]["kind"] == "head":
+            follows = i + 1 < len(keep) and keep[i + 1] == k + 1 and nxt_ok
+            if follows:
+                kept.append(k)
+            nxt_ok = follows
+        else:
+            kept.append(k)
+            nxt_ok = True
+    keep = kept[::-1]
+    out, prev = [], None
+    for k in keep:
+        u = units[k]
+        sep = "\n" if (u["kind"] == "row" or prev == "row") else " "
+        out.append(("" if not out else sep) + u["t"])
+        prev = u["kind"]
+    ctx = "".join(out).strip()
+    return {"ctx": ctx, "raw": raw, "truncated": truncated, "problems": overview_problems(ctx, raw, core, _segment_rows(sec), truncated)}
 
 
-def overview_problems(ctx, raw, core=""):
+def _segment_rows(sec):
+    """원문 절의 사업부문·매출 표 행 — 라벨 칸이 있고 금액 또는 비중(%) 칸이 있는 행 → [(라벨, 금액·비중 글자)]."""
+    out = []
+    for tb in re.findall(r"<TABLE[^>]*>(.*?)</TABLE>", sec, re.S):
+        head = re.sub(r"\s", "", re.sub(r"<[^>]+>", " ", tb[:3000]))
+        if not re.search(r"매출|비중|비율|금액", head):
+            continue
+        for tr in re.findall(r"<TR[^>]*>(.*?)</TR>", tb, re.S):
+            cells = [re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", c)).strip() for c in re.findall(r"<T[DEHU][^>]*>(.*?)</T[DEHU]>", tr, re.S)]
+            lab = next((c for c in cells if re.search(r"[가-힣A-Za-z]", c)), None)
+            num = next((c for c in cells if re.match(r"^\(?-?\d{1,3}(,\d{3})+\)?$|^\d+(\.\d+)?\s*%$", c)), None)
+            if lab and num and not re.search(r"합\s*계|소\s*계|^계$", lab):
+                out.append((lab, num))
+    return out
+
+
+SUBJ = r"(당사는|당사의|당사가|당사\s|회사는|연결회사|지배회사|연결실체|사업부(문)?(는|은|에서))"
+
+
+def overview_problems(ctx, raw, core="", seg_rows=None, truncated=True):
     """추출 실패 유형 자동 검사."""
     p = []
     if re.search(r"[·.‥…ㆍ]{6,}|-{6,}", ctx) or re.search(r"목\s*차", ctx[:200]):
         p.append("목차를 잡음(점선·쪽 번호)")
-    if len(ctx) < 200 and len(raw) >= len(ctx) + 200:
-        p.append(f"추출 {len(ctx)}자 < 200자인데 원문 절은 {len(raw)}자")
     if not ctx:
         p.append("추출 결과 없음")
+    elif len(ctx) < 200 and len(raw) >= len(ctx) + 200:
+        p.append(f"추출 {len(ctx)}자 < 200자인데 원문 절은 {len(raw)}자")
     if re.search(r"(^|\s)[2-9]\s*\.\s*(주요\s*제품|원재료|생산\s*및\s*설비|매출\s*및\s*수주|위험\s*관리|주요\s*계약|연구\s*개발\s*활동|기타\s*참고)", ctx):
         p.append("다른 절까지 넘어감('2. 주요 제품' 등)")
-    who = r"당사|지배회사|연결회사|연결실체|회사는" + ("|" + re.escape(core) if core else "")
-    if re.search(who, raw) and not re.search(who, ctx):
-        p.append("회사(지배회사) 설명 문장이 빠짐")
+    subj = re.compile(SUBJ + ("|" + re.escape(core) if core else ""))
+    if ctx and not subj.search(ctx):
+        p.append("회사 설명 빠짐(회사가 주어인 문장 0개)")
+    miss = [lab for lab, num in (seg_rows or []) if num not in ctx]
+    if miss:
+        p.append("사업부문표 손실(" + ", ".join(m[:20] for m in miss[:4]) + ")")
+    last = ctx.rstrip().split("\n")[-1] if ctx else ""
+    if ctx and truncated and " | " not in last and not re.search(r"(다|음|함|요|됨|임|니다)\.?\)?$", last):
+        p.append("문장 중간에서 잘림")
     body = re.sub(r"\s", "", ctx)
     if body and sum(ch.isdigit() or ch in ",.%()" for ch in body) / len(body) > 0.4:
         p.append("표 숫자만 남음")
