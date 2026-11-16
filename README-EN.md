@@ -10,9 +10,9 @@
 
 **Korean tax calculations for AI agents — code, not guesses.**
 
-AI models often get tax arithmetic wrong. This server computes Korean corporate, income, VAT, withholding, international, inheritance and gift tax — and the tax adjustments behind them — in code, and attaches the statutory basis to every result. 140 tools, rate and limit tables for 2016–2026; for a year without a table it stops instead of guessing. It covers foreign companies, expats and Korean subsidiaries (foreign worker flat tax, non-resident withholding, branch profits tax, exit tax and more). Ask in English: every tool description starts with an English line, and `find_tool` takes English queries. Results can be exported to a review workbook laid out as the statutory forms.
+AI models often get tax arithmetic wrong. This server computes Korean corporate, income, VAT, withholding, international, inheritance and gift tax — and the tax adjustments behind them — in code, and attaches the statutory basis to every result. 142 tools, rate and limit tables for 2016–2026; for a year without a table it stops instead of guessing. It covers foreign companies, expats and Korean subsidiaries (foreign worker flat tax, non-resident withholding, branch profits tax, exit tax and more). Ask in English: every tool description starts with an English line, and `find_tool` takes English queries. Results can be exported to a review workbook laid out as the statutory forms.
 
-> Not tax advice. Results show sources and computations for review; confirm filings and appeals with a tax professional. Only the 3 PDF tools use generative AI, and their results say so — [full notices](#disclaimer)
+> Not tax advice. Results show sources and computations for review; confirm filings and appeals with a tax professional. Only the 3 PDF tools and the optional revenue-row classification in the Korean comparable candidates tool use generative AI, and their results say so — [full notices](#disclaimer)
 
 ## Install
 
@@ -77,9 +77,9 @@ If you do not know which tool to use, ask `find_tool` in plain words.
 
 [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp) is the companion server for statutes, addenda, rulings and cases. With both installed, "find the basis → compute → fill the form" runs in one conversation, and this server's `find_tool` returns ready-to-call statute lookups for questions it has no calculator for (rent tax credit, pension-account credit, stock gains …).
 
-To pick up a new release right away: `uvx --refresh korean-tax-calc-mcp` (uvx caches the downloaded version). Pin with `uvx korean-tax-calc-mcp@0.59.1`.
+To pick up a new release right away: `uvx --refresh korean-tax-calc-mcp` (uvx caches the downloaded version). Pin with `uvx korean-tax-calc-mcp@0.60.0`.
 
-Optional keys: `LAW_OC` (law.go.kr lookups in two audit tools), `UPSTAGE_API_KEY` (PDF table extraction), `VWORLD_KEY` (official property price lookup).
+Optional keys: `LAW_OC` (law.go.kr lookups in two audit tools), `UPSTAGE_API_KEY` (PDF table extraction, filing revenue-row classification), `VWORLD_KEY` (official property price lookup), `DART_API_KEY` (Korean comparable candidates — your own free key from [OpenDART](https://opendart.fss.or.kr); the terms allow only the key holder to use it; without it only that tool is off).
 
 </details>
 
@@ -105,7 +105,7 @@ Optional keys: `LAW_OC` (law.go.kr lookups in two audit tools), `UPSTAGE_API_KEY
 
 Requirements and year-specific judgments (credit eligibility, arm's-length methods, permanent establishment) belong to the companion server [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp). This server computes from amounts that meet the requirements and points to the statute check in its output.
 
-Of the 140 tools, the 137 other than the 3 PDF tools run in code without generative AI; two of them (price lookups) only fetch public data from KRX and VWORLD. The 3 PDF tools use Upstage only when `UPSTAGE_API_KEY` is set.
+Of the 142 tools, the 138 other than the 3 PDF tools and the Korean comparable candidates tool run in code without generative AI; two of them (price lookups) only fetch public data from KRX and VWORLD. The 3 PDF tools and the candidates tool use Upstage only when `UPSTAGE_API_KEY` is set (the candidates tool fetches OpenDART filings and, without the key, classifies revenue rows by name rules).
 
 </details>
 
@@ -165,7 +165,7 @@ Ask in English, get Korean statute-backed answers. Every tool description starts
 | Withholding on interest, dividends, royalties or services paid to a nonresident or foreign company | `nonresident_withholding` |
 | Reverse-charge VAT on services bought from a foreign business | `vat_reverse_charge` |
 | Interest on loans from a foreign parent beyond the debt-equity limit | `thin_capitalization` |
-| Arm's length range, comparable screening, international transaction statement | `arm_length_range` · `tp_comparable_screen` · `international_transaction_statement` |
+| Arm's length range, comparable screening, Korean comparable candidates and profile comparison, international transaction statement | `arm_length_range` · `tp_comparable_screen` · `kr_comparable_candidates` · `kr_comparable_profile_compare` · `international_transaction_statement` |
 | Foreign tax credit (company / individual) | `foreign_tax_credit` · `individual_foreign_tax_credit` |
 | Dividends from a foreign subsidiary — exclusion vs. credit, including the 100% exclusion for dividends received in 2026 (RSTA Art. 23-2) | `foreign_subsidiary_dividend` |
 | Seconded employees — recharge with arm's length markup, deduction, overseas work exemption | `expat_cost_recharge` |
@@ -238,7 +238,7 @@ Form templates were built by checking cell layout against the official form PDFs
 </details>
 
 <details>
-<summary><b>All tools (140)</b></summary>
+<summary><b>All tools (142)</b></summary>
 
 Click a group to expand its tools.
 
@@ -270,7 +270,7 @@ Click a group to expand its tools.
 
 </details>
 <details>
-<summary><b>International tax and cross-border</b> (18)</summary>
+<summary><b>International tax and cross-border</b> (20)</summary>
 
 | Tool | What it does |
 |---|---|
@@ -280,6 +280,8 @@ Click a group to expand its tools.
 | `thin_capitalization` | thin capitalization |
 | `arm_length_range` | Arm's length range and adjustment — interquartile/full range, median, whether the tested value is inside, adjustment amount and direction (ITA Decree art.15(5)(6)). Whether the tested party is domestic or foreign is required |
 | `tp_comparable_screen` | Comparable company screening — applies independence, data, industry, size, loss, R&D, advertising, related-party revenue, segment and special-situation screens plus human decisions (reason required) to a candidate list exported from a paid database (CSV/Excel); returns a per-company rejection matrix, final set, multi-year weighted PLI, interquartile range, sensitivity to screen choices and report annex tables. Statutory (50% related-party) vs. practice thresholds are labelled |
+| `kr_comparable_candidates` | Korean comparable candidates — collects candidates by industry code from OpenDART filings (financial API for listed companies, audit report originals for unlisted ones) and returns yearly financials plus a candidate profile (6-way revenue mix, inventory, raw material inventory, tangible/intangible assets, R&D, advertising, working capital, related-party revenue, largest shareholder) with evidence (filing number, account) and a status for every value (found / absent / not found). Candidate rows use the `tp_comparable_screen` input columns. Needs your own DART_API_KEY |
+| `kr_comparable_profile_compare` | Korean comparable profile comparison — compares the tested party's ratio profile with each candidate profile item by item (revenue mix, inventory, tangible assets, R&D, advertising) as close / different / unknown, splits candidates into include / human review / exclude, and returns the review list (reasons, evidence) and draft `tp_comparable_screen` manual_decisions for a person to confirm. Thresholds are adjustable defaults |
 | `international_transaction_statement` | International transaction statement (Enforcement Rule Form 16(A)) — per-related-party sales/purchase totals, loan balance × days and average, filing obligation and deadline (Act art. 16(2), Decree art. 36), accompanying forms |
 | `foreign_subsidiary_dividend` | foreign subsidiary dividend — exclusion vs foreign tax credit |
 | `foreign_subsidiary_liquidation` | Liquidation of a foreign subsidiary — deemed dividend or liquidation loss and the fiscal year of deduction (CITA art.16(1)4) |
@@ -575,8 +577,8 @@ If you build an agent with Anthropic's BM25 tool search (`tool_search_tool_bm25`
 
 - **Disclaimer:** Results are a review aid, not tax advice. Verify statutes and rulings with a tax accountant, CPA or attorney before filing, during a tax audit, or in appeals. Check the statute text and case law in the original source.
 - **Not a tax agent service:** This tool does not perform **tax agent services under Article 2 of the Certified Tax Accountant Act** (preparing tax adjustment statements, filing on behalf of a taxpayer, tax consultation); only certified tax accountants and registered CPAs or attorneys may do so (Article 20). It is software that turns statutory formulas into code and shows the computation for the inputs given; please verify the facts and make the final judgment together with a tax professional (tax accountant, CPA or attorney).
-- **AI use notice:** All computation, judgment and lookup tools other than the 3 PDF review tools run in code and do not use generative AI. The 3 PDF review tools (`extract_relations`, `tunnelling_from_pdf`, `return_precheck_pdf`) use generative AI (Upstage Solar Pro 4) when UPSTAGE_API_KEY is set, and mark that fact in their results. Without a key, they use pypdf for local text extraction (host_ai mode) and provide 정리 안내 (cleanup guidance) so the next tool input can be prepared manually.
-- **Data transmission:** Document content is sent to the Upstage API (api.upstage.ai) only when UPSTAGE_API_KEY is set and the PDF tools are used. The price lookups send only a ticker and date to KRX (`stock_price_lookup`) or an address, parcel number and year to VWORLD (`official_property_price`, needs VWORLD_KEY). Without a key (pypdf local extraction), no data is transmitted externally. Do not submit documents containing personal or sensitive information when using the API-based flow.
+- **AI use notice:** All computation, judgment and lookup tools other than the 3 PDF review tools and `kr_comparable_candidates` run in code and do not use generative AI. The 3 PDF review tools (`extract_relations`, `tunnelling_from_pdf`, `return_precheck_pdf`) use generative AI (Upstage Solar Pro 4) when UPSTAGE_API_KEY is set, and mark that fact in their results. Without a key, they use pypdf for local text extraction (host_ai mode) and provide 정리 안내 (cleanup guidance) so the next tool input can be prepared manually. `kr_comparable_candidates` sends only the row names of filing revenue tables and the filed business overview section (up to 4,000 characters; the company-overview note for unlisted companies) to generative AI (Upstage Solar Pro 4) when UPSTAGE_API_KEY is set, to classify rows as goods / services / software / platform / other (amounts stay as filed; product vs. merchandise is split by the filed cost-of-sales and inventory figures) and states the method in its result; without the key it classifies by name rules and marks the result as low accuracy.
+- **Data transmission:** Document content is sent to the Upstage API (api.upstage.ai) only when UPSTAGE_API_KEY is set and the PDF tools are used. The price lookups send only a ticker and date to KRX (`stock_price_lookup`) or an address, parcel number and year to VWORLD (`official_property_price`, needs VWORLD_KEY). The Korean comparable candidates tool (`kr_comparable_candidates`, needs DART_API_KEY) sends company codes, years and filing numbers to OpenDART, and, when UPSTAGE_API_KEY is set, revenue-row names (no amounts) and the filed business overview (up to 4,000 characters) to Upstage. Without a key (pypdf local extraction), no data is transmitted externally. Do not submit documents containing personal or sensitive information when using the API-based flow.
 
 </details>
 

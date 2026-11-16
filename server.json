@@ -2,17 +2,17 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.UpstageAI/korean-tax-calc-mcp",
   "title": "Korea Tax Calculator",
-  "description": "Korean tax calculator (140 tools, statute-cited): CIT, VAT, withholding, expats, transfer pricing",
+  "description": "Korean tax calculator (142 tools, statute-cited): CIT, VAT, withholding, expats, transfer pricing",
   "repository": {
     "url": "https://github.com/UpstageAI/korean-tax-calc-mcp",
     "source": "github"
   },
-  "version": "0.59.1",
+  "version": "0.60.0",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "korean-tax-calc-mcp",
-      "version": "0.59.1",
+      "version": "0.60.0",
       "transport": {
         "type": "stdio"
       }

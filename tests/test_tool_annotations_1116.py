@@ -8,6 +8,7 @@ OPEN_WORLD = {
     "stock_price_lookup", "official_property_price",          # 시세·공시가격 조회
     "related_judge", "related_provision_at",                  # LAW_OC가 있으면 법제처 조회
     "extract_relations", "tunnelling_from_pdf", "return_precheck_pdf",  # UPSTAGE_API_KEY가 있으면 문서 추출 API
+    "kr_comparable_candidates",                               # OpenDART 공시(본인 키) + 선택 Upstage 분류
 }
 
 

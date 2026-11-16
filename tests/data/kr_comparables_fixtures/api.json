@@ -1,0 +1,2540 @@
+{
+"company": {
+"00879020": {
+"status": "000",
+"message": "정상",
+"corp_code": "00879020",
+"corp_name": "(주)유니트론텍",
+"stock_code": "142210",
+"corp_cls": "K",
+"induty_code": "46522"
+},
+"00787057": {
+"status": "000",
+"message": "정상",
+"corp_code": "00787057",
+"corp_name": "(주)휴맥스",
+"stock_code": "115160",
+"corp_cls": "K",
+"induty_code": "465"
+},
+"00396925": {
+"status": "000",
+"message": "정상",
+"corp_code": "00396925",
+"corp_name": "(주)엠로",
+"stock_code": "058970",
+"corp_cls": "K",
+"induty_code": "582"
+},
+"01738562": {
+"status": "000",
+"message": "정상",
+"corp_code": "01738562",
+"corp_name": "상신코퍼레이션유한회사",
+"stock_code": "",
+"corp_cls": "E",
+"induty_code": "4610"
+},
+"01446537": {
+"status": "000",
+"message": "정상",
+"corp_code": "01446537",
+"corp_name": "애보트메디칼코리아 유한회사",
+"stock_code": "",
+"corp_cls": "E",
+"induty_code": "46442"
+},
+"01464597": {
+"status": "000",
+"message": "정상",
+"corp_code": "01464597",
+"corp_name": "주식회사 케이엘페트로",
+"stock_code": "",
+"corp_cls": "E",
+"induty_code": "46712"
+}
+},
+"fnltt": {
+"00879020_2024_OFS": {
+"status": "000",
+"message": "정상",
+"list": [
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_Assets",
+"account_nm": "자산총계",
+"thstrm_amount": "268394737025"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_CurrentAssets",
+"account_nm": "유동자산",
+"thstrm_amount": "215869233943"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_CashAndCashEquivalents",
+"account_nm": "현금및현금성자산",
+"thstrm_amount": "30140704454"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_Inventories",
+"account_nm": "재고자산",
+"thstrm_amount": "92985048289"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_NoncurrentAssetsOrDisposalGroupsClassifiedAsHeldForSaleOrAsHeldForDistributionToOwners",
+"account_nm": "매각예정자산",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_OtherCurrentAssets",
+"account_nm": "기타자산",
+"thstrm_amount": "15095087390"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_OtherCurrentFinancialAssets",
+"account_nm": "기타금융자산",
+"thstrm_amount": "14862060772"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_TradeAndOtherCurrentReceivables",
+"account_nm": "매출채권",
+"thstrm_amount": "62786333038"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_NoncurrentAssets",
+"account_nm": "비유동자산",
+"thstrm_amount": "52525503082"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_DeferredTaxAssets",
+"account_nm": "이연법인세자산",
+"thstrm_amount": "1378765599"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_IntangibleAssetsOtherThanGoodwill",
+"account_nm": "무형자산",
+"thstrm_amount": "963376673"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_InvestmentProperty",
+"account_nm": "투자부동산",
+"thstrm_amount": "2716561468"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_InvestmentsInSubsidiariesJointVenturesAndAssociates",
+"account_nm": "관계 및 공동기업 투자자산",
+"thstrm_amount": "18617898380"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_OtherNoncurrentAssets",
+"account_nm": "기타자산",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_OtherNoncurrentFinancialAssets",
+"account_nm": "기타금융자산",
+"thstrm_amount": "28053809353"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_PropertyPlantAndEquipment",
+"account_nm": "유형자산",
+"thstrm_amount": "795091609"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "dart_CapitalSurplus",
+"account_nm": "주식발행초과금",
+"thstrm_amount": "28240765490"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "dart_ElementsOfOtherStockholdersEquity",
+"account_nm": "기타자본항목",
+"thstrm_amount": "-2208364732"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "dart_OtherComprehensiveIncomeLossAccumulatedAmount",
+"account_nm": "기타포괄손익누계액",
+"thstrm_amount": "-3131753475"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_Equity",
+"account_nm": "자본총계",
+"thstrm_amount": "124262101322"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_IssuedCapital",
+"account_nm": "자본금",
+"thstrm_amount": "9623046000"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_RetainedEarnings",
+"account_nm": "이익잉여금",
+"thstrm_amount": "91738408039"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_EquityAndLiabilities",
+"account_nm": "자본과부채총계",
+"thstrm_amount": "268394737025"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_CurrentLiabilities",
+"account_nm": "유동부채",
+"thstrm_amount": "107189658256"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "dart_CurrentPortionOfBonds",
+"account_nm": "유동성사채",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "dart_CurrentPortionOfConvertibleBonds",
+"account_nm": "유동성전환사채",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_CurrentLoansReceivedAndCurrentPortionOfNoncurrentLoansReceived",
+"account_nm": "차입금",
+"thstrm_amount": "66403475049"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_CurrentProvisions",
+"account_nm": "충당부채",
+"thstrm_amount": "185227395"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_CurrentTaxLiabilities",
+"account_nm": "당기법인세부채",
+"thstrm_amount": "4509802362"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_OtherCurrentFinancialLiabilities",
+"account_nm": "기타금융부채",
+"thstrm_amount": "7036786120"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_OtherCurrentLiabilities",
+"account_nm": "기타부채",
+"thstrm_amount": "1059389289"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_TradeAndOtherCurrentPayables",
+"account_nm": "매입채무",
+"thstrm_amount": "27994978041"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_Liabilities",
+"account_nm": "부채총계",
+"thstrm_amount": "144132635703"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_NoncurrentLiabilities",
+"account_nm": "비유동부채",
+"thstrm_amount": "36942977447"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "dart_BondsIssuedNominalValue",
+"account_nm": "사채",
+"thstrm_amount": "4993949637"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "dart_PostemploymentBenefitObligations",
+"account_nm": "순확정급여부채",
+"thstrm_amount": "1431401030"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_NoncurrentPortionOfNoncurrentLoansReceived",
+"account_nm": "차입금",
+"thstrm_amount": "29400000000"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_NoncurrentProvisions",
+"account_nm": "충당부채",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_OtherNoncurrentFinancialLiabilities",
+"account_nm": "기타금융부채",
+"thstrm_amount": "1117626780"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "dart_OperatingIncomeLoss",
+"account_nm": "영업이익",
+"thstrm_amount": "35538553246"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "dart_OtherGains",
+"account_nm": "기타수익",
+"thstrm_amount": "1119229413"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "dart_OtherLosses",
+"account_nm": "기타비용",
+"thstrm_amount": "248894787"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "dart_TotalSellingGeneralAdministrativeExpenses",
+"account_nm": "판매비와관리비",
+"thstrm_amount": "20494964013"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_ComprehensiveIncome",
+"account_nm": "연결총포괄손익",
+"thstrm_amount": "19635826969"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_CostOfSales",
+"account_nm": "매출원가",
+"thstrm_amount": "541234721241"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_BasicEarningsLossPerShare",
+"account_nm": "기본주당이익",
+"thstrm_amount": "1089"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_DilutedEarningsLossPerShare",
+"account_nm": "희석주당이익",
+"thstrm_amount": "1089"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_FinanceCosts",
+"account_nm": "금융비용",
+"thstrm_amount": "22659811854"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_FinanceIncome",
+"account_nm": "금융수익",
+"thstrm_amount": "20783609974"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_GrossProfit",
+"account_nm": "매출총이익",
+"thstrm_amount": "56033517259"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_IncomeTaxExpenseContinuingOperations",
+"account_nm": "법인세비용",
+"thstrm_amount": "6343045772"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_OtherComprehensiveIncome",
+"account_nm": "연결기타포괄손익",
+"thstrm_amount": "-964259766"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_OtherComprehensiveIncomeThatWillNotBeReclassifiedToProfitOrLossNetOfTax",
+"account_nm": "후속적으로 당기손익으로 재분류되지 않는 항목",
+"thstrm_amount": "-964259766"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "-표준계정코드 미사용-",
+"account_nm": "법인세효과",
+"thstrm_amount": "120527352"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "-표준계정코드 미사용-",
+"account_nm": "법인세효과",
+"thstrm_amount": "134251776"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_OtherComprehensiveIncomeNetOfTaxGainsLossesOnRemeasurementsOfDefinedBenefitPlans",
+"account_nm": "순확정급여부채의 재측정요소",
+"thstrm_amount": "-576685897"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_ShareOfOtherComprehensiveIncomeOfAssociatesAndJointVenturesAccountedForUsingEquityMethodThatWillNotBeReclassifiedToProfitOrLossNetOfTax",
+"account_nm": "기타포괄손익-공정가치금융자산평가손익",
+"thstrm_amount": "-642352997"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_OtherIncomeExpenseFromSubsidiariesJointlyControlledEntitiesAndAssociates",
+"account_nm": "종속,관계및공동기업 투자관련손익",
+"thstrm_amount": "-7589553485"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_ProfitLoss",
+"account_nm": "연결당기순이익(손실)",
+"thstrm_amount": "20600086735"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_ProfitLossBeforeTax",
+"account_nm": "법인세차감전순이익",
+"thstrm_amount": "26943132507"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_Revenue",
+"account_nm": "매출액",
+"thstrm_amount": "597268238500"
+}
+]
+},
+"00879020_2024_CFS": {
+"status": "000",
+"message": "정상",
+"list": [
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_Assets",
+"account_nm": "자산총계",
+"thstrm_amount": "311691091332"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_CurrentAssets",
+"account_nm": "유동자산",
+"thstrm_amount": "261645646966"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_CashAndCashEquivalents",
+"account_nm": "현금및현금성자산",
+"thstrm_amount": "39323220541"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_Inventories",
+"account_nm": "재고자산",
+"thstrm_amount": "100679561709"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_NoncurrentAssetsOrDisposalGroupsClassifiedAsHeldForSaleOrAsHeldForDistributionToOwners",
+"account_nm": "매각예정자산",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_OtherCurrentAssets",
+"account_nm": "기타자산",
+"thstrm_amount": "17793059459"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_OtherCurrentFinancialAssets",
+"account_nm": "기타금융자산",
+"thstrm_amount": "17353207845"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_TradeAndOtherCurrentReceivables",
+"account_nm": "매출채권",
+"thstrm_amount": "86496597412"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_NoncurrentAssets",
+"account_nm": "비유동자산",
+"thstrm_amount": "50045444366"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "dart_InvestedAssetForPostemploymentBenefit",
+"account_nm": "순확정급여자산",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_DeferredTaxAssets",
+"account_nm": "이연법인세자산",
+"thstrm_amount": "1747873724"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_IntangibleAssetsOtherThanGoodwill",
+"account_nm": "무형자산",
+"thstrm_amount": "7815295787"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_InvestmentProperty",
+"account_nm": "투자부동산",
+"thstrm_amount": "610896565"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_InvestmentsInSubsidiariesJointVenturesAndAssociates",
+"account_nm": "관계 및 공동기업 투자자산",
+"thstrm_amount": "8085448380"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_OtherNoncurrentAssets",
+"account_nm": "기타자산",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_OtherNoncurrentFinancialAssets",
+"account_nm": "기타금융자산",
+"thstrm_amount": "26894967619"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_PropertyPlantAndEquipment",
+"account_nm": "유형자산",
+"thstrm_amount": "4890962291"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_Equity",
+"account_nm": "자본총계",
+"thstrm_amount": "131938869803"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_EquityAttributableToOwnersOfParent",
+"account_nm": "지배기업소유주지분",
+"thstrm_amount": "126100435169"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "dart_CapitalSurplus",
+"account_nm": "주식발행초과금",
+"thstrm_amount": "28240765490"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "dart_ElementsOfOtherStockholdersEquity",
+"account_nm": "기타자본항목",
+"thstrm_amount": "-1520504170"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "dart_OtherComprehensiveIncomeLossAccumulatedAmount",
+"account_nm": "기타포괄손익누계액",
+"thstrm_amount": "-3038100476"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_IssuedCapital",
+"account_nm": "자본금",
+"thstrm_amount": "9623046000"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_RetainedEarnings",
+"account_nm": "이익잉여금",
+"thstrm_amount": "92795228325"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_NoncontrollingInterests",
+"account_nm": "비지배지분",
+"thstrm_amount": "5838434634"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_EquityAndLiabilities",
+"account_nm": "자본과부채총계",
+"thstrm_amount": "311691091332"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_CurrentLiabilities",
+"account_nm": "유동부채",
+"thstrm_amount": "140192885382"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "dart_CurrentPortionOfBonds",
+"account_nm": "유동성사채",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "dart_CurrentPortionOfConvertibleBonds",
+"account_nm": "유동성전환사채",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_CurrentLoansReceivedAndCurrentPortionOfNoncurrentLoansReceived",
+"account_nm": "차입금",
+"thstrm_amount": "77851490530"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_CurrentProvisions",
+"account_nm": "충당부채",
+"thstrm_amount": "185227395"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_CurrentTaxLiabilities",
+"account_nm": "당기법인세부채",
+"thstrm_amount": "5178822889"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_LiabilitiesIncludedInDisposalGroupsClassifiedAsHeldForSale",
+"account_nm": "매각예정부채",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_OtherCurrentFinancialLiabilities",
+"account_nm": "기타금융부채",
+"thstrm_amount": "8707683557"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_OtherCurrentLiabilities",
+"account_nm": "기타부채",
+"thstrm_amount": "2006557573"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_TradeAndOtherCurrentPayables",
+"account_nm": "매입채무",
+"thstrm_amount": "46263103438"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_Liabilities",
+"account_nm": "부채총계",
+"thstrm_amount": "179752221529"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_NoncurrentLiabilities",
+"account_nm": "비유동부채",
+"thstrm_amount": "39559336147"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "dart_BondsIssuedNominalValue",
+"account_nm": "사채",
+"thstrm_amount": "4993949637"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "dart_PostemploymentBenefitObligations",
+"account_nm": "순확정급여부채",
+"thstrm_amount": "2389803488"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_DeferredTaxLiabilities",
+"account_nm": "이연법인세부채",
+"thstrm_amount": "395672073"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_NoncurrentPortionOfNoncurrentLoansReceived",
+"account_nm": "차입금",
+"thstrm_amount": "29438850000"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_NoncurrentProvisions",
+"account_nm": "충당부채",
+"thstrm_amount": "88006453"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "BS",
+"account_id": "ifrs-full_OtherNoncurrentFinancialLiabilities",
+"account_nm": "기타금융부채",
+"thstrm_amount": "2253054496"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "dart_OperatingIncomeLoss",
+"account_nm": "영업이익",
+"thstrm_amount": "36127149169"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "dart_OtherGains",
+"account_nm": "기타수익",
+"thstrm_amount": "999342882"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "dart_OtherLosses",
+"account_nm": "기타비용",
+"thstrm_amount": "351457754"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "dart_TotalSellingGeneralAdministrativeExpenses",
+"account_nm": "판매비와관리비",
+"thstrm_amount": "30717257819"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "-표준계정코드 미사용-",
+"account_nm": "관계및공동기업 투자관련손익",
+"thstrm_amount": "-6392957653"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_ComprehensiveIncome",
+"account_nm": "연결총포괄손익",
+"thstrm_amount": "18702306851"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_ComprehensiveIncomeAttributableToNoncontrollingInterests",
+"account_nm": "비지배지분",
+"thstrm_amount": "-1220287783"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "-표준계정코드 미사용-",
+"account_nm": "계속영업 총포괄손익",
+"thstrm_amount": "-1220287783"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "-표준계정코드 미사용-",
+"account_nm": "중단영업 총포괄손익",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_ComprehensiveIncomeAttributableToOwnersOfParent",
+"account_nm": "지배기업소유주지분",
+"thstrm_amount": "19922594634"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "-표준계정코드 미사용-",
+"account_nm": "중단영업 총포괄손익",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "-표준계정코드 미사용-",
+"account_nm": "계속영업 총포괄손익",
+"thstrm_amount": "19922594634"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_CostOfSales",
+"account_nm": "매출원가",
+"thstrm_amount": "645444180273"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_BasicEarningsLossPerShareFromContinuingOperations",
+"account_nm": "계속영업기본주당이익(손실)",
+"thstrm_amount": "1105"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_BasicEarningsLossPerShareFromDiscontinuedOperations",
+"account_nm": "중단영업기본주당이익(손실)",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_DilutedEarningsLossPerShareFromContinuingOperations",
+"account_nm": "계속영업희석주당이익(손실)",
+"thstrm_amount": "1105"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_DilutedEarningsLossPerShareFromDiscontinuedOperations",
+"account_nm": "중단영업희석주당이익(손실)",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_FinanceCosts",
+"account_nm": "금융비용",
+"thstrm_amount": "28096651367"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_FinanceIncome",
+"account_nm": "금융수익",
+"thstrm_amount": "24903583089"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_GrossProfit",
+"account_nm": "매출총이익",
+"thstrm_amount": "66844406988"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_IncomeTaxExpenseContinuingOperations",
+"account_nm": "법인세비용",
+"thstrm_amount": "7477949836"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_OtherComprehensiveIncome",
+"account_nm": "연결기타포괄손익",
+"thstrm_amount": "-1008751679"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_OtherComprehensiveIncomeThatWillBeReclassifiedToProfitOrLossNetOfTax",
+"account_nm": "후속적으로 당기손익으로 재분류될 수 있는 항목",
+"thstrm_amount": "19979733"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_ShareOfOtherComprehensiveIncomeOfAssociatesAndJointVenturesAccountedForUsingEquityMethodThatWillBeReclassifiedToProfitOrLossNetOfTax",
+"account_nm": "관계기업기타포괄손익",
+"thstrm_amount": "19979733"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_OtherComprehensiveIncomeThatWillNotBeReclassifiedToProfitOrLossNetOfTax",
+"account_nm": "후속적으로 당기손익으로 재분류되지 않는 항목",
+"thstrm_amount": "-1028731412"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "-표준계정코드 미사용-",
+"account_nm": "법인세효과",
+"thstrm_amount": "137956266"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "-표준계정코드 미사용-",
+"account_nm": "법인세효과",
+"thstrm_amount": "134251776"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_OtherComprehensiveIncomeNetOfTaxGainsLossesFromInvestmentsInEquityInstruments",
+"account_nm": "기타포괄손익-공정가치금융자산평가손익",
+"thstrm_amount": "-642352997"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_OtherComprehensiveIncomeNetOfTaxGainsLossesOnRemeasurementsOfDefinedBenefitPlans",
+"account_nm": "순확정급여부채의 재측정요소",
+"thstrm_amount": "-658586457"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_ProfitLoss",
+"account_nm": "연결당기순이익(손실)",
+"thstrm_amount": "19711058530"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_ProfitLossAttributableToNoncontrollingInterests",
+"account_nm": "비지배지분",
+"thstrm_amount": "-1190972480"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "-표준계정코드 미사용-",
+"account_nm": "계속영업이익",
+"thstrm_amount": "-1190972480"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "-표준계정코드 미사용-",
+"account_nm": "중단영업이익",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_ProfitLossAttributableToOwnersOfParent",
+"account_nm": "지배기업소유주지분",
+"thstrm_amount": "20902031010"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "-표준계정코드 미사용-",
+"account_nm": "계속영업이익",
+"thstrm_amount": "20902031010"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "-표준계정코드 미사용-",
+"account_nm": "중단영업이익",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_ProfitLossBeforeTax",
+"account_nm": "법인세차감전순이익",
+"thstrm_amount": "27189008366"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_ProfitLossFromContinuingOperations",
+"account_nm": "계속영업이익",
+"thstrm_amount": "19711058530"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_ProfitLossFromDiscontinuedOperations",
+"account_nm": "중단영업이익(손실)",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250319000602",
+"sj_div": "CIS",
+"account_id": "ifrs-full_Revenue",
+"account_nm": "매출액",
+"thstrm_amount": "712288587261"
+}
+]
+},
+"00787057_2024_OFS": {
+"status": "000",
+"message": "정상",
+"list": [
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_Assets",
+"account_nm": "자산총계",
+"thstrm_amount": "597241242419"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_CurrentAssets",
+"account_nm": "유동자산",
+"thstrm_amount": "173158858340"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "dart_CurrentFinancialAssetDesignationAsAtFairValueThroughProfitOrLoss",
+"account_nm": "당기손익-공정가치측정금융자산",
+"thstrm_amount": "3073"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_CashAndCashEquivalents",
+"account_nm": "현금및현금성자산",
+"thstrm_amount": "6245475132"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_CurrentFinancialAssetsAtAmortisedCost",
+"account_nm": "상각후원가 측정 금융자산",
+"thstrm_amount": "14000000000"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_CurrentTaxAssets",
+"account_nm": "당기법인세자산",
+"thstrm_amount": "820138190"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_Inventories",
+"account_nm": "유동재고자산",
+"thstrm_amount": "16297205681"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_OtherCurrentAssets",
+"account_nm": "기타유동자산",
+"thstrm_amount": "8444267195"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_OtherCurrentFinancialAssets",
+"account_nm": "기타금융자산",
+"thstrm_amount": "500000000"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_TradeAndOtherCurrentReceivables",
+"account_nm": "매출채권및기타채권",
+"thstrm_amount": "126851769069"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_NoncurrentAssets",
+"account_nm": "비유동자산",
+"thstrm_amount": "417584473179"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "dart_NonCurrentFairValueFinancialAsset",
+"account_nm": "당기손익-공정가치측정금융자산",
+"thstrm_amount": "121644364888"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "-표준계정코드 미사용-",
+"account_nm": "장기매출채권및기타채권",
+"thstrm_amount": "25230524966"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_IntangibleAssetsOtherThanGoodwill",
+"account_nm": "무형자산",
+"thstrm_amount": "815040545"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_InvestmentProperty",
+"account_nm": "투자부동산",
+"thstrm_amount": "23009302744"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_InvestmentsInSubsidiariesJointVenturesAndAssociates",
+"account_nm": "종속기업, 관계기업 및 공동기업투자",
+"thstrm_amount": "240737175585"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_NoncurrentRecognisedAssetsDefinedBenefitPlan",
+"account_nm": "순확정급여자산",
+"thstrm_amount": "120463625"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_OtherNoncurrentAssets",
+"account_nm": "기타비유동자산",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_OtherNoncurrentFinancialAssets",
+"account_nm": "기타금융자산",
+"thstrm_amount": "401500000"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_PropertyPlantAndEquipment",
+"account_nm": "유형자산",
+"thstrm_amount": "2938018956"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_RightofuseAssets",
+"account_nm": "사용권자산",
+"thstrm_amount": "2688081870"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_NoncurrentAssetsOrDisposalGroupsClassifiedAsHeldForSale",
+"account_nm": "매각예정비유동자산",
+"thstrm_amount": "6497910900"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "dart_CapitalSurplus",
+"account_nm": "기타불입자본",
+"thstrm_amount": "390500632081"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "dart_ElementsOfOtherStockholdersEquity",
+"account_nm": "기타자본구성요소",
+"thstrm_amount": "-35821557510"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_Equity",
+"account_nm": "자본총계",
+"thstrm_amount": "208800156554"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_IssuedCapital",
+"account_nm": "자본금",
+"thstrm_amount": "21985062000"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_RetainedEarnings",
+"account_nm": "이익잉여금(결손금)",
+"thstrm_amount": "-167863980017"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_EquityAndLiabilities",
+"account_nm": "자본과부채총계",
+"thstrm_amount": "597241242419"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_CurrentLiabilities",
+"account_nm": "유동부채",
+"thstrm_amount": "236257195035"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "dart_CurrentFinancialLiabilitiesDesignationAsAtFairValueThroughProfitOrLoss",
+"account_nm": "당기손익-공정가치측정금융부채",
+"thstrm_amount": "2789625159"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "dart_CurrentPortionOfBonds",
+"account_nm": "유동성사채",
+"thstrm_amount": "27978555928"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "dart_CurrentPortionOfConvertibleBonds",
+"account_nm": "유동성전환사채",
+"thstrm_amount": "10574028720"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "dart_DeferredIncomeClassifiedAsCurrent",
+"account_nm": "단기이연수익",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "-표준계정코드 미사용-",
+"account_nm": "단기차입금",
+"thstrm_amount": "26900000000"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_CurrentLeaseLiabilities",
+"account_nm": "유동 리스부채",
+"thstrm_amount": "6929579534"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_CurrentProvisions",
+"account_nm": "유동충당부채",
+"thstrm_amount": "22287605770"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_CurrentTaxLiabilities",
+"account_nm": "당기법인세부채",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_OtherCurrentFinancialLiabilities",
+"account_nm": "기타유동금융부채",
+"thstrm_amount": "212534247"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_OtherCurrentLiabilities",
+"account_nm": "기타 유동부채",
+"thstrm_amount": "3930418820"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_TradeAndOtherCurrentPayables",
+"account_nm": "매입채무및기타채무",
+"thstrm_amount": "134654846857"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_Liabilities",
+"account_nm": "부채총계",
+"thstrm_amount": "388441085865"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_NoncurrentLiabilities",
+"account_nm": "비유동부채",
+"thstrm_amount": "152183890830"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "dart_ConvertibleBondsNet",
+"account_nm": "전환사채",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "dart_LongTermTradeAndOtherNonCurrentPayables",
+"account_nm": "매입채무및기타채무",
+"thstrm_amount": "4915567214"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_BondsIssued",
+"account_nm": "사채",
+"thstrm_amount": "11984713819"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_DeferredTaxLiabilities",
+"account_nm": "이연법인세부채",
+"thstrm_amount": "1215813531"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_NoncurrentDeferredIncomeOtherThanNoncurrentContractLiabilities",
+"account_nm": "장기이연수익",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_NoncurrentFinancialLiabilitiesAtFairValueThroughProfitOrLoss",
+"account_nm": "비유동 당기손익인식금융부채",
+"thstrm_amount": "82182006105"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_NoncurrentLeaseLiabilities",
+"account_nm": "비유동 리스부채",
+"thstrm_amount": "51656492607"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_NoncurrentProvisions",
+"account_nm": "비유동충당부채",
+"thstrm_amount": "229297554"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_OtherNoncurrentFinancialLiabilities",
+"account_nm": "기타비유동금융부채",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "dart_OperatingIncomeLoss",
+"account_nm": "영업이익(손실)",
+"thstrm_amount": "-15251065973"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "dart_OtherGains",
+"account_nm": "기타이익",
+"thstrm_amount": "6246442037"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "dart_OtherLosses",
+"account_nm": "기타손실",
+"thstrm_amount": "65867044874"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "dart_TotalSellingGeneralAdministrativeExpenses",
+"account_nm": "판매비와관리비",
+"thstrm_amount": "59108587221"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_ComprehensiveIncome",
+"account_nm": "당기총포괄이익(손실)",
+"thstrm_amount": ""
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_CostOfSales",
+"account_nm": "매출원가",
+"thstrm_amount": "233337887332"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_BasicEarningsLossPerShareFromContinuingOperations",
+"account_nm": "계속영업기본주당이익(손실)",
+"thstrm_amount": "-2182"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_BasicEarningsLossPerShareFromDiscontinuedOperations",
+"account_nm": "중단영업기본주당이익(손실)",
+"thstrm_amount": ""
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_DilutedEarningsLossPerShareFromContinuingOperations",
+"account_nm": "계속영업희석주당이익(손실)",
+"thstrm_amount": "-2182"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_DilutedEarningsLossPerShareFromDiscontinuedOperations",
+"account_nm": "중단영업희석주당이익(손실)",
+"thstrm_amount": ""
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_FinanceCosts",
+"account_nm": "금융원가",
+"thstrm_amount": "61436036037"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_FinanceIncome",
+"account_nm": "금융수익",
+"thstrm_amount": "43487724059"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_GrossProfit",
+"account_nm": "매출총이익",
+"thstrm_amount": "43857521248"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_IncomeTaxExpenseContinuingOperations",
+"account_nm": "법인세비용(수익)",
+"thstrm_amount": "1261726064"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_OtherComprehensiveIncome",
+"account_nm": "기타포괄손실",
+"thstrm_amount": ""
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_OtherComprehensiveIncomeThatWillBeReclassifiedToProfitOrLossNetOfTax",
+"account_nm": "후속적으로 당기손익으로 재분류될 수 있는 항목",
+"thstrm_amount": "-438351253"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_GainsLossesOnExchangeDifferencesOnTranslationNetOfTax",
+"account_nm": "해외사업장환산외환차이(세후기타포괄손익)",
+"thstrm_amount": "-438351253"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_OtherComprehensiveIncomeThatWillNotBeReclassifiedToProfitOrLossNetOfTax",
+"account_nm": "후속적으로 당기손익으로 재분류되지 않는 항목",
+"thstrm_amount": "-101532046"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_IncomeTaxRelatingToComponentsOfOtherComprehensiveIncomeThatWillNotBeReclassifiedToProfitOrLoss",
+"account_nm": "당기손익으로 재분류되지는 않을 기타포괄손익의 각 구성요소와 관련된 법인세",
+"thstrm_amount": "-26827051"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_OtherComprehensiveIncomeBeforeTaxGainsLossesOnRemeasurementsOfDefinedBenefitPlans",
+"account_nm": "확정급여제도의 재측정손익(세전기타포괄손익)",
+"thstrm_amount": "-128359097"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_ProfitLoss",
+"account_nm": "당기순이익(손실)",
+"thstrm_amount": "-94081706852"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_ProfitLossBeforeTax",
+"account_nm": "법인세비용차감전순이익(손실)",
+"thstrm_amount": "-92819980788"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_ProfitLossFromContinuingOperations",
+"account_nm": "계속영업이익(손실)",
+"thstrm_amount": "-94081706852"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_ProfitLossFromDiscontinuedOperations",
+"account_nm": "중단영업이익(손실)",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_Revenue",
+"account_nm": "수익(매출액)",
+"thstrm_amount": "277195408580"
+}
+]
+},
+"00787057_2024_CFS": {
+"status": "000",
+"message": "정상",
+"list": [
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_Assets",
+"account_nm": "자산총계",
+"thstrm_amount": "662812336140"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_CurrentAssets",
+"account_nm": "유동자산",
+"thstrm_amount": "283585912597"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "dart_CurrentFinancialAssetDesignationAsAtFairValueThroughProfitOrLoss",
+"account_nm": "당기손익-공정가치측정금융자산",
+"thstrm_amount": "3073"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_CashAndCashEquivalents",
+"account_nm": "현금및현금성자산",
+"thstrm_amount": "23994609898"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_CurrentContractAssets",
+"account_nm": "유동계약자산",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_CurrentFinanceLeaseReceivables",
+"account_nm": "단기금융리스채권",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_CurrentFinancialAssetsAtAmortisedCost",
+"account_nm": "상각후원가 측정 금융자산",
+"thstrm_amount": "14000000000"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_CurrentTaxAssets",
+"account_nm": "당기법인세자산",
+"thstrm_amount": "1825659511"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_Inventories",
+"account_nm": "유동재고자산",
+"thstrm_amount": "109427343254"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_OtherCurrentAssets",
+"account_nm": "기타유동자산",
+"thstrm_amount": "12997902409"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_OtherCurrentFinancialAssets",
+"account_nm": "기타금융자산",
+"thstrm_amount": "1170050000"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_TradeAndOtherCurrentReceivables",
+"account_nm": "매출채권및기타채권",
+"thstrm_amount": "120170344452"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_NoncurrentAssets",
+"account_nm": "비유동자산",
+"thstrm_amount": "372728512643"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "dart_NonCurrentFairValueFinancialAsset",
+"account_nm": "당기손익-공정가치측정금융자산",
+"thstrm_amount": "121644364584"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "-표준계정코드 미사용-",
+"account_nm": "장기매출채권및기타채권",
+"thstrm_amount": "25846747175"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_DeferredTaxAssets",
+"account_nm": "이연법인세자산",
+"thstrm_amount": "5337328962"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_Goodwill",
+"account_nm": "영업권",
+"thstrm_amount": "1482783292"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_IntangibleAssetsOtherThanGoodwill",
+"account_nm": "무형자산",
+"thstrm_amount": "2154787809"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_InvestmentProperty",
+"account_nm": "투자부동산",
+"thstrm_amount": "22889276077"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_InvestmentsInSubsidiariesJointVenturesAndAssociates",
+"account_nm": "종속기업, 관계기업 및 공동기업투자",
+"thstrm_amount": "147425769852"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_NoncurrentFinanceLeaseReceivables",
+"account_nm": "장기금융리스채권",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_NoncurrentRecognisedAssetsDefinedBenefitPlan",
+"account_nm": "순확정급여자산",
+"thstrm_amount": "120463625"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_OtherNoncurrentAssets",
+"account_nm": "기타비유동자산",
+"thstrm_amount": "1942966674"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_OtherNoncurrentFinancialAssets",
+"account_nm": "기타금융자산",
+"thstrm_amount": "406956892"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_PropertyPlantAndEquipment",
+"account_nm": "유형자산",
+"thstrm_amount": "36618587033"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_RightofuseAssets",
+"account_nm": "사용권자산",
+"thstrm_amount": "6858480668"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_NoncurrentAssetsOrDisposalGroupsClassifiedAsHeldForSaleOrAsHeldForDistributionToOwners",
+"account_nm": "매각예정자산",
+"thstrm_amount": "6497910900"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_Equity",
+"account_nm": "자본총계",
+"thstrm_amount": "165419017811"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_EquityAttributableToOwnersOfParent",
+"account_nm": "지배기업의 소유주에게 귀속되는 자본",
+"thstrm_amount": "156615219991"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "dart_CapitalSurplus",
+"account_nm": "기타불입자본",
+"thstrm_amount": "386535714007"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "dart_ElementsOfOtherStockholdersEquity",
+"account_nm": "기타자본구성요소",
+"thstrm_amount": "-58099839535"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_IssuedCapital",
+"account_nm": "자본금",
+"thstrm_amount": "21985062000"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_RetainedEarnings",
+"account_nm": "이익잉여금(결손금)",
+"thstrm_amount": "-193805716481"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_NoncontrollingInterests",
+"account_nm": "비지배지분",
+"thstrm_amount": "8803797820"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_EquityAndLiabilities",
+"account_nm": "자본과부채총계",
+"thstrm_amount": "662812336140"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_CurrentLiabilities",
+"account_nm": "유동부채",
+"thstrm_amount": "337557883198"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "dart_CurrentFinancialLiabilitiesDesignationAsAtFairValueThroughProfitOrLoss",
+"account_nm": "당기손익-공정가치측정금융부채",
+"thstrm_amount": "2789625159"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "dart_CurrentPortionOfBonds",
+"account_nm": "유동성사채",
+"thstrm_amount": "57968609948"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "dart_CurrentPortionOfConvertibleBonds",
+"account_nm": "유동성전환사채",
+"thstrm_amount": "10574028720"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "dart_CurrentPortionOfConvertibleRedeemablePreferredStockLiabilities",
+"account_nm": "유동성전환상환우선주부채",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "dart_DeferredIncomeClassifiedAsCurrent",
+"account_nm": "단기이연수익",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "-표준계정코드 미사용-",
+"account_nm": "유동성장기차입금",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "-표준계정코드 미사용-",
+"account_nm": "단기차입금",
+"thstrm_amount": "52366864886"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_CurrentContractLiabilities",
+"account_nm": "유동계약부채",
+"thstrm_amount": "5227781286"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_CurrentLeaseLiabilities",
+"account_nm": "유동 리스부채",
+"thstrm_amount": "8376158355"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_CurrentProvisions",
+"account_nm": "유동충당부채",
+"thstrm_amount": "24049400357"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_CurrentTaxLiabilities",
+"account_nm": "당기법인세부채",
+"thstrm_amount": "1206739669"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_OtherCurrentLiabilities",
+"account_nm": "기타 유동부채",
+"thstrm_amount": "14174269856"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_TradeAndOtherCurrentPayables",
+"account_nm": "매입채무및기타채무",
+"thstrm_amount": "160824404962"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_Liabilities",
+"account_nm": "부채총계",
+"thstrm_amount": "497393318329"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_NoncurrentLiabilities",
+"account_nm": "비유동부채",
+"thstrm_amount": "159835435131"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "dart_ConvertibleBondsNet",
+"account_nm": "전환사채",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "dart_LongTermTradeAndOtherNonCurrentPayables",
+"account_nm": "매입채무및기타채무",
+"thstrm_amount": "4915567214"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "-표준계정코드 미사용-",
+"account_nm": "장기차입금",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_BondsIssued",
+"account_nm": "사채",
+"thstrm_amount": "11984713819"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_DeferredTaxLiabilities",
+"account_nm": "이연법인세부채",
+"thstrm_amount": "2187895012"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_NoncurrentDeferredIncomeOtherThanNoncurrentContractLiabilities",
+"account_nm": "장기이연수익",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_NoncurrentFinancialLiabilitiesAtFairValueThroughProfitOrLoss",
+"account_nm": "비유동 당기손익인식금융부채",
+"thstrm_amount": "82182006105"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_NoncurrentLeaseLiabilities",
+"account_nm": "비유동 리스부채",
+"thstrm_amount": "54723081010"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_NoncurrentProvisions",
+"account_nm": "비유동충당부채",
+"thstrm_amount": "3754791902"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_NoncurrentRecognisedLiabilitiesDefinedBenefitPlan",
+"account_nm": "순확정급여부채",
+"thstrm_amount": "87380069"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "BS",
+"account_id": "ifrs-full_OtherNoncurrentLiabilities",
+"account_nm": "기타 비유동 부채",
+"thstrm_amount": "0"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "dart_LossesOfAssociatesAndJointVenturesAccountedForUsingEquityMethod",
+"account_nm": "지분법손실",
+"thstrm_amount": "31043617952"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "dart_OperatingIncomeLoss",
+"account_nm": "영업이익(손실)",
+"thstrm_amount": "6200491083"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "dart_OtherGains",
+"account_nm": "기타이익",
+"thstrm_amount": "10951746332"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "dart_OtherLosses",
+"account_nm": "기타손실",
+"thstrm_amount": "19485348829"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "dart_TotalSellingGeneralAdministrativeExpenses",
+"account_nm": "판매비와관리비",
+"thstrm_amount": "91205696684"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_ComprehensiveIncome",
+"account_nm": "당기총포괄이익(손실)",
+"thstrm_amount": "-64188003459"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_ComprehensiveIncomeAttributableToNoncontrollingInterests",
+"account_nm": "비지배지분",
+"thstrm_amount": "-3575377319"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_ComprehensiveIncomeAttributableToOwnersOfParent",
+"account_nm": "지배기업 소유주지분",
+"thstrm_amount": "-60612626140"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_CostOfSales",
+"account_nm": "매출원가",
+"thstrm_amount": "438152714809"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_BasicEarningsLossPerShareFromContinuingOperations",
+"account_nm": "계속영업기본주당이익(손실)",
+"thstrm_amount": "-1290"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_BasicEarningsLossPerShareFromDiscontinuedOperations",
+"account_nm": "중단영업기본주당이익(손실)",
+"thstrm_amount": "-33"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_DilutedEarningsLossPerShareFromContinuingOperations",
+"account_nm": "계속영업희석주당이익(손실)",
+"thstrm_amount": "-1290"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_DilutedEarningsLossPerShareFromDiscontinuedOperations",
+"account_nm": "중단영업희석주당이익(손실)",
+"thstrm_amount": "-33"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_FinanceCosts",
+"account_nm": "금융원가",
+"thstrm_amount": "74009711527"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_FinanceIncome",
+"account_nm": "금융수익",
+"thstrm_amount": "54179790891"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_GrossProfit",
+"account_nm": "매출총이익",
+"thstrm_amount": "97406187767"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_IncomeTaxExpenseContinuingOperations",
+"account_nm": "법인세비용(수익)",
+"thstrm_amount": "3115903846"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_OtherComprehensiveIncome",
+"account_nm": "기타포괄손실",
+"thstrm_amount": "-3270851079"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_OtherComprehensiveIncomeThatWillBeReclassifiedToProfitOrLossNetOfTax",
+"account_nm": "후속적으로 당기손익으로 재분류될 수 있는 항목",
+"thstrm_amount": "-2993837320"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_GainsLossesOnExchangeDifferencesOnTranslationNetOfTax",
+"account_nm": "해외사업장환산외환차이(세후기타포괄손익)",
+"thstrm_amount": "-1666873748"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_ShareOfOtherComprehensiveIncomeOfAssociatesAndJointVenturesAccountedForUsingEquityMethodThatWillBeReclassifiedToProfitOrLossNetOfTax",
+"account_nm": "지분법자본변동",
+"thstrm_amount": "-1326963572"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_OtherComprehensiveIncomeThatWillNotBeReclassifiedToProfitOrLossNetOfTax",
+"account_nm": "후속적으로 당기손익으로 재분류되지 않는 항목",
+"thstrm_amount": "-277013759"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_IncomeTaxRelatingToComponentsOfOtherComprehensiveIncomeThatWillNotBeReclassifiedToProfitOrLoss",
+"account_nm": "당기손익으로 재분류되지는 않을 기타포괄손익의 각 구성요소와 관련된 법인세",
+"thstrm_amount": "-53356473"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_OtherComprehensiveIncomeBeforeTaxGainsLossesOnRemeasurementsOfDefinedBenefitPlans",
+"account_nm": "확정급여제도의 재측정손익(세전기타포괄손익)",
+"thstrm_amount": "-255294133"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_ShareOfOtherComprehensiveIncomeOfAssociatesAndJointVenturesAccountedForUsingEquityMethodThatWillNotBeReclassifiedToProfitOrLossNetOfTax",
+"account_nm": "지분법이익잉여금변동",
+"thstrm_amount": "-75076099"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_ProfitLoss",
+"account_nm": "당기순이익(손실)",
+"thstrm_amount": "-60917152380"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_ProfitLossAttributableToNoncontrollingInterests",
+"account_nm": "비지배지분에 귀속되는 당기순이익(손실)",
+"thstrm_amount": "-3867662386"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_ProfitLossAttributableToOwnersOfParent",
+"account_nm": "지배기업 소유주지분",
+"thstrm_amount": "-57049489994"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_ProfitLossBeforeTax",
+"account_nm": "법인세비용차감전순이익(손실)",
+"thstrm_amount": "-53206650002"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_ProfitLossFromContinuingOperations",
+"account_nm": "계속영업이익(손실)",
+"thstrm_amount": "-56322553848"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_ProfitLossFromDiscontinuedOperations",
+"account_nm": "중단영업이익(손실)",
+"thstrm_amount": "-4594598532"
+},
+{
+"rcept_no": "20250325000222",
+"sj_div": "CIS",
+"account_id": "ifrs-full_Revenue",
+"account_nm": "수익(매출액)",
+"thstrm_amount": "535558902576"
+}
+]
+}
+},
+"hyslr": {
+"00879020": {
+"status": "000",
+"list": [
+{
+"rcept_no": "20250319000602",
+"nm": "남궁선",
+"relate": "최대주주",
+"stock_knd": "보통주",
+"trmend_posesn_stock_qota_rt": "21.55"
+},
+{
+"rcept_no": "20250319000602",
+"nm": "김경희",
+"relate": "특수관계인(처)",
+"stock_knd": "보통주",
+"trmend_posesn_stock_qota_rt": "0.78"
+},
+{
+"rcept_no": "20250319000602",
+"nm": "남궁현",
+"relate": "특수관계인(자)",
+"stock_knd": "보통주",
+"trmend_posesn_stock_qota_rt": "0.27"
+},
+{
+"rcept_no": "20250319000602",
+"nm": "남궁홍",
+"relate": "특수관계인(자)",
+"stock_knd": "보통주",
+"trmend_posesn_stock_qota_rt": "0.27"
+},
+{
+"rcept_no": "20250319000602",
+"nm": "이병락",
+"relate": "특수관계인(임원)",
+"stock_knd": "보통주",
+"trmend_posesn_stock_qota_rt": "0.28"
+},
+{
+"rcept_no": "20250319000602",
+"nm": "계",
+"relate": null,
+"stock_knd": "보통주",
+"trmend_posesn_stock_qota_rt": "23.15"
+},
+{
+"rcept_no": "20250319000602",
+"nm": "계",
+"relate": null,
+"stock_knd": "-",
+"trmend_posesn_stock_qota_rt": "-"
+}
+]
+},
+"00787057": {
+"status": "000",
+"list": [
+{
+"rcept_no": "20250325000222",
+"nm": "㈜휴맥스홀딩스",
+"relate": "최대주주 본인",
+"stock_knd": "보통주",
+"trmend_posesn_stock_qota_rt": "34.92"
+},
+{
+"rcept_no": "20250325000222",
+"nm": "㈜제이투비",
+"relate": "계열회사",
+"stock_knd": "보통주",
+"trmend_posesn_stock_qota_rt": "0.05"
+},
+{
+"rcept_no": "20250325000222",
+"nm": "정성민",
+"relate": "임원",
+"stock_knd": "보통주",
+"trmend_posesn_stock_qota_rt": "0.14"
+},
+{
+"rcept_no": "20250325000222",
+"nm": "변지영",
+"relate": "기타",
+"stock_knd": "보통주",
+"trmend_posesn_stock_qota_rt": "0.05"
+},
+{
+"rcept_no": "20250325000222",
+"nm": "변정석",
+"relate": "기타",
+"stock_knd": "보통주",
+"trmend_posesn_stock_qota_rt": "0.04"
+},
+{
+"rcept_no": "20250325000222",
+"nm": "오영현",
+"relate": "계열회사 임원",
+"stock_knd": "보통주",
+"trmend_posesn_stock_qota_rt": "0.13"
+},
+{
+"rcept_no": "20250325000222",
+"nm": "정창수",
+"relate": "계열회사 임원",
+"stock_knd": "보통주",
+"trmend_posesn_stock_qota_rt": "0.02"
+},
+{
+"rcept_no": "20250325000222",
+"nm": "심재현",
+"relate": "계열회사 임원",
+"stock_knd": "보통주",
+"trmend_posesn_stock_qota_rt": "0.01"
+},
+{
+"rcept_no": "20250325000222",
+"nm": "계",
+"relate": null,
+"stock_knd": "보통주",
+"trmend_posesn_stock_qota_rt": "35.36"
+},
+{
+"rcept_no": "20250325000222",
+"nm": "계",
+"relate": null,
+"stock_knd": "-",
+"trmend_posesn_stock_qota_rt": "-"
+}
+]
+}
+},
+"list_corp": {
+"00879020_A": {
+"status": "000",
+"list": [
+{
+"corp_code": "00879020",
+"corp_name": "(주)유니트론텍",
+"report_nm": "사업보고서 (2024.12)",
+"rcept_no": "20250319000602"
+}
+]
+},
+"00787057_A": {
+"status": "000",
+"list": [
+{
+"corp_code": "00787057",
+"corp_name": "(주)휴맥스",
+"report_nm": "사업보고서 (2024.12)",
+"rcept_no": "20250319001071"
+}
+]
+},
+"01738562_F": {
+"status": "000",
+"list": [
+{
+"corp_code": "01738562",
+"corp_name": "상신코퍼레이션유한회사",
+"report_nm": "감사보고서 (2024.12)",
+"rcept_no": "20250407001537"
+}
+]
+},
+"01446537_F": {
+"status": "000",
+"list": [
+{
+"corp_code": "01446537",
+"corp_name": "애보트메디칼코리아 유한회사",
+"report_nm": "감사보고서 (2024.12)",
+"rcept_no": "20250328001610"
+}
+]
+},
+"01464597_F": {
+"status": "000",
+"list": [
+{
+"corp_code": "01464597",
+"corp_name": "주식회사 케이엘페트로",
+"report_nm": "감사보고서 (2024.12)",
+"rcept_no": "20250328000684"
+}
+]
+}
+},
+"pool": {
+"status": "000",
+"total_page": 1,
+"list": [
+{
+"corp_code": "01738562",
+"corp_name": "상신코퍼레이션유한회사",
+"report_nm": "감사보고서 (2024.12)",
+"rcept_no": "20250407001537"
+},
+{
+"corp_code": "01446537",
+"corp_name": "애보트메디칼코리아 유한회사",
+"report_nm": "감사보고서 (2024.12)",
+"rcept_no": "20250328001610"
+},
+{
+"corp_code": "01464597",
+"corp_name": "주식회사 케이엘페트로",
+"report_nm": "감사보고서 (2024.12)",
+"rcept_no": "20250328000684"
+}
+]
+},
+"corps": [
+{
+"corp_code": "00879020",
+"corp_name": "(주)유니트론텍",
+"stock_code": "142210"
+},
+{
+"corp_code": "00787057",
+"corp_name": "(주)휴맥스",
+"stock_code": "115160"
+},
+{
+"corp_code": "00396925",
+"corp_name": "(주)엠로",
+"stock_code": "058970"
+},
+{
+"corp_code": "01738562",
+"corp_name": "상신코퍼레이션유한회사",
+"stock_code": ""
+},
+{
+"corp_code": "01446537",
+"corp_name": "애보트메디칼코리아 유한회사",
+"stock_code": ""
+},
+{
+"corp_code": "01464597",
+"corp_name": "주식회사 케이엘페트로",
+"stock_code": ""
+}
+],
+"docs": [
+"20250319000602",
+"20250319001071",
+"20250328000684",
+"20250328001610",
+"20250407001537"
+]
+}
