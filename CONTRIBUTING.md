@@ -15,6 +15,16 @@ Open an issue with the "Wrong result or statute" form and include:
 
 A report with the statute and the effective date can usually be fixed and covered by a test right away.
 
+## 서버 역할 (Server roles)
+
+이 서버(계산 MCP)는 **계산만** 합니다. 요건 해당 여부, 연도별 적용 판단, 판례·결정례·해석, 소득 구분 같은 **판단은 짝 서버 [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp)(조문 MCP)** 가 맡습니다.
+
+- 새 도구나 기능을 더하기 전에 "이 판단은 어느 서버 몫인가"를 먼저 정합니다. 판단이면 조문 MCP에 요건 안내·판례 도구를 만들고, 계산 도구 출력 첫 줄에서 그 도구 이름을 안내합니다.
+- 계산 도구의 쟁점 설명은 "무엇이 숫자를 바꾸는지" 한 줄씩만 둡니다. 판례 번호와 판단 경로를 이 서버에 새로 넣지 않습니다(`tests/test_role_boundary.py`가 판례 번호가 늘면 실패시킵니다).
+- 같은 판단을 두 서버에 중복해 두지 않습니다.
+
+This server only computes. Requirement checks, year-by-year applicability, rulings and case law live in the companion server korean-tax-mcp; calculator outputs point to the matching tool there.
+
 ## Running tests (테스트 실행)
 
 The same commands CI runs (`.github/workflows/test.yml`, Python 3.10–3.12):
