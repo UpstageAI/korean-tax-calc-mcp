@@ -82,7 +82,7 @@ def _amt(v, where, 문제):
 def _side(raw, where, fy_days, 문제):
     raw = raw or {}
     if not isinstance(raw, dict):
-        문제.append(f"{where} — 거래 금액 dict")
+        문제.append(f"{where} — 거래 금액을 {{키: 원}} 꼴의 객체로 넣으세요")
         return None
     unknown = set(raw) - SIDE_KEYS
     if unknown:

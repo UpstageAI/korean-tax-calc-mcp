@@ -528,7 +528,7 @@ def _judgement_rows(data: dict, calc_sheet: str) -> list[dict]:
     for q in data.get("쟁점") or []:     # nonresident_withholding 등 — 확인할 쟁점
         if isinstance(q, dict) and q.get("쟁점"):
             out.append({"항목": "쟁점", "결론": q["쟁점"], "근거": ", ".join(map(str, q.get("참고") or [])),
-                        "이유": q.get("판단", "")})
+                        "이유": q.get("판단") or ("확인할 자료: " + ", ".join(map(str, q["확인할 자료"])) if q.get("확인할 자료") else "")})
     if out:
         return out
     근거 = data.get("근거", "")
@@ -710,7 +710,7 @@ def export_workbook_impl(title: str, calls, output_dir: str = ".", filename: str
             if not isinstance(parsed_args, dict):
                 오류_call.append(label)
                 결과들.append({"label": label, "tool": tool,
-                               "error": "입력 확인 필요 — call args가 JSON 객체(dict)가 아님",
+                               "error": "입력 확인 필요 — call args는 {인자 이름: 값} 꼴의 JSON 객체로 넣으세요",
                                "basis": "", "result": None})
                 continue
             args = parsed_args

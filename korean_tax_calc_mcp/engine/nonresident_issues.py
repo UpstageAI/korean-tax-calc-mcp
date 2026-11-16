@@ -12,7 +12,8 @@
 
 from __future__ import annotations
 
-JUDGE = "전문가 확인 필요"
+# 쟁점마다 '확인할 자료'(그 쟁점에서 결과를 바꾸는 사실 중 입력으로 정해지지 않은 것)를 붙인다 — issues.json 항목과 같은 키.
+# 0.59.0까지는 모든 줄에 같은 '판단: 전문가 확인 필요'를 붙였다(입력과 무관한 고정 문구라 신호가 없었음).
 GUIDE = "korean-tax-mcp royalty_withholding_guide"
 _RATE_TOOL = "korean-tax-mcp treaty_withholding_rates"
 POINTER = ("요건·소득구분·조약 적용 판단은 korean-tax-mcp `royalty_withholding_guide`(사용료)·`treaty_withholding_rates`·`tax_treaty`로 먼저 확인 — "
@@ -43,13 +44,14 @@ def local_tax_basis(side: int, included: bool | None) -> str:
            " · 지방세법 제103조의18제1항(비거주자 특별징수 — 원천징수할 소득세의 10%)"
 
 
-def _issue(구분, 쟁점, 참고):
-    return {"구분": 구분, "쟁점": 쟁점, "참고": 참고, "판단": JUDGE}
+def _issue(구분, 쟁점, 참고, 확인):
+    return {"구분": 구분, "쟁점": 쟁점, "참고": 참고, "확인할 자료": list(확인)}
 
 
 def pointer_issue() -> dict:
     return {"구분": "안내", "쟁점": POINTER, "en": POINTER_EN,
-            "참고": [GUIDE, _RATE_TOOL, "korean-tax-mcp tax_treaty"], "판단": JUDGE}
+            "참고": [GUIDE, _RATE_TOOL, "korean-tax-mcp tax_treaty"],
+            "확인할 자료": ["소득 구분(사용료·이자·배당·인적용역 등)과 조약 적용 요건 — 조문 MCP"]}
 
 
 def relief_issue(side: int, treaty_rate_given: bool) -> dict:
@@ -59,14 +61,17 @@ def relief_issue(side: int, treaty_rate_given: bool) -> dict:
     return _issue("조약 적용 절차",
                   head + f"제한세율 적용신청서를 지급 전에 받지 못하면 treaty_rate 없이 국내세율로 원천징수({art}제3항), 뒤에 5년 내 경정청구(제5항). "
                   "받은 신청서는 다음 해 2월 말일까지 세무서 제출(제4항, 2025.12.23. 신설" + (" — 2026년 신청분부터)" if side else " — 적용례는 부칙 확인)"),
-                  [f"{art}제3항·제4항·제5항", _RATE_TOOL])
+                  [f"{art}제3항·제4항·제5항", _RATE_TOOL],
+                  (["제한세율 적용신청서를 지급 전에 받았는지"] if treaty_rate_given
+                   else ["조약 제한세율(있으면 treaty_rate에 넣어 다시 계산)", "제한세율 적용신청서를 지급 전에 받았는지"]))
 
 
 def exemption_issue(side: int) -> dict:
     art = "법인세법 제98조의4" if side else "소득세법 제156조의2"
     return _issue("조약 면제 신청",
                   f"조약상 면제(고정사업장 없음 등)에 해당하면 세액 0 — 비과세·면제신청서({art})가 있어야 하고, 없으면 국내세율. 면제 여부 판단은 조문 MCP tax_treaty로(유추 — 직접 회신 없음)",
-                  [art + ("제1항·제3항" if side else "(세부 요건은 조문 MCP로 확인)"), "korean-tax-mcp tax_treaty"])
+                  [art + ("제1항·제3항" if side else "(세부 요건은 조문 MCP로 확인)"), "korean-tax-mcp tax_treaty"],
+                  ["조약상 면제 요건(국내 고정사업장·체류일수 등)", "비과세·면제신청서를 받았는지"])
 
 
 def compliance_issue(side: int, kind: str) -> dict:
@@ -83,7 +88,10 @@ def compliance_issue(side: int, kind: str) -> dict:
     elif kind == "배당":
         txt += ". 미지급 배당은 지급시기 의제 여부 확인(법인세법 시행령 제137조제1항, 기본통칙 98-137…1)"
         refs.append("법인세법 시행령 제137조제1항")
-    return _issue("납부·신고 기한", txt, refs + ["withholding_late_payment_penalty 도구"])
+    확인 = ["실제 지급일과 납부일(다음 달 10일 기한)"]
+    if kind == "배당":
+        확인.append("미지급 배당이면 처분 결정일과 지급시기 의제 여부")
+    return _issue("납부·신고 기한", txt, refs + ["withholding_late_payment_penalty 도구"], 확인)
 
 
 def gross_up_issue(side: int, net_of_tax: bool, bears_local: bool) -> dict:
@@ -95,7 +103,9 @@ def gross_up_issue(side: int, net_of_tax: bool, bears_local: bool) -> dict:
                "지방소득세도 지급자가 부담하면 payer_bears_local_tax=True(유추)")
     if not side:
         txt += ". 비거주자(개인)에 이 통칙 산식을 쓰는 것은 유추"
-    return _issue("순액(세금부담) 약정", txt, ["법인세법 기본통칙 98-0…2", "국이22601-403(1991.7.19.)"])
+    확인 = (["계약서상 세금 공제 후 금액(순액)을 지급하기로 했는지"] + ([] if bears_local else ["지방소득세도 지급자가 부담하는지"])) if net_of_tax \
+        else ["계약서상 지급액이 세금 포함 총액인지, 세금 공제 후 순액인지"]
+    return _issue("순액(세금부담) 약정", txt, ["법인세법 기본통칙 98-0…2", "국이22601-403(1991.7.19.)"], 확인)
 
 
 def royalty_issues(side: int, treaty_rate_given: bool, base_amount: int, net_of_tax: bool, bears_local: bool) -> list[dict]:
@@ -113,21 +123,23 @@ def royalty_issues(side: int, treaty_rate_given: bool, base_amount: int, net_of_
         _issue("국내 미등록 특허",
                "국내에 등록되지 않은 특허라도 특허기술이 국내 제조·판매에 사실상 사용되면 국내원천 사용료(대법원 2025.9.18. 선고 2021두59908 전원합의체) — "
                f"국외 사용으로 입증된 부분만 amount에서 뺀다. 판단은 {GUIDE}",
-               [GUIDE]),
+               [GUIDE], ["특허의 국내 등록 여부와 국외 사용으로 입증되는 부분"]),
         _issue("소득 구분·세율",
                "대가의 성격(특허·노하우, 저작권, 소프트웨어, 용역, 양도대가, 침해 배상)에 따라 income_kind와 treaty_rate가 달라짐 — "
                f"구분은 {GUIDE}, 세율은 {_RATE_TOOL}",
-               [GUIDE, _RATE_TOOL]),
+               [GUIDE, _RATE_TOOL], ["계약서상 대가의 성격(권리 사용·용역·양도·배상)"]),
         relief_issue(side, treaty_rate_given),
         compliance_issue(side, "사용료"),
         _issue("정상가격(이전가격)",
                "특수관계인에게 준 금액이 정상가격을 넘으면 초과분은 제한세율 상한 밖일 수 있고 손금 부인 대상 — arm_length_range. "
                + thr + "(국제조세조정에 관한 법률 시행령 제36조제1호) — international_transaction_statement",
-               ["국제조세조정에 관한 법률 제7조 · 시행령 제36조제1호", "arm_length_range · international_transaction_statement 도구", GUIDE]),
+               ["국제조세조정에 관한 법률 제7조 · 시행령 제36조제1호", "arm_length_range · international_transaction_statement 도구", GUIDE],
+               ["지급액이 정상가격 범위 안인지", "그 사업연도 다른 무형자산거래 합계"]),
         _issue("다른 세목",
                "사용료를 면세사업에 쓰면 부가가치세 대리납부(부가가치세법 제52조제1항) — vat_reverse_charge. "
                "수입물품과 관련된 권리사용료는 관세 과세가격에 더함(관세법 제30조제1항제4호 — 판례는 미확인)",
-               ["부가가치세법 제52조제1항", "관세법 제30조제1항제4호", "vat_reverse_charge 도구"]),
+               ["부가가치세법 제52조제1항", "관세법 제30조제1항제4호", "vat_reverse_charge 도구"],
+               ["사용료를 면세사업에 쓰는지", "수입물품과 관련된 권리사용료인지"]),
         gross_up_issue(side, net_of_tax, bears_local),
     ]
 

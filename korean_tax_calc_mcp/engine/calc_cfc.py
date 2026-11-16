@@ -160,7 +160,7 @@ def cfc_deemed_dividend(
     if not (isinstance(months, int) and not isinstance(months, bool) and 1 <= months <= 12):
         문제.append(f"months={months} — 1~12")
     if not isinstance(distributable, dict):
-        문제.append("distributable — dict")
+        문제.append("distributable — {항목: 금액(원)} 꼴의 객체로 넣으세요")
     else:
         for k, v in distributable.items():
             if k not in _DIST_KEYS:
@@ -180,11 +180,20 @@ def cfc_deemed_dividend(
         if v is not None and not (num(v) and v >= 0):
             문제.append(f"{이름}={v} — 0 이상 숫자")
     기준일 = None
+    긴_사업연도 = False
     if fy_end is not None:
         try:
-            기준일 = date.fromisoformat(fy_end) + timedelta(days=60)   # 종료일의 다음 날부터 60일이 되는 날
+            _fe = date.fromisoformat(fy_end)
+            기준일 = _fe + timedelta(days=60)   # 종료일의 다음 날부터 60일이 되는 날
         except (TypeError, ValueError):
-            문제.append(f"fy_end='{fy_end}' — YYYY-MM-DD")
+            문제.append(f"fy_end='{fy_end}' — YYYY-MM-DD 형식의 실제 날짜로 넣으세요(예: 2025-12-31)")
+        else:
+            # 사업연도는 개시일 뒤에 끝난다 — 종료일이 개시연도(year)보다 앞이면 서로 맞지 않는 입력(0.59.1)
+            if isinstance(year, int) and _fe.year < year:
+                문제.append(f"fy_end='{fy_end}' — 특정외국법인 사업연도 종료일이 개시연도 year={year}보다 앞섬. "
+                            f"year는 그 사업연도 개시일이 속하는 연도 — year 또는 fy_end를 확인하세요")
+            elif isinstance(year, int) and _fe.year > year + 1:
+                긴_사업연도 = True
     if 문제:
         return _오류(문제)
 
@@ -241,6 +250,8 @@ def cfc_deemed_dividend(
                    "'과세연도'를 특정외국법인 사업연도 개시일 기준으로 보아 year로 나눔")
     if holding_company_exemption or fixed_facility_active_business:
         주의.append("해외지주회사·고정 시설 실질 사업 요건 충족 여부는 호출자 판정")
+    if 긴_사업연도:
+        주의.append(f"fy_end {fy_end}가 개시연도 year={year}의 다음 해보다 뒤 — 사업연도가 1년을 넘는지 확인. 익금 귀속은 fy_end로, 세율·조문은 year로 계산함")
     # 비역년: 사업연도가 이듬해로 걸치고 두 해의 저세율 기준이 다르면, 종료연도 기준도 함께 판정(2026-11-14 원문·해석 재검색 — 시점 규정 없음)
     if 기준일 is not None and 소득합 > 0:
         종료연도 = date.fromisoformat(fy_end).year

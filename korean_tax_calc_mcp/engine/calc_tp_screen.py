@@ -354,7 +354,7 @@ def comparable_screen(rows=None, file_path=None, column_map=None, tested_party=N
     if sc["independence_pct"] is not None and (not isinstance(sc["independence_pct"], (int, float)) or sc["independence_pct"] > 50):
         문제.append(f"screens.independence_pct={sc['independence_pct']} — 50 이하(50% 이상 소유는 법정 특수관계, 법 제2조①3호·영 제2조②: 이보다 느슨하게 둘 수 없음)")
     if sc["loss_years"] is not None and (not isinstance(sc["loss_years"], int) or isinstance(sc["loss_years"], bool) or sc["loss_years"] < 1):
-        문제.append(f"screens.loss_years={sc['loss_years']!r} — 1 이상의 정수(손실 연도 수), 끄려면 None")
+        문제.append(f"screens.loss_years={sc['loss_years']!r} — 1 이상의 정수(손실 연도 수), 끄려면 비워 두세요(null)")
     if wca is not None and (not isinstance(wca, dict) or not isinstance(wca.get("rate"), (int, float)) or not str(wca.get("rate_basis", "")).strip()):
         문제.append("wca — {rate: 이자율(소수), rate_basis: 금리 근거(예: 'USD 1년 SOFR + 스프레드')} — 근거 없는 금리로는 조정하지 않음")
     decisions = {}

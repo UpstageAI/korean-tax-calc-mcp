@@ -93,7 +93,7 @@ def calc_cg(args: dict[str, Any], vocab_on) -> dict:
     except (KeyError, ValueError):
         return {
             "error": "입력 확인 필요 — 계산하지 않음",
-            "문제": ["acquisition_date·transfer_date는 YYYY-MM-DD 형식이어야 함"],
+            "문제": ["acquisition_date·transfer_date — YYYY-MM-DD 형식의 실제 날짜로 넣으세요(예: 2025-03-31)"],
             "필요 입력": {"acquisition_date": "str(YYYY-MM-DD)", "transfer_date": "str(YYYY-MM-DD)"},
         }
 
@@ -108,7 +108,7 @@ def calc_cg(args: dict[str, Any], vocab_on) -> dict:
         return {
             "error": "입력 확인 필요 — 계산하지 않음",
             "문제": [f"양도일({args['transfer_date']})이 취득일({args['acquisition_date']})보다 앞섬"],
-            "필요 입력": {"transfer_date": "str(취득일 이후)", "acquisition_date": "str(양도일 이전)"},
+            "필요 입력": {"transfer_date": "취득일 이후 날짜(YYYY-MM-DD, 예: 2025-03-31)", "acquisition_date": "양도일 이전 날짜(YYYY-MM-DD)"},
         }
 
     양도일_int = 양도일.year * 10_000 + 양도일.month * 100 + 양도일.day
@@ -156,22 +156,22 @@ def calc_cg(args: dict[str, Any], vocab_on) -> dict:
     if is_주택:
         if one_house is None:
             문제목록.append("주택: one_house 입력 필요 — 1세대 1주택 여부")
-            필요입력["one_house"] = "bool|None(주택만)"
+            필요입력["one_house"] = "true 또는 false(주택만 — 주택이 아니면 넣지 않음)"
         elif one_house:
             if exempt_met is None:
                 문제목록.append("one_house=True: exempt_met 입력 필요 — 1세대 1주택 비과세 요건 충족 여부")
-                필요입력["exempt_met"] = "bool(주택 1주택 비과세 요건 충족 여부)"
+                필요입력["exempt_met"] = "true 또는 false(주택 1주택 비과세 요건 충족 여부)"
             if residence_years is None:
                 # 2020.1.1 이전 양도분은 거주 요건 없음(표2_거주요건년=0) → residence_years 불필요
                 if 양도일 >= date(2020, 1, 1):
                     문제목록.append("one_house=True: residence_years 입력 필요 — 보유기간 중 거주기간(만 년수)")
-                    필요입력["residence_years"] = "int≥0(주택 1주택 거주기간, 만 년수)"
+                    필요입력["residence_years"] = "0 이상의 정수(주택 1주택 거주기간, 만 년수)"
         else:  # one_house=False
             if heavy_multi_home is None and not 중과사실:
                 문제목록.append("주택·1세대1주택 아님: 다주택 중과(제104조⑦) 판정 사실 입력 필요 — houses_count·adjusted_area(또는 중과 대상 아님이 확실하면 heavy_multi_home=False)")
-                필요입력["heavy_multi_home"] = "bool(주택 1주택 아님, 다주택 중과 대상 여부) — 또는 houses_count·adjusted_area"
-                필요입력["houses_count"] = "int≥1(양도일 현재 1세대 주택 수, 조합원입주권·분양권 포함)"
-                필요입력["adjusted_area"] = "bool(양도일 현재 조정대상지역 소재 여부)"
+                필요입력["heavy_multi_home"] = "true 또는 false(주택 1주택 아님, 다주택 중과 대상 여부) — 또는 houses_count·adjusted_area"
+                필요입력["houses_count"] = "1 이상의 정수(양도일 현재 1세대 주택 수, 조합원입주권·분양권 포함)"
+                필요입력["adjusted_area"] = "true 또는 false(양도일 현재 조정대상지역 소재 여부)"
             else:
                 중과 = 다주택_중과_판정(args["acquisition_date"], args["transfer_date"], houses_count=houses_count,
                                   adjusted_area=adjusted_area, exclusion_reason=exclusion_reason,
@@ -185,13 +185,13 @@ def calc_cg(args: dict[str, Any], vocab_on) -> dict:
     if not is_주택:
         if one_house is not None:
             문제목록.append("주택이 아닌 자산(토지·건물)에 one_house 입력 불가")
-            필요입력["one_house"] = "bool|None(주택만)"
+            필요입력["one_house"] = "true 또는 false(주택만 — 주택이 아니면 넣지 않음)"
         if exempt_met is not None:
             문제목록.append("주택이 아닌 자산(토지·건물)에 exempt_met 입력 불가")
-            필요입력["exempt_met"] = "bool(주택 1주택 비과세 요건 충족 여부)"
+            필요입력["exempt_met"] = "true 또는 false(주택 1주택 비과세 요건 충족 여부)"
         if residence_years is not None:
             문제목록.append("주택이 아닌 자산(토지·건물)에 residence_years 입력 불가")
-            필요입력["residence_years"] = "int≥0(주택 1주택 거주기간, 만 년수)"
+            필요입력["residence_years"] = "0 이상의 정수(주택 1주택 거주기간, 만 년수)"
         if 중과사실 or heavy_multi_home:
             문제목록.append("다주택 중과(heavy_multi_home·houses_count·adjusted_area·exclusion_reason)는 주택에만 입력")
 
@@ -666,8 +666,8 @@ def 다주택_중과_판정(acquisition_date: str, transfer_date: str, *, houses
     보유년 = full_years(acq, tr)   # 법 제95조④ 보유기간(취득일~양도일)
     사실 = houses_count is not None or adjusted_area is not None or exclusion_reason is not None
     없음 = {"적용": False, "가산세율": 0.0, "구분": None, "판단": [], "근거": None, "사실입력": 사실}
-    필요 = {"houses_count": "int≥1(양도일 현재 1세대 주택 수 — 조합원입주권·분양권 포함, 영 제167조의3①·제167조의10① 각 호 괄호의 주택 수 제외분은 빼고)",
-            "adjusted_area": "bool(양도일 현재 양도 주택이 조정대상지역에 있는지)"}
+    필요 = {"houses_count": "1 이상의 정수(양도일 현재 1세대 주택 수 — 조합원입주권·분양권 포함, 영 제167조의3①·제167조의10① 각 호 괄호의 주택 수 제외분은 빼고)",
+            "adjusted_area": "true 또는 false(양도일 현재 양도 주택이 조정대상지역에 있는지)"}
 
     if not 사실:
         if not heavy_multi_home:

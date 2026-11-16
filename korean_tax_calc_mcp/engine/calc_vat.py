@@ -13,6 +13,12 @@ from .exact import exact as _x, floor_won as _floor, trunc_won as _trunc
 VAT_FIRST, VAT_LAST = (2016, 1), (2026, 2)
 
 
+def _period_end(p) -> str:
+    """'YYYY-1'·'YYYY-2' → 그 과세기간 마지막 날 'YYYY-06-30'·'YYYY-12-31'."""
+    y, h = _period(p)
+    return f"{y}-06-30" if h == 1 else f"{y}-12-31"
+
+
 def _period(p):
     """→ (연도, 기). 'YYYY-1'/'YYYY-2' 또는 'YYYY-MM-DD'."""
     if p is None: return None
@@ -415,6 +421,10 @@ def vat_input_tax_deduction(period, filing, items):
             문제.append(f"공급자='{공급자}'은(는) 허용값이 아님 — 허용: {sorted(_VALID_SUPPLIER)}")
         if 공급가액 is None and 공급대가 is None:
             문제.append("공급가액·공급대가 모두 없음 — 하나 이상 입력 필요")
+        # 매입세액은 공급받는 시기가 속하는 과세기간의 매출세액에서 공제(법 제38조제2항) — 공급시기가 이 과세기간 뒤면 이 신고의 매입세액이 아님(0.59.1)
+        if isinstance(공급시기, str) and len(공급시기) >= 10 and 공급시기[:10] > _period_end(period):
+            문제.append(f"항목 '{항목}': 공급시기 {공급시기[:10]}가 과세기간 {period}(~{_period_end(period)}) 뒤 — 매입세액은 공급받는 시기가 속하는 과세기간에 공제"
+                        "(부가가치세법 제38조제2항). 공급시기나 period를 확인하세요")
         if 문제:
             return {"error": "입력 확인 필요 — 계산하지 않음", "문제": 문제}
         항목들.append(it)
@@ -937,9 +947,9 @@ def vat_return_general(inputs: dict) -> dict:
 
     for p in penalties:
         if not isinstance(p, dict) or "kind" not in p or "amount" not in p:
-            raise ValueError("penalties 각 항목에 kind와 amount(int≥0)가 필요")
+            raise ValueError("penalties 각 항목은 {kind: 가산세 종류, amount: 0 이상의 원 단위 정수} 꼴로 넣으세요")
         if not isinstance(p.get("amount"), int) or p["amount"] < 0:
-            raise ValueError("penalties amount는 int≥0")
+            raise ValueError("penalties amount — 0 이상의 원 단위 정수로 넣으세요(예: 1500000 — 쉼표·소수점 없이)")
 
     # ── 계산 ──
     # 매출 과세표준: (1)~(4)+(7)

@@ -441,7 +441,7 @@ def judge(transactions, 사업자="일반", period=None):
     rows, 판단전체, 기간합 = [], [], {}
     for n, tx in enumerate(transactions, 1):
         if not isinstance(tx, dict):
-            raise InputError(f"거래{n}: 객체(dict)로 입력")
+            raise InputError(f"거래{n}: 거래 한 건을 {{키: 값}} 꼴의 객체로 넣으세요(도구 설명의 transactions 항목 키)")
         kind = str(tx.get("종류") or "").replace(" ", "")
         if kind in KOREAN_VAT_EXPORT_TYPES:   # 신규 수출 유형 — 선적일·확정일·인도일 기준
             name = tx.get("이름") or f"거래{n}"
@@ -467,7 +467,7 @@ def judge(transactions, 사업자="일반", period=None):
             판단전체 += [{"거래": name, **j} for j in 판단]
             continue
         if not isinstance(tx, dict):
-            raise InputError(f"거래{n}: 객체(dict)로 입력")
+            raise InputError(f"거래{n}: 거래 한 건을 {{키: 값}} 꼴의 객체로 넣으세요(도구 설명의 transactions 항목 키)")
         name = tx.get("이름") or f"거래{n}"
         형태, parts, 판단, 영30 = _base_parts(tx, n)
         parts = _apply_invoices(tx, n, parts, 영30, 간이, 판단)

@@ -93,11 +93,11 @@ def statement(year, filer="법인", fy_end=None, subsidiary=None, ownership_dire
         if v is not None and not (num(v) and v >= 0):
             문제.append(f"{이름}={v} — 0 이상 원")
     if subsidiary is not None and not isinstance(subsidiary, dict):
-        문제.append("subsidiary — dict")
+        문제.append("subsidiary — 자회사 정보를 {키: 값} 꼴의 객체로 넣으세요")
     fin: dict[str, int] = {}
     if financials is not None:
         if not isinstance(financials, dict):
-            문제.append("financials — dict(코드 → 원)")
+            문제.append("financials — {계정 코드: 금액(원)} 꼴의 객체로 넣으세요")
         else:
             for k, v in financials.items():
                 kk = str(k).zfill(2) if str(k).isdigit() else str(k)

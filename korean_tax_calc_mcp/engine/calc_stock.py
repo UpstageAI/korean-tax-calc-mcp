@@ -8,6 +8,9 @@ import os
 from datetime import date, datetime
 from typing import Any
 
+from .exact import floor_won
+from .rounding import pct_text
+
 _RULES: dict | None = None
 _MARKETS = ("코스피", "코스닥", "코넥스", "비상장", "K-OTC", "국외")
 _MARKET_SYNONYMS = [
@@ -65,11 +68,16 @@ def _ratio(x: float | int | None, name: str = "지분율") -> tuple[float | None
 
 
 def _pct(v: float) -> str:
-    return f"{v * 100:g}%"
+    return pct_text(v)          # 지수 표기 없이(1.9e-07% 같은 꼴을 내지 않음)
 
 
 def _won(v: int | float) -> str:
-    return f"{int(round(v)):,}원"
+    return f"{floor_won(v):,}원"   # 원 미만 버림 — 기준 금액(정수)과의 대소는 버리기 전과 같음
+
+
+def _r(v):
+    """결과에 적는 지분율 — 부동소수 꼬리(0.013000000000000001)를 떼어 소수 8자리까지(판정은 버리기 전 값으로 이미 함)."""
+    return None if v is None else round(float(v), 8)
 
 
 # ── 대주주 판정 ──────────────────────────────────────────────────────────────
@@ -115,8 +123,8 @@ def major_shareholder(transfer_date: str, market: str, own_ratio=None, own_mcap=
     for n in (n1, n2):
         if n:
             해석.append(n)
-    own_m = float(own_mcap) if own_mcap is not None else None
-    rel_m = float(related_mcap) if related_mcap is not None else None
+    own_m = floor_won(own_mcap) if own_mcap is not None else None      # 시가총액은 원 단위 정수(원 미만 버림 — 기준 금액과의 대소는 같음)
+    rel_m = floor_won(related_mcap) if related_mcap is not None else None
     if own_r is None and own_m is None:
         return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["own_ratio(직전 사업연도 종료일 현재 본인 지분율) 또는 own_mcap(본인 보유 시가총액) 중 하나는 필요"],
                 "필요 입력": {"own_ratio": "0~1 또는 %", "own_mcap": "원"}}
@@ -139,7 +147,7 @@ def major_shareholder(transfer_date: str, market: str, own_ratio=None, own_mcap=
 
     own_hit = meets(own_r, own_m)
     comb_r = ((own_r if own_r is not None else 0.0) + (rel_r if rel_r is not None else 0.0)) if (own_r is not None or rel_r is not None) else None
-    comb_m = ((own_m if own_m is not None else 0.0) + (rel_m if rel_m is not None else 0.0)) if (own_m is not None or rel_m is not None) else None
+    comb_m = ((own_m if own_m is not None else 0) + (rel_m if rel_m is not None else 0)) if (own_m is not None or rel_m is not None) else None
     comb_hit = meets(comb_r, comb_m)
     has_related = (rel_r or 0) > 0 or (rel_m or 0) > 0
 
@@ -183,7 +191,7 @@ def major_shareholder(transfer_date: str, market: str, own_ratio=None, own_mcap=
     if 명부:
         판단 = 명부["판단"] + 판단
         if 명부["조건부"] and 판정 != "대주주":
-            cr = (comb_r if comb_r is not None else 0.0) + 명부["cond_ratio"]; cm = (comb_m + (명부["cond_mcap"] if 명부["cond_mcap"] is not None else 0.0)) if comb_m is not None else None
+            cr = (comb_r if comb_r is not None else 0.0) + 명부["cond_ratio"]; cm = (comb_m + (명부["cond_mcap"] if 명부["cond_mcap"] is not None else 0)) if comb_m is not None else None
             if meets(cr, cm):
                 판정, 이유 = "확인 필요", f"최대주주군이면 합산되는 주주({'·'.join(명부['조건부'])})까지 합하면 기준 충족(지분율 {_pct(cr)}) — 주주 1인등의 지분 합계가 그 법인에서 최대인지(is_max_group) 확인 필요"
     if 판정 != "대주주" and post_acquisition_ratio is not None:
@@ -199,7 +207,7 @@ def major_shareholder(transfer_date: str, market: str, own_ratio=None, own_mcap=
         판단.append({"항목": "확인 필요", "결론": P["확인 필요"], "근거": P["근거"]})
     판단.append({"항목": "기준일·시가", "결론": R["판정 기준일"] + ". 시가총액은 " + (R["시가총액 기준"]["상장"] if std in ("코스피", "코스닥", "코넥스") else R["시가총액 기준"]["비상장"]), "근거": "소득세법 시행령 제157조"})
     out = {"결과": {"판정": 판정, "이유": 이유, "기준_지분율": thr_r, "기준_시가총액": thr_m, "합산_방식": mode, "시장": std},
-           "계산": {"본인_지분율": own_r, "본인_시가총액": own_m, "특수관계인_지분율": rel_r, "특수관계인_시가총액": rel_m, "합산_지분율": comb_r, "합산_시가총액": comb_m, "최대주주군": is_max_group},
+           "계산": {"본인_지분율": _r(own_r), "본인_시가총액": own_m, "특수관계인_지분율": _r(rel_r), "특수관계인_시가총액": rel_m, "합산_지분율": _r(comb_r), "합산_시가총액": comb_m, "최대주주군": is_max_group},
            "근거": P["근거"], "판단": 판단}
     if 명부:
         out["주주별"] = 명부["주주별"]
@@ -325,7 +333,7 @@ def holdings_to_inputs(P: dict, listed: bool, td: date, is_max: bool | None, tot
            "own_mcap": None, "related_mcap": None, "cond_mcap": None, "판단": 판단, "주주별": 주주별, "조건부": 조건부}
     if price is not None:
         p = float(price)
-        out.update({"own_mcap": own_total * p, "related_mcap": rel_shares * p, "cond_mcap": cond_shares * p})
+        out.update({"own_mcap": floor_won(own_total, price), "related_mcap": floor_won(rel_shares, price), "cond_mcap": floor_won(cond_shares, price)})
         out["판단"].append({"항목": "시가총액", "결론": f"1주당 {p:,.0f}원 × 보유 주식 수 — " + ("직전 사업연도 종료일 최종시세가액(없으면 직전거래일)" if listed else "소득세법 시행령 제165조④ 기준시가(stock_basis_income_tax로 산정 — 상증법 평가와 다른 산식, 할증 없음)"), "근거": "소득세법 시행령 제157조④(구 ⑥·⑦)"})
     else:
         out["판단"].append({"항목": "시가총액", "결론": "price(1주당 가액)를 주지 않아 시가총액 기준은 판정하지 않음 — 지분율 기준만", "근거": "소득세법 시행령 제157조④"})
@@ -388,7 +396,7 @@ def stock_gains_tax(transfer_date: str, market: str, major_shareholder: bool | N
     elif std in ("코스피", "코스닥", "코넥스"):
         if major_shareholder is None and not otc_trade:
             return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["상장주식은 대주주 양도 또는 장외 양도만 과세 — major_shareholder(대주주 여부, stock_major_shareholder로 판정) 또는 otc_trade(장외 양도)를 주세요"],
-                    "필요 입력": {"major_shareholder": "bool", "otc_trade": "bool"}}
+                    "필요 입력": {"major_shareholder": "true 또는 false", "otc_trade": "true 또는 false"}}
         if not major_shareholder and not otc_trade:
             return {"결과": {"과세대상": False, "산출세액": 0, "이유": "대주주가 아닌 자가 증권시장에서 양도한 상장주식 — 양도소득세 과세 대상 아님(증권거래세만)"},
                     "근거": "소득세법 제94조①3호가목", "판단": [{"항목": "과세 대상", "결론": "과세 대상 아님", "근거": R["과세대상"]["상장"]}]}
@@ -399,9 +407,9 @@ def stock_gains_tax(transfer_date: str, market: str, major_shareholder: bool | N
                     "근거": "소득세법 제94조①3호나목 단서(2018.1.1.~)", "판단": [{"항목": "과세 대상", "결론": "과세 제외", "근거": R["과세대상"]["비상장"]}]}
         판단.append({"항목": "과세 대상", "결론": "비상장주식 — 과세", "근거": "소득세법 제94조①3호나목"})
         if major_shareholder is None:
-            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["비상장주식 세율은 대주주 여부로 갈림 — major_shareholder를 주세요(stock_major_shareholder로 판정)"], "필요 입력": {"major_shareholder": "bool"}}
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": ["비상장주식 세율은 대주주 여부로 갈림 — major_shareholder를 주세요(stock_major_shareholder로 판정)"], "필요 입력": {"major_shareholder": "true 또는 false"}}
     if sme is None:   # 국외주식도 중소기업 여부로 세율이 갈림(제104조①12호) — 기본값을 두지 않고 묻는다(리뷰 반영)
-        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"sme(중소기업 여부)가 필요 — 판정 기준: {SM['기준']}" + (" (국외주식도 중소기업 10%·그 밖 20%)" if std == "국외" else "")], "필요 입력": {"sme": "bool"}}
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"sme(중소기업 여부)가 필요 — 판정 기준: {SM['기준']}" + (" (국외주식도 중소기업 10%·그 밖 20%)" if std == "국외" else "")], "필요 입력": {"sme": "true 또는 false"}}
     # 2. 양도차익
     if gain is None:
         if transfer_price is None or acquisition_price is None:

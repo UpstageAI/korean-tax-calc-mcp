@@ -133,8 +133,9 @@ def test_bad_labels_are_rejected(tmp_path, bad):
 
 def test_result_and_description_say_not_to_resave(made):
     en, ko = made["en", "plain"]["결과"], made["ko", "plain"]["결과"]
-    for r in (en, ko):
-        assert "다시 저장하면" in r["파일_안내"] and "labels" in r["파일_안내"] and "Re-saving this file" in r["파일_안내"] and "verify_workbook" in r["파일_안내"]
+    assert "다시 저장하면" in ko["파일_안내"] and "labels" in ko["파일_안내"] and "Re-saving this file" in ko["파일_안내"] and "verify_workbook" in ko["파일_안내"]
+    # 0.59.1: lang='en'이면 국문·영문 병기 안내 가운데 영문 부분만
+    assert en["파일_안내"].startswith("Re-saving this file") and "verify_workbook" in en["파일_안내"] and "다시 저장하면" not in en["파일_안내"]
     assert en["번역_없음"] and "labels" in en["번역_없음_안내"] and "번역_없음_안내" not in ko
     assert "`labels`" in next(w for w in made["en", "plain"]["warnings"] if w.startswith("Untranslated labels"))
     doc = S.mcp._tool_manager._tools["export_workbook"].description

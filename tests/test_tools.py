@@ -149,7 +149,7 @@ def test_사용료_쟁점_수원고등법원_포함():
     assert len(issues) == 9
     refs = [ref for it in issues for ref in it["참고"]]
     assert any("수원고등법원-2023-누-15618" in ref for ref in refs)
-    assert all(it["판단"] == "전문가 확인 필요" for it in issues)
+    assert all(it["확인할 자료"] and "판단" not in it for it in issues)   # 0.59.1: 고정 문구 대신 쟁점별 확인할 자료
 
 
 def test_배당_treaty_rate_제156조의6_포함():
@@ -196,7 +196,7 @@ def test_thin_capitalization_쟁점_포함():
     assert len(issues) >= 1
     refs = [ref for it in issues for ref in it["참고"]]
     assert any("제22조" in ref for ref in refs)
-    assert all(it["판단"] == "전문가 확인 필요" for it in issues)
+    assert all(it["확인할 자료"] and "판단" not in it for it in issues)   # 0.59.1: 고정 문구 대신 쟁점별 확인할 자료
 
 
 def test_issues_json_패키지_데이터_존재():

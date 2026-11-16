@@ -51,7 +51,7 @@ def capital_gains_withholding(seller_type, asset_kind, year, gross_price, acquis
         if isinstance(v, bool) or not isinstance(v, int) or v < 0:
             return _err(f"{n}={v!r} — 0 이상 정수(원)")
     if acquisition_cost is not None and (isinstance(acquisition_cost, bool) or not isinstance(acquisition_cost, int) or acquisition_cost < 0):
-        return _err(f"acquisition_cost={acquisition_cost!r} — 0 이상 정수(원), 확인되지 않으면 비움")
+        return _err(f"acquisition_cost={acquisition_cost!r} — 0 이상의 원 단위 정수로 넣으세요(확인되지 않으면 비워 둠)")
     if transfer_expenses and acquisition_cost is None:
         return _err("transfer_expenses는 취득가액이 확인될 때(acquisition_cost)만 — 단서는 '취득가액 및 양도비용이 확인되는 경우'")
     if normal_price is not None:
@@ -161,8 +161,10 @@ def capital_gains_withholding(seller_type, asset_kind, year, gross_price, acquis
 
     if year <= 2018:
         한계.append(f"{year}년 지급분: 원천징수 호는 2019.1.1. 시행 개정 전 번호({wh_art}) — 세율·산식 문언은 2019년 이후와 같음")
+    if acquisition_cost is not None:   # 취득가액을 넣었을 때만 — 넣지 않았으면 지급금액 × 10%라 양도차익을 쓰지 않음
+        한계.append("양도차익은 지급금액 − 취득가액 − 양도비용으로 계산(입력 기준) — 확인할 것: 입력한 취득가액·양도비용이 확인되는 금액인지"
+                  "(범위는 소득세법 시행령·법인세법 시행령 위임 — 이 도구는 판단하지 않음)")
     한계 += [
-        "양도차익은 지급금액 − 취득가액 − 양도비용으로 계산(입력 기준). 확인되는 취득가액·양도비용의 범위(소득세법 시행령·법인세법 시행령 위임)는 판단하지 않음 — 확인 필요",
         "끝수: 세액은 원 미만을 버리고 계산 — 납부할 때 10원 미만 끝수는 버림(국고금 관리법 제47조제1항)",
         "국내원천소득 해당 여부(부동산주식등 50% 판정, 기타유가증권의 양수자 요건 등)는 입력(asset_kind)으로 받음 — 판단하지 않음",
         "조세조약 면제(treaty_exempt)는 입력값 — 조약 요건은 판단하지 않음",

@@ -578,6 +578,10 @@ def _front(r):
 import json as _json
 
 from .engine.rounding import WITHHOLDING_ROUNDING_BASIS as _WH_ROUNDING_BASIS, attach_pay_amount as _attach_pay_amount  # 끝수 규칙(국고금 관리법 제47조) 한 곳
+from .engine.rounding import num_text as _num_text, tidy_amounts as _tidy_amounts
+from .result_en import english_result as _english_result
+_re_iso = re.compile(r"\d{4}-\d{2}-\d{2}")
+_NO_TIDY = frozenset({"export_workbook", "verify_workbook", "find_tool"})   # 파일·검색 결과 — 금액 표기 정리 대상 아님
 
 _CALL_MEMO: dict[str, int] = {}   # key → 호출 횟수 (최근 500개만 보관, 초과 시 오래된 것부터 삭제)
 
@@ -740,6 +744,8 @@ def _guard(fn):
         repeat = count >= 2
         try:
             inner = _attach_pay_amount(fn.__name__, fn(*a, **k))
+            if fn.__name__ not in _NO_TIDY:
+                inner = _tidy_amounts(inner)   # 금액 키의 25000000.0 → 25000000(값 그대로, 표기만)
             r = _front(inner)
         except _NoYearTable as e:
             r = {"error": str(e), "주의": "연도표 없는 해는 추정 계산하지 않음"}
@@ -2787,6 +2793,9 @@ def withholding_tax(kind: Annotated[str, Field(description="소득 종류: 이�
 소액부징수(제86조제1호): 원천징수세액 1천원 미만이면 징수하지 않음 — 이자소득은 제외(2016~2026 같음), 2024.7.1. 이후 지급하는 부가가치세법 제26조제1항제15호 인적용역 계속·반복 공급 사업소득도 제외(법률 제19933호 부칙).
 연도: 비실명 38%(~2017)·40%(2018)·42%(2019~2022)·45%(2023~), 외국인직업운동가 3%(~2018)·20%(2019~2024는 계약기간 3년 이하만, 2025~ 제한 없음), 온투업이자 25%(~2019)·14%(2020~).
 결과: 원천징수세액·적용 세율, 근거(소득세법 제129조). 지방소득세 10% 별도. 비거주자·외국법인은 nonresident_withholding 사용. 국내 withholding tax (소득세분) on interest, dividends, business income, etc."""
+    if paid_date:   # year는 지급연도 — 지급일과 다른 해면 같은 사실을 두 값으로 다르게 준 것(0.59.1)
+        _pd = _chk.to_date("paid_date", paid_date)
+        _chk.need(_pd.year == year, f"paid_date={paid_date} — 지급일의 연도가 지급연도 year={year}와 다름. year에는 지급일이 속하는 연도를 넣으세요")
     if kind.strip() == "외국인직업운동가" and contract_over_3_years and 2019 <= year <= 2024:
         # 소득세법 제129조①3호 단서: 2019~2024년 "계약기간이 3년 이하인 경우로 한정" → 3년 초과 계약은 사업소득 3%. 2025.1.1. 한정 삭제(법률 제20615호, 부칙 제13조).
         out = _ok({"원천징수세액": I.withholding_tax("사업", amount, year), "세율": I.withholding_rate("사업", year)}, "소득세법 제129조①3호 본문",
@@ -2827,7 +2836,7 @@ def _wh_small(out: dict, kind: str, year: int, paid_date, cps: bool) -> dict:
             try:
                 d = date.fromisoformat(str(paid_date)[:10])
             except ValueError:
-                return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"paid_date={paid_date!r} — 지급일 YYYY-MM-DD"]}
+                return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"paid_date={paid_date!r} — 지급일을 YYYY-MM-DD 형식의 실제 날짜로 넣으세요(예: 2025-03-31)"]}
             예외 = d >= _WH_소액부징수_사업예외일
         elif year == _WH_소액부징수_사업예외일.year:
             판단.append({"항목": "소액부징수", "결론": f"원천징수세액 {tax:,}원 < 1천원 — 인적용역 계속·반복 공급 사업소득은 2024.7.1. 이후 지급분부터 징수(그 전은 부징수). paid_date를 넣어 다시 계산 — 지금 값은 징수로 둠",
@@ -2876,9 +2885,9 @@ def nonresident_withholding(income_kind: Annotated[Literal["이자", "배당", "
     _e = _range_err(("year", year))
     if _e: return _e
     if treaty_rate is not None and not (0 <= treaty_rate <= 1):
-        hint = f" — {treaty_rate:g}%라면 {treaty_rate / 100:g}" if 1 < treaty_rate <= 100 else ""
+        hint = f" — {_num_text(treaty_rate, 6)}%라면 {_num_text(treaty_rate / 100, 6)}" if 1 < treaty_rate <= 100 else ""
         return {"error": "입력 확인 필요 — 계산하지 않음",
-                "문제": [f"treaty_rate={treaty_rate:g} — 조세조약 제한세율은 0~1 소수로 넣으세요(예: 15%면 0.15){hint}. "
+                "문제": [f"treaty_rate={_num_text(treaty_rate, 6)} — 조세조약 제한세율은 0~1 소수로 넣으세요(예: 15%면 0.15){hint}. "
                          "퍼센트 숫자를 소수로 바꾸거나 국내세율로 대신 계산하지 않음"]}
     r = I.nonresident_withholding(income_kind, amount, recipient_type, residence_country, treaty_rate, bond_interest, related_party,
                                   treaty_includes_local_tax, service_location, year, net_of_tax, payer_bears_local_tax,
@@ -3179,6 +3188,9 @@ def nonbusiness_interest_disallowance(loans: Annotated[list[Loan], Field(descrip
     extra = {"계산": calc, "판단": 판단}
     if pointer:
         extra["인정이자_연결"] = pointer
+    _fy = re.findall(r"\d{4}-\d{2}-\d{2}", str(calc.get("사업연도") or ""))
+    _밖 = [f"{nm}[{i}].{k} {a[k][:10]}" for nm, rows in (("advances", advances), ("deposits", deposits)) for i, a in enumerate(rows or [])
+          for k in ("지급일", "일자") if len(_fy) == 2 and isinstance(a, dict) and isinstance(a.get(k), str) and a[k][:10] > _fy[1]]
     if any((a or {}).get("대상") == "특수관계법인" and (a or {}).get("사유", "업무무관대여") in ("업무무관대여", "가지급금", "기타") for a in (advances or [])):
         extra["주의"] = [
             "특수관계법인 대여금이 '업무와 관련 없는' 것인지는 이 도구가 판정하지 않음 — 입력한 대로 업무무관 가지급금으로 계산. "
@@ -3190,7 +3202,9 @@ def nonbusiness_interest_disallowance(loans: Annotated[list[Loan], Field(descrip
                ", 시행령 제51조·제53조·제55조·제106조, 시행규칙 제28조·제44조" +
                ("; 특수관계인: " + ", ".join(dict.fromkeys(x["특수관계_판정"]["근거"] for x in calc["가지급금"] if "특수관계_판정" in x))
                 if any("특수관계_판정" in x for x in calc["가지급금"]) else ""),
-               산식="순위(영 제55조) 채권자불분명 → 비실명 → 건설자금 → 지급이자 × min(업무무관 적수, 차입금 적수) ÷ 차입금 적수", **extra)
+               산식="순위(영 제55조) 채권자불분명 → 비실명 → 건설자금 → 지급이자 × min(업무무관 적수, 차입금 적수) ÷ 차입금 적수",
+               **(extra | ({"주의": extra.get("주의", []) + [f"{', '.join(_밖)} — 사업연도({_fy[0]}~{_fy[1]}) 뒤 날짜라 이 사업연도 적수는 0으로 계산함. "
+                                                          "날짜나 year를 확인"]} if _밖 else {})))
 
 
 @mcp.tool(annotations=CALC)
@@ -3471,7 +3485,19 @@ def _thin_cap_by_loans(equity, borrowings, total_interest, ratio, year, country,
     elif country and res["기타사외유출 처분"] and not res["배당 처분"]:
         주의.append("손금불산입액이 모두 기타사외유출 처분분(특수관계인·지급보증 차입분)이라 배당 원천징수 재계산 없음")
     return _ok(res, f"{B['법']}, {B['배정']}, {B['처분']}",
-               계산=r["계산"], 세무조정=세무조정, 주의=주의, 쟁점=_load_issues().get("thin_capitalization", []))
+               계산=r["계산"], 세무조정=세무조정, 주의=주의, 쟁점=_thin_cap_issues_with_loans(_load_issues().get("thin_capitalization", [])))
+
+
+def _thin_cap_issues_with_loans(issues: list) -> list:
+    """loans로 차입금 종류(직접·특수관계인·보증)와 적수를 이미 받았으면 쟁점에서 그 부분('보증·간접차입 포함 여부', 차입금 적수)을 뺀다."""
+    out = []
+    for it in issues:
+        it = dict(it)
+        if it.get("조건") == "항상":
+            it["쟁점"] = "출자금액 산정 시점(사업연도 종료일, 자본이 변동했으면 적수)이 결과를 바꿈 — 차입금 종류·적수는 loans 입력대로 계산"
+            it["확인할 자료"] = ["사업연도 중 자본 변동(출자금액 적수)", "loans의 차입금별 적수·이자율이 차입 계약서·원장과 맞는지"]
+        out.append(it)
+    return out
 
 
 @mcp.tool(annotations=CALC)
@@ -3493,10 +3519,14 @@ def missing_receipt_disallowance(year: YEAR, items: Annotated[list[ReceiptItem],
     lo = vocab.rule_on("기업업무추진비_적격증빙미수취", 20201231)["기준"]
     hi = vocab.rule_on("기업업무추진비_적격증빙미수취", 20210101)["기준"]
     yr = vocab.rule("기업업무추진비_적격증빙미수취", year)["기준"]
-    total, 미정 = 0, []
+    total, 미정, 밖 = 0, [], []
+    _fs, _fe, _ = DB.fiscal_year(year, fy_start, fy_end)
     for n, i in enumerate(items):
         if i.spent_on:
             d = _chk.to_date(f"items[{n}].spent_on", i.spent_on)
+            _chk.supported_year(f"items[{n}].spent_on", i.spent_on)     # 기준금액 표(2016~2026) 밖 지출일은 계산하지 않음(0.59.1)
+            if not (_fs <= d <= _fe):
+                밖.append(f"items[{n}].spent_on {d.isoformat()}")
             std = vocab.rule_on("기업업무추진비_적격증빙미수취", DB.ymd(d))["기준"]
         else:
             std = yr
@@ -3509,6 +3539,9 @@ def missing_receipt_disallowance(year: YEAR, items: Annotated[list[ReceiptItem],
     if 미정:
         extra["주의"] = [f"items {미정} — 기준금액이 2021.1.1. 이후 지출분부터 {lo['일반']:,}원 → {hi['일반']:,}원(대통령령 제31443호 부칙 제9조)이라 지출일에 따라 결론이 갈림. "
                        f"사업연도 표({year})로 판정했음 — spent_on(지출일)을 넣는다"]
+    if 밖:
+        extra.setdefault("주의", []).append(f"{', '.join(밖)} — 지출일이 사업연도({_fs.isoformat()}~{_fe.isoformat()}) 밖. 기준금액은 지출일로 골라 계산했음 — "
+                                            "그 사업연도의 기업업무추진비가 맞는지, 지출일을 잘못 넣지 않았는지 확인")
     return _ok({"손금불산입": total}, "법인세법 제25조②, 시행령 제41조①" + (", 대통령령 제31443호 부칙 제9조(지출일 기준)" if any(i.spent_on for i in items) else ""), **extra)
 
 
@@ -4159,6 +4192,17 @@ def vat_bad_debt_credit(bad_debt_incl_vat: Annotated[int, Field(description="대
     from datetime import date, timedelta
     from .engine.calc_deadline import add_months
 
+    # 범위 밖·서로 맞지 않는 날짜(0.59.1): 신고 과세기간은 지원 범위(2016년) 이후 — 2026년 사유가 2027년에 확정되면 2027년 과세기간도 맞으므로 뒤쪽은 막지 않음.
+    # 공급일은 대손 사유 발생일보다 앞(공급 전에는 그 공급대가 채권이 없음)
+    if period is not None:
+        _m = re.fullmatch(r"(\d{4})-([12])", str(period))
+        _chk.need(_m is not None, f"period={period!r} — 과세기간은 'YYYY-1'(1기) 또는 'YYYY-2'(2기)로 넣으세요(예: 2025-2)")
+        _chk.need(int(_m.group(1)) >= _chk.YEAR_MIN, f"period={period} — {_chk.YEAR_MIN}년 이후 과세기간만 지원(그 전 과세기간은 계산하지 않음)")
+    _chk.to_date("reason_date", reason_date)
+    if supply_date:
+        _chk.need(_chk.to_date("supply_date", supply_date) <= _chk.to_date("reason_date", reason_date),
+                  f"supply_date={supply_date} — 공급일이 대손 사유 발생일 reason_date={reason_date}보다 뒤. 공급 전에는 그 공급대가 채권이 없어 대손 사유가 생길 수 없음 — 날짜를 확인하세요")
+
     # 대손확정일 계산
     if reason == "부도":
         부도발생일 = date.fromisoformat(reason_date)
@@ -4332,14 +4376,14 @@ def _ymd(name: str, v: str | None) -> date | None:
     try:
         return date.fromisoformat(str(v)[:10])
     except ValueError:
-        raise ValueError(f"{name}={v!r} — YYYY-MM-DD")
+        raise ValueError(f"{name}={v!r} — YYYY-MM-DD 형식의 실제 날짜로 넣으세요(예: 2025-03-31)")
 
 
 _FW_LIMITS = [
     "특수관계기업 여부(시행령 제16조의2제2항)·외국인투자기업 예외(같은 조 제1항)·지역본부(같은 조 제3항) 해당 여부는 입력값을 그대로 씀 — 도구가 판정하지 않음",
     "사택 제공 이익 비과세 유지(제18조의2제3항 괄호, 시행령 제16조의2제5항 → 소득세법 시행령 제17조의4제1호)는 2024.1.1. 이후 지급분부터(법률 제19936호 부칙 제6조) — "
     "이 도구는 귀속연도 2024부터로 처리, 2023년 귀속분을 2024년에 지급한 경우는 지급일 기준으로 따로 확인",
-    "원천징수(제18조의2제4항) 월 세액은 입력한 월 지급액 × 세율 — 월 원천징수 대상에 비과세 급여를 넣는지는 확인 필요",
+    "원천징수(제18조의2제4항) 월 세액은 입력한 월 지급액(monthly_pay) × 세율 — 확인할 것: monthly_pay가 그 달 원천징수 대상 근로소득과 같은지(비과세 급여를 넣었는지 뺐는지)",
     "끝수: 세액은 원 단위까지 계산(원 미만 버림) — 납부할 때 10원 미만 끝수는 버림(국고금 관리법 제47조제1항)",
 ]
 # 원문 대조로 닫은 것(법제처 시행본·부칙, 2026-11-15) — 결과의 '대조'로 내보낸다.
@@ -4408,7 +4452,10 @@ def foreign_worker_flat_tax(
     주의 = el["주의"] + ["외국인기술자 감면(제18조) 대상이면 누진세율 쪽에 그 감면을 반영해 foreign_expert_income_reduction으로 따로 비교"]
     if prog["과세표준추정"]:
         주의.append("누진세율 과세표준은 본인 기본공제만 뺀 추정 — 부양가족 등 공제가 있으면 tax_base를 주세요")
-    return _ok(결과, " · ".join(근거), 주의=주의, 한계=_FW_LIMITS, 대조=_FW_VERIFIED, 시행본=el["시행본"])
+    # 한계 중 입력과 관련 없는 줄은 뺀다 — 사택 줄은 사택 제공 이익을 넣었을 때만, 월 원천징수 줄은 monthly_pay를 넣었을 때만
+    한계 = [x for x in _FW_LIMITS
+            if not ((x.startswith("사택") and not housing_benefit_nontaxable) or (x.startswith("원천징수(") and monthly_pay is None))]
+    return _ok(결과, " · ".join(근거), 주의=주의, 한계=한계, 대조=_FW_VERIFIED, 시행본=el["시행본"])
 
 
 _FE_LIMITS = [
@@ -4979,6 +5026,10 @@ def bad_debt_adjustment(year: YEAR, sme: Annotated[bool, Field(description="중�
     _bd_fy = (_bd_fs, _bd_fe0)
     _extra = []
     for i, w in enumerate(writeoffs or []):
+        # 0.59.1: 대손 사유일(date)이 사업연도 뒤면 그 사업연도의 대손이 아닐 수 있음 — 계산은 하되 알림
+        if isinstance(w, dict) and isinstance(w.get("date"), str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", w["date"][:10]) and w["date"][:10] > _bd_fe0.isoformat():
+            화해_주의.append(f"항목 {i+1}: date {w['date'][:10]}이 사업연도({_bd_fs.isoformat()}~{_bd_fe0.isoformat()}) 뒤 — 입력대로 이 사업연도에 넣어 계산했음. "
+                          "이 사업연도의 대손인지, 날짜·year를 잘못 넣지 않았는지 확인")
         if isinstance(w, dict) and isinstance(w.get("amount"), (int, float)) and w["amount"] < 0:
             _extra.append(f"항목 {i+1}: amount {w['amount']:,}원 — 음수는 받지 않음(대손금은 0 이상)")
         if isinstance(w, dict) and w.get("booked") not in (None, "상계", "손비", "전기부인"):
@@ -6128,7 +6179,7 @@ def financial_income_aggregate(year: YEAR,
         try:
             cur_rate, _pd = _gu_rate_on(it.get("paid_date"))
         except ValueError:
-            raise ValueError(f"paid_date={it.get('paid_date')!r} — 지급일 YYYY-MM-DD")
+            raise ValueError(f"paid_date={it.get('paid_date')!r} — 지급일을 YYYY-MM-DD 형식의 실제 날짜로 넣으세요(예: 2025-04-30)")
         cur_pd = _pd
         _규칙_지급일 = (lambda n: vocab.rule_on(n, int(_pd.strftime("%Y%m%d")))) if _pd else (lambda n: vocab.rule(n, year))
         if k == "예금이자":
@@ -7540,6 +7591,17 @@ def vat_return_general(
         if dup_keys:
             raise ValueError(f"ledger와 scalar 입력이 중복됨: {', '.join(dup_keys)} — 하나로 통일해 입력")
 
+    # 0.59.1: 신고일이 그 과세기간(예정은 예정신고기간)이 시작하기 전이면 서식 신고가 있을 수 없음 — 막는다.
+    #   과세기간이 끝나기 전 날짜는 폐업(과세기간이 폐업일에 끝남 — 법 제49조제1항 괄호)이면 있을 수 있어 계산하고 주의만 붙인다.
+    _신고일_주의 = None
+    if filed_on:
+        _fd = _chk.to_date("filed_on", filed_on)
+        _ps = date(year, 1 if str(period) == "1" else 7, 1)
+        _pe = date(year, *{("1", "예정"): (3, 31), ("1", "확정"): (6, 30), ("2", "예정"): (9, 30), ("2", "확정"): (12, 31)}[(str(period), kind)])
+        _chk.need(_fd >= _ps, f"filed_on={filed_on} — 신고일이 {year}년 제{period}기({_ps.isoformat()}~) 시작 전. 그 과세기간의 신고일을 넣으세요")
+        if _fd <= _pe:
+            _신고일_주의 = (f"filed_on={filed_on} — 신고 대상 기간({_ps.isoformat()}~{_pe.isoformat()})이 끝나기 전 날짜. 폐업이 아니면 기간이 끝난 뒤 25일 안에 신고"
+                         f"(부가가치세법 제48조제1항·제49조제1항) — 날짜를 확인")
     # e_filing_credit 계산
     if e_filing:
         _filed_on = filed_on if filed_on else default_filed_on(year, period)
@@ -7590,6 +7652,8 @@ def vat_return_general(
         # 2025년 과세기간의 서식 판: (1)~(30) 칸 서식은 <개정 2025. 7. 4.>(기획재정부령 제1136호, 부칙 '공포한 날부터 시행' — 서식 적용례 없음)부터라
         # 그 전에 신고하는 제1기 예정신고(기한 4.25.)는 <개정 2025. 3. 21.> 서식((1)~(27))
         r["계산식_입력"].append({"이름": "예정신고_1기", "값": int(period == "1" and kind == "예정"), "설명": "제1기 예정신고이면 1 — 2025년 과세기간의 서식 판 선택에 씀"})
+    if _신고일_주의 and isinstance(r, dict) and "error" not in r:
+        r["주의"] = (r["주의"] if isinstance(r.get("주의"), list) else ([r["주의"]] if r.get("주의") else [])) + [_신고일_주의]
     return r
 
 
@@ -8371,7 +8435,7 @@ def deemed_dividend_capital_reduction(
     problems: list[str] = []
     for i, a in enumerate(acquisitions or []):
         if not isinstance(a, dict):
-            problems.append(f"항목 {i+1}: dict 아님")
+            problems.append(f"항목 {i+1}: {{키: 값}} 꼴의 객체로 넣으세요")
             continue
         d = str(a.get("date", ""))
         if len(d) != 10:
@@ -9256,6 +9320,11 @@ def pension_account_withdrawal(
       이연퇴직_연금수령(연금소득·분리과세), 기타소득_연금외수령, 계산.연금수령연차·연금수령한도, 판단.
     주의: contributions_not_deducted > contributions_total, 음수, 날짜 형식 오류 → error."""
     _chk.supported_year("year", year)
+    # 0.59.1: 개시 신청일이 인출 연도 뒤면 막는다 — 연금수령은 55세 이후 개시를 신청한 후 인출해야 하므로(영 제40조의2제3항제1호)
+    # 그 해 인출은 모두 신청 전 인출. 출생·가입·신청일의 앞뒤는 엔진이 종전대로 본다.
+    sd = _chk.to_date("start_request_date", start_request_date)
+    _chk.need(sd.year <= year, f"start_request_date={start_request_date} — 개시 신청일이 인출 연도 year={year} 뒤라 그 해 인출은 모두 개시 신청 전 인출"
+                               "(연금수령은 개시를 신청한 후 인출해야 함, 소득세법 시행령 제40조의2제3항제1호). 그 해 말까지 신청했다면 실제 신청일을 넣으세요")
     return GG.pension_account_withdrawal(
         year=year, birth_date=birth_date, join_date=join_date,
         start_request_date=start_request_date, balance_at_period_start=balance_at_period_start,
@@ -9594,7 +9663,7 @@ def capital_gains_tax(base: Annotated[int, Field(description="양도소득 과�
         if asset_type != "주택":
             return {"error": "입력 확인 필요 — 계산하지 않음",
                     "문제": [f"heavy_multi_home·houses_count·adjusted_area·exclusion_reason은 주택에만 입력(asset_type={asset_type})"],
-                    "필요 입력": {"heavy_multi_home": "None|False(주택이 아닌 자산)"}}
+                    "필요 입력": {"heavy_multi_home": "false 또는 비워 둠(주택이 아닌 자산)"}}
         if heavy_multi_home and not 중과사실 and designated_area and date.fromisoformat(transfer_date) < date(2018, 4, 1):
             return {"error": "지원하지 않음 — 지정지역 다주택 가산(제104조④1호·2호, 2018.4.1. 전 양도)",
                     "문제": ["heavy_multi_home=True·designated_area=True, 2018.4.1. 전 양도: 지정지역 1세대 3주택 이상 등 +10%p(제104조④1호·2호) — 지원하지 않음"],
@@ -9793,6 +9862,8 @@ def _등록임대_판정(year: int, h: dict, nm: str) -> tuple[bool | None, str]
         return None, f"{nm}: 등록임대=True면 임대유형(공공지원|장기일반|단기) 입력"
     신청일 = h.get("등록신청일")
     변경일 = h.get("단기에서_변경신고일")
+    if 신청일 and _chk.to_date(f"{nm}.등록신청일", 신청일) > date(year, 12, 31):   # 0.59.1: 그 해 뒤에 등록 신청한 주택은 그 해 등록임대주택이 아님
+        return None, f"{nm}: 등록신청일 {신청일}이 과세연도 {year}년 뒤 — 그 해에는 등록하지 않은 주택. 등록임대=false로 넣거나 날짜를 확인"
     if year == 2019:
         return True, f"{유형}민간임대주택 — 2019 시행본은 공공지원·장기일반·단기 모두 등록임대주택(시행령 제122조의2①1호)"
     제한대상 = 유형 == "단기" or (유형 == "장기일반" and h.get("아파트"))
@@ -10495,6 +10566,11 @@ def vat_exempt_use_deemed_supply(
             return {"error": "입력 확인 필요 — 계산하지 않음",
                     "문제": [f"assets: 구분='{구분}'은(는) 허용값 아님 — '건물'|'구축물'|'기타'|'토지'|'비상각'"]}
 
+        # 아직 취득하지 않은 재화는 면세사업에 쓸 수 없음 — 구분과 무관하게 서로 맞지 않는 입력(0.59.1, 상각 자산은 종전에도 아래 경과 계산에서 막음)
+        if _re_iso.fullmatch(취득일[:10]) and 취득일[:10] > str(use_date)[:10]:
+            return {"error": "입력 확인 필요 — 계산하지 않음",
+                    "문제": [f"자산 '{구분}': 취득일 {취득일}이 전용일 use_date={use_date}보다 뒤 — 취득 전에 면세사업에 쓸 수 없음. 날짜를 확인하세요"]}
+
         # 토지 제외
         if 구분 == "토지":
             자산별.append({"구분": 구분, "제외사유": "토지 — 면세 재화(부가법 제10조① 괄호)",
@@ -10909,9 +10985,11 @@ def export_workbook(
   선택 입력을 줬을 때만: 결과.통합_시트·결과.detail·결과.시트_안내(뒤 시트 구성)·결과.서식_안내(compact에서 서식이 있을 때 — 이 두 안내는 시트에 찍지 않고 결과로만),
     결과.자유_시트·결과.자유_시트_안내(extra_sheets), 결과.labels_적용(labels).
   lang='en'일 때만: 결과.lang, 결과.번역_라벨_수, 결과.번역_없음(국문 그대로 찍힌 라벨·근거 구절·법령명), 결과.번역_없음_안내.
+  lang='en'이면 결과 JSON의 키도 영어 — result.file·result.sheets·result.call_count·result.failed_calls·result.untranslated·result.file_note, basis(위 결과.* 이름과 같은 뜻).
   근거 — '계산 도구 결과 정리(세무 자문 아님)'."""
-    return _export_workbook_impl(title, calls, output_dir, filename, layout, company, period, biz_no, review_notes, lang,
-                                 scenarios, sources, issues, detail, labels, extra_sheets, actions, key_figures)
+    out = _export_workbook_impl(title, calls, output_dir, filename, layout, company, period, biz_no, review_notes, lang,
+                                scenarios, sources, issues, detail, labels, extra_sheets, actions, key_figures)
+    return _english_result(out) if lang == "en" else out     # 0.59.1: lang='en'이면 결과 키·고정 문구도 영어
 
 
 # ── verify_workbook: 직접 만든 통합 문서의 금액 칸을 계산 도구 결과와 대조(본문은 workbook_verify.py) ────────
@@ -10951,9 +11029,11 @@ def verify_workbook(
   결과.부가_점검 — 저장된 값이 없는 수식 칸 수, 저장된 값과 다시 계산한 값이 다른 칸, 원 미만 소수가 남은 금액 칸, 오류 칸, 수식 열에 직접 적은 숫자, 값을 계산하지 못한 수식 칸.
   결과.사본 — 대조 결과 시트를 붙인 사본의 절대경로(annotate=true). 결과.다음 — 다음에 할 일 한 줄. 한계 — 금액 판정 기준, 수식 모양으로 정하는 범위, 호출_id 보관 범위, 자동 대조의 우연 일치.
   lang='en'일 때만(사본을 만들었을 때): 결과.lang, 결과.번역_없음, 결과.번역_없음_안내. labels를 줬을 때: 결과.labels_적용, 시트에 없는 키는 warnings.
+  lang='en'이면 결과 JSON의 키도 영어 — result.summary{checked, matched, mismatched, unreadable, tool_errors, auto_matched, auto_mismatched, unchecked_amounts}·result.checks[{cell, item, method, tool, call, key, workbook_value, tool_value, difference, verdict, basis}]·result.mismatches·result.unchecked_amounts·result.copy·result.next_step, basis·limits.
   근거 — '통합 문서의 칸 값과 계산 도구 결과 대조(세무 자문 아님)'."""
     from .workbook_verify import verify_workbook_impl
-    return verify_workbook_impl(path, checks, annotate, output_dir, filename, lang, labels, auto, log=(call_record, call_records))
+    out = verify_workbook_impl(path, checks, annotate, output_dir, filename, lang, labels, auto, log=(call_record, call_records))
+    return _english_result(out) if lang == "en" else out     # 0.59.1: lang='en'이면 결과 키·고정 문구도 영어
 
 
 # ── 국세 우선권에 따른 매각대금 배분(국세기본법 제35조·제36조) ──────────────────────
@@ -10972,7 +11052,7 @@ def tax_priority_distribution(
     execution_cost: Annotated[int, Field(description="집행비용(원) — 강제집행·경매·공매 절차 비용(국세기본법 제35조제1항제2호)", ge=0)] = 0,
     property_type: Annotated[Literal["주택", "상가건물", "기타"], Field(description="매각 재산 종류 — 소액임차 2분의 1 한도·주택 임차인 당해세 특례(제35조제7항) 판정용")] = "기타",
     prior_owner: Annotated[dict | None, Field(description=(
-        "양도전_설정 담보가 있고 2023.4.1. 이후 매각일 때만: 직전 보유자 체납 정보 {체납: [{금액, 법정기일}], 보유전_전세권등: bool, 최초설정일?} "
+        "양도전_설정 담보가 있고 2023.4.1. 이후 매각일 때만: 직전 보유자 체납 정보 {체납: [{금액, 법정기일}], 보유전_전세권등: true 또는 false, 최초설정일?} "
         "또는 계산된 한도 {한도: 원}(시행령 제18조제3항)"))] = None) -> dict:
     """Priority of national taxes in auction proceeds distribution vs secured and wage claims (국세 우선권).
     국세 우선권에 따른 매각대금 배분 순서·금액(경매·공매, 국세기본법 제35조·제36조). 언제: 체납자 재산이 경매·공매로 매각될 때 집행비용 → 최우선변제 → 당해세 → 법정기일과 담보 설정일 비교 → 임금 → 그 밖의 조세 → 일반채권 순으로 누가 얼마를 받는지 계산할 때.
@@ -11595,7 +11675,7 @@ def overseas_account_reporting(
     assessed_on: Annotated[str | None, Field(description="과태료 부과일(YYYY-MM-DD, 선택). 생략하면 지금 부과하는 것으로 보아 2025.2.28. 개정 기준(10%, 10억원 한도, 소명 불이행 10%). 2025.2.28. 전이면 종전 누진표와 소명 불이행 20%, 2021.2.17. 전이면 구 시행령 제51조 누진표(20억원 한도 없음). 2016.1.1. 이후")] = None,
 ) -> dict:
     """Overseas financial account reporting duty and administrative fine (해외금융계좌 신고).
-    해외금융계좌 신고의무·과태료 판정(국조법 제53조(1항·2항)·제54조·제90조(1항·2항), 시행령 제92조(3항)·제93조(1항)·제94조·제147조(1항·2항·4항).
+    해외금융계좌 신고의무·과태료 판정(국조법 제53조(1항·2항)·제54조·제90조(1항·2항), 시행령 제92조(3항)·제93조(1항)·제94조·제147조(1항·2항·4항)).
 
     언제: 거주자·내국법인이 보유한 해외금융계좌 매월 말일 잔액 합계가 기준금액(2018년 보유분부터 5억 원, 2017년까지 10억 원)을 초과하는지,
     신고의무 유무·기한, 미신고·과소신고 과태료, 수정신고 감경, 소명 불이행 과태료를 계산한다.
@@ -11617,6 +11697,11 @@ def overseas_account_reporting(
     공동명의자는 각자 전체 잔액 보유로 봄(제53조(2항2호)).
     주의: 신고기한은 공휴일 조정 없음(법 제53조(1항)), 기한 후 신고 감경은 영 제147조(4항2호) 표 확인.
     """
+    # 그 해 계좌 잔액은 그 해가 끝난 뒤 다음 해 6월에 신고한다(법 제53조제1항) — 수정신고일·과태료 부과일이 신고대상 연도 안이면 서로 맞지 않는 입력(0.59.1)
+    for _n, _v in (("corrected_on", corrected_on), ("assessed_on", assessed_on)):
+        if _v:
+            _chk.need(_chk.to_date(_n, _v).year > year,
+                      f"{_n}={_v} — 신고대상 연도 year={year} 안의 날짜. 그 해 잔액은 다음 해 6월에 신고하므로 수정신고·과태료 부과는 {year + 1}년 이후 — 날짜나 year를 확인하세요")
     r = B.overseas_account_reporting(
         year=year, month_end_totals_krw=month_end_totals_krw, accounts=accounts,
         holder=holder, foreigner_resident_years_in_korea_last10=foreigner_resident_years_in_korea_last10,
@@ -11932,7 +12017,7 @@ def capital_gains_unfair_transaction(
     income_belongs_to_donee: Annotated[bool, Field(description="소득이 수증자에게 실질적으로 귀속되는지(기본 False — 증여후양도 모드)")] = False,
 ) -> dict:
     """Capital gains wrongful calculation for related party transfers (양도소득 부당행위계산).
-    양도소득 부당행위계산(소득세법 제101조(1항·2항·3항), 시행령 제98조(1항)·제167조(3항·4항·5항·6항).
+    양도소득 부당행위계산(소득세법 제101조(1항·2항·3항), 시행령 제98조(1항)·제167조(3항·4항·5항·6항)).
 
     언제: 특수관계인 간 자산 양도·취득이 시가와 현저히 차이가 나 부당행위계산 부인 대상인지,
     또는 증여 후 수증자가 양도할 때 증여자가 직접 양도한 것으로 볼지 계산한다.
@@ -12276,8 +12361,8 @@ def _find_tool(q: str, n: int) -> dict:
     for name in ranked:
         desc = tools[name]
         lines = [ln.strip() for ln in desc.splitlines() if ln.strip()]
-        언제 = next((ln for ln in lines if ln.startswith("언제")), "")
-        out.append({"도구": name, "설명": lines[0][:160] if lines else "", "국문 설명": (lines[1][:160] if len(lines) > 1 else ""), "언제": 언제[:200],
+        en, ko, 언제 = _desc_parts(lines)
+        out.append({"도구": name, "설명": _clip_text(en, 160), "국문 설명": _clip_text(ko, 160), "언제": _clip_text(언제, 200),
                     "일치": ", ".join(why.get(name, [])) or "설명문 낱말 겹침", "점수": round(scores[name], 2)})
     return {"결과": {"후보": out,
                     "안내": "후보의 설명·입력 스키마를 확인한 뒤 호출하세요. 후보에 맞는 도구가 없으면 이 서버에 해당 계산이 없는 것이니 "
@@ -12286,6 +12371,52 @@ def _find_tool(q: str, n: int) -> dict:
                                 "사실관계가 조문의 요건에 맞는지(비과세·공제 요건, 적용 시기)는 도구가 아니라 조문으로 판단합니다.",
                     "근거 서버": _LAW_MCP_HINT},
             "근거": "도구 목록 검색(세무 자문 아님)"}
+
+
+def _desc_parts(lines: list[str]) -> tuple[str, str, str]:
+    """도구 설명 줄 → (영문 첫 줄, 국문 설명, 언제). 국문 설명은 둘째 줄부터 '언제:'·'입력:' 앞까지 이은 글, 언제는 '언제:'부터 '입력:'·'결과:' 앞까지."""
+    en = lines[0] if lines else ""
+    ko_parts: list[str] = []
+    when_parts: list[str] = []
+    cur = ko_parts
+    for ln in lines[1:]:
+        if ln.startswith(("입력", "결과", "·", "-")):
+            break
+        if "언제:" in ln:
+            head, _, tail = ln.partition("언제:")
+            if head.strip() and cur is ko_parts:
+                ko_parts.append(head.strip())
+            cur = when_parts
+            when_parts.append("언제:" + tail)
+            continue
+        cur.append(ln)
+    return en, " ".join(ko_parts).strip(), " ".join(when_parts).strip()
+
+
+def _clip_text(text: str, limit: int) -> str:
+    """limit 자 안에서 문장·괄호 경계로 자른다 — 괄호 안에서 끊지 않고, 문장 끝(. ; 。)을 먼저, 없으면 쉼표·가운뎃점 뒤에서 자르고 '…'."""
+    text = (text or "").strip()
+    if len(text) <= limit:
+        return text
+    depth, sent, soft = 0, -1, -1
+    closers = {")": "(", "]": "[", "」": "「"}
+    for i, ch in enumerate(text[:limit]):
+        if ch in "([「":
+            depth += 1
+        elif ch in closers and depth:
+            depth -= 1
+        if depth:
+            continue
+        nxt = text[i + 1] if i + 1 < len(text) else " "
+        if ch in ".;。" and nxt == " " and not (i and text[i - 1].isdigit()):
+            sent = i + 1
+        elif ch in ",·—" or (ch == " " and i):
+            soft = i
+    if sent > limit // 3:
+        return text[:sent].rstrip()
+    if soft > 0:
+        return text[:soft].rstrip(" ,·—") + " …"
+    return text[:sent].rstrip() if sent > 0 else text[:limit].rstrip() + " …"
 
 
 _CATALOG: dict[str, str] | None = None

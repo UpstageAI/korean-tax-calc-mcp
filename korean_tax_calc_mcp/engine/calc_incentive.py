@@ -29,6 +29,7 @@ import math
 from datetime import date
 
 from . import calc_cit as CC
+from .rounding import num_text
 
 YEAR_MIN, YEAR_MAX = 2016, 2026
 REGIONS = ("수도권과밀억제권역", "수도권", "수도권 인구감소지역", "수도권 밖")
@@ -244,7 +245,7 @@ def sme_special_tax_reduction(year, size, hq_in_capital_area, industry_group, ta
         한도 = 100_000_000
         if employees_prev is not None and employees_now < employees_prev:
             한도 = max(0, 100_000_000 - math.floor((employees_prev - employees_now) * 5_000_000))
-            판단.append(f"상시근로자 {employees_prev - employees_now:g}명 감소 — 한도 1억원에서 1명당 500만원 차감")
+            판단.append(f"상시근로자 {num_text(employees_prev - employees_now)}명 감소 — 한도 1억원에서 1명당 500만원 차감")
         elif employees_prev is None:
             주의.append("상시근로자 수를 넣지 않아 한도를 1억원으로 계산 — 직전 과세연도보다 줄었으면 1명당 500만원씩 한도가 줄어듦")
         계산["감면한도"] = 한도
@@ -1245,12 +1246,12 @@ def integrated_investment_credit(year, size, investments, prior3_total=0, histor
     if size == "졸업 뒤 3년":
         if graduated_year is None:
             졸업_주의 = ("graduated_year(최초로 중소기업에 해당하지 않게 된 과세연도) 미입력 — '졸업 뒤 3년' 율로 계산. 이 율은 2025.1.1. 이후 개시하는 과세연도에 "
-                     "처음 졸업한 경우부터(법률 제20617호 부칙 제5조제2항) — 2024 과세연도 이전에 졸업했으면 graduated_year를 넣거나 size='중견기업'(요건 미충족이면 '일반')으로")
+                     "처음 졸업한 경우부터(법률 제20617호 부칙 제5조제2항) — 2024 과세연도 이전에 졸업했으면 graduated_year를 넣거나 size='중견기업'(요건 미충족이면 '일반')으로 다시 계산하세요")
             판단.append(졸업_주의)
         elif graduated_year < 2025:
             size = "중견기업"
             판단.append(f"최초로 중소기업에 해당하지 않게 된 과세연도 {graduated_year} — 2025.1.1. 이후 개시 과세연도 졸업이 아니라 '졸업 뒤 3년' 율을 적용하지 않고 중견기업 율로 계산"
-                      "(법률 제20617호 부칙 제5조제2항). 중견기업 요건을 갖추지 못하면 size='일반'으로")
+                      "(법률 제20617호 부칙 제5조제2항). 중견기업 요건을 갖추지 못하면 size='일반'으로 다시 계산하세요")
         else:
             판단.append(f"최초로 중소기업에 해당하지 않게 된 과세연도 {graduated_year} — 2025.1.1. 이후 개시 과세연도 졸업이라 '졸업 뒤 3년' 율(법률 제20617호 부칙 제5조제2항)")
     if year == 2020:
