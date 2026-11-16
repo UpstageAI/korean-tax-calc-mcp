@@ -1420,7 +1420,7 @@ def provision_reserve_ledger(grants: Annotated[list, Field(description="연도�
 @_guard
 def unfair_transaction(market_price: Annotated[float, Field(description="시가(단가, 원)")], actual_price: Annotated[float, Field(description="실제 거래 단가(원)")],
                        quantity: Annotated[int, Field(description="수량")],
-                       wholly_owned_capital_increase: Annotated[bool, Field(description="100% 자회사 액면 증자 단독 인수 — True이면 부당행위계산 부인 대상 아님(서이46012-12126, 조심-2014-전-0041)")] = False,
+                       wholly_owned_capital_increase: Annotated[bool, Field(description="100% 자회사 액면 증자 단독 인수 — True이면 차액이 있어도 부당행위계산=False로 계산. 해당 여부의 판단 근거는 조문 MCP(korean-tax-mcp) search_tax_rulings(query='100% 단독 출자 유상증자 신주 인수 부당행위계산')")] = False,
                        foreign_related: Annotated[bool, Field(description="거래 상대가 국외특수관계인(해외 자회사·해외 모회사 등)인지 — True면 국제거래라 법인세법 제52조 대신 국조법 정상가격 조정(3억·5% 기준 없음). transaction_type이 예외 유형이면 법인세법 제52조")] = False,
                        transaction_type: Annotated[Literal["일반", "무상이전·채무면제", "무수익자산", "출연금대납", "자본거래"], Field(description="거래 유형(foreign_related=True일 때만 의미) — '일반'(재화·용역·임대차·금전대차 등) 외 네 가지는 국제거래라도 법인세법 제52조를 적용하는 예외(국조령 제4조): 자산 무상 이전·채무 면제 / 수익 없는 자산 매입·현물출자·비용 부담 / 출연금 대신 부담 / 자본거래(증자·감자·합병 등)")] = "일반",
                        year: Annotated[int | None, Field(description="거래가 속한 사업연도(2016~2026, 선택) — 국조법 조문 번호 표기용(2020년까지 구법 제3조·제4조). 생략하면 현행 조문")] = None) -> dict:
@@ -1428,7 +1428,7 @@ def unfair_transaction(market_price: Annotated[float, Field(description="시가(
     부당행위계산 기준(시가와 실제 거래가 차이 3억 원 이상 또는 5% 이상). 언제: 특수관계인과의 거래 가격이 시가와 크게 차이 나 부당행위계산 부인 대상인지 확인할 때.
 입력: 시가(단가, 원) → market_price, 실제 거래 단가(원) → actual_price, 수량 → quantity, 100% 자회사 액면 증자 단독 인수 여부 → wholly_owned_capital_increase(기본 False).
 결과: 시가총액·차액·차액비율·부당행위계산 여부, 근거(법인세법 제52조, 시행령 제88조제3항). 부당행위계산 기준(시가와 실제 거래가 차액이 3억 원 이상 또는 5% 이상이면 부인 대상).
-wholly_owned_capital_increase=True이고 시가가 액면 미만(액면=0 포함)인 법인의 신주를 100% 단독 출자 법인이 전부 인수한 경우 부당행위계산 부인 대상 아님(서이46012-12126, 조심-2014-전-0041, 대구지법 2013구합10573).
+wholly_owned_capital_increase=True(시가가 액면 미만인 법인의 신주를 100% 단독 출자 법인이 전부 인수)면 차액이 있어도 부당행위계산=False로 계산 — 판단 근거는 조문 MCP(korean-tax-mcp) search_tax_rulings(query='100% 단독 출자 유상증자 신주 인수 부당행위계산').
 국외특수관계인 거래(foreign_related=True): 국제거래에는 법인세법 제52조를 적용하지 않음(국조법 제4조제2항) → 결과의 적용_규정이 '국조법 정상가격 조정', 부당행위계산은 False, 차액 전부가 조정대상_차액(3억·5% 기준 없음). 입력한 시가를 정상가격으로 본 차액이며 정상가격 산출 자체는 하지 않음.
   예외 — transaction_type이 무상이전·채무면제, 무수익자산, 출연금대납, 자본거래면 국제거래라도 법인세법 제52조(국조령 제4조)로 종전처럼 판정."""
     _e = _range_err(("year", year))
@@ -1453,7 +1453,7 @@ wholly_owned_capital_increase=True이고 시가가 액면 미만(액면=0 포함
     if wholly_owned_capital_increase and gap > 0:          # 100% 단독 인수 액면 증자 — 시가 0이든 액면 미만이든 부당행위 아님
         return _ok({"시가총액": int(base), "차액": int(gap), "차액비율": None,
                     "부당행위계산": False, **규정}, basis,
-                   판단=extra.get("판단", []) + ["100% 자회사 액면 증자 단독 인수 — 부당행위계산 부인 대상 아님(서이46012-12126, 조심-2014-전-0041)"])
+                   판단=extra.get("판단", []) + ["100% 자회사 액면 증자 단독 인수(wholly_owned_capital_increase=True) — 부당행위계산=False로 계산. 판단 근거는 조문 MCP(korean-tax-mcp) search_tax_rulings(query='100% 단독 출자 유상증자 신주 인수 부당행위계산')"])
     return _ok({"시가총액": int(base), "차액": int(gap), "차액비율": round(gap / base, 4) if base else None,
                 "부당행위계산": bool(gap >= 300_000_000 or (base and gap >= base * 0.05)), **규정}, basis, **extra)
 
@@ -3260,9 +3260,8 @@ def nonbusiness_interest_disallowance(loans: Annotated[list[Loan], Field(descrip
     if any((a or {}).get("대상") == "특수관계법인" and (a or {}).get("사유", "업무무관대여") in ("업무무관대여", "가지급금", "기타") for a in (advances or [])):
         extra["주의"] = [
             "특수관계법인 대여금이 '업무와 관련 없는' 것인지는 이 도구가 판정하지 않음 — 입력한 대로 업무무관 가지급금으로 계산. "
-            "자회사·해외현지법인에 시설·운영자금을 대여한 경우 그 대여가 사실상 내국법인의 영업활동과 관련되면 업무무관 가지급금으로 보지 않음"
-            "(법인세과-599, 2009.5.21.; 법인세과-45, 2011.1.13.; 조심2012서2206, 2013.7.24. — 수출 증대를 위한 판매·생산 현지법인의 시설·초기 운영자금 등). "
-            "두 법인 사이에 직접 거래가 없고 목적사업이 무관하면 업무무관으로 봄(조심2016중1733, 2016.7.26.). 사업 관련 정도를 따지는 사실판단 사항",
+            "영업활동과 관련된 대여로 판단되면 그 대여금을 advances에서 빼고 다시 계산(지급이자 손금불산입액이 줄어듦). "
+            "판단 근거는 조문 MCP(korean-tax-mcp) search_tax_rulings(query='해외현지법인 대여금 업무무관 가지급금')",
             "해외 자회사 대여금은 정상이자 조정(국제조세조정에 관한 법률, deemed_interest의 foreign_related)과 이 지급이자 손금불산입이 따로 적용될 수 있음(서면인터넷방문상담2팀-1931, 2007.10.25.) — 업무무관 가지급금에 해당할 때에 한함"]
     return _ok(r, "법인세법 제28조①·" + ("⑤" if (r and calc["사업연도"][:4] <= "2018") else "③") +
                ", 시행령 제51조·제53조·제55조·제106조, 시행규칙 제28조·제44조" +

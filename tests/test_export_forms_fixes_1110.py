@@ -68,7 +68,7 @@ def test_service_location_ignored_for_royalty():
 # ── B3 100% 자회사 증자 ─────────────────────────────────────────────────────
 def test_wholly_owned_capital_increase_not_unfair():
     r = c("unfair_transaction", {"market_price": 0, "actual_price": 500 * M, "quantity": 1, "wholly_owned_capital_increase": True})
-    assert r["결과"]["부당행위계산"] is False and any("46012-12126" in str(j) for j in r.get("판단", []))
+    assert r["결과"]["부당행위계산"] is False and any("search_tax_rulings" in str(j) for j in r.get("판단", []))
     assert c("unfair_transaction", {"market_price": 0, "actual_price": 500 * M, "quantity": 1})["결과"]["부당행위계산"] is True
 
 

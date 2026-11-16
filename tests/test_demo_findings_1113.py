@@ -51,7 +51,7 @@ def test_nonbusiness_advance_to_affiliate_warns():
     args = dict(loans=[S.Loan(interest=120 * M, principal=2_400 * M, days=365)], year=2025, fiscal_start="2025-01-01", fiscal_end="2025-12-31")
     r = _fn(S.nonbusiness_interest_disallowance)(**args, advances=[{"대상": "특수관계법인", "이름": "해외 자회사", "사유": "업무무관대여", "금액": 1_000 * M, "지급일": "2025-03-01"}])
     assert "error" not in r, r
-    assert any("법인세과-599" in x and "조심2016중1733" in x and "판정하지 않음" in x for x in r["주의"])
+    assert any("판정하지 않음" in x and "advances에서 빼고" in x and "search_tax_rulings" in x for x in r["주의"])   # 판단 근거(해석·결정례)는 조문 MCP
     assert any("서면인터넷방문상담2팀-1931" in x for x in r["주의"])
     p = _fn(S.nonbusiness_interest_disallowance)(**args, advances=[{"대상": "대표이사", "이름": "대표", "사유": "업무무관대여", "금액": 100 * M, "지급일": "2025-03-01"}])
     assert "주의" not in p

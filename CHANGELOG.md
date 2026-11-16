@@ -23,10 +23,12 @@
 
 - **도구 제거 `related_provision_at`**(기준일의 특수관계 조문 위치·원문 조회) — 조문 MCP `find_article(keyword='특수관계인의 범위', law_name=시행령, as_of=기준일)`·`law_article(as_of)`로 같은 일을 함(법인세법 시행령 2019.2.12. 이후는 keyword='법 제2조제12호'). `related_judge`의 '적용조문'이 쓰는 내부 함수 `cite_at`은 그대로이고, 고정 이동표 회귀 테스트는 함수로 직접 검증. 도구 수 142 → 141(README·README-EN·llms.txt·server.json·pyproject, 도구 수 테스트).
 - **판단 문장 줄임** — "무엇이 숫자를 바꾸는지" 한 줄 + 판단 근거를 볼 조문 MCP 도구 이름:
+  - `unfair_transaction` 100% 단독 출자 신주 인수(입력 설명·도구 설명·결과 판단): 해석·결정례 번호를 빼고 `search_tax_rulings(query='100% 단독 출자 유상증자 신주 인수 부당행위계산')` 안내.
+  - `nonbusiness_interest_disallowance` 특수관계법인 대여금 업무무관 주의: 해석·결정례 번호를 빼고 "영업활동 관련 대여면 advances에서 빼고 다시 계산" + `search_tax_rulings(query='해외현지법인 대여금 업무무관 가지급금')`.
   - `sme_special_tax_reduction`·`sme_status` 위탁제조·위탁생산 업종: 결정례 문장을 빼고 `sme_tax_incentives_guide(industry='위탁제조')`의 '중소기업 특별세액감면' 업종 주의·업종 분류 주의 안내(같은 내용이 이미 있음).
   - `nonresident_withholding` 사용료 쟁점 '국내 미등록 특허': 판례 문장을 빼고 `royalty_withholding_guide` 안내(이미 있음).
   - 어휘 '뇌물' 근거: 판례 대신 국세기본법 제45조의2제2항 + 조문 MCP `other_income_guide(income_item='뇌물')`.
-- **역할 경계 기준선**(tests/test_role_boundary.py) 낮춤: engine/calc_incentive.py 8 → 4, data/facts_vocab.json 1 → 0, engine/nonresident_issues.py 1 → 0.
+- **역할 경계 기준선**(tests/test_role_boundary.py) 낮춤: server.py 7 → 4, engine/calc_incentive.py 8 → 4, data/facts_vocab.json 1 → 0, engine/nonresident_issues.py 1 → 0.
 
 ## 0.60.1 (2026-11-17)
 
