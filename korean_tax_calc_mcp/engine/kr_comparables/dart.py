@@ -46,7 +46,8 @@ def mask(text, key=None):
 
 def _ssl_ctx():
     c = ssl.create_default_context()
-    # Python 3.13+의 X509 엄격 검사만 끈다(인증서 검증 자체는 유지) — 일부 공공기관 인증서 체인 호환
+    # 인증서·호스트 검증은 그대로 둔다. Python 3.13+가 기본으로 켠 X509 엄격 검사(VERIFY_X509_STRICT)만 끈다 —
+    # 실제로 opendart.fss.or.kr 연결이 엄격 검사에서만 'Missing Authority Key Identifier'로 실패한 적이 있음(망·인증서 체인에 따라 다름). 3.12 이하와 같은 검증 수준
     if hasattr(ssl, "VERIFY_X509_STRICT"):
         c.verify_flags &= ~ssl.VERIFY_X509_STRICT
     return c

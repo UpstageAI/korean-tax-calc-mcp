@@ -209,6 +209,15 @@ def test_status_020_stops(env):
 def test_run_call_cap(env):
     r = run(Transport(), client=_client(Transport(), max_calls=3))["결과"]
     assert "호출 상한(3건)" in r["멈춤"] and r["호출"]["OpenDART_실호출"] == 3
+    assert r["남은_회사_수"] > 0 and "이어서 계속" in r["이어서"]
+
+
+def test_resume_after_cap(env):
+    tr = Transport()
+    first = run(tr, client=_client(tr, max_calls=8))["결과"]
+    assert first["멈춤"] and first["남은_회사_수"] > 0
+    second = run(Transport())["결과"]       # 상한 없이 다시 부름 — 캐시로 이어서 끝까지
+    assert second["멈춤"] == "" and second["후보_수"] == 5 and second["남은_회사_수"] == 0
 
 
 def test_daily_cap(env, monkeypatch):

@@ -80,10 +80,32 @@ def business_tables(s):
     return out[:8]
 
 
+SRC_TYPE = {"제품": "product", "제품매출": "product", "상품": "merchandise", "상품매출": "merchandise",
+            "용역": "service", "용역매출": "service", "서비스": "service", "서비스매출": "service"}
+
+
+CONT = re.compile(r"^(내수|수출|국내|해외|직접판매|파트너판매|대리점판매|로컬|직수출|내\s*수|수\s*출)$")
+
+
+def _src_type(labs):
+    """라벨 칸 중 원문 매출유형(제품·상품·용역/서비스) 한 칸 — '제품/상품매출/기타매출'처럼 섞인 칸은 쓰지 않음."""
+    hits = {SRC_TYPE[re.sub(r"\s", "", x)] for x in labs if re.sub(r"\s", "", x) in SRC_TYPE}
+    return hits.pop() if len(hits) == 1 else None
+
+
 def _analyze(tb):
     total, items = None, []
+    has_type_col = bool(re.search(r"유\s*형", " ".join(tb["rows"][0]) if tb["rows"] else ""))
+    cur_type, type_labs = None, set()
     for ri, row in enumerate(tb["rows"]):
         labs, amt = _row_cells(row)
+        if has_type_col and labs:
+            t = _src_type(labs)
+            first = re.sub(r"\s", "", labs[0])
+            if t:
+                cur_type, type_labs = t, {re.sub(r"\s", "", x) for x in labs}
+            elif not (CONT.search(first) or first in type_labs):
+                cur_type = None   # 이어지는 행(병합 칸)인지 확실하지 않으면 원문 유형을 쓰지 않음
         if amt is None or not labs:
             continue
         lab = " / ".join(labs)
@@ -94,7 +116,7 @@ def _analyze(tb):
             continue
         if any(SUBT.search(x) for x in labs):
             continue
-        items.append((ri, lab, amt, bool(any(GEO.search(x) for x in labs)), len(labs)))
+        items.append((ri, lab, amt, bool(any(GEO.search(x) for x in labs)), len(labs), cur_type if has_type_col else None))
     return total, items
 
 
@@ -140,7 +162,7 @@ def listed_rows(s):
         return [], {"note": "매출 표 못 찾음(사업의 내용에 매출 표 없음 또는 부문 재무표만)"}
     _, _, ti, layer, xs, ok = best
     tb = tabs[ti]
-    return [(x[1], x[2] * tb["unit"], ti, x[0]) for x in xs], {"table": f"{ti}:{tb['section']}", "layer": layer, "total_check": ok, "unit_src": tb["unit_src"]}
+    return [(x[1], x[2] * tb["unit"], ti, x[0], x[5]) for x in xs], {"table": f"{ti}:{tb['section']}", "layer": layer, "total_check": ok, "unit_src": tb["unit_src"]}
 
 
 def unlisted_rows(is_rows):
@@ -221,12 +243,15 @@ def classify(rows, ctx, listed, upstage_key=None, http=None, stat=None):
     """rows → ({i: (갈래, 근거)}, 방법). 비상장의 표준 계정명은 코드로 바로 정함."""
     cls, need = {}, []
     for i, r in enumerate(rows):
+        if listed and len(r) > 4 and r[4]:
+            cls[i] = (r[4], "원문 매출유형")
+            continue
         k = None if listed else next((c for p, c in FIX if re.match(p, re.sub(r"\s", "", r[0]))), None)
         if k:
-            cls[i] = (k, "계정명 그대로")
+            cls[i] = (k, "원문 계정명")
         else:
             need.append(i)
-    method = "계정명"
+    method = "원문 매출유형·계정명"
     if need:
         labels = [rows[i][0] for i in need]
         got = classify_solar(labels, ctx, upstage_key, http, stat) if upstage_key else None

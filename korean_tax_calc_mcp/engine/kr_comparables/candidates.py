@@ -291,6 +291,7 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
     up_key = upstage_key if upstage_key is not None else os.environ.get("UPSTAGE_API_KEY", "")
     R = _Run(dc, up_key, solar_http)
     found, cand_rows, profiles, stop, skipped, short = [], [], [], None, [], []
+    prog = {"left": None}
     try:
         corps = _corp_list(dc)
         pools = []
@@ -298,8 +299,9 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
             pools.append(("상장", sorted((c for c in corps if c["stock_code"]), key=lambda c: c["corp_code"])))
         if listed in ("비상장", "둘 다"):
             pools.append(("비상장", _unlisted_pool(dc, years, unlisted_window)))
-        for kind, pool in pools:
-            for c in pool:
+        for pi, (kind, pool) in enumerate(pools):
+            for ci, c in enumerate(pool):
+                prog["left"] = (len(pool) - ci) + sum(len(x[1]) for x in pools[pi + 1:])
                 if len(found) >= limit:
                     break
                 info = dc.get("company.json", {"corp_code": c["corp_code"]})
@@ -338,6 +340,8 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
         "호출": {"OpenDART_실호출": dc.calls, "OpenDART_캐시": dc.cache_hits, "Solar_실호출": R.stat.get("solar_calls", 0),
                  "Solar_캐시": R.stat.get("solar_cached", 0), "오류": [mask(x, key) for x in dc.errors[:10]] + [mask(x, key) for x in R.stat.get("solar_errors", [])[:5]]},
         "멈춤": stop or "",
+        "남은_회사_수": (prog["left"] if stop else 0),
+        "이어서": ("같은 입력으로 다시 부르면 캐시에 쌓인 결과는 다시 부르지 않고 남은 회사부터 이어서 계속합니다." if stop else ""),
         "입력": {"industry_codes": prefixes, "years": years, "listed": listed, "revenue_min": revenue_min, "revenue_max": revenue_max, "limit": limit, "fs_pref": fs_pref},
     }
     notes = ["후보 프로필은 숫자 신호와 근거(접수번호·계정)입니다 — 비교대상 적정성 판단은 kr_comparable_profile_compare·사람 검토로.",
@@ -346,7 +350,8 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
     if low_acc:
         notes.append(UPSTAGE_GUIDE)
     if stop:
-        notes.append("멈춤: " + stop)
+        left = "알 수 없음(후보 목록을 만드는 중 멈춤)" if prog["left"] is None else f"{prog['left']}개"
+        notes.append(f"멈춤: {stop} — 아직 확인하지 않은 회사 {left}. 같은 입력으로 다시 부르면 이어서 계속합니다.")
     basis = ["OpenDART 개발가이드(공시정보·정기보고서 주요정보·재무정보·공시서류원본파일)", "국조법 시행령 제2조②(특수관계 — 지분 50%)",
              "국조칙 비교가능성 분석요소 — 기능·자산·위험(프로필 지표는 판단 보조)"]
     return {"결과": result, "근거": basis, "주의": notes}

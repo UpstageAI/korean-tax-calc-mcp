@@ -7,7 +7,7 @@
 """
 from .schema import (PROFILE_FIELDS, MIX_CATEGORIES, STATUS_OK, STATUS_NONE, STATUS_UNKNOWN, STATUSES,
                      value, empty_profile, validate_profile)
-from .compare import DEFAULT_RULES, ITEMS, compare_profile, compare_many
+from .compare import DEFAULT_RULES, ITEMS, compare_profile, compare_many, run_tool as profile_compare
 
 __all__ = ["PROFILE_FIELDS", "MIX_CATEGORIES", "STATUS_OK", "STATUS_NONE", "STATUS_UNKNOWN", "STATUSES",
-           "value", "empty_profile", "validate_profile", "DEFAULT_RULES", "ITEMS", "compare_profile", "compare_many"]
+           "value", "empty_profile", "validate_profile", "DEFAULT_RULES", "ITEMS", "compare_profile", "compare_many", "profile_compare"]
