@@ -1,0 +1,1745 @@
+{
+ "description": "국내 비교기업 프로필 비교 테스트용 정답 20개(상장 8·비상장 12). values·revenue_mix는 OpenDART 원문 공시와 직접 대조한 값. 금액 단위 원.",
+ "source": "OpenDART(사업보고서·감사보고서 원문, 2024 사업연도)",
+ "companies": [
+  {
+   "corp_code": "00787057",
+   "corp_name": "(주)휴맥스",
+   "listed": true,
+   "fiscal_year": 2024,
+   "rcept_no": "20250319001071",
+   "rcept_no_financials": "20250325000222",
+   "fs_basis": "별도",
+   "values": {
+    "revenue": 277195408580,
+    "operating_profit": -15251065973,
+    "total_assets": 597241242419,
+    "inventory": 16297205681,
+    "ppe": 2938018956
+   },
+   "value_status": {
+    "inventory": "확보"
+   },
+   "revenue_mix": {
+    "status": "확보",
+    "main_category": "product",
+    "main_share": 0.9885,
+    "shares": {
+     "product": 0.9885,
+     "sw_license": 0.0115
+    },
+    "coverage": 1.012,
+    "coverage_basis": "연결",
+    "rows": [
+     {
+      "label": "게이트웨이부문 / 제조, 상품, 기타 / 셋톱박스,비디오 게이트웨이,브로드밴드 게이트웨이",
+      "amount": 339046000000,
+      "category": "product"
+     },
+     {
+      "label": "차량용 안테나부분 / 제조, 상품, 기타 / 통합샤크안테나,마이크로안테나,센서 안테나 등",
+      "amount": 196513000000,
+      "category": "product"
+     },
+     {
+      "label": "디지털솔루션 개발 및 판매 / 기타 / 미디어,SW Quality Insight 등",
+      "amount": 6230000000,
+      "category": "sw_license"
+     }
+    ]
+   },
+   "verification": {
+    "method": "사업보고서 원문 XML의 '재무제표'(별도) 절과 '매출 및 수주상황'·'주요 제품' 표에서 계정 행의 당기 금액을 직접 찾아 대조(단위 환산 포함)",
+    "result": {
+     "revenue": "일치",
+     "operating_profit": "일치",
+     "total_assets": "일치",
+     "inventory": "일치",
+     "ppe": "일치",
+     "revenue_mix": "일치"
+    }
+   },
+   "profile_other": {
+    "rnd_ratio": {
+     "value": 0.0128,
+     "status": "확보",
+     "note": ""
+    },
+    "advert_ratio": {
+     "value": 0.0,
+     "status": "불명-없음",
+     "note": "판관비 내역은 있으나 광고판촉비 계정 없음 → 0"
+    },
+    "raw_material_inv": {
+     "value": null,
+     "status": "불명-못찾음",
+     "note": "재고 구성 주석·하위 행 못 찾음"
+    },
+    "related_sales_ratio": {
+     "value": null,
+     "status": "불명-못찾음",
+     "note": "특수관계자 주석 없음/못 찾음"
+    },
+    "max_shareholder_pct": {
+     "value": 34.92,
+     "status": "확보",
+     "note": ""
+    }
+   },
+   "profile_other_note": "원문 대조 대상 아님(비교 함수 테스트 입력용)"
+  },
+  {
+   "corp_code": "00556615",
+   "corp_name": "모바일어플라이언스 주식회사",
+   "listed": true,
+   "fiscal_year": 2024,
+   "rcept_no": "20250321001174",
+   "rcept_no_financials": "20250321001174",
+   "fs_basis": "별도",
+   "values": {
+    "revenue": 38418631229,
+    "operating_profit": 1698974614,
+    "total_assets": 78793578144,
+    "inventory": 5258566156,
+    "ppe": 4522523080
+   },
+   "value_status": {
+    "inventory": "확보"
+   },
+   "revenue_mix": {
+    "status": "확보",
+    "main_category": "product",
+    "main_share": 0.8954,
+    "shares": {
+     "merchandise": 0.077,
+     "other": 0.0276,
+     "product": 0.8954
+    },
+    "coverage": 1.0,
+    "coverage_basis": "연결",
+    "rows": [
+     {
+      "label": "영상기록장치HUDADAS내비게이션 외 / 제품",
+      "amount": 36246259000,
+      "category": "product"
+     },
+     {
+      "label": "상품",
+      "amount": 3117638000,
+      "category": "merchandise"
+     },
+     {
+      "label": "기타",
+      "amount": 1116895000,
+      "category": "other"
+     }
+    ]
+   },
+   "verification": {
+    "method": "사업보고서 원문 XML의 '재무제표'(별도) 절과 '매출 및 수주상황'·'주요 제품' 표에서 계정 행의 당기 금액을 직접 찾아 대조(단위 환산 포함)",
+    "result": {
+     "revenue": "일치",
+     "operating_profit": "일치",
+     "total_assets": "일치",
+     "inventory": "일치",
+     "ppe": "일치",
+     "revenue_mix": "일치"
+    }
+   },
+   "profile_other": {
+    "rnd_ratio": {
+     "value": 0.0496,
+     "status": "확보",
+     "note": ""
+    },
+    "advert_ratio": {
+     "value": 0.0,
+     "status": "확보",
+     "note": ""
+    },
+    "raw_material_inv": {
+     "value": true,
+     "status": "확보",
+     "note": "재고 구성: 상품|원재료|제품"
+    },
+    "related_sales_ratio": {
+     "value": 0.0,
+     "status": "확보",
+     "note": ""
+    },
+    "max_shareholder_pct": {
+     "value": 17.84,
+     "status": "확보",
+     "note": ""
+    }
+   },
+   "profile_other_note": "원문 대조 대상 아님(비교 함수 테스트 입력용)"
+  },
+  {
+   "corp_code": "00879020",
+   "corp_name": "(주)유니트론텍",
+   "listed": true,
+   "fiscal_year": 2024,
+   "rcept_no": "20250319000602",
+   "rcept_no_financials": "20250319000602",
+   "fs_basis": "별도",
+   "values": {
+    "revenue": 597268238500,
+    "operating_profit": 35538553246,
+    "total_assets": 268394737025,
+    "inventory": 92985048289,
+    "ppe": 795091609
+   },
+   "value_status": {
+    "inventory": "확보"
+   },
+   "revenue_mix": {
+    "status": "확보",
+    "main_category": "merchandise",
+    "main_share": 0.9982,
+    "shares": {
+     "merchandise": 0.9982,
+     "other": 0.0018
+    },
+    "coverage": 1.0,
+    "coverage_basis": "연결",
+    "rows": [
+     {
+      "label": "반도체 / DRAM, SSD 등",
+      "amount": 482503000000,
+      "category": "merchandise"
+     },
+     {
+      "label": "디스플레이외 / TFT-LCD 등",
+      "amount": 228523000000,
+      "category": "merchandise"
+     },
+     {
+      "label": "기타",
+      "amount": 1263000000,
+      "category": "other"
+     }
+    ]
+   },
+   "verification": {
+    "method": "사업보고서 원문 XML의 '재무제표'(별도) 절과 '매출 및 수주상황'·'주요 제품' 표에서 계정 행의 당기 금액을 직접 찾아 대조(단위 환산 포함)",
+    "result": {
+     "revenue": "일치",
+     "operating_profit": "일치",
+     "total_assets": "일치",
+     "inventory": "일치",
+     "ppe": "일치",
+     "revenue_mix": "일치"
+    }
+   },
+   "profile_other": {
+    "rnd_ratio": {
+     "value": 0.0068,
+     "status": "확보",
+     "note": ""
+    },
+    "advert_ratio": {
+     "value": 0.0,
+     "status": "불명-없음",
+     "note": "판관비 내역은 있으나 광고판촉비 계정 없음 → 0"
+    },
+    "raw_material_inv": {
+     "value": null,
+     "status": "불명-못찾음",
+     "note": "재고 구성 주석·하위 행 못 찾음"
+    },
+    "related_sales_ratio": {
+     "value": 0.0101,
+     "status": "확보",
+     "note": ""
+    },
+    "max_shareholder_pct": {
+     "value": 21.55,
+     "status": "확보",
+     "note": ""
+    }
+   },
+   "profile_other_note": "원문 대조 대상 아님(비교 함수 테스트 입력용)"
+  },
+  {
+   "corp_code": "00269889",
+   "corp_name": "(주)누리플렉스",
+   "listed": true,
+   "fiscal_year": 2024,
+   "rcept_no": "20250327000145",
+   "rcept_no_financials": "20250327000145",
+   "fs_basis": "별도",
+   "values": {
+    "revenue": 81796035117,
+    "operating_profit": -8431681552,
+    "total_assets": 140798895914,
+    "inventory": 7432249785,
+    "ppe": 13693589923
+   },
+   "value_status": {
+    "inventory": "확보"
+   },
+   "revenue_mix": {
+    "status": "확보",
+    "main_category": "merchandise",
+    "main_share": 0.7122,
+    "shares": {
+     "merchandise": 0.7122,
+     "other": 0.0109,
+     "product": 0.2551,
+     "service": 0.0218
+    },
+    "coverage": 1.0,
+    "coverage_basis": "별도",
+    "rows": [
+     {
+      "label": "전력IoT 사업-스마트미터링솔루션(주1) / 제품 / AMI / 내수 / 지능형검침인프라,전력량계 / AiMiR(아이미르)",
+      "amount": 19551618000,
+      "category": "product"
+     },
+     {
+      "label": "AMI / 수출 / 지능형검침인프라 / AiMiR(아이미르)",
+      "amount": 1312690000,
+      "category": "product"
+     },
+     {
+      "label": "상품 / AMI / 내수 / 지능형검침인프라 / AiMiR(아이미르)",
+      "amount": 4616984000,
+      "category": "merchandise"
+     },
+     {
+      "label": "AMI / 수출 / 지능형검침인프라 / AiMiR(아이미르)",
+      "amount": 42967796000,
+      "category": "merchandise"
+     },
+     {
+      "label": "기타 / 기타 / 내수 / 지능형검침인프라 / AiMiR(아이미르)",
+      "amount": 857739000,
+      "category": "other"
+     },
+     {
+      "label": "기타 / 수출 / 지능형검침인프라 / AiMiR(아이미르)",
+      "amount": 34943000,
+      "category": "other"
+     },
+     {
+      "label": "스마트에너지사업-마이크로그리드솔루션(주2) / 제품 / AMI,EMS,ESS,영상보안 등 / 내수 / 마이크로그리드 솔루션 / AiMiR(아이미르)",
+      "amount": 0,
+      "category": "product"
+     },
+     {
+      "label": "수출 / 마이크로그리드 솔루션 / AiMiR(아이미르)",
+      "amount": 0,
+      "category": "product"
+     },
+     {
+      "label": "상품 / AMI,EMS,ESS,영상보안 등 / 내수 / AMI,EMS,ESS,영상보안 등 / AiMiR(아이미르)",
+      "amount": 6178397000,
+      "category": "merchandise"
+     },
+     {
+      "label": "수출 / AMI,EMS,ESS,영상보안 등 / AiMiR(아이미르)",
+      "amount": 0,
+      "category": "merchandise"
+     },
+     {
+      "label": "기타 / 기타 / 내수/수출 / 렌탈 및 기술용역 등",
+      "amount": 46132000,
+      "category": "service"
+     },
+     {
+      "label": "산업IoT 사업-자동인식 솔루션 / 상품 / 바코드/RFID / 내수 / 자동인식 솔루션 / Symbol 등",
+      "amount": 4358959000,
+      "category": "merchandise"
+     },
+     {
+      "label": "수출 / 자동인식 솔루션 / Symbol 등",
+      "amount": 134741000,
+      "category": "merchandise"
+     },
+     {
+      "label": "기타 / 기타 / 내수/수출 / 기술용역 , 기타 등",
+      "amount": 195542000,
+      "category": "service"
+     },
+     {
+      "label": "기타(주3) / 기타 / 기타 / 내수/수출 / 임대수입 등",
+      "amount": 1540494000,
+      "category": "service"
+     }
+    ]
+   },
+   "verification": {
+    "method": "사업보고서 원문 XML의 '재무제표'(별도) 절과 '매출 및 수주상황'·'주요 제품' 표에서 계정 행의 당기 금액을 직접 찾아 대조(단위 환산 포함)",
+    "result": {
+     "revenue": "일치",
+     "operating_profit": "일치",
+     "total_assets": "일치",
+     "inventory": "일치",
+     "ppe": "일치",
+     "revenue_mix": "수정: 원문 매출유형이 '제품'인 AMI·마이크로그리드 행 4개를 sw_license → product로 고침(주된 갈래 merchandise 비중 0.712는 변화 없음)"
+    }
+   },
+   "profile_other": {
+    "rnd_ratio": {
+     "value": 0.0484,
+     "status": "확보",
+     "note": ""
+    },
+    "advert_ratio": {
+     "value": 0.0001,
+     "status": "확보",
+     "note": ""
+    },
+    "raw_material_inv": {
+     "value": true,
+     "status": "확보",
+     "note": "재고 구성: 상품|원재료|재공품|제품"
+    },
+    "related_sales_ratio": {
+     "value": null,
+     "status": "불명-못찾음",
+     "note": "특수관계자 주석 없음/못 찾음"
+    },
+    "max_shareholder_pct": {
+     "value": 27.1,
+     "status": "확보",
+     "note": ""
+    }
+   },
+   "profile_other_note": "원문 대조 대상 아님(비교 함수 테스트 입력용)"
+  },
+  {
+   "corp_code": "01472930",
+   "corp_name": "오브젠 주식회사",
+   "listed": true,
+   "fiscal_year": 2024,
+   "rcept_no": "20250320001164",
+   "rcept_no_financials": "20250320001164",
+   "fs_basis": "별도",
+   "values": {
+    "revenue": 15201656072,
+    "operating_profit": -4149694322,
+    "total_assets": 29481813288,
+    "inventory": null,
+    "ppe": 271972655
+   },
+   "value_status": {
+    "inventory": "불명-없음"
+   },
+   "revenue_mix": {
+    "status": "확보",
+    "main_category": "service",
+    "main_share": 0.6896,
+    "shares": {
+     "service": 0.6896,
+     "sw_license": 0.3104
+    },
+    "coverage": 1.0,
+    "coverage_basis": "별도",
+    "rows": [
+     {
+      "label": "제품 라이선스비",
+      "amount": 2929000000,
+      "category": "sw_license"
+     },
+     {
+      "label": "프로페셔널 서비스",
+      "amount": 8550000000,
+      "category": "service"
+     },
+     {
+      "label": "제품 기술비",
+      "amount": 1790000000,
+      "category": "sw_license"
+     },
+     {
+      "label": "제품 운영비",
+      "amount": 1932000000,
+      "category": "service"
+     }
+    ]
+   },
+   "verification": {
+    "method": "사업보고서 원문 XML의 '재무제표'(별도) 절과 '매출 및 수주상황'·'주요 제품' 표에서 계정 행의 당기 금액을 직접 찾아 대조(단위 환산 포함)",
+    "result": {
+     "revenue": "일치",
+     "operating_profit": "일치",
+     "total_assets": "일치",
+     "inventory": "없음 확인(재무상태표에 계정 없음)",
+     "ppe": "일치",
+     "revenue_mix": "일치"
+    }
+   },
+   "profile_other": {
+    "rnd_ratio": {
+     "value": null,
+     "status": "불명-못찾음",
+     "note": "판관비 내역 미확보, 0인지 모름"
+    },
+    "advert_ratio": {
+     "value": null,
+     "status": "불명-못찾음",
+     "note": "판관비 내역 미확보, 0인지 모름"
+    },
+    "raw_material_inv": {
+     "value": false,
+     "status": "확보",
+     "note": "재고 0"
+    },
+    "related_sales_ratio": {
+     "value": null,
+     "status": "불명-못찾음",
+     "note": "특수관계자 주석 없음/못 찾음"
+    },
+    "max_shareholder_pct": {
+     "value": 36.2,
+     "status": "확보",
+     "note": ""
+    }
+   },
+   "profile_other_note": "원문 대조 대상 아님(비교 함수 테스트 입력용)"
+  },
+  {
+   "corp_code": "00396925",
+   "corp_name": "(주)엠로",
+   "listed": true,
+   "fiscal_year": 2024,
+   "rcept_no": "20250311000862",
+   "rcept_no_financials": "20250311001210",
+   "fs_basis": "별도",
+   "values": {
+    "revenue": 75038782159,
+    "operating_profit": 8752460250,
+    "total_assets": 99442024308,
+    "inventory": null,
+    "ppe": 14079250330
+   },
+   "value_status": {
+    "inventory": "불명-없음"
+   },
+   "revenue_mix": {
+    "status": "확보",
+    "main_category": "service",
+    "main_share": 0.828,
+    "shares": {
+     "service": 0.828,
+     "sw_license": 0.172
+    },
+    "coverage": 1.019,
+    "coverage_basis": "별도",
+    "rows": [
+     {
+      "label": "시스템구축 및전문용역 (주1) / 국 내",
+      "amount": 50997000000,
+      "category": "service"
+     },
+     {
+      "label": "라이선스(주2) / 국 내",
+      "amount": 7959000000,
+      "category": "sw_license"
+     },
+     {
+      "label": "기술지원(주3) / 국 내",
+      "amount": 12325000000,
+      "category": "service"
+     },
+     {
+      "label": "클라우드사용료(주4) / 국 내",
+      "amount": 5191000000,
+      "category": "sw_license"
+     }
+    ]
+   },
+   "verification": {
+    "method": "사업보고서 원문 XML의 '재무제표'(별도) 절과 '매출 및 수주상황'·'주요 제품' 표에서 계정 행의 당기 금액을 직접 찾아 대조(단위 환산 포함)",
+    "result": {
+     "revenue": "일치",
+     "operating_profit": "일치",
+     "total_assets": "일치",
+     "inventory": "없음 확인(재무상태표에 계정 없음)",
+     "ppe": "일치",
+     "revenue_mix": "일치"
+    }
+   },
+   "profile_other": {
+    "rnd_ratio": {
+     "value": 0.0546,
+     "status": "확보",
+     "note": ""
+    },
+    "advert_ratio": {
+     "value": 0.0037,
+     "status": "확보",
+     "note": ""
+    },
+    "raw_material_inv": {
+     "value": false,
+     "status": "확보",
+     "note": "재고 0"
+    },
+    "related_sales_ratio": {
+     "value": 0.3947,
+     "status": "확보",
+     "note": ""
+    },
+    "max_shareholder_pct": {
+     "value": 36.08,
+     "status": "확보",
+     "note": ""
+    }
+   },
+   "profile_other_note": "원문 대조 대상 아님(비교 함수 테스트 입력용)"
+  },
+  {
+   "corp_code": "00204262",
+   "corp_name": "(주)한컴",
+   "listed": true,
+   "fiscal_year": 2024,
+   "rcept_no": "20250319000886",
+   "rcept_no_financials": "20250319000886",
+   "fs_basis": "별도",
+   "values": {
+    "revenue": 159095632453,
+    "operating_profit": 49703933009,
+    "total_assets": 413460189892,
+    "inventory": 296964835,
+    "ppe": 20871590764
+   },
+   "value_status": {
+    "inventory": "확보"
+   },
+   "revenue_mix": {
+    "status": "확보",
+    "main_category": "sw_license",
+    "main_share": 0.5618,
+    "shares": {
+     "other": 0.0113,
+     "product": 0.3403,
+     "service": 0.0867,
+     "sw_license": 0.5618
+    },
+    "coverage": 1.0,
+    "coverage_basis": "연결",
+    "rows": [
+     {
+      "label": "SW 부문 / 제품/상품매출/기타매출 / 문서기반 서비스 및 SW (설치형, 클라우드 SaaS, SDK, 서비스) / 문서 생성, 공유, 편집 등전자문서 SaaS, AI, SDK 및 클라우드플랫폼 / 한컴오피스, 한컴독스, 한컴타자, 웹오피스,웹기안기 등",
+      "amount": 171209000000,
+      "category": "sw_license"
+     },
+     {
+      "label": "제조부문 / 제품/상품매출 / 소방용호흡기, 보호의방산관련 제품 / 소방 개인안전장비 등",
+      "amount": 103702000000,
+      "category": "product"
+     },
+     {
+      "label": "기타부문 / 유통/서비스 매출 / 마케팅 대행, 브랜드 관리검진설계 및 건강관리 서비스 / 디지털 브랜딩 및 마케팅 대행,건광관리 서비스 및 디지털헬스케어(유전체 분석)관련 데이터 사업",
+      "amount": 26428000000,
+      "category": "service"
+     },
+     {
+      "label": "금융부문 / 이자수익/투자수익 / 이자수익 및 투자수익 외 / 자금대출, 신기술사업자에 대한 투자 등",
+      "amount": 3434000000,
+      "category": "other"
+     }
+    ]
+   },
+   "verification": {
+    "method": "사업보고서 원문 XML의 '재무제표'(별도) 절과 '매출 및 수주상황'·'주요 제품' 표에서 계정 행의 당기 금액을 직접 찾아 대조(단위 환산 포함)",
+    "result": {
+     "revenue": "일치",
+     "operating_profit": "일치",
+     "total_assets": "일치",
+     "inventory": "일치",
+     "ppe": "일치",
+     "revenue_mix": "일치"
+    }
+   },
+   "profile_other": {
+    "rnd_ratio": {
+     "value": 0.0,
+     "status": "불명-없음",
+     "note": "판관비 내역은 있으나 연구개발비 계정 없음 → 0"
+    },
+    "advert_ratio": {
+     "value": 0.0,
+     "status": "불명-없음",
+     "note": "판관비 내역은 있으나 광고판촉비 계정 없음 → 0"
+    },
+    "raw_material_inv": {
+     "value": true,
+     "status": "확보",
+     "note": "재고 구성: 원재료|제품"
+    },
+    "related_sales_ratio": {
+     "value": 0.0269,
+     "status": "확보",
+     "note": ""
+    },
+    "max_shareholder_pct": {
+     "value": 21.52,
+     "status": "확보",
+     "note": ""
+    }
+   },
+   "profile_other_note": "원문 대조 대상 아님(비교 함수 테스트 입력용)"
+  },
+  {
+   "corp_code": "01398151",
+   "corp_name": "(주)밸로프",
+   "listed": true,
+   "fiscal_year": 2024,
+   "rcept_no": "20250318000970",
+   "rcept_no_financials": "20250318000970",
+   "fs_basis": "별도",
+   "values": {
+    "revenue": 19915293023,
+    "operating_profit": 766209111,
+    "total_assets": 42101146321,
+    "inventory": null,
+    "ppe": 177588658
+   },
+   "value_status": {
+    "inventory": "불명-없음"
+   },
+   "revenue_mix": {
+    "status": "확보",
+    "main_category": "sw_license",
+    "main_share": 1.0,
+    "shares": {
+     "sw_license": 1.0
+    },
+    "coverage": 1.0,
+    "coverage_basis": "연결",
+    "rows": [
+     {
+      "label": "RPG",
+      "amount": 19885603000,
+      "category": "sw_license"
+     },
+     {
+      "label": "캐주얼 액션",
+      "amount": 12657132000,
+      "category": "sw_license"
+     },
+     {
+      "label": "FPS",
+      "amount": 2368634000,
+      "category": "sw_license"
+     },
+     {
+      "label": "기타",
+      "amount": 677884000,
+      "category": "sw_license"
+     }
+    ]
+   },
+   "verification": {
+    "method": "사업보고서 원문 XML의 '재무제표'(별도) 절과 '매출 및 수주상황'·'주요 제품' 표에서 계정 행의 당기 금액을 직접 찾아 대조(단위 환산 포함)",
+    "result": {
+     "revenue": "일치",
+     "operating_profit": "일치",
+     "total_assets": "일치",
+     "inventory": "없음 확인(재무상태표에 계정 없음)",
+     "ppe": "일치",
+     "revenue_mix": "일치"
+    }
+   },
+   "profile_other": {
+    "rnd_ratio": {
+     "value": 0.0,
+     "status": "불명-없음",
+     "note": "판관비 내역은 있으나 연구개발비 계정 없음 → 0"
+    },
+    "advert_ratio": {
+     "value": 0.0,
+     "status": "불명-없음",
+     "note": "판관비 내역은 있으나 광고판촉비 계정 없음 → 0"
+    },
+    "raw_material_inv": {
+     "value": false,
+     "status": "확보",
+     "note": "재고 0"
+    },
+    "related_sales_ratio": {
+     "value": 0.1256,
+     "status": "확보",
+     "note": ""
+    },
+    "max_shareholder_pct": {
+     "value": 22.9,
+     "status": "확보",
+     "note": ""
+    }
+   },
+   "profile_other_note": "원문 대조 대상 아님(비교 함수 테스트 입력용)"
+  },
+  {
+   "corp_code": "01662621",
+   "corp_name": "명성엘엔텍",
+   "listed": false,
+   "fiscal_year": 2024,
+   "rcept_no": "20250408001553",
+   "rcept_no_financials": "20250408001553",
+   "fs_basis": "별도",
+   "values": {
+    "revenue": 20761466699,
+    "operating_profit": 2157236113,
+    "total_assets": 42408502069,
+    "inventory": 9891640871,
+    "ppe": 19399314751
+   },
+   "value_status": {
+    "inventory": "확보"
+   },
+   "revenue_mix": {
+    "status": "확보",
+    "main_category": "product",
+    "main_share": 1.0,
+    "shares": {
+     "product": 1.0
+    },
+    "coverage": 1.0,
+    "coverage_basis": "별도",
+    "rows": [
+     {
+      "label": "제품매출",
+      "amount": 20761466699,
+      "category": "product"
+     }
+    ]
+   },
+   "verification": {
+    "method": "감사보고서 원문 XML의 '(첨부)재무제표' 표에서 계정 행의 당기 금액을 직접 찾아 대조(단위 환산 포함)",
+    "result": {
+     "revenue": "일치",
+     "operating_profit": "일치",
+     "total_assets": "일치",
+     "inventory": "일치",
+     "ppe": "일치",
+     "revenue_mix": "일치"
+    }
+   },
+   "profile_other": {
+    "rnd_ratio": {
+     "value": 0.0,
+     "status": "불명-없음",
+     "note": "판관비 내역은 있으나 연구개발비 계정 없음 → 0"
+    },
+    "advert_ratio": {
+     "value": 0.0,
+     "status": "확보",
+     "note": ""
+    },
+    "raw_material_inv": {
+     "value": true,
+     "status": "확보",
+     "note": "재고 구성: 원재료|제품"
+    },
+    "related_sales_ratio": {
+     "value": 0.0,
+     "status": "확보",
+     "note": ""
+    },
+    "max_shareholder_pct": {
+     "value": null,
+     "status": "불명-못찾음",
+     "note": "비상장: 최대주주 현황 API 없음"
+    }
+   },
+   "profile_other_note": "원문 대조 대상 아님(비교 함수 테스트 입력용)"
+  },
+  {
+   "corp_code": "00923808",
+   "corp_name": "북두엔지니어링",
+   "listed": false,
+   "fiscal_year": 2024,
+   "rcept_no": "20250408001041",
+   "rcept_no_financials": "20250408001041",
+   "fs_basis": "별도",
+   "values": {
+    "revenue": 16794289008,
+    "operating_profit": -2782163831,
+    "total_assets": 19276177503,
+    "inventory": 1605232622,
+    "ppe": 5146518880
+   },
+   "value_status": {
+    "inventory": "확보"
+   },
+   "revenue_mix": {
+    "status": "확보",
+    "main_category": "product",
+    "main_share": 1.0,
+    "shares": {
+     "product": 1.0,
+     "service": 0.0
+    },
+    "coverage": 1.0,
+    "coverage_basis": "별도",
+    "rows": [
+     {
+      "label": "제품매출",
+      "amount": 16794289008,
+      "category": "product"
+     },
+     {
+      "label": "임대수익",
+      "amount": 0,
+      "category": "service"
+     }
+    ]
+   },
+   "verification": {
+    "method": "감사보고서 원문 XML의 '(첨부)재무제표' 표에서 계정 행의 당기 금액을 직접 찾아 대조(단위 환산 포함)",
+    "result": {
+     "revenue": "일치",
+     "operating_profit": "일치",
+     "total_assets": "일치",
+     "inventory": "일치",
+     "ppe": "일치",
+     "revenue_mix": "일치"
+    }
+   },
+   "profile_other": {
+    "rnd_ratio": {
+     "value": 0.0,
+     "status": "불명-없음",
+     "note": "판관비 내역은 있으나 연구개발비 계정 없음 → 0"
+    },
+    "advert_ratio": {
+     "value": 0.0,
+     "status": "불명-없음",
+     "note": "판관비 내역은 있으나 광고판촉비 계정 없음 → 0"
+    },
+    "raw_material_inv": {
+     "value": true,
+     "status": "확보",
+     "note": "재고 구성: 원재료|재공품"
+    },
+    "related_sales_ratio": {
+     "value": null,
+     "status": "불명-못찾음",
+     "note": "특수관계자 주석 없음/못 찾음"
+    },
+    "max_shareholder_pct": {
+     "value": null,
+     "status": "불명-못찾음",
+     "note": "비상장: 최대주주 현황 API 없음"
+    }
+   },
+   "profile_other_note": "원문 대조 대상 아님(비교 함수 테스트 입력용)"
+  },
+  {
+   "corp_code": "01735547",
+   "corp_name": "남양씨피엠",
+   "listed": false,
+   "fiscal_year": 2024,
+   "rcept_no": "20250408002512",
+   "rcept_no_financials": "20250408002512",
+   "fs_basis": "별도",
+   "values": {
+    "revenue": 11028904481,
+    "operating_profit": 624072578,
+    "total_assets": 13998588306,
+    "inventory": 826205617,
+    "ppe": 7325224477
+   },
+   "value_status": {
+    "inventory": "확보"
+   },
+   "revenue_mix": {
+    "status": "확보",
+    "main_category": "product",
+    "main_share": 0.8112,
+    "shares": {
+     "merchandise": 0.1884,
+     "other": 0.0004,
+     "product": 0.8112
+    },
+    "coverage": 1.0,
+    "coverage_basis": "별도",
+    "rows": [
+     {
+      "label": "제품매출",
+      "amount": 8946913775,
+      "category": "product"
+     },
+     {
+      "label": "상품매출",
+      "amount": 2077903706,
+      "category": "merchandise"
+     },
+     {
+      "label": "기타매출",
+      "amount": 4087000,
+      "category": "other"
+     }
+    ]
+   },
+   "verification": {
+    "method": "감사보고서 원문 XML의 '(첨부)재무제표' 표에서 계정 행의 당기 금액을 직접 찾아 대조(단위 환산 포함)",
+    "result": {
+     "revenue": "일치",
+     "operating_profit": "일치",
+     "total_assets": "일치",
+     "inventory": "일치",
+     "ppe": "일치",
+     "revenue_mix": "일치"
+    }
+   },
+   "profile_other": {
+    "rnd_ratio": {
+     "value": 0.0003,
+     "status": "확보",
+     "note": ""
+    },
+    "advert_ratio": {
+     "value": 0.0002,
+     "status": "확보",
+     "note": ""
+    },
+    "raw_material_inv": {
+     "value": true,
+     "status": "확보",
+     "note": "재고 구성: 상품|원재료|재공품|제품"
+    },
+    "related_sales_ratio": {
+     "value": null,
+     "status": "불명-못찾음",
+     "note": "특수관계자 주석 없음/못 찾음"
+    },
+    "max_shareholder_pct": {
+     "value": null,
+     "status": "불명-못찾음",
+     "note": "비상장: 최대주주 현황 API 없음"
+    }
+   },
+   "profile_other_note": "원문 대조 대상 아님(비교 함수 테스트 입력용)"
+  },
+  {
+   "corp_code": "00112448",
+   "corp_name": "대주기공",
+   "listed": false,
+   "fiscal_year": 2024,
+   "rcept_no": "20250324000187",
+   "rcept_no_financials": "20250324000187",
+   "fs_basis": "별도",
+   "values": {
+    "revenue": 20338342281,
+    "operating_profit": 229130649,
+    "total_assets": 45240524003,
+    "inventory": 4060011585,
+    "ppe": 6255625371
+   },
+   "value_status": {
+    "inventory": "확보"
+   },
+   "revenue_mix": {
+    "status": "확보",
+    "main_category": "product",
+    "main_share": 0.8953,
+    "shares": {
+     "merchandise": 0.1047,
+     "product": 0.8953
+    },
+    "coverage": 1.0,
+    "coverage_basis": "별도",
+    "rows": [
+     {
+      "label": "제품매출",
+      "amount": 18208629036,
+      "category": "product"
+     },
+     {
+      "label": "상품매출",
+      "amount": 2129713245,
+      "category": "merchandise"
+     }
+    ]
+   },
+   "verification": {
+    "method": "감사보고서 원문 XML의 '(첨부)재무제표' 표에서 계정 행의 당기 금액을 직접 찾아 대조(단위 환산 포함)",
+    "result": {
+     "revenue": "일치",
+     "operating_profit": "일치",
+     "total_assets": "일치",
+     "inventory": "일치",
+     "ppe": "일치",
+     "revenue_mix": "일치"
+    }
+   },
+   "profile_other": {
+    "rnd_ratio": {
+     "value": 0.0,
+     "status": "불명-없음",
+     "note": "판관비 내역은 있으나 연구개발비 계정 없음 → 0"
+    },
+    "advert_ratio": {
+     "value": 0.002,
+     "status": "확보",
+     "note": ""
+    },
+    "raw_material_inv": {
+     "value": true,
+     "status": "확보",
+     "note": "재고 구성: 상품|원재료|재공품|저장품|제품"
+    },
+    "related_sales_ratio": {
+     "value": 0.4243,
+     "status": "확보",
+     "note": ""
+    },
+    "max_shareholder_pct": {
+     "value": null,
+     "status": "불명-못찾음",
+     "note": "비상장: 최대주주 현황 API 없음"
+    }
+   },
+   "profile_other_note": "원문 대조 대상 아님(비교 함수 테스트 입력용)"
+  },
+  {
+   "corp_code": "01738562",
+   "corp_name": "상신코퍼레이션",
+   "listed": false,
+   "fiscal_year": 2024,
+   "rcept_no": "20250407001537",
+   "rcept_no_financials": "20250407001537",
+   "fs_basis": "별도",
+   "values": {
+    "revenue": 25518363485,
+    "operating_profit": 430979305,
+    "total_assets": 6181000633,
+    "inventory": 3076395760,
+    "ppe": 300117509
+   },
+   "value_status": {
+    "inventory": "확보"
+   },
+   "revenue_mix": {
+    "status": "확보",
+    "main_category": "merchandise",
+    "main_share": 1.0,
+    "shares": {
+     "merchandise": 1.0
+    },
+    "coverage": 1.0,
+    "coverage_basis": "별도",
+    "rows": [
+     {
+      "label": "상품매출액",
+      "amount": 25518363485,
+      "category": "merchandise"
+     }
+    ]
+   },
+   "verification": {
+    "method": "감사보고서 원문 XML의 '(첨부)재무제표' 표에서 계정 행의 당기 금액을 직접 찾아 대조(단위 환산 포함)",
+    "result": {
+     "revenue": "일치",
+     "operating_profit": "일치",
+     "total_assets": "일치",
+     "inventory": "일치",
+     "ppe": "일치",
+     "revenue_mix": "일치"
+    }
+   },
+   "profile_other": {
+    "rnd_ratio": {
+     "value": 0.0,
+     "status": "불명-없음",
+     "note": "판관비 내역은 있으나 연구개발비 계정 없음 → 0"
+    },
+    "advert_ratio": {
+     "value": 0.0001,
+     "status": "확보",
+     "note": ""
+    },
+    "raw_material_inv": {
+     "value": false,
+     "status": "확보",
+     "note": "재고 구성: 상품"
+    },
+    "related_sales_ratio": {
+     "value": null,
+     "status": "불명-못찾음",
+     "note": "특수관계자 주석 없음/못 찾음"
+    },
+    "max_shareholder_pct": {
+     "value": null,
+     "status": "불명-못찾음",
+     "note": "비상장: 최대주주 현황 API 없음"
+    }
+   },
+   "profile_other_note": "원문 대조 대상 아님(비교 함수 테스트 입력용)"
+  },
+  {
+   "corp_code": "01446537",
+   "corp_name": "애보트메디칼코리아",
+   "listed": false,
+   "fiscal_year": 2024,
+   "rcept_no": "20250328001610",
+   "rcept_no_financials": "20250328001610",
+   "fs_basis": "별도",
+   "values": {
+    "revenue": 138350884152,
+    "operating_profit": 5175695582,
+    "total_assets": 104678490385,
+    "inventory": 31741174242,
+    "ppe": 1643500716
+   },
+   "value_status": {
+    "inventory": "확보"
+   },
+   "revenue_mix": {
+    "status": "확보",
+    "main_category": "merchandise",
+    "main_share": 1.0,
+    "shares": {
+     "merchandise": 1.0
+    },
+    "coverage": 1.0,
+    "coverage_basis": "별도",
+    "rows": [
+     {
+      "label": "상품매출",
+      "amount": 138350884152,
+      "category": "merchandise"
+     }
+    ]
+   },
+   "verification": {
+    "method": "감사보고서 원문 XML의 '(첨부)재무제표' 표에서 계정 행의 당기 금액을 직접 찾아 대조(단위 환산 포함)",
+    "result": {
+     "revenue": "일치",
+     "operating_profit": "일치",
+     "total_assets": "일치",
+     "inventory": "일치",
+     "ppe": "일치",
+     "revenue_mix": "일치"
+    }
+   },
+   "profile_other": {
+    "rnd_ratio": {
+     "value": 0.0,
+     "status": "불명-없음",
+     "note": "판관비 내역은 있으나 연구개발비 계정 없음 → 0"
+    },
+    "advert_ratio": {
+     "value": 0.0,
+     "status": "불명-없음",
+     "note": "판관비 내역은 있으나 광고판촉비 계정 없음 → 0"
+    },
+    "raw_material_inv": {
+     "value": false,
+     "status": "확보",
+     "note": "재고 구성: 상품"
+    },
+    "related_sales_ratio": {
+     "value": 0.005,
+     "status": "확보",
+     "note": ""
+    },
+    "max_shareholder_pct": {
+     "value": null,
+     "status": "불명-못찾음",
+     "note": "비상장: 최대주주 현황 API 없음"
+    }
+   },
+   "profile_other_note": "원문 대조 대상 아님(비교 함수 테스트 입력용)"
+  },
+  {
+   "corp_code": "01464597",
+   "corp_name": "케이엘페트로",
+   "listed": false,
+   "fiscal_year": 2024,
+   "rcept_no": "20250328000684",
+   "rcept_no_financials": "20250328000684",
+   "fs_basis": "별도",
+   "values": {
+    "revenue": 107126031696,
+    "operating_profit": 596849957,
+    "total_assets": 16712654142,
+    "inventory": 4457058530,
+    "ppe": 81860177
+   },
+   "value_status": {
+    "inventory": "확보"
+   },
+   "revenue_mix": {
+    "status": "확보",
+    "main_category": "merchandise",
+    "main_share": 0.9974,
+    "shares": {
+     "merchandise": 0.9974,
+     "service": 0.0026
+    },
+    "coverage": 1.0,
+    "coverage_basis": "별도",
+    "rows": [
+     {
+      "label": "상품매출",
+      "amount": 106848032245,
+      "category": "merchandise"
+     },
+     {
+      "label": "임대료수입",
+      "amount": 277999451,
+      "category": "service"
+     }
+    ]
+   },
+   "verification": {
+    "method": "감사보고서 원문 XML의 '(첨부)재무제표' 표에서 계정 행의 당기 금액을 직접 찾아 대조(단위 환산 포함)",
+    "result": {
+     "revenue": "일치",
+     "operating_profit": "일치",
+     "total_assets": "일치",
+     "inventory": "일치",
+     "ppe": "일치",
+     "revenue_mix": "일치"
+    }
+   },
+   "profile_other": {
+    "rnd_ratio": {
+     "value": 0.0,
+     "status": "불명-없음",
+     "note": "판관비 내역은 있으나 연구개발비 계정 없음 → 0"
+    },
+    "advert_ratio": {
+     "value": 0.0002,
+     "status": "확보",
+     "note": ""
+    },
+    "raw_material_inv": {
+     "value": false,
+     "status": "확보",
+     "note": "재고 구성: 상품"
+    },
+    "related_sales_ratio": {
+     "value": 0.0,
+     "status": "확보",
+     "note": ""
+    },
+    "max_shareholder_pct": {
+     "value": null,
+     "status": "불명-못찾음",
+     "note": "비상장: 최대주주 현황 API 없음"
+    }
+   },
+   "profile_other_note": "원문 대조 대상 아님(비교 함수 테스트 입력용)"
+  },
+  {
+   "corp_code": "01219748",
+   "corp_name": "천하자동차",
+   "listed": false,
+   "fiscal_year": 2024,
+   "rcept_no": "20250407000684",
+   "rcept_no_financials": "20250407000684",
+   "fs_basis": "별도",
+   "values": {
+    "revenue": 111863463184,
+    "operating_profit": 1907854562,
+    "total_assets": 43921166137,
+    "inventory": 16769845611,
+    "ppe": 21394621403
+   },
+   "value_status": {
+    "inventory": "확보"
+   },
+   "revenue_mix": {
+    "status": "확보",
+    "main_category": "merchandise",
+    "main_share": 0.8887,
+    "shares": {
+     "merchandise": 0.8887,
+     "service": 0.1113
+    },
+    "coverage": 1.0,
+    "coverage_basis": "별도",
+    "rows": [
+     {
+      "label": "상품매출",
+      "amount": 99414390744,
+      "category": "merchandise"
+     },
+     {
+      "label": "정비매출",
+      "amount": 12449072440,
+      "category": "service"
+     }
+    ]
+   },
+   "verification": {
+    "method": "감사보고서 원문 XML의 '(첨부)재무제표' 표에서 계정 행의 당기 금액을 직접 찾아 대조(단위 환산 포함)",
+    "result": {
+     "revenue": "일치",
+     "operating_profit": "일치",
+     "total_assets": "일치",
+     "inventory": "일치",
+     "ppe": "일치",
+     "revenue_mix": "일치"
+    }
+   },
+   "profile_other": {
+    "rnd_ratio": {
+     "value": 0.0,
+     "status": "불명-없음",
+     "note": "판관비 내역은 있으나 연구개발비 계정 없음 → 0"
+    },
+    "advert_ratio": {
+     "value": 0.0264,
+     "status": "확보",
+     "note": ""
+    },
+    "raw_material_inv": {
+     "value": false,
+     "status": "확보",
+     "note": "재고 구성: 상품"
+    },
+    "related_sales_ratio": {
+     "value": 0.0,
+     "status": "확보",
+     "note": ""
+    },
+    "max_shareholder_pct": {
+     "value": null,
+     "status": "불명-못찾음",
+     "note": "비상장: 최대주주 현황 API 없음"
+    }
+   },
+   "profile_other_note": "원문 대조 대상 아님(비교 함수 테스트 입력용)"
+  },
+  {
+   "corp_code": "00238445",
+   "corp_name": "디티씨",
+   "listed": false,
+   "fiscal_year": 2024,
+   "rcept_no": "20250407001543",
+   "rcept_no_financials": "20250407001543",
+   "fs_basis": "별도",
+   "values": {
+    "revenue": 63972717333,
+    "operating_profit": 149675860,
+    "total_assets": 35772368685,
+    "inventory": 18930000,
+    "ppe": 7272362886
+   },
+   "value_status": {
+    "inventory": "확보"
+   },
+   "revenue_mix": {
+    "status": "확보",
+    "main_category": "service",
+    "main_share": 0.9698,
+    "shares": {
+     "other": 0.0302,
+     "service": 0.9698
+    },
+    "coverage": 1.0,
+    "coverage_basis": "별도",
+    "rows": [
+     {
+      "label": "운송수입",
+      "amount": 45556696916,
+      "category": "service"
+     },
+     {
+      "label": "조작수입",
+      "amount": 5688468823,
+      "category": "service"
+     },
+     {
+      "label": "기타수입",
+      "amount": 1934403601,
+      "category": "other"
+     },
+     {
+      "label": "복합운송수입",
+      "amount": 10793147993,
+      "category": "service"
+     }
+    ]
+   },
+   "verification": {
+    "method": "감사보고서 원문 XML의 '(첨부)재무제표' 표에서 계정 행의 당기 금액을 직접 찾아 대조(단위 환산 포함)",
+    "result": {
+     "revenue": "일치",
+     "operating_profit": "일치",
+     "total_assets": "일치",
+     "inventory": "일치",
+     "ppe": "일치",
+     "revenue_mix": "일치"
+    }
+   },
+   "profile_other": {
+    "rnd_ratio": {
+     "value": 0.0,
+     "status": "불명-없음",
+     "note": "판관비 내역은 있으나 연구개발비 계정 없음 → 0"
+    },
+    "advert_ratio": {
+     "value": 0.0001,
+     "status": "확보",
+     "note": ""
+    },
+    "raw_material_inv": {
+     "value": false,
+     "status": "확보",
+     "note": "재고 구성: 저장품"
+    },
+    "related_sales_ratio": {
+     "value": 0.0411,
+     "status": "확보",
+     "note": ""
+    },
+    "max_shareholder_pct": {
+     "value": null,
+     "status": "불명-못찾음",
+     "note": "비상장: 최대주주 현황 API 없음"
+    }
+   },
+   "profile_other_note": "원문 대조 대상 아님(비교 함수 테스트 입력용)"
+  },
+  {
+   "corp_code": "00104935",
+   "corp_name": "세창",
+   "listed": false,
+   "fiscal_year": 2024,
+   "rcept_no": "20250328001030",
+   "rcept_no_financials": "20250328001030",
+   "fs_basis": "별도",
+   "values": {
+    "revenue": 4539708055,
+    "operating_profit": -3962727732,
+    "total_assets": 129945606252,
+    "inventory": 943483614,
+    "ppe": 82771191085
+   },
+   "value_status": {
+    "inventory": "확보"
+   },
+   "revenue_mix": {
+    "status": "확보",
+    "main_category": "service",
+    "main_share": 0.5596,
+    "shares": {
+     "merchandise": 0.4381,
+     "other": 0.0023,
+     "service": 0.5596
+    },
+    "coverage": 1.0,
+    "coverage_basis": "별도",
+    "rows": [
+     {
+      "label": "상품매출",
+      "amount": 1364677295,
+      "category": "merchandise"
+     },
+     {
+      "label": "임대수익",
+      "amount": 2504452506,
+      "category": "service"
+     },
+     {
+      "label": "관리비수익",
+      "amount": 36013858,
+      "category": "service"
+     },
+     {
+      "label": "용지매출",
+      "amount": 624300000,
+      "category": "merchandise"
+     },
+     {
+      "label": "기타매출",
+      "amount": 10264396,
+      "category": "other"
+     }
+    ]
+   },
+   "verification": {
+    "method": "감사보고서 원문 XML의 '(첨부)재무제표' 표에서 계정 행의 당기 금액을 직접 찾아 대조(단위 환산 포함)",
+    "result": {
+     "revenue": "일치",
+     "operating_profit": "일치",
+     "total_assets": "일치",
+     "inventory": "일치",
+     "ppe": "일치",
+     "revenue_mix": "일치"
+    }
+   },
+   "profile_other": {
+    "rnd_ratio": {
+     "value": 0.0,
+     "status": "불명-없음",
+     "note": "판관비 내역은 있으나 연구개발비 계정 없음 → 0"
+    },
+    "advert_ratio": {
+     "value": 0.0006,
+     "status": "확보",
+     "note": ""
+    },
+    "raw_material_inv": {
+     "value": false,
+     "status": "확보",
+     "note": "재고 구성: 상품"
+    },
+    "related_sales_ratio": {
+     "value": 0.0,
+     "status": "확보",
+     "note": ""
+    },
+    "max_shareholder_pct": {
+     "value": null,
+     "status": "불명-못찾음",
+     "note": "비상장: 최대주주 현황 API 없음"
+    }
+   },
+   "profile_other_note": "원문 대조 대상 아님(비교 함수 테스트 입력용)"
+  },
+  {
+   "corp_code": "00330026",
+   "corp_name": "행담도개발",
+   "listed": false,
+   "fiscal_year": 2024,
+   "rcept_no": "20250326000380",
+   "rcept_no_financials": "20250326000380",
+   "fs_basis": "별도",
+   "values": {
+    "revenue": 12538015982,
+    "operating_profit": 6982485130,
+    "total_assets": 43739829073,
+    "inventory": null,
+    "ppe": 34050110345
+   },
+   "value_status": {
+    "inventory": "불명-없음"
+   },
+   "revenue_mix": {
+    "status": "확보",
+    "main_category": "service",
+    "main_share": 1.0,
+    "shares": {
+     "service": 1.0
+    },
+    "coverage": 1.0,
+    "coverage_basis": "별도",
+    "rows": [
+     {
+      "label": "임대수익",
+      "amount": 12431200778,
+      "category": "service"
+     },
+     {
+      "label": "전기차충전시설임대수익",
+      "amount": 106815204,
+      "category": "service"
+     }
+    ]
+   },
+   "verification": {
+    "method": "감사보고서 원문 XML의 '(첨부)재무제표' 표에서 계정 행의 당기 금액을 직접 찾아 대조(단위 환산 포함)",
+    "result": {
+     "revenue": "일치",
+     "operating_profit": "일치",
+     "total_assets": "일치",
+     "inventory": "없음 확인(재무상태표에 계정 없음)",
+     "ppe": "일치",
+     "revenue_mix": "일치"
+    }
+   },
+   "profile_other": {
+    "rnd_ratio": {
+     "value": 0.0,
+     "status": "불명-없음",
+     "note": "판관비 내역은 있으나 연구개발비 계정 없음 → 0"
+    },
+    "advert_ratio": {
+     "value": 0.0,
+     "status": "불명-없음",
+     "note": "판관비 내역은 있으나 광고판촉비 계정 없음 → 0"
+    },
+    "raw_material_inv": {
+     "value": false,
+     "status": "확보",
+     "note": "재고 0"
+    },
+    "related_sales_ratio": {
+     "value": null,
+     "status": "불명-못찾음",
+     "note": "특수관계자 주석 없음/못 찾음"
+    },
+    "max_shareholder_pct": {
+     "value": null,
+     "status": "불명-못찾음",
+     "note": "비상장: 최대주주 현황 API 없음"
+    }
+   },
+   "profile_other_note": "원문 대조 대상 아님(비교 함수 테스트 입력용)"
+  },
+  {
+   "corp_code": "00974486",
+   "corp_name": "참트레이딩",
+   "listed": false,
+   "fiscal_year": 2024,
+   "rcept_no": "20250326000691",
+   "rcept_no_financials": "20250326000691",
+   "fs_basis": "별도",
+   "values": {
+    "revenue": 436424431226,
+    "operating_profit": 18286984352,
+    "total_assets": 155071428054,
+    "inventory": 113139854959,
+    "ppe": 14017987
+   },
+   "value_status": {
+    "inventory": "확보"
+   },
+   "revenue_mix": {
+    "status": "불명-못찾음",
+    "note": "손익계산서에 매출 하위 행 없음(매출액 한 줄)",
+    "rows": []
+   },
+   "verification": {
+    "method": "감사보고서 원문 XML의 '(첨부)재무제표' 표에서 계정 행의 당기 금액을 직접 찾아 대조(단위 환산 포함)",
+    "result": {
+     "revenue": "일치",
+     "operating_profit": "일치",
+     "total_assets": "일치",
+     "inventory": "일치",
+     "ppe": "일치",
+     "revenue_mix": "불명 확인(원문에 매출 하위 행 없음)"
+    }
+   },
+   "profile_other": {
+    "rnd_ratio": {
+     "value": 0.0,
+     "status": "불명-없음",
+     "note": "판관비 내역은 있으나 연구개발비 계정 없음 → 0"
+    },
+    "advert_ratio": {
+     "value": 0.0,
+     "status": "불명-없음",
+     "note": "판관비 내역은 있으나 광고판촉비 계정 없음 → 0"
+    },
+    "raw_material_inv": {
+     "value": null,
+     "status": "불명-못찾음",
+     "note": "재고 구성 주석·하위 행 못 찾음"
+    },
+    "related_sales_ratio": {
+     "value": 0.6011,
+     "status": "확보",
+     "note": ""
+    },
+    "max_shareholder_pct": {
+     "value": null,
+     "status": "불명-못찾음",
+     "note": "비상장: 최대주주 현황 API 없음"
+    }
+   },
+   "profile_other_note": "원문 대조 대상 아님(비교 함수 테스트 입력용)"
+  }
+ ]
+}
