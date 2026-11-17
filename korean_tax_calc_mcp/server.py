@@ -1281,7 +1281,8 @@ def tp_comparable_screen(tested_party: Annotated[dict, Field(description="분석
 후보 프로필(매출 구성 6갈래·재고/매출·원재료 재고·유형/무형자산 비중·연구개발·광고·매출채권·운전자본·특수관계 매출·최대주주 지분)을 근거(접수번호·계정)와 함께 낸다.
 언제: 이전가격 거래순이익률방법의 비교대상 후보를 국내 공시로 직접 찾고, 후보마다 기능·자산·위험 숫자를 붙여 분석대상과 비교하려 할 때.
 입력: 업종 코드 앞자리 → industry_codes, 분석 연도 → years, 상장 구분 → listed, 매출 범위(마지막 연도, 원) → revenue_min·revenue_max, 후보 수 → limit(상한 100),
-  재무제표 기준 → fs_pref(별도 우선), 비상장 탐색 기간 → unlisted_window, 이번 실행 호출 상한 → max_calls, 색인만 쌓기 → build_index_only.
+  재무제표 기준 → fs_pref(별도 우선), 비상장 탐색 기간 → unlisted_window, 이번 실행 호출 상한 → max_calls, 색인만 쌓기 → build_index_only,
+  짧은 업종 코드 후보 거르기 → short_code_keywords(등록 코드가 입력보다 짧은 후보만 사업 설명 낱말로 거름, 예 ['화장품']).
 결과: 후보_행(tp_comparable_screen 입력 열 그대로 + 접수번호·연결/별도·바꾼 칸), 후보_프로필(값마다 상태: 확보 / 불명-없음(계정 없음 → 0) / 불명-못찾음),
   매출_분류_방법(원문 매출유형·Solar·규칙 — 규칙이면 정확도_낮음), 업종_짧은코드_포함(등록 코드가 입력보다 짧아 들어온 회사 — 세분류 확인), 호출 수, 멈춤 사유와 남은_회사_수(같은 입력으로 다시 부르면 이어서 계속).
 처리: 재무는 상장 = 단일회사 재무 API(별도 우선, 없으면 연결), 비상장 = 감사보고서 원문 표(그 해 보고서, 없으면 다음 해 보고서의 전기 열). 매출 구성 금액은 원문 표 숫자만 쓰고,
@@ -1303,13 +1304,15 @@ def kr_comparable_candidates(
         fs_pref: Annotated[Literal["별도", "연결"], Field(description="재무제표 기준 — 별도(이전가격 기본)|연결. 없으면 다른 쪽으로 대체하고 fs_div에 표시")] = "별도",
         unlisted_window: Annotated[list[str] | None, Field(description="비상장 탐색 기간 [시작 YYYYMMDD, 끝 YYYYMMDD](3개월 이내, 생략하면 마지막 연도 다음 해 3월 — 12월 결산 감사보고서가 몰리는 달)")] = None,
         max_calls: Annotated[int, Field(description="이번 실행 OpenDART 호출 상한(기본 300) — 닿으면 멈추고 다시 실행하면 캐시로 이어감", ge=1, le=5000)] = 300,
-        build_index_only: Annotated[bool, Field(description="true면 재무는 부르지 않고 회사 색인(기업개황 → 업종코드·결산월·법인구분)만 쌓음 — 비상장 모집단이 클 때 먼저 며칠에 나눠 색인을 채우는 용도")] = False) -> dict:
+        build_index_only: Annotated[bool, Field(description="true면 재무는 부르지 않고 회사 색인(기업개황 → 업종코드·결산월·법인구분)만 쌓음 — 비상장 모집단이 클 때 먼저 며칠에 나눠 색인을 채우는 용도")] = False,
+        short_code_keywords: Annotated[list[str] | None, Field(description="등록 업종 코드가 입력보다 짧은 후보(예: 입력 '2042'에 등록 '204')만 거르는 품목 낱말(예 ['화장품']) — 사업 설명에 하나도 없으면 후보에서 빼고 업종_짧은코드_설명불일치에 적음. 생략하면 짧은 코드 후보도 모두 넣고 표시만")] = None) -> dict:
     from .engine.kr_comparables import candidates as KRC
     win = tuple(unlisted_window) if unlisted_window else None
     if win is not None and len(win) != 2:
         raise ValueError("unlisted_window는 [시작 YYYYMMDD, 끝 YYYYMMDD]")
     r = KRC.run(industry_codes=industry_codes, years=years, listed=listed, revenue_min=revenue_min, revenue_max=revenue_max,
-                limit=limit, fs_pref=fs_pref, unlisted_window=win, max_calls=max_calls, build_index_only=build_index_only)
+                limit=limit, fs_pref=fs_pref, unlisted_window=win, max_calls=max_calls, build_index_only=build_index_only,
+                short_code_keywords=short_code_keywords)
     extra = {k: v for k, v in r.items() if k not in ("결과", "근거")}
     return _ok(r["결과"], r["근거"], **extra)
 

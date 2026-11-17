@@ -54,6 +54,12 @@ def _match_industry(code, prefixes):
     return None
 
 
+def _kw_hits(prof, kws):
+    """사업 설명(사업의 개요·회사 개요 앞 1,500자)에 들어 있는 낱말 — 글자 그대로 찾기만 함(판단 아님)."""
+    text = str((prof.get("business_desc") or {}).get("value") or "")
+    return [k for k in kws if k and k in text]
+
+
 def _ratio(a, b):
     return a / b if a is not None and b else None
 
@@ -504,7 +510,8 @@ def _profile_unlisted(R, corp, name, code, rows, parsed, docs, last):
 
 
 def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=None, limit=30, fs_pref="별도",
-        unlisted_window=None, max_calls=300, client=None, solar_http=None, upstage_key=None, build_index_only=False):
+        unlisted_window=None, max_calls=300, client=None, solar_http=None, upstage_key=None, build_index_only=False,
+        short_code_keywords=None):
     """반환 {'결과': ..., '근거': [...], '주의': [...]} 또는 키 없음 안내."""
     key = os.environ.get(KEY_ENV, "")
     if client is None and not key:
@@ -516,6 +523,8 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
     limit = max(1, min(int(limit), LIMIT_MAX))
     years = sorted({int(y) for y in years})
     prefixes = [str(c).strip().upper().lstrip("C") for c in industry_codes]
+    kws = [str(k).strip() for k in (short_code_keywords or []) if str(k).strip()]
+    short_drop = []
     dc = client or DartClient(key=key, max_calls=max_calls)
     up_key = upstage_key if upstage_key is not None else os.environ.get("UPSTAGE_API_KEY", "")
     R = _Run(dc, up_key, solar_http)
@@ -562,7 +571,14 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
                     continue
                 rows, prof = res
                 if mt == "short":
-                    short.append({"company_id": c["corp_code"], "company_name": info.get("corp_name"), "industry_code": info.get("induty_code")})
+                    ent = {"company_id": c["corp_code"], "company_name": info.get("corp_name"), "industry_code": info.get("induty_code")}
+                    if kws:
+                        ent["설명_일치어"] = _kw_hits(prof, kws)
+                        if not ent["설명_일치어"]:
+                            short_drop.append({**ent, "사유": "등록 업종 코드가 입력보다 짧고 사업 설명에 short_code_keywords 낱말이 없음",
+                                               "rcept_no": prof.get("rcept_no")})
+                            continue
+                    short.append(ent)
                 found.append(c["corp_code"])
                 cand_rows += rows
                 profiles.append(prof)
@@ -584,6 +600,7 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
         "후보_프로필": profiles,
         "제외_목록": skipped[:50],
         "업종_짧은코드_포함": short,
+        "업종_짧은코드_설명불일치": short_drop,
         "매출_분류_방법": method or ["매출 행 없음"],
         "정확도_낮음": low_acc,
         "호출": {"OpenDART_실호출": dc.calls, "OpenDART_캐시": dc.cache_hits, "Solar_실호출": R.stat.get("solar_calls", 0),
@@ -593,7 +610,7 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
         "이어서": ("같은 입력으로 다시 부르면 캐시에 쌓인 결과는 다시 부르지 않고 남은 회사부터 이어서 계속합니다."
                    + (" 비상장 모집단(공시 목록)을 모으는 중에 멈춰 남은 수에 비상장은 아직 빠져 있습니다." if pool_cut else "") if stop else ""),
         "입력": {"industry_codes": prefixes, "years": years, "listed": listed, "revenue_min": revenue_min, "revenue_max": revenue_max, "limit": limit,
-                 "fs_pref": fs_pref, "build_index_only": build_index_only},
+                 "fs_pref": fs_pref, "build_index_only": build_index_only, "short_code_keywords": kws},
         "색인": {"버전": IX.data["version"], "갱신": IX.data["updated"], "색인된_회사": len(IX.data["corps"]),
                  "모집단_색인": f"{ix_n}/{ix_N}", "완료": ix_N > 0 and ix_n == ix_N, "비상장_모집단_일수": len(IX.data["days"]),
                  "안내": ("" if ix_N and ix_n == ix_N else f"색인 {ix_n}/{ix_N} — 같은 입력으로 다시 부르면 이어서 계속(하루 상한 KR_COMPARABLES_DAILY_CAP 안에서)")},
@@ -605,6 +622,11 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
              "비상장 최대주주 지분은 OpenDART API로 얻을 수 없어 불명 — 감사보고서 주석의 주주 현황을 사람이 확인."]
     if low_acc:
         notes.append(UPSTAGE_GUIDE)
+    if short and not kws:
+        notes.append(f"등록 업종 코드가 입력보다 짧은 후보 {len(short)}개(업종_짧은코드_포함) — 세분류가 달라도 들어옴(예: '204' 기타 화학제품은 화장품·계면활성제·전자재료를 모두 포함). "
+                     "short_code_keywords에 품목 낱말(예: ['화장품'])을 주면 사업 설명에 그 낱말이 없는 짧은 코드 후보는 후보에서 빼고 업종_짧은코드_설명불일치에 적음.")
+    if short_drop:
+        notes.append(f"짧은 코드 후보 {len(short_drop)}개를 사업 설명 낱말 불일치로 뺌(업종_짧은코드_설명불일치) — 글자 일치만 본 것이라 사람이 목록을 훑어 되살릴 수 있음.")
     if stop:
         left = "알 수 없음(후보 목록을 만드는 중 멈춤)" if prog["left"] is None else f"{prog['left']}개"
         notes.append(f"멈춤: {stop} — 아직 확인하지 않은 회사 {left}. 같은 입력으로 다시 부르면 이어서 계속합니다.")
