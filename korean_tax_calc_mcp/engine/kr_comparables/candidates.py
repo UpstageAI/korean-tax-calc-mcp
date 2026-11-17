@@ -454,8 +454,9 @@ def _mix(R, p, rows_mix, tinfo, rev, rc, listed, ctx, items_cfs=None, signals=No
             src = "회계 기준 배분" if (k in ("product", "merchandise") and al["goods_alloc"].startswith("회계")) else method
             p["mix_" + k] = value(sh.get(k, 0.0), rcept_no=rc, note=src)
     ev = p["mix_coverage"]["evidence"]
-    ev["rows"] = [{"label": r[0], "amount": r[1], "category": cls[i][0],
-                   "reason": ("회계 기준 배분(모델·규칙: 재화) " if cls[i][0] == RM.GOODS and al["goods_alloc"].startswith("회계") else "") + cls[i][1]}
+    ev["rows"] = [{"label": r[0], "amount": r[1], "category": "deduction" if i in al["contra_rows"] else cls[i][0],
+                   "reason": al["contra_rows"][i] if i in al["contra_rows"] else
+                   ("회계 기준 배분(모델·규칙: 재화) " if cls[i][0] == RM.GOODS and al["goods_alloc"].startswith("회계") else "") + cls[i][1]}
                   for i, r in enumerate(rows_mix)]
     ev["accounting"] = signals or {}
     if al["conflict"]:
