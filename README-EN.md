@@ -10,7 +10,7 @@
 
 **Korean tax calculations for AI agents — code, not guesses.**
 
-AI models often get tax arithmetic wrong. This server computes Korean corporate, income, VAT, withholding, international, inheritance and gift tax — and the tax adjustments behind them — in code, and attaches the statutory basis to every result. 141 tools, rate and limit tables for 2016–2026; for a year without a table it stops instead of guessing. It covers foreign companies, expats and Korean subsidiaries (foreign worker flat tax, non-resident withholding, branch profits tax, exit tax and more). Ask in English: every tool description starts with an English line, and `find_tool` takes English queries. Results can be exported to a review workbook laid out as the statutory forms.
+AI models often get tax arithmetic wrong. This server computes Korean corporate, income, VAT, withholding, international, inheritance and gift tax — and the tax adjustments behind them — in code, and attaches the statutory basis to every result. 142 tools, rate and limit tables for 2016–2026; for a year without a table it stops instead of guessing. It covers foreign companies, expats and Korean subsidiaries (foreign worker flat tax, non-resident withholding, branch profits tax, exit tax and more). Ask in English: every tool description starts with an English line, and `find_tool` takes English queries. Results can be exported to a review workbook laid out as the statutory forms.
 
 > Not tax advice. Results show sources and computations for review; confirm filings and appeals with a tax professional. Only the 3 PDF tools and the optional revenue-row classification in the Korean comparable candidates tool use generative AI, and their results say so — [full notices](#disclaimer)
 
@@ -105,7 +105,7 @@ Optional keys: `LAW_OC` (law.go.kr lookups in two audit tools), `UPSTAGE_API_KEY
 
 Requirements and year-specific judgments (credit eligibility, arm's-length methods, permanent establishment) belong to the companion server [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp). This server computes from amounts that meet the requirements and points to the statute check in its output.
 
-Of the 141 tools, the 137 other than the 3 PDF tools and the Korean comparable candidates tool run in code without generative AI; two of them (price lookups) only fetch public data from KRX and VWORLD. The 3 PDF tools and the candidates tool use Upstage only when `UPSTAGE_API_KEY` is set (the candidates tool fetches OpenDART filings and, without the key, classifies revenue rows by name rules).
+Of the 142 tools, the 137 other than the 3 PDF tools and the Korean comparable candidates tool run in code without generative AI; two of them (price lookups) only fetch public data from KRX and VWORLD. The 3 PDF tools and the candidates tool use Upstage only when `UPSTAGE_API_KEY` is set (the candidates tool fetches OpenDART filings and, without the key, classifies revenue rows by name rules).
 
 </details>
 
@@ -165,7 +165,7 @@ Ask in English, get Korean statute-backed answers. Every tool description starts
 | Withholding on interest, dividends, royalties or services paid to a nonresident or foreign company | `nonresident_withholding` |
 | Reverse-charge VAT on services bought from a foreign business | `vat_reverse_charge` |
 | Interest on loans from a foreign parent beyond the debt-equity limit | `thin_capitalization` |
-| Arm's length range, comparable screening, Korean comparable candidates and profile comparison, international transaction statement | `arm_length_range` · `tp_comparable_screen` · `kr_comparable_candidates` · `kr_comparable_profile_compare` · `international_transaction_statement` |
+| Arm's length range, comparable screening, Korean comparable candidates and profile comparison, international transaction statement | `arm_length_range` · `tp_comparable_screen` · `kr_comparable_candidates` · `kr_comparable_profile_compare` · `ksic_lookup` · `international_transaction_statement` |
 | Foreign tax credit (company / individual) | `foreign_tax_credit` · `individual_foreign_tax_credit` |
 | Dividends from a foreign subsidiary — exclusion vs. credit, including the 100% exclusion for dividends received in 2026 (RSTA Art. 23-2) | `foreign_subsidiary_dividend` |
 | Seconded employees — recharge with arm's length markup, deduction, overseas work exemption | `expat_cost_recharge` |
@@ -238,7 +238,7 @@ Form templates were built by checking cell layout against the official form PDFs
 </details>
 
 <details>
-<summary><b>All tools (141)</b></summary>
+<summary><b>All tools (142)</b></summary>
 
 Click a group to expand its tools.
 
@@ -270,7 +270,7 @@ Click a group to expand its tools.
 
 </details>
 <details>
-<summary><b>International tax and cross-border</b> (20)</summary>
+<summary><b>International tax and cross-border</b> (21)</summary>
 
 | Tool | What it does |
 |---|---|
@@ -280,6 +280,7 @@ Click a group to expand its tools.
 | `thin_capitalization` | thin capitalization |
 | `arm_length_range` | Arm's length range and adjustment — interquartile/full range, median, whether the tested value is inside, adjustment amount and direction (ITA Decree art.15(5)(6)). Whether the tested party is domestic or foreign is required. Quartile method: Korean NTS basic ruling 8-15…1 by default (positions (n+2)/4 and (3n+2)/4), with Excel QUARTILE.INC, EXC or the US definition (26 CFR §1.482-1(e)(2)(iii)(C)) as options and a three-method sensitivity in the output |
 | `tp_comparable_screen` | Comparable company screening — applies independence, data, industry, size, loss, R&D, advertising, related-party revenue, segment and special-situation screens plus human decisions (reason required) to a candidate list exported from a paid database (CSV/Excel); returns a per-company rejection matrix, final set, multi-year weighted PLI, interquartile range, sensitivity to screen choices and report annex tables. Statutory (50% related-party) vs. practice thresholds are labelled. Persistent losses go to human review by default (auto-exclusion optional), comparables may differ by year (all-years requirement optional), year-by-year quartile ranges alongside the multi-year range, and before/after ranges when the optional working-capital adjustment is on. Practice screens (independence %, R&D/advertising caps, loss years, outlier multiple) apply only when passed in `screens`; otherwise only the statutory 50% and two-or-more tests |
+| `ksic_lookup` | Korean Standard Industrial Classification (KSIC, 11th revision) lookup — industry name ↔ code, parent levels and sub-classes, 10th-revision codes mapped to the 11th. Use it to pick industry codes for the Korean comparable candidates tool. Extracted from the Statistics Korea notice's explanatory book, with item counts per level checked against the notice |
 | `kr_comparable_candidates` | Korean comparable candidates — collects candidates by industry code from OpenDART filings (financial API for listed companies, audit report originals for unlisted ones) and returns yearly financials plus a candidate profile (6-way revenue mix, inventory, raw material inventory, tangible/intangible assets, R&D, advertising, working capital, related-party revenue, largest shareholder) with evidence (filing number, account) and a status for every value (found / absent / not found). Candidate rows use the `tp_comparable_screen` input columns. Needs your own DART_API_KEY |
 | `kr_comparable_profile_compare` | Korean comparable profile comparison — compares the tested party's ratio profile with each candidate profile item by item (revenue mix, inventory, tangible assets, R&D, advertising) as close / different / unknown, splits candidates into include / human review / exclude, and returns the review list (reasons, evidence) and draft `tp_comparable_screen` manual_decisions for a person to confirm. Thresholds are adjustable defaults. Revenue mix is the core item; one of inventory or tangible assets differing goes to human review, both (or raw-material inventory as well) to exclusion candidates; advertising, SG&A ratio and product-keyword mismatches, related-party sales or purchases of 20%+, de facto control sentences (not a statutory related-party finding) and persistent losses go to human review; reason codes and a statutory / practice / own-rule label on every threshold. No practice thresholds are built in — they come in as `rules` (values and sources from the companion korean-tax-mcp `transfer_pricing_guide`); without them only statutory tests apply |
 | `international_transaction_statement` | International transaction statement (Enforcement Rule Form 16(A)) — per-related-party sales/purchase totals, loan balance × days and average, filing obligation and deadline (Act art. 16(2), Decree art. 36), accompanying forms |

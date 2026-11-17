@@ -171,7 +171,8 @@ SAMPLES = json.loads((pathlib.Path(__file__).parent / "data" / "blend_sweep_call
 NO_SAMPLE = {"dominant_shareholder", "export_workbook", "verify_workbook", "extract_relations", "kinship_check", "official_property_price", "ownership_ratio",
              "precheck_schema", "related_judge", "return_precheck", "return_precheck_pdf", "stock_price_lookup",
              "tunnelling_from_pdf", "tunnelling_gift", "tunnelling_gift_nts",
-             "kr_comparable_candidates"}   # OpenDART 키·네트워크가 필요한 도구
+             "kr_comparable_candidates",   # OpenDART 키·네트워크가 필요한 도구
+             "ksic_lookup"}                # 분류 찾아보기(결과가 표 모양 아님)
 
 
 def _sample_args(tool):
