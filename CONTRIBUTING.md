@@ -47,6 +47,7 @@ Run the full suite locally before opening a pull request.
 - **Tool descriptions start with an English line**, followed by Korean detail.
 - **No secrets.** Never commit API keys (`LAW_OC` or `UPSTAGE_API_KEY`), tokens, or personal data, including in tests and fixtures.
 - Docs-only changes do not need a version bump; maintainers handle releases and `CHANGELOG.md`.
+- **Releases go through GitHub Actions only.** Maintainers publish with `gh workflow run publish-pypi.yml` (PyPI Trusted Publishing, no API token); the MCP Registry workflow runs after it. Do not upload from a local machine with an API token.
 
 ## Keeping the law.go.kr key out of the repo (법제처 OC 키 유출 방지)
 
