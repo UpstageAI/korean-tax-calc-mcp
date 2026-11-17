@@ -622,10 +622,24 @@ def goods_signals(cogs_rows, inv_rows, cogs_total=None, rcept_no=None):
 
 # ---------------- 실질 지배 신호(특수관계자 주석) ----------------
 PURCHASE_HDR = r"매입"
+# 재고(상품·제품·원재료) 매입 열·행 — '기타매입'(사용료·용역·광고비 등 재고 아닌 매입)은 매출원가와 짝이 맞지 않아 먼저 뺀다
+GOODS_ITEM = r"(재고자산|재고|상품|제품|원재료|원부재료|원자재|부재료)"
+GOODS_PURCHASE_HDR = rf"^({GOODS_ITEM}(및|·|,|/)?)*\s*매입(액|거래)?(\(\*\d*\))?$"
+GOODS_PURCHASE_EXCL = REL_EXCL[:-1] + r"|^기타|비용|용역|수수료|사용료|로열티)"
+OVER_COGS_NOTE = "매입이 매출원가보다 큼 — 재고가 늘었거나 재고 아닌 매입이 섞였을 수 있음, 원문 확인"
+
+
+def _purchase_ratio(r, why, bl):
+    """매입 ÷ 매출원가가 100%를 넘으면 숫자는 두되 근거에 주의를 붙인다(관계사에서 거의 다 사는 회사는 재고 증가만으로도 넘음).
+    150% 넘으면 단위·열 오독으로 보고 숫자를 내지 않는다."""
+    if r < 0 or r > 1.5:
+        return None, f"비율 범위 밖({r:.2f}) — 단위·열 확인 필요"
+    return r, why + (f" — {OVER_COGS_NOTE}({r:.0%})" if r > 1 and bl == "매출원가" else "")
 
 
 def related_purchases(s, is_bizrep, cogs=None, revenue=None):
-    """특수관계자 거래 주석 표의 매입 열 합계 ÷ 매출원가(없으면 매출) → (비율, 근거)."""
+    """특수관계자 거래 주석 표의 매입 합계 ÷ 매출원가(없으면 매출) → (비율, 근거).
+    재고 매입 열·행(상품·원재료 매입 등)이 있으면 그것만, 없으면 '매입'이 붙은 열·행 전부(근거에 표시)."""
     sec, t = find_section(s, r"특수\s*관계", is_bizrep)
     if not sec:
         return None, "특수관계자 절 못 찾음"
@@ -636,26 +650,26 @@ def related_purchases(s, is_bizrep, cogs=None, revenue=None):
         if is_prior_table(ctx):
             continue
         trs = re.findall(r"<TR[^>]*>(.*?)</TR>", tb, re.S)
-        wv, winfo = _wide_sum(trs, PURCHASE_HDR)
+        wv, winfo = _wide_sum(trs, GOODS_PURCHASE_HDR)
+        if wv is None and not winfo:
+            wv, winfo = _wide_sum(trs, PURCHASE_HDR)
+        cols = re.match(r"열 ([^,]+)", winfo or "")
+        kind = "재고 매입" if cols and all(re.fullmatch(GOODS_PURCHASE_HDR, c) for c in cols.group(1).split("+")) else "매입(재고 외 포함 가능)"
         if wv is None and winfo:
             return None, winfo
         if wv is None:
-            lv = _long_sum(trs, PURCHASE_ROW, REL_EXCL)
+            lv, kind = _long_sum(trs, PURCHASE_ROW, GOODS_PURCHASE_EXCL), "매입(기타 매입 행 제외)"
+            if lv is None:
+                lv, kind = _long_sum(trs, PURCHASE_ROW, REL_EXCL), "매입(재고 외 포함 가능)"
             if lv is None:
                 continue
             if _unit_mismatch(sec, _rel_unit(ctx)):
                 return None, "주석 표마다 단위 표기가 다름(원·천원 등) — 사람 확인"
-            r = lv * _rel_unit(ctx) / base
-            if 0 <= r <= 1.5:
-                return r, f"특수관계자 주석 표(거래 종류 행, 당기) 매입 ÷ {bl}: " + t[:30]
-            return None, f"비율 범위 밖({r:.2f}) — 단위·열 확인 필요"
+            return _purchase_ratio(lv * _rel_unit(ctx) / base, f"특수관계자 주석 표(거래 종류 행, 당기) {kind} ÷ {bl}: " + t[:30], bl)
         unit = _rel_unit(ctx)
         if _unit_mismatch(sec, unit):
             return None, "주석 표마다 단위 표기가 다름(원·천원 등) — 사람 확인"
-        r = wv * unit / base
-        if 0 <= r <= 1.5:
-            return r, f"특수관계자 주석 표({winfo}) 매입 ÷ {bl}: " + t[:30]
-        return None, f"비율 범위 밖({r:.2f}) — 단위·열 확인 필요"
+        return _purchase_ratio(wv * unit / base, f"특수관계자 주석 표({winfo}) {kind} ÷ {bl}: " + t[:30], bl)
     if NO_REL_TX.search(re.sub(r"\s", "", txt(sec))):
         return 0.0, "특수관계자 거래 없음 문장"
     return None, "매입 열 못 찾음"

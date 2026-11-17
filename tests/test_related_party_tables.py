@@ -21,11 +21,12 @@ LONG_KOSE = [_tr("특수관계구분", "특수관계자명", "거래내용", "�
 
 
 def test_long_table_takes_current_year_and_skips_merged_cells():
-    """세로형(거래 종류 행 × 당기·전기). 앞 두 칸이 병합되어 둘째 행부터 칸이 밀려도 당기 금액만 — 종전엔 전기·배당금을 더해 234%."""
+    """세로형(거래 종류 행 × 당기·전기). 앞 두 칸이 병합되어 둘째 행부터 칸이 밀려도 당기 금액만 — 종전엔 전기·배당금을 더해 234%.
+    0.63.4부터 '기타매입' 행은 매출원가와 짝이 아니라 빼고 상품매입만."""
     s = _doc(3, "특수관계자와의 주요거래", [("(단위:천원)", LONG_KOSE)])
     r, why = ST.related_purchases(s, False, cogs=9_437_000_000)
-    assert r == pytest.approx((9_392_071 + 158_759) * 1000 / 9_437_000_000)
-    assert "거래 종류 행" in why
+    assert r == pytest.approx(9_392_071 * 1000 / 9_437_000_000)
+    assert "거래 종류 행" in why and "기타 매입 행 제외" in why
 
 
 def test_header_detected_only_in_header_rows():
@@ -200,3 +201,34 @@ def test_column_without_any_amount_is_not_zero():
     rows = [row("회사명", "매출", "비고"), row("A", "해당사항 없음", ""), row("B", "", "")]
     s = _doc(12, "특수관계자 거래", [("(단위:천원)", rows)])
     assert ST.related_sales(s, False, revenue=1_000_000_000) == (None, "매출 열 못 찾음")
+
+
+def _coty_like(inv_buy, other_buy):
+    rows = [_tr("구분", "회사명", "매출", "재고매입", "기타매입", th=True),
+            _tr("지배기업", "본사", "1,000", inv_buy, other_buy), _tr("기타", "계열사", "500", "0", "100"),
+            _tr("합계", "", "1,500", inv_buy, str(int(other_buy.replace(",", "")) + 100))]
+    return _doc(25, "특수관계자 등", [("(단위:백만원)", rows)])
+
+
+def test_inventory_purchase_column_only_when_present():
+    """가로형에 '재고매입'과 '기타매입'이 함께 있으면 재고매입만 매출원가로 나눔(실제 사례: 둘을 더해 144%)."""
+    r, why = ST.related_purchases(_coty_like("80", "40"), False, cogs=100_000_000)
+    assert r == pytest.approx(0.8) and "재고 매입" in why and "매출원가보다 큼" not in why
+
+
+def test_purchase_over_cogs_keeps_number_with_warning():
+    """관계사에서 거의 다 사는 회사는 재고가 늘면 매입이 매출원가를 넘음 — 숫자는 두고 근거에 원문 확인 주의."""
+    r, why = ST.related_purchases(_coty_like("110", "40"), False, cogs=100_000_000)
+    assert r == pytest.approx(1.1) and "매출원가보다 큼" in why and "110%" in why
+
+
+def test_purchase_far_over_cogs_is_not_a_number():
+    r, why = ST.related_purchases(_coty_like("160", "40"), False, cogs=100_000_000)
+    assert r is None and "범위 밖" in why
+
+
+def test_only_combined_purchase_column_is_labelled():
+    """재고 매입 열이 따로 없고 '매입등'만 있으면 그 열을 쓰되 재고 외 매입이 섞일 수 있다고 근거에 적음."""
+    rows = [_tr("구분", "회사명", "매출등", "매입등", th=True), _tr("관계기업", "A", "1,000", "300")]
+    r, why = ST.related_purchases(_doc(9, "특수관계자", [("(단위:천원)", rows)]), False, cogs=1_000_000)
+    assert r == pytest.approx(0.3) and "재고 외 포함 가능" in why
