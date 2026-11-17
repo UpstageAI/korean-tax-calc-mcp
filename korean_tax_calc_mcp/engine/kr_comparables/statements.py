@@ -298,13 +298,35 @@ def find_section(s, kw_pat, is_bizrep):
                 if sub:
                     return sub, "재무제표 주석>" + tt
         return "", ""
-    for m in re.finditer(r">\s*(\d{1,2})\s*\.\s*(?:<[^>]+>\s*)*([^<]{0,40})", s):
-        if re.search(kw_pat, m.group(2)) and len(m.group(2).strip()) < 40:
+    for m in re.finditer(r">\s*(\d{1,2})\s*\.\s*(?:<[^>]+>\s*)*([^<]{0,80})", s):
+        title = _heading_title(m.group(2))
+        if title and not title[0].isdigit() and re.search(kw_pat, title) and len(title) < 40:
             n = int(m.group(1))
             nxt = re.search(r">\s*%d\s*\.\s*[가-힣]" % (n + 1), s[m.end():m.end() + 120000])
             end = m.end() + (nxt.start() if nxt else 40000)
-            return s[m.start():end], m.group(2).strip()
+            return s[m.start():end], title
     return "", ""
+
+
+# 감사보고서 주석 제목 뒤에 본문이 태그 없이 붙는 원문이 많음('특수관계자와의 거래27-1. 당기말…', '특수관계자(1) 당기말…',
+# '특수관계자 공시22.1 지배…') — 하위 번호·괄호 번호·두 칸 공백 앞에서 끊은 것을 제목으로 봄
+_HEAD_CUT = re.compile(r"\d{1,2}\s*[.\-]\s*\d|\(\s*\d{1,2}\s*\)|\d{1,2}\)|[①-⑳]|\s{2,}")
+
+
+def _heading_title(raw):
+    t = raw.strip()
+    m = _HEAD_CUT.search(t)
+    return (t[:m.start()] if m else t).strip()
+
+
+_PRIOR_TABLE = re.compile(r"[<(\[①-⑳\d.\s가-하]*전\s*기\s*말?\s*[>)\]]?\s*[:：]?\s*(\(?단위[^)]*\)?)?\s*$")
+
+
+def is_prior_table(ctx):
+    """표 바로 앞 글이 '전기'·'(전기)'·'② 전기'·'<전기>'(+단위 표기)로 끝나면 전기 표 — 당기 표에 그 열이 없을 때 전기 표 값을 대신 읽지 않게."""
+    i = ctx.rfind("<TABLE")
+    pre = re.sub(r"\s+", " ", txt(ctx[:i] if i >= 0 else ctx)).strip()[-40:]
+    return bool(_PRIOR_TABLE.search(pre)) and not re.search(r"당\s*기[^전]*$", pre)
 
 
 def tables_in(sec):
@@ -345,32 +367,144 @@ def _header_col(trs, pat):
     return None
 
 
-def _long_sum(trs, row_pat, excl_pat):
-    """세로형 표: 머리글에 '당기' 열(또는 맨 오른쪽 '계' 열)이 있고, 거래 종류(예: 상품매입)가 행으로 내려옴. 행마다 거래 종류 칸 오른쪽 첫 금액(당기)을 더함 —
-    앞 칸(특수관계구분·회사명)이 여러 행에 걸친 병합 칸이어도 거래 종류 칸 기준이라 밀리지 않음. 해당 행이 없으면 None."""
-    hdr = [t for t in trs[:3] if _is_header_row(t)]
-    ht = [re.sub(r"\s", "", txt(b)) for t in hdr for _, _, b in re.findall(_CELL, t, re.S)]
-    cur = next((i for i, x in enumerate(ht) if re.match(r"^당기", x)), None)
-    last_total = bool(ht) and re.fullmatch(r"(계|합계|총계)", ht[-1] or "") is not None
-    if cur is None and not last_total:
-        return None
-    pri = next((i for i, x in enumerate(ht) if re.match(r"^전기", x)), None)
-    k = 1 if (cur is not None and pri is not None and pri < cur) else 0      # 전기 열이 먼저면 둘째 금액이 당기
-    if cur is None:   # 거래 종류 행 × 회사별 열 + 맨 오른쪽 '계' 열 — 행의 마지막 금액(계)을 씀
-        k = -1
-    total, found = 0, False
-    for t in trs:
-        if t in hdr:
+def _grid(trs):
+    """표의 행들을 병합(ROWSPAN·COLSPAN)을 풀어 격자로 — 행마다 [(글자, 내려온 칸인지)]. 머리글이 여러 줄이거나 앞 칸이 세로로 병합된 표에서
+    칸 위치가 밀리지 않게 한다(종전: 둘째 머리글 줄의 '매출등'을 0번 열로 봐 회사 이름 열을 더하고 0%를 냄)."""
+    rows, carry = [], {}
+    for tr in trs:
+        pending, row, col = list(re.findall(_CELL, tr, re.S)), [], 0
+        while pending or any(c >= col for c in carry):
+            if col in carry:
+                rem, text = carry[col]
+                row.append((text, True))
+                if rem > 1:
+                    carry[col] = (rem - 1, text)
+                else:
+                    del carry[col]
+                col += 1
+                continue
+            if not pending:
+                row.append(("", True))
+                col += 1
+                continue
+            tag, attr, b = pending.pop(0)
+            text = re.sub(r"\s", "", txt(b))
+            m = re.search(r'ROWSPAN="(\d+)"', attr)
+            rs = int(m.group(1)) if m else 1
+            for k in range(_span(attr)):
+                row.append((text, False))
+                if rs > 1:
+                    carry[col + k] = (rs - 1, text)
+            col += _span(attr)
+        rows.append(row)
+    width = max((len(r) for r in rows), default=0)
+    # 병합 표시(ROWSPAN) 없이 앞 칸이 빠진 행(예: 둘째 행부터 '구분' 칸이 없음, 둘째 머리글 줄에 '당기|전기'만 있음)은 오른쪽에 맞춘다 — 금액 칸은 오른쪽 끝에 있음
+    return [[("", True)] * (width - len(r)) + r if 1 < len(r) < width else r for r in rows]
+
+
+REL_HDR_EXCL = r"채권|채무|외상|대여|차입|미수|미지급|선수|선급|보증|잔액|원가|유형|무형|(?<!재고)자산|주식|지분|투자|취득|처분|매각|할인|에누리"
+_TOTAL_LAB = ("합계", "계", "총계", "총합계")
+
+
+_CUR = r"당기(\([^)]*\))?(금액)?"
+
+
+def _wide_sum(trs, hdr_pat):
+    """가로형 표(회사가 행, 거래 종류가 열): 머리글 줄들을 격자로 풀어 열마다 제목 경로(위→아래)를 만들고, 맨 아래 제목이 hdr_pat에 맞는 열을
+    (당기·전기가 함께 있으면 당기 쪽만) 더한다. 반환 (금액 또는 None, 설명). 열을 못 찾거나 그 열에서 금액을 하나도 못 읽으면 None —
+    0으로 내지 않는다. 합계 행이 있으면 합계를 쓰고 행을 더한 값과 다르면 설명에 적는다."""
+    n_hdr = 0
+    for t in trs[:5]:
+        if not _is_header_row(t):
+            break
+        n_hdr += 1
+    if not n_hdr:
+        return None, ""
+    g = _grid(trs)
+    width = max(len(r) for r in g)
+    paths = []
+    for c in range(width):
+        path = []
+        for r in g[:n_hdr]:
+            x = r[c][0] if c < len(r) else ""
+            if x and (not path or path[-1] != x):
+                path.append(x)
+        paths.append(path)
+
+    def ok(c):
+        path = paths[c]
+        return bool(path) and re.search(hdr_pat, path[-1]) and not any(re.search(REL_HDR_EXCL, x) for x in path)
+    cols = [c for c in range(width) if ok(c)]
+    if not cols:      # 맨 아래 제목이 아니라 윗줄 제목이 맞는 경우(예: '매출' 아래 '상품'·'용역')
+        cols = [c for c in range(width) if paths[c] and any(re.search(hdr_pat, x) for x in paths[c][:-1])
+                and not any(re.search(REL_HDR_EXCL, x) for x in paths[c]) and not re.match(r"^(기타|이자|배당|임대|수수료)", paths[c][-1])]
+    if not cols:
+        return None, ""
+    if any(any(re.fullmatch(_CUR, x) for x in paths[c]) for c in cols):
+        cols = [c for c in cols if any(re.fullmatch(_CUR, x) for x in paths[c])]
+    elif all(any(re.match(r"^전기", x) for x in paths[c]) for c in cols):
+        return None, ""      # 전기만 있는 표
+    total, rows_sum, read, totals, cur_mark = None, 0, 0, 0, False
+    for r in g[n_hdr:]:
+        labs = [x for x, _ in r[:3]]
+        if any(re.fullmatch(r"[<(\[]?당기[>)\]]?", x) for x, _ in r):
+            cur_mark = True
+        vals = [num(r[c][0]) for c in cols if c < len(r) and not r[c][1] and r[c][0] != ""]
+        vals = [v for v in vals if v is not None]
+        if not vals:
             continue
-        cs = [re.sub(r"\s", "", txt(b)) for _, _, b in re.findall(_CELL, t, re.S)]
-        for j, x in enumerate(cs):
-            if x and num(x) is None and re.search(row_pat, x) and not re.search(excl_pat, x):
-                vals = [0.0 if y in ("-", "–", "—") else num(y) for y in cs[j + 1:]]
-                vals = [v for v in vals if v is not None]
-                if vals and (k == -1 or len(vals) > k):
-                    total += vals[k]
-                    found = True
-                break
+        if any(x in _TOTAL_LAB for x in labs):
+            totals += 1
+            if totals == 1:
+                total = sum(vals)
+        elif totals or any(re.search(r"소계$", x) for x in labs):
+            continue                 # 첫 합계 행 뒤(한 표에 당기·전기 묶음이 위아래로 있는 경우의 둘째 묶음)와 소계 행은 더하지 않음
+        else:
+            rows_sum += sum(vals)
+            read += 1
+    if total is None and not read:
+        return None, ""
+    names = "+".join(dict.fromkeys(paths[c][-1] for c in cols))
+    if totals > 1 and not cur_mark:
+        return None, "합계 행이 둘 이상(당기·전기 묶음 구분 없음) — 사람 확인"
+    if total is not None and read and abs(total - rows_sum) > 1:
+        return None, f"열 {names}: 행을 더한 값({rows_sum:,.0f})과 합계 행({total:,.0f})이 다름 — 사람 확인"
+    return (total if total is not None else rows_sum), f"열 {names}" + (", 합계 행과 일치" if total is not None and read else "")
+
+
+def _long_sum(trs, row_pat, excl_pat):
+    """세로형 표: 머리글에 '당기' 열(또는 맨 오른쪽 '계' 열)이 있고, 거래 종류(예: 상품매입)가 행으로 내려옴. 병합을 푼 격자에서 거래 종류 이름이
+    row_pat에 맞는 행의 당기 칸을 더함 — 거래 종류 칸이 세로로 병합돼 둘째 행부터 비어 있어도(과목 | 구분 | 당기) 읽고,
+    합계·소계 행은 더하지 않는다(종전: '합계 | 매출등' 행까지 더해 두 배). 해당 행이 없으면 None."""
+    n_hdr = 0
+    for t in trs[:5]:
+        if not _is_header_row(t):
+            break
+        n_hdr += 1
+    if not n_hdr:
+        return None
+    g = _grid(trs)
+    width = max(len(r) for r in g)
+    paths = [[r[c][0] for r in g[:n_hdr] if c < len(r) and r[c][0]] for c in range(width)]
+    cur = next((c for c in range(width) if any(re.fullmatch(_CUR, x) for x in paths[c])), None)
+    if cur is None:
+        if not (paths and paths[-1] and re.fullmatch(r"(계|합계|총계)", paths[-1][-1])):
+            return None
+        cur = width - 1      # 거래 종류 행 × 회사별 열 + 맨 오른쪽 '계' 열
+    total, found = 0, False
+    for r in g[n_hdr:]:
+        if cur >= len(r) or r[cur][1]:
+            continue
+        labs = [x for x, _ in r[:cur] if x and num(x) is None]
+        if any(x in _TOTAL_LAB or re.search(r"소계$", x) for x in labs):
+            continue
+        # '상품매출/매출채권등'처럼 거래와 잔액 이름을 빗금으로 묶은 칸은 빗금 앞(거래 이름)만 본다
+        if not any(re.search(row_pat, x.split("/")[0]) and not re.search(excl_pat, x.split("/")[0]) for x in labs):
+            continue
+        v = num(r[cur][0])
+        if v is not None:
+            total += v
+            found = True
     return total if found else None
 
 
@@ -395,9 +529,10 @@ def _unit_mismatch(sec, unit):
     return unit != major
 
 
-SALES_ROW = r"^(매출|제품매출|상품매출|용역매출|매출액|영업수익|재화의판매|용역의제공|용역제공)"
+SALES_HDR = r"매출|^영업수익|^수익(거래)?$|재화의판매|용역의제공"
+SALES_ROW = r"매출|^영업수익|^수익$|재화의판매|용역의제공|용역제공"
 PURCHASE_ROW = r"매입"
-REL_EXCL = r"(원가|채권|채무|유형|무형|자산|주식|지분|투자)"
+REL_EXCL = r"(원가|채권|채무|외상|미수|미지급|선수|선급|유형|무형|(?<!재고)자산|주식|지분|투자|취득|처분|매각|할인|에누리)"
 # '특수관계자와의 거래 없음' 문장 — '자금거래·담보·보증 내역은 없습니다' 같은 다른 거래 문장에 걸리지 않게 '특수관계자(와의) 거래'로 한정
 NO_REL_TX = re.compile(r"특수관계자(와|와의|와의주요|간)?(매출·?매입)?거래(내역|내용)?(은|는|이|가)?(없|존재하지않)")
 
@@ -408,11 +543,15 @@ def related_sales(s, is_bizrep, revenue):
         return None, "특수관계자 절 못 찾음"
     plain = re.sub(r"\s", "", txt(sec))
     for tb, ctx in tables_in(sec):
+        if is_prior_table(ctx):
+            continue
         trs = re.findall(r"<TR[^>]*>(.*?)</TR>", tb, re.S)
         if len(trs) < 2:
             continue
-        col = _header_col(trs, r"^(매출|수익|매출등|매출액|영업수익|수익거래|재화의판매|매출거래)(?!원가)")
-        if col is None:
+        wv, winfo = _wide_sum(trs, SALES_HDR)
+        if wv is None and winfo:
+            return None, winfo
+        if wv is None:
             lv = _long_sum(trs, SALES_ROW, REL_EXCL)
             if lv is None:
                 continue
@@ -428,28 +567,11 @@ def related_sales(s, is_bizrep, revenue):
         unit = _rel_unit(ctx)
         if _unit_mismatch(sec, unit):
             return None, "주석 표마다 단위 표기가 다름(원·천원 등) — 사람 확인"
-        total, rows_sum = None, 0
-        for tr in trs:
-            cells = re.findall(r"<(TH|TD|TE)([^>]*)>(.*?)</\1>", tr, re.S)
-            if not cells or cells[0][0] == "TH":
-                continue
-            pos, val = 0, None
-            for tag, attr, b in cells:
-                if pos == col:
-                    val = num(txt(b))
-                pos += _span(attr)
-            lab = re.sub(r"\s", "", txt(cells[0][2]))
-            if val is None:
-                continue
-            if lab in ("합계", "계", "총계"):
-                total = val
-            else:
-                rows_sum += val
-        a = (total if total is not None else rows_sum) * unit
+        a = wv * unit
         if revenue and revenue > 0:
             r = a / revenue
             if 0 <= r <= 1.05:
-                return r, "특수관계자 주석 표: " + t[:30]
+                return r, f"특수관계자 주석 표({winfo}): " + t[:30]
             return None, f"비율 범위 밖({r:.2f}) — 단위·열 확인 필요"
         return None, "매출 없음"
     if NO_REL_TX.search(plain):
@@ -499,7 +621,7 @@ def goods_signals(cogs_rows, inv_rows, cogs_total=None, rcept_no=None):
 
 
 # ---------------- 실질 지배 신호(특수관계자 주석) ----------------
-PURCHASE_HDR = r"^(매입|매입등|원재료매입|상품매입|매입거래|재화의매입|재화등의매입)"
+PURCHASE_HDR = r"매입"
 
 
 def related_purchases(s, is_bizrep, cogs=None, revenue=None):
@@ -511,9 +633,13 @@ def related_purchases(s, is_bizrep, cogs=None, revenue=None):
     if not base or base <= 0:
         return None, "매출원가·매출 없음"
     for tb, ctx in tables_in(sec):
+        if is_prior_table(ctx):
+            continue
         trs = re.findall(r"<TR[^>]*>(.*?)</TR>", tb, re.S)
-        col = _header_col(trs, PURCHASE_HDR)
-        if col is None:
+        wv, winfo = _wide_sum(trs, PURCHASE_HDR)
+        if wv is None and winfo:
+            return None, winfo
+        if wv is None:
             lv = _long_sum(trs, PURCHASE_ROW, REL_EXCL)
             if lv is None:
                 continue
@@ -526,25 +652,9 @@ def related_purchases(s, is_bizrep, cogs=None, revenue=None):
         unit = _rel_unit(ctx)
         if _unit_mismatch(sec, unit):
             return None, "주석 표마다 단위 표기가 다름(원·천원 등) — 사람 확인"
-        total, rows_sum = None, 0
-        for tr in trs:
-            cells = re.findall(r"<(TH|TD|TE)([^>]*)>(.*?)</\1>", tr, re.S)
-            if not cells or cells[0][0] == "TH":
-                continue
-            pos, val = 0, None
-            for tag, attr, b in cells:
-                if pos == col:
-                    val = num(txt(b))
-                pos += _span(attr)
-            if val is None:
-                continue
-            if re.sub(r"\s", "", txt(cells[0][2])) in ("합계", "계", "총계"):
-                total = val
-            else:
-                rows_sum += val
-        r = (total if total is not None else rows_sum) * unit / base
+        r = wv * unit / base
         if 0 <= r <= 1.5:
-            return r, f"특수관계자 주석 표 매입 ÷ {bl}: " + t[:30]
+            return r, f"특수관계자 주석 표({winfo}) 매입 ÷ {bl}: " + t[:30]
         return None, f"비율 범위 밖({r:.2f}) — 단위·열 확인 필요"
     if NO_REL_TX.search(re.sub(r"\s", "", txt(sec))):
         return 0.0, "특수관계자 거래 없음 문장"
