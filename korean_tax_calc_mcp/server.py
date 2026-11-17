@@ -1317,6 +1317,34 @@ def kr_comparable_candidates(
     return _ok(r["결과"], r["근거"], **extra)
 
 
+@mcp.tool(annotations=CALC, description="""Korean Standard Industrial Classification (KSIC) code lookup by name or code (한국표준산업분류 코드 찾기).
+한국표준산업분류(11차, 통계청 고시 제2024-203호) 코드 찾기 — 업종 이름으로 코드를, 코드로 이름·상위 단계·하위 세세분류를 찾고, 10차 코드는 11차로 연계한다.
+언제: kr_comparable_candidates에 넣을 업종 코드를 정하기 전(기억으로 넣지 말고 여기서 확인 — 예: 화장품 도매는 46443, 46444는 비누·세정제 도매),
+  후보의 등록 코드가 짧을 때(예: '204') 그 아래 세세분류가 무엇인지 볼 때, 옛 보고서의 10차 코드를 11차로 바꿀 때.
+입력: query → 업종 이름 낱말(띄어쓰기로 여러 낱말, 모두 들어간 항목) 또는 코드(대분류 문자 A~U, 숫자 2~5자리), level → 이름 검색을 한 단계로 좁힘(선택).
+결과: 이름 검색 → 맞는 항목(세세분류부터), 코드 → 이름·단계·상위·하위 세세분류(10차 코드면 11차 코드). OpenDART 기업개황 업종 코드는 11차.
+근거·범위: 분류표·구·신 연계표는 고시 해설서 원문에서 뽑아 단계별 항목 수를 고시 표와 대조함. 어느 업종이 비교대상으로 적절한지는 판단하지 않음.""")
+@_guard
+def ksic_lookup(
+        query: Annotated[str, Field(description="업종 이름 낱말(예 '화장품', '화장품 도매') 또는 코드(예 '2042', '46443', 'C')")],
+        level: Annotated[Literal["대분류", "중분류", "소분류", "세분류", "세세분류"] | None, Field(description="이름 검색 단계 좁히기(선택)")] = None) -> dict:
+    from .engine.kr_comparables import ksic as KS
+    q = str(query).strip()
+    if not q:
+        raise ValueError("query가 비었습니다 — 업종 이름 낱말이나 코드를 넣으세요")
+    src = KS.source()
+    basis = [f"{src['고시']} (시행 {src['시행일']}) — {src['문서']}", "구·신 연계표(10차 → 11차)"]
+    if re.fullmatch(r"[A-Ua-u]|\d{2,5}", q):
+        d = KS.describe(q.upper())
+        if d is None:
+            return _ok({"찾음": False, "안내": f"'{q}'는 11차·10차 분류에 없는 코드입니다 — 업종 이름으로 찾아 보세요"}, basis)
+        if d["level"] != "10차 코드":
+            d["하위_세세분류"] = KS.children(d["code"], leaf_only=True) if d["level"] != "세세분류" else []
+        return _ok({"찾음": True, **d}, basis)
+    hits = KS.search(q, level=level, limit=40)
+    return _ok({"찾음": bool(hits), "항목": hits, "안내": "" if hits else "이름에 그 낱말이 들어간 항목이 없습니다 — 낱말을 줄이거나 바꿔 보세요"}, basis)
+
+
 @mcp.tool(annotations=CALC, description="""Korean comparable profile comparison against the tested party: functions, assets and risks item by item (국내 비교기업 프로필 비교).
 국내 비교기업 프로필 비교 — 분석대상 당사자의 숫자 프로필(매출 구성·재고·유형자산·연구개발·광고)과 후보 프로필을 항목별로 나란히 놓고 가까움/다름/불명을 판정해
 포함 후보·사람 확인·제외 후보로 나누고, 사람 확인 목록(사유·근거 접수번호·매출 행)과 tp_comparable_screen의 manual_decisions 초안을 낸다.
@@ -12163,7 +12191,7 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "소급공제": ["loss_carryback_refund"], "결손금 환급": ["loss_carryback_refund"], "결손금 소급": ["loss_carryback_refund"],
     "이월결손금 추적": ["loss_carryforward_ledger"], "결손금 잔액": ["loss_carryforward_ledger"], "결손금 소멸": ["loss_carryforward_ledger"], "이월결손금": ["loss_carryforward_ledger", "loss_carryforward_limit"],
     "해외법인 청산": ["foreign_subsidiary_liquidation", "foreign_exchange_reporting"], "자회사 청산 손실": ["foreign_subsidiary_liquidation"], "투자주식 손실": ["foreign_subsidiary_liquidation"],
-    "정상가격 범위": ["arm_length_range"], "사분위": ["arm_length_range"], "사분위 계산법": ["arm_length_range", "tp_comparable_screen"], "quartile": ["arm_length_range"], "이전가격 조정액": ["arm_length_range"], "비교대상 이익률": ["arm_length_range", "tp_comparable_screen"], "비교대상 선정": ["tp_comparable_screen"], "비교기업": ["kr_comparable_candidates", "tp_comparable_screen"], "국내 비교기업": ["kr_comparable_candidates", "kr_comparable_profile_compare"], "프로필 비교": ["kr_comparable_profile_compare"], "기능 자산 위험 비교": ["kr_comparable_profile_compare"], "비교가능성 비교": ["kr_comparable_profile_compare"], "후보 비교": ["kr_comparable_profile_compare"], "비교기업 후보": ["kr_comparable_candidates"], "전자공시 재무": ["kr_comparable_candidates"], "공시 재무제표": ["kr_comparable_candidates"], "감사보고서 재무": ["kr_comparable_candidates"], "특정외국법인 배당": ["cfc_actual_dividend"], "배당간주 실제 배당": ["cfc_actual_dividend"], "특정외국법인 주식 양도": ["cfc_share_disposal"], "통고처분": ["tax_crime_settlement_amount"], "벌금상당액": ["tax_crime_settlement_amount"], "조세범칙": ["tax_crime_settlement_amount"], "스크리닝": ["tp_comparable_screen"], "탈락 사유": ["tp_comparable_screen"], "벤치마크": ["tp_comparable_screen"],
+    "정상가격 범위": ["arm_length_range"], "사분위": ["arm_length_range"], "사분위 계산법": ["arm_length_range", "tp_comparable_screen"], "quartile": ["arm_length_range"], "이전가격 조정액": ["arm_length_range"], "비교대상 이익률": ["arm_length_range", "tp_comparable_screen"], "비교대상 선정": ["tp_comparable_screen"], "비교기업": ["kr_comparable_candidates", "tp_comparable_screen"], "국내 비교기업": ["kr_comparable_candidates", "kr_comparable_profile_compare"], "프로필 비교": ["kr_comparable_profile_compare"], "기능 자산 위험 비교": ["kr_comparable_profile_compare"], "비교가능성 비교": ["kr_comparable_profile_compare"], "후보 비교": ["kr_comparable_profile_compare"], "비교기업 후보": ["kr_comparable_candidates"], "업종 코드": ["ksic_lookup"], "산업분류": ["ksic_lookup"], "표준산업분류": ["ksic_lookup"], "업종코드 찾기": ["ksic_lookup"], "전자공시 재무": ["kr_comparable_candidates"], "공시 재무제표": ["kr_comparable_candidates"], "감사보고서 재무": ["kr_comparable_candidates"], "특정외국법인 배당": ["cfc_actual_dividend"], "배당간주 실제 배당": ["cfc_actual_dividend"], "특정외국법인 주식 양도": ["cfc_share_disposal"], "통고처분": ["tax_crime_settlement_amount"], "벌금상당액": ["tax_crime_settlement_amount"], "조세범칙": ["tax_crime_settlement_amount"], "스크리닝": ["tp_comparable_screen"], "탈락 사유": ["tp_comparable_screen"], "벤치마크": ["tp_comparable_screen"],
     "마일리지충당부채": ["provision_reserve_ledger"], "포인트충당부채": ["provision_reserve_ledger"], "판매보증충당부채": ["provision_reserve_ledger"],
     "충당부채": ["provision_reserve_ledger"], "유효기간 소멸": ["provision_reserve_ledger"], "마일리지 유보": ["provision_reserve_ledger"],
     "마일리지": ["vat_tax_base_adjustments", "provision_reserve_ledger"], "포인트 결제": ["vat_tax_base_adjustments"], "반품": ["vat_tax_base_adjustments"], "환입": ["vat_tax_base_adjustments"],
@@ -12260,7 +12288,7 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     # 영어 질의(외국 기업·주재원) — 도구 설명 영문 첫 줄과 함께 쓰인다. 공백을 떼고 소문자로 비교
     "corporate income tax": ["corporate_tax"],
     "transfer pricing": ["arm_length_range", "tp_comparable_screen", "international_transaction_statement", "kr_comparable_candidates"],
-    "comparable companies korea": ["kr_comparable_candidates"], "comparable profile": ["kr_comparable_profile_compare"], "functions assets risks comparison": ["kr_comparable_profile_compare"], "dart filings": ["kr_comparable_candidates"],
+    "comparable companies korea": ["kr_comparable_candidates"], "comparable profile": ["kr_comparable_profile_compare"], "functions assets risks comparison": ["kr_comparable_profile_compare"], "dart filings": ["kr_comparable_candidates"], "industry code": ["ksic_lookup"], "ksic": ["ksic_lookup"], "industry classification": ["ksic_lookup"],
     "arm's length": ["arm_length_range"],
     "thin cap": ["thin_capitalization"],
     "expat": ["expat_cost_recharge"],

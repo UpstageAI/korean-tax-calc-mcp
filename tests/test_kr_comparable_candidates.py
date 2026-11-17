@@ -383,7 +383,7 @@ def test_short_code_keywords_drop_unmatched_only(env):
 def test_short_code_keywords_keep_matched_with_hits(env):
     r = run(Transport(), industry_codes=["4652"], listed="상장", short_code_keywords=["반도체", "셋톱박스"])["결과"]
     assert r["후보_수"] == 2 and r["업종_짧은코드_설명불일치"] == []
-    assert r["업종_짧은코드_포함"] == [{"company_id": "00787057", "company_name": "(주)휴맥스", "industry_code": "465", "설명_일치어": ["셋톱박스"]}]
+    assert r["업종_짧은코드_포함"] == [{"company_id": "00787057", "company_name": "(주)휴맥스", "industry_code": "465", "등록코드_이름": "기계장비 및 관련 물품 도매업", "설명_일치어": ["셋톱박스"]}]
 
 
 def test_short_code_drops_do_not_use_limit(env):

@@ -14,6 +14,7 @@ import re
 import xml.etree.ElementTree as ET
 import zipfile
 
+from . import ksic as KS
 from . import statements as ST
 from .statements import title_sections as F_title_sections
 from . import revenue_mix as RM
@@ -523,6 +524,18 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
     limit = max(1, min(int(limit), LIMIT_MAX))
     years = sorted({int(y) for y in years})
     prefixes = [str(c).strip().upper().lstrip("C") for c in industry_codes]
+    code_info, v10_notes = [], []
+    for p_ in list(prefixes):
+        d_ = KS.describe(p_)
+        if d_ is None:
+            raise ValueError(f"업종 코드 '{p_}'는 한국표준산업분류(11차·10차)에 없습니다 — ksic_lookup에 업종 이름(예: '화장품')을 넣어 코드를 찾으세요")
+        if d_["level"] == "10차 코드":   # OpenDART는 11차 코드 — 10차 코드는 구·신 연계표로 바꿔 찾음
+            new_ = [x["code"] for x in d_["11차"]]
+            prefixes = [x for x in prefixes if x != p_] + [n for n in new_ if n not in prefixes]
+            v10_notes.append(f"{p_}(10차) → {', '.join(x['code'] + ' ' + x['name'] for x in d_['11차'])}(11차)")
+            code_info += [{"code": x["code"], "name": x["name"], "10차_입력": p_} for x in d_["11차"]]
+        else:
+            code_info.append({"code": p_, "name": d_["name"], "level": d_["level"]})
     kws = [str(k).strip() for k in (short_code_keywords or []) if str(k).strip()]
     short_drop = []
     dc = client or DartClient(key=key, max_calls=max_calls)
@@ -571,7 +584,9 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
                     continue
                 rows, prof = res
                 if mt == "short":
-                    ent = {"company_id": c["corp_code"], "company_name": info.get("corp_name"), "industry_code": info.get("induty_code")}
+                    reg_ = KS.item(info.get("induty_code") or "")
+                    ent = {"company_id": c["corp_code"], "company_name": info.get("corp_name"), "industry_code": info.get("induty_code"),
+                           "등록코드_이름": reg_["name"] if reg_ else None}
                     if kws:
                         ent["설명_일치어"] = _kw_hits(prof, kws)
                         if not ent["설명_일치어"]:
@@ -610,7 +625,8 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
         "이어서": ("같은 입력으로 다시 부르면 캐시에 쌓인 결과는 다시 부르지 않고 남은 회사부터 이어서 계속합니다."
                    + (" 비상장 모집단(공시 목록)을 모으는 중에 멈춰 남은 수에 비상장은 아직 빠져 있습니다." if pool_cut else "") if stop else ""),
         "입력": {"industry_codes": prefixes, "years": years, "listed": listed, "revenue_min": revenue_min, "revenue_max": revenue_max, "limit": limit,
-                 "fs_pref": fs_pref, "build_index_only": build_index_only, "short_code_keywords": kws},
+                 "fs_pref": fs_pref, "build_index_only": build_index_only, "short_code_keywords": kws,
+                 "업종_이름": code_info},
         "색인": {"버전": IX.data["version"], "갱신": IX.data["updated"], "색인된_회사": len(IX.data["corps"]),
                  "모집단_색인": f"{ix_n}/{ix_N}", "완료": ix_N > 0 and ix_n == ix_N, "비상장_모집단_일수": len(IX.data["days"]),
                  "안내": ("" if ix_N and ix_n == ix_N else f"색인 {ix_n}/{ix_N} — 같은 입력으로 다시 부르면 이어서 계속(하루 상한 KR_COMPARABLES_DAILY_CAP 안에서)")},
@@ -622,6 +638,8 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
              "비상장 최대주주 지분은 OpenDART API로 얻을 수 없어 불명 — 감사보고서 주석의 주주 현황을 사람이 확인."]
     if low_acc:
         notes.append(UPSTAGE_GUIDE)
+    if v10_notes:
+        notes.append("입력 업종 코드 중 10차 코드를 11차로 바꿔 찾음(OpenDART 등록 코드는 11차): " + "; ".join(v10_notes))
     if short and not kws:
         notes.append(f"등록 업종 코드가 입력보다 짧은 후보 {len(short)}개(업종_짧은코드_포함) — 세분류가 달라도 들어옴(예: '204' 기타 화학제품은 화장품·계면활성제·전자재료를 모두 포함). "
                      "short_code_keywords에 품목 낱말(예: ['화장품'])을 주면 사업 설명에 그 낱말이 없는 짧은 코드 후보는 후보에서 빼고 업종_짧은코드_설명불일치에 적음.")
