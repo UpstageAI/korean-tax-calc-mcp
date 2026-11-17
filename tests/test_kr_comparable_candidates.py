@@ -360,3 +360,33 @@ def test_tool_registered_and_findable(monkeypatch, tmp_path):
     monkeypatch.setenv("KR_COMPARABLES_CACHE_DIR", str(tmp_path))
     r = S.kr_comparable_candidates(industry_codes=["4651"], years=[2024])
     assert "꺼짐" in r["결과"]["상태"]
+
+
+# ---------- 짧은 업종 코드 거르기(short_code_keywords) — Claude 작성(2026-11-17) ----------
+def test_short_code_without_keywords_kept_and_noted(env):
+    """입력 '4652'에 등록 '465'(휴맥스)는 짧은 코드 — 낱말을 안 주면 종전처럼 넣고 표시·안내만."""
+    out = run(Transport(), industry_codes=["4652"], listed="상장")
+    r = out["결과"]
+    assert r["후보_수"] == 2 and [x["company_name"] for x in r["업종_짧은코드_포함"]] == ["(주)휴맥스"]
+    assert r["업종_짧은코드_설명불일치"] == [] and any("short_code_keywords" in n for n in out["주의"])
+
+
+def test_short_code_keywords_drop_unmatched_only(env):
+    out = run(Transport(), industry_codes=["4652"], listed="상장", short_code_keywords=["반도체"])
+    r = out["결과"]
+    assert [p["company_name"] for p in r["후보_프로필"]] == ["(주)유니트론텍"]          # 정확 일치는 낱말과 무관하게 남음
+    assert {x["company_name"] for x in r["업종_짧은코드_설명불일치"]} == {"(주)휴맥스"}   # 설명에 '반도체' 없음
+    assert r["업종_짧은코드_포함"] == [] and r["입력"]["short_code_keywords"] == ["반도체"]
+    assert any("설명불일치" in n for n in out["주의"])
+
+
+def test_short_code_keywords_keep_matched_with_hits(env):
+    r = run(Transport(), industry_codes=["4652"], listed="상장", short_code_keywords=["반도체", "셋톱박스"])["결과"]
+    assert r["후보_수"] == 2 and r["업종_짧은코드_설명불일치"] == []
+    assert r["업종_짧은코드_포함"] == [{"company_id": "00787057", "company_name": "(주)휴맥스", "industry_code": "465", "설명_일치어": ["셋톱박스"]}]
+
+
+def test_short_code_drops_do_not_use_limit(env):
+    """빠진 짧은 코드 후보는 후보 수(limit)를 차지하지 않음."""
+    r = run(Transport(), industry_codes=["46"], listed="둘 다", limit=10, short_code_keywords=["없는낱말"])["결과"]
+    assert r["업종_짧은코드_설명불일치"] == [] and r["후보_수"] == 5    # '46' 입력엔 짧은 코드 후보 자체가 없음
