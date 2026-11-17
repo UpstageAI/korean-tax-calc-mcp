@@ -80,3 +80,123 @@ def test_wide_table_unchanged():
     s = _doc(12, "특수관계자 거래", [("(단위:백만원)", rows)])
     assert ST.related_sales(s, False, revenue=15_000_000_000)[0] == pytest.approx(0.1)
     assert ST.related_purchases(s, False, cogs=10_000_000_000)[0] == pytest.approx(0.05)
+
+
+# ---- 주석 제목 뒤에 본문이 붙은 원문(2026-11-17 화장품 업종 72개 중 '특수관계자 절 못 찾음' 18개 대부분) ----
+GLUED = [
+    ("특수관계자와의 거래27-1. 당기말과 전기말 현재 당사의 특수관계자 현황은 다음과 같습니다", "특수관계자와의 거래"),
+    ("특수관계자(1) 당기말 및 전기말 현재 당사의 특수관계자 등의 현황은 다음과 같습니다.", "특수관계자"),
+    ("특수관계자 공시22.1 지배ㆍ종속기업간의 특수관계보고기간종료일 현재 당사와 특수관계에 있는", "특수관계자 공시"),
+    ("특수관계자와의 거래36.1  보고기간말 현재 당사의 특수관계자 내역은 다음과 같습니다.", "특수관계자와의 거래"),
+    ("특수관계자 (1)  당기말 현재 당사의 지배기업은 (주)", "특수관계자"),
+]
+
+
+@pytest.mark.parametrize("raw,title", GLUED)
+def test_glued_heading_title_is_cut_before_body(raw, title):
+    assert ST._heading_title(raw) == title
+    s = f"<P>12. 재고자산</P><P>본문</P><P>27. {raw}</P><TABLE><TR><TD>x</TD></TR></TABLE><P>28. 우발부채</P>"
+    sec, t = ST.find_section(s, r"특수\s*관계", False)
+    assert t == title and sec.startswith(">27.") and "우발부채" not in sec
+
+
+def test_sub_item_sentence_is_not_a_heading():
+    """'36. 2 당기와 전기 중 특수관계자와의 거래 내역은…'(하위 항목 36.2)을 절 제목으로 잡지 않음."""
+    s = "<P>36. 2 당기와 전기 중 특수관계자와의 거래 내역은 다음과 같습니다.</P><P>37. 특수관계자</P><P>본문</P><P>38. 기타</P>"
+    sec, t = ST.find_section(s, r"특수\s*관계", False)
+    assert t == "특수관계자" and sec.startswith(">37.")
+
+
+def test_long_sentence_mentioning_keyword_is_not_a_heading():
+    s = "<P>1. 회사는 특수관계자와의 거래에 대하여 이사회의 승인을 받도록 정관에 정하고 있으며 그 내역은 주석에 기재하였습니다</P>"
+    assert ST.find_section(s, r"특수\s*관계", False) == ("", "")
+
+
+# ---- 2026-11-17 전수 대조(화장품 74개·도매 47개, 도구 값 ↔ Solar가 따로 읽은 값 ↔ 원문)에서 나온 표 모양. 숫자는 원문 그대로 ----
+def c(text, cs=1, rs=1, th=False):
+    tag = "TH" if th else "TD"
+    return f'<{tag}' + (f' COLSPAN="{cs}"' if cs > 1 else "") + (f' ROWSPAN="{rs}"' if rs > 1 else "") + f'>{text}</{tag}>'
+
+
+def row(*cells):
+    return "<TR>" + "".join(x if x.startswith("<T") else c(x) for x in cells) + "</TR>"
+
+
+def test_two_row_header_and_balance_table_first():
+    """머리글 두 줄(특수관계자 | 당기 3칸 | 전기 3칸 / 상품매출·기타매출·판매수수료)과 그 앞의 채권 표('매출채권').
+    종전: 채권 표의 '매출채권'을 매출 열로 잡고 열이 한 칸 밀려 0%."""
+    bal = [row(c("특수관계자", rs=2), c("당기말", cs=3), c("전기말", cs=3)), row("매출채권", "선수금", "보증금", "매출채권", "선수금", "보증금"),
+           row("한국주철관공업㈜", "224,711", "6,458", "100,000", "397,426", "26,667", "120,000")]
+    tx = [row(c("특수관계자", rs=2), c("당기", cs=3), c("전기", cs=3)), row("상품매출", "기타매출", "판매수수료", "상품매출", "기타매출", "판매수수료"),
+          row("한국주철관공업㈜", "5,130,758", "20,208", "2,320,562", "6,088,525", "31,875", "2,412,152")]
+    s = _doc(22, "특수관계자 공시", [("(단위:천원)", bal), ("(단위:천원)", tx)])
+    r, why = ST.related_sales(s, False, revenue=60_000_000_000)
+    assert r == pytest.approx((5_130_758 + 20_208) * 1000 / 60_000_000_000) and "상품매출+기타매출" in why
+
+
+def test_three_row_header_sales_and_purchases():
+    rows = [row(c("특수관계자명", rs=3), c("당기", cs=4)), row(c("매출등", cs=2), c("매입등", cs=2)), row("매출", "기타", "매입", "기타"),
+            row("콜마홀딩스(주)", "-", "-", "-", "102,864"), row("한국콜마(주)", "11,560,213", "-", "1,838,126", "10,053"),
+            row("콜마스크(주)", "1,363,833", "-", "-", "-"), row("에치엔지(주)", "433,895", "-", "4,515", "-"),
+            row("(주)연우", "-", "-", "14,820", "-"), row("콜마비앤에이치(주)", "-", "-", "5,780", "-"), row("합계", "13,357,941", "-", "1,863,241", "112,917")]
+    s = _doc(27, "특수관계자와의 거래", [("(단위 : 천원)", rows)])
+    assert ST.related_sales(s, False, revenue=100_000_000_000)[0] == pytest.approx(13_357_941_000 / 100_000_000_000)
+    assert ST.related_purchases(s, False, cogs=80_000_000_000)[0] == pytest.approx(1_863_241_000 / 80_000_000_000)
+
+
+def test_long_table_does_not_add_total_rows():
+    """세로형 표 아래 '합계 | 합계 | 매출등' 행까지 더해 두 배가 되던 것."""
+    rows = [_tr("특수관계구분", "특수관계자명", "거래내용", "당기", "전기", th=True),
+            _tr("관계기업", "아시아첨가제(주)", "매출", "93,664", "92,560"), _tr("관계기업", "아시아첨가제(주)", "매입", "14,128,094", "20,917,155"),
+            _tr("기타특수관계자", "미성통상(주)", "매출", "3,133,180", "2,842,134"),
+            _tr("합계", "합계", "매출등", "3,226,844", "2,934,694"), _tr("합계", "합계", "매입등", "14,128,094", "20,917,155")]
+    s = _doc(30, "특수관계자", [("(단위:천원)", rows)])
+    assert ST.related_sales(s, False, revenue=400_000_000_000)[0] == pytest.approx(3_226_844_000 / 400_000_000_000)
+    assert ST.related_purchases(s, False, cogs=300_000_000_000)[0] == pytest.approx(14_128_094_000 / 300_000_000_000)
+
+
+def test_long_table_merged_account_cell():
+    """과목 칸이 세로로 병합(상품매출 3행) — 종전: 첫 행만 읽음."""
+    rows = [row("과목", "구분", "당기", "전기"), row(c("상품매출", rs=3), "BMK-LTD", "53,624", "129,093"), row("BMK-SC", "313,789", "134,416"),
+            row("BMK-F&B", "21,645", "1,708"), row("임대수익", "BMK-SC", "76,000", "0"), row(c("이자수익", rs=2), "BMK-LTD", "75,000", "0"), row("BMK-SC", "5,500", "0")]
+    s = _doc(10, "특수관계자와의 거래", [("(단위 : 천원)", rows)])
+    assert ST.related_sales(s, False, revenue=30_000_000_000)[0] == pytest.approx((53_624 + 313_789 + 21_645) * 1000 / 30_000_000_000)
+
+
+def test_prior_year_table_is_not_used_when_current_has_no_column():
+    """당기 표에 매입 열이 없는데 '② 전기' 표의 매입을 가져오던 것 — 값을 내지 않는다."""
+    cur = [row("구분", "특수관계자명", "매출", "기타수익", "기타비용"), row("종속기업", "A", "195,291", "36,771", "-"), row("합계", "합계", "195,291", "36,771", "-")]
+    pri = [row("구분", "특수관계자명", "매출", "매입", "기타비용"), row("종속기업", "A", "269,218", "55,008", "25,273"), row("합계", "합계", "269,218", "55,008", "25,273")]
+    s = _doc(34, "특수관계자", [("① 당기 (단위:천원)", cur), ("② 전기 (단위:천원)", pri)])
+    assert ST.related_sales(s, False, revenue=10_000_000_000)[0] == pytest.approx(195_291_000 / 10_000_000_000)
+    assert ST.related_purchases(s, False, cogs=5_000_000_000) == (None, "매입 열 못 찾음")
+
+
+def test_two_total_blocks_in_one_table_go_to_human():
+    """한 표에 당기·전기 묶음이 위아래로 있고 구분 표시가 없음(합계 행 둘) — 종전: 아래(전기) 합계를 씀."""
+    rows = [row("특수관계구분", "회사명등", "매출", "매입"), row("관계기업", "A", "276,382", "5,805"), row("합계", "합계", "276,382", "5,805"),
+            row("관계기업", "A", "899,375", "810,435"), row("합계", "합계", "899,375", "810,435")]
+    s = _doc(31, "특수관계자", [("(단위:천원)", rows)])
+    assert ST.related_sales(s, False, revenue=100_000_000_000) == (None, "합계 행이 둘 이상(당기·전기 묶음 구분 없음) — 사람 확인")
+
+
+def test_slash_joined_label_uses_transaction_part():
+    rows = [row(c("관계", rs=2), c("특수관계자명", rs=2), c("거래구분", rs=2), c("수익(비용)", cs=2), c("채권(채무)", cs=2)), row("당기", "전기", "당기말", "전기말"),
+            row("종속기업", "(주)바이오비쥬", "용역매출", "64,991", "51,161", "-", "-"), row("종속기업", "(주)바이오비쥬", "잡이익등/미수금등", "59,267", "5,959", "8,384", "6,379"),
+            row("종속기업", "QINGDAO", "상품매출/매출채권등", "2,896,661", "91,437", "4,160,197", "85,272")]
+    s = _doc(33, "특수관계자와의 거래", [("(단위: 천원)", rows)])
+    assert ST.related_sales(s, False, revenue=200_000_000_000)[0] == pytest.approx((64_991 + 2_896_661) * 1000 / 200_000_000_000)
+
+
+def test_asset_purchase_column_is_not_purchases():
+    rows = [row(c("특수관계구분", rs=2), c("회사명", rs=2), c("매출등", cs=3), c("매입등", cs=2), c("자산매입", rs=2)), row("상품", "용역", "기타", "용역", "기타"),
+            row("종속기업", "(주)다우기술", "368,042", "1,163,582", "-", "120,464", "31,189", "3,700"), row("합계", "합계", "368,042", "1,163,582", "-", "120,464", "31,189", "3,700")]
+    s = _doc(30, "특수관계자 거래", [("(단위: 천원)", rows)])
+    assert ST.related_purchases(s, False, cogs=10_000_000_000)[0] == pytest.approx(120_464_000 / 10_000_000_000)
+    assert ST.related_sales(s, False, revenue=10_000_000_000)[0] == pytest.approx((368_042 + 1_163_582) * 1000 / 10_000_000_000)
+
+
+def test_column_without_any_amount_is_not_zero():
+    rows = [row("회사명", "매출", "비고"), row("A", "해당사항 없음", ""), row("B", "", "")]
+    s = _doc(12, "특수관계자 거래", [("(단위:천원)", rows)])
+    assert ST.related_sales(s, False, revenue=1_000_000_000) == (None, "매출 열 못 찾음")
