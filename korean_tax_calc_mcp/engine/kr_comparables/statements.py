@@ -324,6 +324,83 @@ def inventory_items(rows):
     return got
 
 
+
+# ---------------- 특수관계자 거래 표: 가로형(회사 × 매출·매입 열)·세로형(거래 종류 행 × 당기·전기 열) ----------------
+_CELL = r"<(TH|TD|TE)([^>]*)>(.*?)</\1>"
+
+
+def _is_header_row(tr):
+    """머리글 행 = 금액 칸이 없는 행. 첫 데이터 행의 '상품매입' 같은 글자를 열 제목으로 잘못 잡지 않게."""
+    cells = re.findall(_CELL, tr, re.S)
+    return bool(cells) and all(num(txt(b)) is None for _, _, b in cells)
+
+
+def _header_col(trs, pat):
+    for tr in [t for t in trs[:3] if _is_header_row(t)]:
+        pos = 0
+        for tag, attr, b in re.findall(_CELL, tr, re.S):
+            if re.match(pat, re.sub(r"\s", "", txt(b))):
+                return pos
+            pos += _span(attr)
+    return None
+
+
+def _long_sum(trs, row_pat, excl_pat):
+    """세로형 표: 머리글에 '당기' 열(또는 맨 오른쪽 '계' 열)이 있고, 거래 종류(예: 상품매입)가 행으로 내려옴. 행마다 거래 종류 칸 오른쪽 첫 금액(당기)을 더함 —
+    앞 칸(특수관계구분·회사명)이 여러 행에 걸친 병합 칸이어도 거래 종류 칸 기준이라 밀리지 않음. 해당 행이 없으면 None."""
+    hdr = [t for t in trs[:3] if _is_header_row(t)]
+    ht = [re.sub(r"\s", "", txt(b)) for t in hdr for _, _, b in re.findall(_CELL, t, re.S)]
+    cur = next((i for i, x in enumerate(ht) if re.match(r"^당기", x)), None)
+    last_total = bool(ht) and re.fullmatch(r"(계|합계|총계)", ht[-1] or "") is not None
+    if cur is None and not last_total:
+        return None
+    pri = next((i for i, x in enumerate(ht) if re.match(r"^전기", x)), None)
+    k = 1 if (cur is not None and pri is not None and pri < cur) else 0      # 전기 열이 먼저면 둘째 금액이 당기
+    if cur is None:   # 거래 종류 행 × 회사별 열 + 맨 오른쪽 '계' 열 — 행의 마지막 금액(계)을 씀
+        k = -1
+    total, found = 0, False
+    for t in trs:
+        if t in hdr:
+            continue
+        cs = [re.sub(r"\s", "", txt(b)) for _, _, b in re.findall(_CELL, t, re.S)]
+        for j, x in enumerate(cs):
+            if x and num(x) is None and re.search(row_pat, x) and not re.search(excl_pat, x):
+                vals = [0.0 if y in ("-", "–", "—") else num(y) for y in cs[j + 1:]]
+                vals = [v for v in vals if v is not None]
+                if vals and (k == -1 or len(vals) > k):
+                    total += vals[k]
+                    found = True
+                break
+    return total if found else None
+
+
+def _rel_unit(ctx):
+    """특수관계자 표 단위 — 표 안 AUNITVALUE, 없으면 표 바로 앞에서 가장 가까운 '단위:' 표기(앞 표의 단위를 가져오지 않게)."""
+    i = ctx.rfind("<TABLE")      # 맥락 안의 마지막 표가 이 표(앞 표가 맥락에 들어와도)
+    head, table = (ctx[:i], ctx[i:]) if i >= 0 else (ctx, "")
+    mu = re.search(r'AUNITVALUE="(\d+)"', table)
+    if mu:
+        return int(mu.group(1))
+    ms = re.findall(r"단\s*위\s*[:：]\s*(천\s*원|백\s*만\s*원|원)", txt(head))
+    return {"원": 1, "천원": 1000, "백만원": 1000000}[re.sub(r"\s", "", ms[-1])] if ms else unit_of(ctx)[0]
+
+
+def _unit_mismatch(sec, unit):
+    """같은 특수관계자 절 안에서 금액 표의 단위 표기가 갈리면(예: 거래 표 '원', 채권·채무 표 '천원') 그 표 단위가 다수와 다른지.
+    원문 단위 표기가 틀린 경우가 있어(실제 사례: 거래 표 '(단위 : 원)'인데 같은 상대 채권이 천원 표에서 43억) 숫자를 내지 않고 사람 확인."""
+    units = [_rel_unit(c) for tb, c in tables_in(sec) if re.search(r"\d{1,3}(,\d{3})+", txt(tb))]
+    if len(set(units)) < 2:
+        return False
+    major = max(set(units), key=units.count)
+    return unit != major
+
+
+SALES_ROW = r"^(매출|제품매출|상품매출|용역매출|매출액|영업수익|재화의판매|용역의제공|용역제공)"
+PURCHASE_ROW = r"매입"
+REL_EXCL = r"(원가|채권|채무|유형|무형|자산|주식|지분|투자)"
+# '특수관계자와의 거래 없음' 문장 — '자금거래·담보·보증 내역은 없습니다' 같은 다른 거래 문장에 걸리지 않게 '특수관계자(와의) 거래'로 한정
+NO_REL_TX = re.compile(r"특수관계자(와|와의|와의주요|간)?(매출·?매입)?거래(내역|내용)?(은|는|이|가)?(없|존재하지않)")
+
 def related_sales(s, is_bizrep, revenue):
     """특수관계자 거래 주석의 매출 합계 ÷ 매출 → (비율, 근거)."""
     sec, t = find_section(s, r"특수\s*관계", is_bizrep)
@@ -334,19 +411,23 @@ def related_sales(s, is_bizrep, revenue):
         trs = re.findall(r"<TR[^>]*>(.*?)</TR>", tb, re.S)
         if len(trs) < 2:
             continue
-        col = None
-        for tr in trs[:3]:
-            pos = 0
-            for tag, attr, b in re.findall(r"<(TH|TD|TE)([^>]*)>(.*?)</\1>", tr, re.S):
-                x = re.sub(r"\s", "", txt(b))
-                if col is None and re.match(r"^(매출|수익|매출등|매출액|영업수익|수익거래|재화의판매|매출거래)", x) and "원가" not in x:
-                    col = pos
-                pos += _span(attr)
-            if col is not None:
-                break
+        col = _header_col(trs, r"^(매출|수익|매출등|매출액|영업수익|수익거래|재화의판매|매출거래)(?!원가)")
         if col is None:
-            continue
-        unit = parse_group(ctx)[1]
+            lv = _long_sum(trs, SALES_ROW, REL_EXCL)
+            if lv is None:
+                continue
+            if _unit_mismatch(sec, _rel_unit(ctx)):
+                return None, "주석 표마다 단위 표기가 다름(원·천원 등) — 사람 확인"
+            a = lv * _rel_unit(ctx)
+            if revenue and revenue > 0:
+                r = a / revenue
+                if 0 <= r <= 1.05:
+                    return r, "특수관계자 주석 표(거래 종류 행, 당기): " + t[:30]
+                return None, f"비율 범위 밖({r:.2f}) — 단위·열 확인 필요"
+            return None, "매출 없음"
+        unit = _rel_unit(ctx)
+        if _unit_mismatch(sec, unit):
+            return None, "주석 표마다 단위 표기가 다름(원·천원 등) — 사람 확인"
         total, rows_sum = None, 0
         for tr in trs:
             cells = re.findall(r"<(TH|TD|TE)([^>]*)>(.*?)</\1>", tr, re.S)
@@ -371,7 +452,7 @@ def related_sales(s, is_bizrep, revenue):
                 return r, "특수관계자 주석 표: " + t[:30]
             return None, f"비율 범위 밖({r:.2f}) — 단위·열 확인 필요"
         return None, "매출 없음"
-    if re.search(r"거래(내역)?(은|는|이|가)?없", plain):
+    if NO_REL_TX.search(plain):
         return 0.0, "특수관계자 거래 없음 문장"
     return None, "매출 열 못 찾음"
 
@@ -431,18 +512,20 @@ def related_purchases(s, is_bizrep, cogs=None, revenue=None):
         return None, "매출원가·매출 없음"
     for tb, ctx in tables_in(sec):
         trs = re.findall(r"<TR[^>]*>(.*?)</TR>", tb, re.S)
-        col = None
-        for tr in trs[:3]:
-            pos = 0
-            for tag, attr, b in re.findall(r"<(TH|TD|TE)([^>]*)>(.*?)</\1>", tr, re.S):
-                if col is None and re.match(PURCHASE_HDR, re.sub(r"\s", "", txt(b))):
-                    col = pos
-                pos += _span(attr)
-            if col is not None:
-                break
+        col = _header_col(trs, PURCHASE_HDR)
         if col is None:
-            continue
-        unit = parse_group(ctx)[1]
+            lv = _long_sum(trs, PURCHASE_ROW, REL_EXCL)
+            if lv is None:
+                continue
+            if _unit_mismatch(sec, _rel_unit(ctx)):
+                return None, "주석 표마다 단위 표기가 다름(원·천원 등) — 사람 확인"
+            r = lv * _rel_unit(ctx) / base
+            if 0 <= r <= 1.5:
+                return r, f"특수관계자 주석 표(거래 종류 행, 당기) 매입 ÷ {bl}: " + t[:30]
+            return None, f"비율 범위 밖({r:.2f}) — 단위·열 확인 필요"
+        unit = _rel_unit(ctx)
+        if _unit_mismatch(sec, unit):
+            return None, "주석 표마다 단위 표기가 다름(원·천원 등) — 사람 확인"
         total, rows_sum = None, 0
         for tr in trs:
             cells = re.findall(r"<(TH|TD|TE)([^>]*)>(.*?)</\1>", tr, re.S)
@@ -463,7 +546,7 @@ def related_purchases(s, is_bizrep, cogs=None, revenue=None):
         if 0 <= r <= 1.5:
             return r, f"특수관계자 주석 표 매입 ÷ {bl}: " + t[:30]
         return None, f"비율 범위 밖({r:.2f}) — 단위·열 확인 필요"
-    if re.search(r"거래(내역)?(은|는|이|가)?없", re.sub(r"\s", "", txt(sec))):
+    if NO_REL_TX.search(re.sub(r"\s", "", txt(sec))):
         return 0.0, "특수관계자 거래 없음 문장"
     return None, "매입 열 못 찾음"
 

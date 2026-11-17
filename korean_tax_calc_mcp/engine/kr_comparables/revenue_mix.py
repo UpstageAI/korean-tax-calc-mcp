@@ -292,15 +292,39 @@ def allocate(rows, cls, signals):
     tot = sum(r[1] for r in rows)
     amt = {k: 0 for k in CATS}
     goods = 0
+    contra = []
     for i, r in enumerate(rows):
+        if r[1] < 0:            # 매출할인·에누리·환입처럼 음수인 차감 행 — 한 갈래로 두지 않고 깎인 매출에서 뺌(아래)
+            contra.append(i)
+            continue
         c = cls[i][0]
         if c == GOODS:
             goods += r[1]
         else:
             amt[c] = amt.get(c, 0) + r[1]
-    res = {"shares": {}, "unknown": [], "conflict": None, "goods_alloc": "", "total": tot}
+    res = {"shares": {}, "unknown": [], "conflict": None, "goods_alloc": "", "total": tot, "contra_rows": {}}
     if not tot:
         return res
+    for i in contra:
+        lab = re.sub(r"\s", "", rows[i][0])
+        base = re.sub(r"(할인|에누리|환입|반품|차감|공제)(액)?$", "", lab)
+        tgt = next((c for p_, c in FIX if re.match(p_, base)), None)
+        if tgt and amt.get(tgt, 0) > 0:
+            amt[tgt] += rows[i][1]
+            res["contra_rows"][i] = f"차감 행 — {tgt}에서 뺌(행 이름)"
+            continue
+        pos = {k: v for k, v in amt.items() if v > 0}
+        if goods > 0:
+            pos[GOODS] = goods
+        ptot = sum(pos.values())
+        if not ptot:
+            continue
+        for k, v in pos.items():
+            if k == GOODS:
+                goods += rows[i][1] * v / ptot
+            else:
+                amt[k] += rows[i][1] * v / ptot
+        res["contra_rows"][i] = "차감 행 — 양수 매출 갈래에 금액 비율로 나눠 뺌"
     m = (signals or {}).get("merch_ratio")
     if goods:
         if m is None:
@@ -315,4 +339,7 @@ def allocate(rows, cls, signals):
     model_goods = (goods + sum(r[1] for i, r in enumerate(rows) if cls[i][0] in ("product", "merchandise"))) / tot
     if gc is not None and abs(model_goods - gc) > GOODS_GAP:
         res["conflict"] = f"엇갈림 — 매출 행 분류상 재화 {model_goods:.0%} vs 회계상 재화 원가 {gc:.0%}({signals.get('source')})"
+    bad = {k: v for k, v in res["shares"].items() if v < -1e-9 or v > 1 + 1e-9}
+    if bad:   # 비중은 0~100%여야 함 — 벗어나면 숫자를 내지 않고 사람 확인
+        res["conflict"] = "비중 범위 밖(" + ", ".join(f"{k} {v:.0%}" for k, v in bad.items()) + ") — 매출 표의 차감·조정 행 확인"
     return res
