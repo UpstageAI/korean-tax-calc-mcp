@@ -138,16 +138,28 @@ def _cost_from_grid(g, ctx):
             return num(mrow[cc]), (num(trow[cc]) if trow and cc < len(trow) else None), f"주석 표 행 '{mrow[0]}' × 열 '{g[hi][cc]}'"
         if not mrow and trow and any(r and _PPE_CLASS.match(r[0]) for r in body):
             return "없음", (num(trow[cc]) if cc < len(trow) else None), "주석 취득원가 표에 기계장치 행 없음 — " + ", ".join(r[0] for r in body if r and r[0])[:60]
-    # 모양 3: 변동표 안에 '기계장치' 줄 아래 '취득원가' 줄 — 기말 열(없으면 마지막 숫자)
+    # 모양 3: 변동표 안에 '기계장치' 줄과 그 아래(또는 같은 줄 둘째 칸) '취득원가' 줄 — 기말 열(없으면 마지막 숫자)
     endc = next((j for hi in hdr for j, c in enumerate(g[hi]) if _END_COL.match(c)), None)
     for i, row in enumerate(g):
-        if row and _MACH_LAB.match(row[0]):
-            sub = row[1:2] and _COST_LAB.match(row[1]) and row or (g[i + 1] if i + 1 < len(g) and g[i + 1] and _COST_LAB.match(g[i + 1][0] or g[i + 1][1] if len(g[i + 1]) > 1 else "") else None)
-            if sub:
-                vals = [num(c) for c in sub]
-                v = num(sub[endc]) if endc is not None and endc < len(sub) else next((x for x in reversed(vals) if x is not None), None)
-                if v is not None:
-                    return v, None, "주석 변동표 '기계장치 > 취득원가' 기말"
+        if not (row and _MACH_LAB.match(row[0])):
+            continue
+        if len(row) > 1 and _COST_LAB.match(row[1]):
+            sub = row
+        elif i + 1 < len(g) and g[i + 1] and (_COST_LAB.match(g[i + 1][0]) or (len(g[i + 1]) > 1 and _COST_LAB.match(g[i + 1][1]))):
+            sub = g[i + 1]
+        else:
+            continue
+        v = num(sub[endc]) if endc is not None and endc < len(sub) else next((x for x in reversed([num(c) for c in sub]) if x is not None), None)
+        if v is not None:
+            return v, None, "주석 변동표 '기계장치 > 취득원가' 기말"
+    # 모양 5: 한 표에 취득원가·감가상각누계액·장부금액 덩어리가 제목 없이 쌓임 — 기계장치 행이 여럿이고 음수(상각누계) 행이 있으면
+    # 맨 앞 기계장치 행의 기말을 취득원가로. 취득원가 + 상각누계 = 장부금액(마지막 기계장치 행)일 때만 받는다.
+    if endc is not None:
+        mrows = [r for r in g if r and _MACH_LAB.match(r[0]) and endc < len(r) and num(r[endc]) is not None]
+        if len(mrows) >= 3:
+            cost, acc, book = num(mrows[0][endc]), num(mrows[1][endc]), num(mrows[-1][endc])
+            if cost > 0 and acc < 0 and abs(cost + acc - book) <= max(1, abs(book) * 0.001):
+                return cost, None, "주석 변동표 덩어리(취득원가·상각누계·장부금액) 중 취득원가 기말 — 취득원가+상각누계=장부금액 확인"
     # 모양 4: 표 바로 앞 글이 '취득원가'인 변동표(취득원가 변동·상각누계액 변동을 표 둘로) — 기계장치 행의 기말
     pre = re.sub(r"\s+", "", txt(ctx[:ctx.rfind("<TABLE")] if "<TABLE" in ctx else ctx))[-60:]
     if endc is not None and re.search(r"취득원가|취득가액", pre) and not re.search(r"감가상각누계|상각누계", pre):
