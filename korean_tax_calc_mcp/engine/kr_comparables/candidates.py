@@ -19,6 +19,7 @@ from . import statements as ST
 from .statements import title_sections as F_title_sections
 from . import revenue_mix as RM
 from . import sales_channel as SC
+from . import production as PRD
 from .dart import DartClient, DartStop, KEY_ENV, KEY_GUIDE, mask
 from .index import CorpIndex
 from .schema import STATUS_NONE, STATUS_UNKNOWN, empty_profile, value
@@ -196,6 +197,12 @@ def _profile_listed(R, corp, name, code, rows, fin_items, last, cls_ctx):
         else:
             p["sales_channel"] = value(status=STATUS_UNKNOWN if sc["problems"] else STATUS_NONE, rcept_no=brc, account="매출 및 수주상황",
                                        note="; ".join(sc["problems"]) or "매출 및 수주상황 절에 판매경로·판매방법·판매전략·주요 매출처 소제목 없음")
+        pr = PRD.extract(s)
+        if pr["found"]:
+            p["production"] = value({"no_own_facility": pr["no_own_facility"], "own_production": pr["own_production"], "text": pr["text"]},
+                                    rcept_no=brc, account="원재료 및 생산설비", note="; ".join(pr["problems"] + (["글이 길어 앞부분만"] if pr["truncated"] else [])))
+        else:
+            p["production"] = value(status=STATUS_NONE, rcept_no=brc, account="원재료 및 생산설비", note="; ".join(pr["problems"]))
         sga = _rows_from_sections(s, True, r"판매비\s*와?\s*(일반)?관리비|판매비및관리비") + _rows_from_sections(s, True, r"비용의\s*성격")
         sga_detail = any(re.match(r"^(급여|복리후생비|지급수수료|감가상각비)", l) for l, c, pr in sga)
         for k, pat, fld, lab in (("rnd", RND, "rnd_ratio", "연구개발비"), ("adv", ADV, "advert_ratio", "광고선전비·판매촉진비")):
@@ -512,6 +519,7 @@ def _profile_unlisted(R, corp, name, code, rows, parsed, docs, last):
     ctx = _context(s, False)
     p["business_desc"] = value(ctx[:1500], rcept_no=rc, account="감사보고서 주석 회사 개요") if ctx else value(note="회사 개요 못 찾음")
     p["sales_channel"] = value(status=STATUS_NONE, rcept_no=rc, note="감사보고서에는 '매출 및 수주상황' 절이 없음 — 계열사 경유 판매는 특수관계자 매출 비중으로 봄")
+    p["production"] = value(status=STATUS_NONE, rcept_no=rc, note="감사보고서에는 '원재료 및 생산설비' 절이 없음 — 직접 생산 여부는 유형자산 주석(기계장치)으로 봄")
     if col == 0:
         sig = _signals(s, False, is_, bs, last.get("cogs"), rc)
         _mix(R, p, RM.unlisted_rows(is_), {}, rev, rc, False, ctx or f"{name} 업종코드 {code}", signals=sig)
