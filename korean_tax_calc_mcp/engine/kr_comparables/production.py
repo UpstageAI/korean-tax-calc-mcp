@@ -73,3 +73,22 @@ def extract(s):
         problems.append("자체 생산설비가 없다는 문장과 생산능력·설비 현황이 함께 있음 — 사업부문·자회사마다 다를 수 있어 원문 확인")
     return {"found": True, "text": text[:TEXT_MAX], "truncated": len(text) > TEXT_MAX,
             "no_own_facility": no_own[:3], "own_production": own[:3], "problems": problems}
+
+
+MACHINERY = re.compile(r"기\s*계\s*(?:장\s*치|설\s*비)|생\s*산\s*설\s*비")
+PPE = re.compile(r"유\s*형\s*자\s*산")
+
+
+def machinery(s):
+    """비상장 감사보고서 → 기계장치 계정이 있는지(2026-11-18). 반환 {'machinery_account': 없음|있음|불명, 'evidence': 원문 일부}.
+
+    없음: 유형자산 주석은 있는데 '기계장치·기계설비·생산설비'라는 말이 전혀 없음 — 직접 생산하지 않는다는 단서.
+    있음: 그 말이 있음 — 금액·비중은 아직 읽지 않음(회계정책 표의 내용연수만 있을 수도 있어 판단은 사람·조문 MCP).
+    불명: 원문에서 유형자산 자체를 못 찾음(문서를 못 읽었을 수 있어 '없음'이라 하지 않음). 판정하지 않는다."""
+    plain = re.sub(r"\s+", " ", txt(s or ""))
+    if not PPE.search(plain):
+        return {"machinery_account": "불명", "evidence": "원문에서 유형자산을 찾지 못함"}
+    m = MACHINERY.search(plain)
+    if not m:
+        return {"machinery_account": "없음", "evidence": "유형자산 주석에 기계장치·기계설비·생산설비 계정 없음"}
+    return {"machinery_account": "있음", "evidence": plain[max(0, m.start() - SNIP):m.end() + SNIP]}

@@ -38,3 +38,12 @@ def test_section_missing_and_alternate_title():
     assert not PR.extract("<TITLE>II. 사업의 내용</TITLE><TITLE>1. 사업의 개요</TITLE><P>x</P><TITLE>III. 재무에 관한 사항</TITLE>")["found"]
     r = PR.extract(_doc("<P>자체 생산설비 없이 외주가공(OEM) 형태로 생산하고 있습니다.</P>", title="2. 생산 및 설비"))
     assert r["found"] and r["no_own_facility"]
+
+
+def test_unlisted_machinery_account_presence_only():
+    """비상장 감사보고서(2026-11-18): 유형자산 주석에 기계장치 계정이 있는지만 — 없으면 없음, 있으면 있음(금액은 안 읽음), 유형자산 자체를 못 찾으면 불명."""
+    none = PR.machinery("<P>8. 유형자산</P><TABLE><TR><TD>비품</TD><TD>12,000</TD></TR><TR><TD>차량운반구</TD><TD>3,000</TD></TR></TABLE>")
+    assert none["machinery_account"] == "없음"
+    has = PR.machinery("<P>8. 유형자산</P><TABLE><TR><TD>기 계 장 치</TD><TD>2,559,481,818</TD></TR></TABLE>")
+    assert has["machinery_account"] == "있음" and "기 계 장 치" in has["evidence"]
+    assert PR.machinery("<P>회사의 개요</P>")["machinery_account"] == "불명"
