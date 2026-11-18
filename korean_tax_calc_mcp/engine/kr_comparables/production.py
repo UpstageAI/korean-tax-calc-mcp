@@ -92,3 +92,106 @@ def machinery(s):
     if not m:
         return {"machinery_account": "없음", "evidence": "유형자산 주석에 기계장치·기계설비·생산설비 계정 없음"}
     return {"machinery_account": "있음", "evidence": plain[max(0, m.start() - SNIP):m.end() + SNIP]}
+
+
+_MACH_LAB = re.compile(r"^(?:기계장치|기계설비|생산설비)(?:\(\*\d*\))?$")
+_COST_LAB = re.compile(r"^(?:취득원가|취득가액|원가)(?:\(\*\d*\))?$")
+_TOTAL_LAB = re.compile(r"^(?:합계|계|총계)$")
+_PPE_CLASS = re.compile(r"^(?:토지|건물|구축물|비품|공기구비품|공구와기구|차량운반구|시설장치|건설중인자산|임차개량자산)")
+_END_COL = re.compile(r"^(?:기말|당기말|기말금액|기말잔액)")
+
+
+def _ppe_sections(s):
+    """감사보고서의 '유형자산' 번호 절을 모두(회계정책의 같은 제목 포함) — 표가 있는 절을 고르려고."""
+    from .statements import _heading_title
+    out = []
+    for m in re.finditer(r">\s*(\d{1,2})\s*\.\s*(?:<[^>]+>\s*)*([^<]{0,80})", s):
+        title = _heading_title(m.group(2))
+        if re.match(r"^유형자산(?!처분|손상|재평가잉여|폐기)", title or "") and len(title) < 40:
+            n = int(m.group(1))
+            nxt = re.search(r">\s*%d\s*\.\s*[가-힣]" % (n + 1), s[m.end():m.end() + 120000])
+            out.append(s[m.start():m.end() + (nxt.start() if nxt else 40000)])
+    return out
+
+
+def _cost_from_grid(g, ctx):
+    """격자 하나에서 기계장치 취득원가 → (값, 유형자산 합계 또는 None, 설명) / ('없음', None, 설명) / None."""
+    from .statements import num, txt
+    hdr = range(min(4, len(g)))
+    # 모양 1: 기계장치가 머리글 열, 취득원가가 행 이름
+    for hi in hdr:
+        mc = next((j for j, c in enumerate(g[hi]) if _MACH_LAB.match(c)), None)
+        if mc is None: continue
+        tc = next((j for j, c in enumerate(g[hi]) if _TOTAL_LAB.match(c)), None)
+        for row in g[hi + 1:]:
+            if row and _COST_LAB.match(row[0]) and mc < len(row) and num(row[mc]) is not None:
+                tot = num(row[tc]) if tc is not None and tc < len(row) else None
+                return num(row[mc]), tot, f"주석 표 열 '{g[hi][mc]}' × 행 '{row[0]}'"
+    # 모양 2: 자산 종류가 행, 취득원가가 머리글 열(당기·전기 두 줄 머리글이면 처음 나온 취득원가 = 당기)
+    for hi in hdr:
+        cc = next((j for j, c in enumerate(g[hi]) if _COST_LAB.match(c)), None)
+        if cc is None: continue
+        body = g[hi + 1:]
+        mrow = next((r for r in body if r and _MACH_LAB.match(r[0])), None)
+        trow = next((r for r in body if r and _TOTAL_LAB.match(r[0])), None)
+        if mrow and cc < len(mrow) and num(mrow[cc]) is not None:
+            return num(mrow[cc]), (num(trow[cc]) if trow and cc < len(trow) else None), f"주석 표 행 '{mrow[0]}' × 열 '{g[hi][cc]}'"
+        if not mrow and trow and any(r and _PPE_CLASS.match(r[0]) for r in body):
+            return "없음", (num(trow[cc]) if cc < len(trow) else None), "주석 취득원가 표에 기계장치 행 없음 — " + ", ".join(r[0] for r in body if r and r[0])[:60]
+    # 모양 3: 변동표 안에 '기계장치' 줄 아래 '취득원가' 줄 — 기말 열(없으면 마지막 숫자)
+    endc = next((j for hi in hdr for j, c in enumerate(g[hi]) if _END_COL.match(c)), None)
+    for i, row in enumerate(g):
+        if row and _MACH_LAB.match(row[0]):
+            sub = row[1:2] and _COST_LAB.match(row[1]) and row or (g[i + 1] if i + 1 < len(g) and g[i + 1] and _COST_LAB.match(g[i + 1][0] or g[i + 1][1] if len(g[i + 1]) > 1 else "") else None)
+            if sub:
+                vals = [num(c) for c in sub]
+                v = num(sub[endc]) if endc is not None and endc < len(sub) else next((x for x in reversed(vals) if x is not None), None)
+                if v is not None:
+                    return v, None, "주석 변동표 '기계장치 > 취득원가' 기말"
+    # 모양 4: 표 바로 앞 글이 '취득원가'인 변동표(취득원가 변동·상각누계액 변동을 표 둘로) — 기계장치 행의 기말
+    pre = re.sub(r"\s+", "", txt(ctx[:ctx.rfind("<TABLE")] if "<TABLE" in ctx else ctx))[-60:]
+    if endc is not None and re.search(r"취득원가|취득가액", pre) and not re.search(r"감가상각누계|상각누계", pre):
+        mrow = next((r for r in g if r and _MACH_LAB.match(r[0])), None)
+        if mrow and endc < len(mrow) and num(mrow[endc]) is not None:
+            return num(mrow[endc]), None, "주석 '취득원가' 변동표 기계장치 기말"
+    return None
+
+
+def machinery_cost(s):
+    """비상장 감사보고서에서 기계장치 '취득원가'를 칸 단위로 읽는다(2026-11-18).
+
+    상각누계액·장부가액은 쓰지 않는다 — 상각은 원가 배분일 뿐 설비는 처분 전까지 남아, 오래된 공장일수록 장부가액이 작게 읽힘.
+    1순위 재무상태표의 '기계장치/감가상각누계액' 짝(일반기업회계기준에 흔함), 2순위 유형자산 주석 표(K-IFRS는 취득원가·상각누계액 공시):
+    열·행 두 모양, 두 줄 머리글, 변동표 안 '기계장치 > 취득원가' 줄, '취득원가' 변동표. 전기 표는 건너뛴다. 단위는 표마다.
+    취득원가 표에 기계장치 행이 없거나 재무상태표 기계장치가 0이면 0(기계장치 없음). 못 읽으면 None — 추정하지 않는다.
+    반환 {'machinery_cost': 원 또는 None, 'ppe_cost_total': 원 또는 None, 'unit', 'evidence'}."""
+    from .statements import tables_in, is_prior_table, unit_of, _grid, statement_groups
+    try:
+        bs = statement_groups(s or "")[0]
+    except Exception:
+        bs = []
+    for i, (lab, cur, _pri) in enumerate(bs):
+        if _MACH_LAB.match(lab) and i + 1 < len(bs) and "감가상각누계" in bs[i + 1][0] and cur:
+            return {"machinery_cost": cur[0], "ppe_cost_total": None, "unit": 1,
+                    "evidence": f"재무상태표 '{lab}' {cur[0]:,}원 · 다음 줄 '{bs[i + 1][0]}' {bs[i + 1][1][0] if bs[i + 1][1] else ''}"}
+    secs = _ppe_sections(s or "")
+    if not secs:
+        return {"machinery_cost": None, "ppe_cost_total": None, "unit": None, "evidence": "유형자산 주석을 찾지 못함"}
+    none_hit = None
+    for sec in secs:
+        for body, ctx in tables_in(sec):
+            if is_prior_table(ctx):
+                continue
+            g = [[t for t, _ in row] for row in _grid(re.findall(r"<TR[^>]*>(.*?)</TR>", body, re.S | re.I))]
+            if not g:
+                continue
+            r = _cost_from_grid(g, ctx)
+            if not r:
+                continue
+            unit = unit_of(ctx)[0]
+            v, tot, ev = r
+            if v == "없음":
+                none_hit = none_hit or {"machinery_cost": 0, "ppe_cost_total": tot * unit if tot is not None else None, "unit": unit, "evidence": ev}
+                continue
+            return {"machinery_cost": v * unit, "ppe_cost_total": tot * unit if tot is not None else None, "unit": unit, "evidence": ev}
+    return none_hit or {"machinery_cost": None, "ppe_cost_total": None, "unit": None, "evidence": "유형자산 표에서 기계장치 취득원가 칸을 찾지 못함"}

@@ -47,3 +47,37 @@ def test_unlisted_machinery_account_presence_only():
     has = PR.machinery("<P>8. 유형자산</P><TABLE><TR><TD>기 계 장 치</TD><TD>2,559,481,818</TD></TR></TABLE>")
     assert has["machinery_account"] == "있음" and "기 계 장 치" in has["evidence"]
     assert PR.machinery("<P>회사의 개요</P>")["machinery_account"] == "불명"
+
+
+def _ppe_tbl(rows, pre="(단위: 천원)"):
+    tr = "".join("<TR>" + "".join(f"<TD>{c}</TD>" for c in r) + "</TR>" for r in rows)
+    return f"<P>{pre}</P><TABLE>{tr}</TABLE>"
+
+
+def _ppe_doc(*tables):
+    return "<P>10. 유형자산</P>" + "".join(tables) + "<P>11. 무형자산</P>"
+
+
+def test_machinery_cost_reads_acquisition_cost_not_book_value():
+    """취득원가(상각 전)를 읽는다 — 두 줄 머리글(당기·전기)은 당기 쪽, 단위 천원."""
+    from korean_tax_calc_mcp.engine.kr_comparables import production as PR
+    s = _ppe_doc(_ppe_tbl([["구분", "당기말", "당기말", "당기말", "전기말", "전기말", "전기말"],
+                   ["구분", "취득원가", "상각누계액", "장부금액", "취득원가", "상각누계액", "장부금액"],
+                   ["토지", "100", "-", "100", "100", "-", "100"],
+                   ["기계장치", "5,000", "(4,900)", "100", "4,000", "(3,900)", "100"],
+                   ["합계", "5,100", "(4,900)", "200", "4,100", "(3,900)", "200"]]))
+    r = PR.machinery_cost(s)
+    assert r["machinery_cost"] == 5_000_000 and r["ppe_cost_total"] == 5_100_000
+
+
+def test_machinery_cost_zero_when_cost_table_has_no_machinery_row():
+    from korean_tax_calc_mcp.engine.kr_comparables import production as PR
+    s = _ppe_doc(_ppe_tbl([["구분", "취득원가", "상각누계액", "장부금액"], ["비품", "4,437", "(1,759)", "2,678"], ["합계", "4,437", "(1,759)", "2,678"]]))
+    assert PR.machinery_cost(s)["machinery_cost"] == 0
+
+
+def test_machinery_cost_none_when_only_book_value_movement():
+    """기초·취득·상각·기말(장부가액) 변동표만 있으면 취득원가를 추정하지 않는다."""
+    from korean_tax_calc_mcp.engine.kr_comparables import production as PR
+    s = _ppe_doc(_ppe_tbl([["구분", "기초", "취득", "감가상각", "기말"], ["기계장치", "1,000", "-", "(200)", "800"]]))
+    assert PR.machinery_cost(s)["machinery_cost"] is None
