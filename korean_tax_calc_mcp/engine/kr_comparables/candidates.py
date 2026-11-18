@@ -523,8 +523,18 @@ def _profile_unlisted(R, corp, name, code, rows, parsed, docs, last):
     if mc["machinery_account"] == "불명":
         p["production"] = value(status=STATUS_UNKNOWN, rcept_no=rc, account="감사보고서 유형자산 주석", note=mc["evidence"])
     else:
-        p["production"] = value({"machinery_account": mc["machinery_account"], "machinery_evidence": mc["evidence"]}, rcept_no=rc, account="감사보고서 유형자산 주석",
-                                note="감사보고서에는 '원재료 및 생산설비' 절이 없어 기계장치 계정 유무만 봄 — 금액·비중은 아직 읽지 않음")
+        pv = {"machinery_account": mc["machinery_account"], "machinery_evidence": mc["evidence"]}
+        note = "감사보고서에는 '원재료 및 생산설비' 절이 없어 기계장치 계정으로 봄"
+        if mc["machinery_account"] == "있음":
+            if col == 0:
+                cst = PRD.machinery_cost(s)   # 취득원가(상각 전) — 상각은 원가 배분일 뿐 설비는 처분 전까지 남음
+                pv["machinery_cost"] = cst["machinery_cost"]
+                pv["machinery_cost_evidence"] = cst["evidence"]
+                pv["machinery_cost_to_sales"] = (round(cst["machinery_cost"] / rev, 4)
+                                                 if cst["machinery_cost"] is not None and rev else None)
+            else:
+                note += " — 마지막 연도 감사보고서가 없어(다음 해 보고서 전기 열) 기계장치 취득원가는 읽지 않음"
+        p["production"] = value(pv, rcept_no=rc, account="감사보고서 유형자산 주석·재무상태표", note=note)
     if col == 0:
         sig = _signals(s, False, is_, bs, last.get("cogs"), rc)
         _mix(R, p, RM.unlisted_rows(is_), {}, rev, rc, False, ctx or f"{name} 업종코드 {code}", signals=sig)
