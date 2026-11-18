@@ -18,9 +18,10 @@ from . import ksic as KS
 from . import statements as ST
 from .statements import title_sections as F_title_sections
 from . import revenue_mix as RM
+from . import sales_channel as SC
 from .dart import DartClient, DartStop, KEY_ENV, KEY_GUIDE, mask
 from .index import CorpIndex
-from .schema import STATUS_NONE, empty_profile, value
+from .schema import STATUS_NONE, STATUS_UNKNOWN, empty_profile, value
 
 LIMIT_MAX = 100
 LISTED_OPTS = ("상장", "비상장", "둘 다")
@@ -188,6 +189,13 @@ def _profile_listed(R, corp, name, code, rows, fin_items, last, cls_ctx):
         ov = _overview(s, name)
         p["business_desc"] = value(ov["ctx"][:1500], rcept_no=brc, account="사업의 개요") if ov["ctx"] else value(note="사업의 개요 못 찾음")
         _mix(R, p, rows_mix, tinfo, rev, brc, True, ov["ctx"] or cls_ctx, items_cfs=(corp, last["year"]), signals=sig, ctx_problems=ov["problems"])
+        sc = SC.extract(s)
+        if sc["found"]:
+            p["sales_channel"] = value({"topics": {k: v["text"] for k, v in sc["topics"].items()}, "shares": sc["shares"], "shares_note": sc["shares_note"]},
+                                       rcept_no=brc, account="매출 및 수주상황", note="; ".join(sc["problems"] + [f"{k} 글이 길어 앞부분만" for k, v in sc["topics"].items() if v["truncated"]]))
+        else:
+            p["sales_channel"] = value(status=STATUS_UNKNOWN if sc["problems"] else STATUS_NONE, rcept_no=brc, account="매출 및 수주상황",
+                                       note="; ".join(sc["problems"]) or "매출 및 수주상황 절에 판매경로·판매방법·판매전략·주요 매출처 소제목 없음")
         sga = _rows_from_sections(s, True, r"판매비\s*와?\s*(일반)?관리비|판매비및관리비") + _rows_from_sections(s, True, r"비용의\s*성격")
         sga_detail = any(re.match(r"^(급여|복리후생비|지급수수료|감가상각비)", l) for l, c, pr in sga)
         for k, pat, fld, lab in (("rnd", RND, "rnd_ratio", "연구개발비"), ("adv", ADV, "advert_ratio", "광고선전비·판매촉진비")):
@@ -503,6 +511,7 @@ def _profile_unlisted(R, corp, name, code, rows, parsed, docs, last):
     p["owner_pct"] = value(op, rcept_no=rc, sentence=osent, account="감사보고서 주석(주주 현황·지배기업)") if op is not None else value(note=osent)
     ctx = _context(s, False)
     p["business_desc"] = value(ctx[:1500], rcept_no=rc, account="감사보고서 주석 회사 개요") if ctx else value(note="회사 개요 못 찾음")
+    p["sales_channel"] = value(status=STATUS_NONE, rcept_no=rc, note="감사보고서에는 '매출 및 수주상황' 절이 없음 — 계열사 경유 판매는 특수관계자 매출 비중으로 봄")
     if col == 0:
         sig = _signals(s, False, is_, bs, last.get("cogs"), rc)
         _mix(R, p, RM.unlisted_rows(is_), {}, rev, rc, False, ctx or f"{name} 업종코드 {code}", signals=sig)
