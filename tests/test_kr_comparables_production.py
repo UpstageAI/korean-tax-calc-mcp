@@ -81,3 +81,21 @@ def test_machinery_cost_none_when_only_book_value_movement():
     from korean_tax_calc_mcp.engine.kr_comparables import production as PR
     s = _ppe_doc(_ppe_tbl([["구분", "기초", "취득", "감가상각", "기말"], ["기계장치", "1,000", "-", "(200)", "800"]]))
     assert PR.machinery_cost(s)["machinery_cost"] is None
+
+
+def test_machinery_cost_stacked_blocks_checks_cost_plus_acc_equals_book():
+    """한 표에 취득원가·상각누계·장부금액 덩어리가 제목 없이 쌓인 모양 — 취득원가+상각누계=장부금액일 때만."""
+    from korean_tax_calc_mcp.engine.kr_comparables import production as PR
+    rows = [["구분", "기초", "취득", "감가상각", "기말"], ["기계장치", "8,741", "27", "-", "8,768"],
+            ["", "", "", "", ""], ["기계장치", "(7,727)", "-", "(363)", "(8,090)"],
+            ["", "", "", "", ""], ["기계장치", "1,014", "27", "(363)", "678"]]
+    assert PR.machinery_cost(_ppe_doc(_ppe_tbl(rows)))["machinery_cost"] == 8_768_000
+    rows[-1][-1] = "999"   # 맞지 않으면 받지 않음
+    assert PR.machinery_cost(_ppe_doc(_ppe_tbl(rows)))["machinery_cost"] is None
+
+
+def test_machinery_cost_nested_cost_row_in_movement_table():
+    """변동표 안 '기계장치' 줄 아래 '취득원가' 줄(이솝코리아 모양) — 기말 열."""
+    from korean_tax_calc_mcp.engine.kr_comparables import production as PR
+    rows = [["구분", "구분", "기초", "취득", "기말"], ["기계장치", "취득원가", "-", "-", "-"], ["기계장치", "감가상각누계액", "-", "-", "-"]]
+    assert PR.machinery_cost(_ppe_doc(_ppe_tbl(rows)))["machinery_cost"] == 0
