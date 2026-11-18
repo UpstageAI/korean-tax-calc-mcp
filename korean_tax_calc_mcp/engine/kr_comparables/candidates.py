@@ -519,7 +519,12 @@ def _profile_unlisted(R, corp, name, code, rows, parsed, docs, last):
     ctx = _context(s, False)
     p["business_desc"] = value(ctx[:1500], rcept_no=rc, account="감사보고서 주석 회사 개요") if ctx else value(note="회사 개요 못 찾음")
     p["sales_channel"] = value(status=STATUS_NONE, rcept_no=rc, note="감사보고서에는 '매출 및 수주상황' 절이 없음 — 계열사 경유 판매는 특수관계자 매출 비중으로 봄")
-    p["production"] = value(status=STATUS_NONE, rcept_no=rc, note="감사보고서에는 '원재료 및 생산설비' 절이 없음 — 직접 생산 여부는 유형자산 주석(기계장치)으로 봄")
+    mc = PRD.machinery(s)
+    if mc["machinery_account"] == "불명":
+        p["production"] = value(status=STATUS_UNKNOWN, rcept_no=rc, account="감사보고서 유형자산 주석", note=mc["evidence"])
+    else:
+        p["production"] = value({"machinery_account": mc["machinery_account"], "machinery_evidence": mc["evidence"]}, rcept_no=rc, account="감사보고서 유형자산 주석",
+                                note="감사보고서에는 '원재료 및 생산설비' 절이 없어 기계장치 계정 유무만 봄 — 금액·비중은 아직 읽지 않음")
     if col == 0:
         sig = _signals(s, False, is_, bs, last.get("cogs"), rc)
         _mix(R, p, RM.unlisted_rows(is_), {}, rev, rc, False, ctx or f"{name} 업종코드 {code}", signals=sig)
