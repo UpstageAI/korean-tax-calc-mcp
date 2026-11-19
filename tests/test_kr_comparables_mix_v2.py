@@ -248,3 +248,19 @@ def test_extraction_failure_skips_model_and_needs_review(monkeypatch, tmp_path):
         cmp_ = compare_profile(RESELLER, p)
         assert cmp_["items"]["revenue_mix"]["verdict"] == "불명"
         assert any("사업의 개요 추출 실패" in x for x in cmp_["reasons"])
+
+
+def test_goods_merch_ratio_kept_when_mix_unreadable():
+    """매출 구성을 못 읽어도(행이 품목 이름뿐·매출 한 줄) 매출원가·재고의 상품:제품 비율은 프로필에 남긴다(2026-11-19) —
+    조문 MCP가 기능 대분류(제조·유통)의 대체 신호로 씀. 화장품 후보 22곳 중 17곳이 이 값으로 대분류 가능."""
+    from korean_tax_calc_mcp.engine.kr_comparables import candidates as C, statements as ST
+    from korean_tax_calc_mcp.engine.kr_comparables.schema import PROFILE_FIELDS, empty_profile
+    assert "goods_merch_ratio" in PROFILE_FIELDS and "goods_merch_ratio" in empty_profile(company_name="가")
+    sig = ST.goods_signals([("상품매출원가", [300.0], []), ("제품매출원가", [700.0], [])], [], 1000.0, "R1")
+    v = C._goods_merch(sig, "R1")
+    assert v["value"] == 0.3
+    assert v["evidence"]["account"] == "매출원가 상품:제품" and "700" in v["note"]
+    inv = ST.goods_signals([], [("상품", [90.0], []), ("원재료", [10.0], [])])
+    assert C._goods_merch(inv, "R2")["value"] == 0.9 and C._goods_merch(inv, "R2")["evidence"]["account"].startswith("재고")
+    none = C._goods_merch(ST.goods_signals([], []), "R3")
+    assert none["value"] is None and none["status"] == "불명-못찾음" and "못 찾음" in none["note"]
