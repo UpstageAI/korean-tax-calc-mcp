@@ -187,6 +187,7 @@ def _profile_listed(R, corp, name, code, rows, fin_items, last, cls_ctx):
         api_cogs = [(ST.norm(i.get("account_nm")), [ST.amt(i.get("thstrm_amount"))], []) for i in items
                     if i.get("sj_div") in ("IS", "CIS") and ST.amt(i.get("thstrm_amount")) is not None]
         sig = _signals(s, True, api_cogs, [], last.get("cogs"), brc)
+        p["goods_merch_ratio"] = _goods_merch(sig, brc)
         ov = _overview(s, name)
         p["business_desc"] = value(ov["ctx"][:1500], rcept_no=brc, account="사업의 개요") if ov["ctx"] else value(note="사업의 개요 못 찾음")
         _mix(R, p, rows_mix, tinfo, rev, brc, True, ov["ctx"] or cls_ctx, items_cfs=(corp, last["year"]), signals=sig, ctx_problems=ov["problems"])
@@ -429,6 +430,14 @@ def _signals(s, biz, stmt_cogs_rows, stmt_inv_rows, cogs_total, rc):
     return ST.goods_signals(cogs_rows, inv_rows, cogs_total, rc)
 
 
+def _goods_merch(sig, rc):
+    """goods_signals 결과를 프로필 값으로 — 매출 구성을 못 읽어도 기능 대분류의 대체 신호로 남긴다."""
+    if not sig or sig.get("merch_ratio") is None:
+        return value(note="매출원가 내역·재고 구성에서 상품·제품을 못 찾음")
+    vals = "; ".join(f"{k} {v:,.0f}" for k, v in sig["values"].items() if isinstance(v, (int, float)))
+    return value(round(sig["merch_ratio"], 4), rcept_no=rc, account=sig["source"], note=vals)
+
+
 def _mix(R, p, rows_mix, tinfo, rev, rc, listed, ctx, items_cfs=None, signals=None, ctx_problems=None):
     if not rows_mix:
         p["mix_coverage"] = value(note=tinfo.get("note", "매출 하위 행 없음"))
@@ -537,6 +546,7 @@ def _profile_unlisted(R, corp, name, code, rows, parsed, docs, last):
         p["production"] = value(pv, rcept_no=rc, account="감사보고서 유형자산 주석·재무상태표", note=note)
     if col == 0:
         sig = _signals(s, False, is_, bs, last.get("cogs"), rc)
+        p["goods_merch_ratio"] = _goods_merch(sig, rc)
         _mix(R, p, RM.unlisted_rows(is_), {}, rev, rc, False, ctx or f"{name} 업종코드 {code}", signals=sig)
     else:
         p["mix_coverage"] = value(note="마지막 연도 감사보고서 없음(다음 해 보고서 전기 열) — 매출 구성 생략")
