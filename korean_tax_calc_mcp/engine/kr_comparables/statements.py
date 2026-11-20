@@ -308,6 +308,23 @@ def find_section(s, kw_pat, is_bizrep):
     return "", ""
 
 
+def find_note(s, codes, kw_pat, is_bizrep):
+    """주석 찾기 — 문서 색인(docindex)에 표준 코드로 먼저 묻고, 색인이 '못 찾았을 수 있음'이라 할 때만 낱말 찾기(find_section)로 넘어간다.
+    반환 (주석 원문, 제목, 상태). 상태: '있음' | '없음'(문서를 빈틈없이 나눴는데 그 주석이 없음) | '못 찾았을 수 있음'."""
+    from . import docindex
+    hits = docindex.notes_for(s, codes, kw_pat, is_bizrep)
+    if hits:
+        a, b, t, _sure = hits[0]
+        return s[a:b], t, "있음"
+    state, _why = docindex.state_for(s, codes)
+    if state == "없음":
+        return "", "", "없음"
+    sec, t = find_section(s, kw_pat, is_bizrep)
+    return sec, t, ("있음" if sec else "못 찾았을 수 있음")
+
+
+REL = ("D818000",)
+
 # 감사보고서 주석 제목 뒤에 본문이 태그 없이 붙는 원문이 많음('특수관계자와의 거래27-1. 당기말…', '특수관계자(1) 당기말…',
 # '특수관계자 공시22.1 지배…') — 하위 번호·괄호 번호·두 칸 공백 앞에서 끊은 것을 제목으로 봄
 _HEAD_CUT = re.compile(r"\d{1,2}\s*[.\-]\s*\d|\(\s*\d{1,2}\s*\)|\d{1,2}\)|[①-⑳]|\s{2,}")
@@ -406,7 +423,17 @@ REL_HDR_EXCL = r"채권|채무|외상|대여|차입|미수|미지급|선수|선�
 _TOTAL_LAB = ("합계", "계", "총계", "총합계")
 
 
-_CUR = r"당기(\([^)]*\))?(금액)?"
+def _is_total(x):
+    """합계 행의 이름 — '합계'·'계'뿐 아니라 '전체특수관계자합계'·'매출합계'처럼 합계로 끝나는 이름도(2026-11-18: 이런 행을 회사 행으로 더해 두 배가 됨)."""
+    return x in _TOTAL_LAB or bool(re.search(r"(합계|총계)$", x))
+
+
+def _is_prior_row(r):
+    """행 안에 '전기'·'전기말'만 적힌 칸이 있으면 전기 행(회사마다 당기·전기 두 줄씩 내려오는 표)."""
+    return any(re.fullmatch(r"[<(\[]?전기말?[>)\]]?", x) for x, _ in r)
+
+
+_CUR = r"당기말?(\([^)]*\))?(금액)?"
 
 
 def _wide_sum(trs, hdr_pat):
@@ -437,9 +464,13 @@ def _wide_sum(trs, hdr_pat):
     cols = [c for c in range(width) if ok(c)]
     if not cols:      # 맨 아래 제목이 아니라 윗줄 제목이 맞는 경우(예: '매출' 아래 '상품'·'용역')
         cols = [c for c in range(width) if paths[c] and any(re.search(hdr_pat, x) for x in paths[c][:-1])
-                and not any(re.search(REL_HDR_EXCL, x) for x in paths[c]) and not re.match(r"^(기타|이자|배당|임대|수수료)", paths[c][-1])]
+                and not any(re.search(REL_HDR_EXCL, x) for x in paths[c]) and not re.match(r"^(기타|이자|배당|임대|수수료)", paths[c][-1])
+                and not re.search(r"수수료|임차|리스|상환|이자|배당|로열티|용역비|경비", paths[c][-1])]      # '매입등비용' 아래 지급수수료·임차료·리스부채상환은 매입이 아님
     if not cols:
         return None, ""
+    plain = [c for c in cols if not re.search(r"(합계|총계|소계)$", paths[c][-1])]      # '매출등합계' 열은 옆 열들의 합 — 함께 더하면 두 배
+    if plain and len(plain) < len(cols):
+        cols = plain
     if any(any(re.fullmatch(_CUR, x) for x in paths[c]) for c in cols):
         cols = [c for c in cols if any(re.fullmatch(_CUR, x) for x in paths[c])]
     elif all(any(re.match(r"^전기", x) for x in paths[c]) for c in cols):
@@ -453,7 +484,9 @@ def _wide_sum(trs, hdr_pat):
         vals = [v for v in vals if v is not None]
         if not vals:
             continue
-        if any(x in _TOTAL_LAB for x in labs):
+        if _is_prior_row(r):
+            continue
+        if any(_is_total(x) for x in labs):
             totals += 1
             if totals == 1:
                 total = sum(vals)
@@ -486,7 +519,8 @@ def _long_sum(trs, row_pat, excl_pat):
     g = _grid(trs)
     width = max(len(r) for r in g)
     paths = [[r[c][0] for r in g[:n_hdr] if c < len(r) and r[c][0]] for c in range(width)]
-    cur = next((c for c in range(width) if any(re.fullmatch(_CUR, x) for x in paths[c])), None)
+    curs = [c for c in range(width) if any(re.fullmatch(_CUR, x) for x in paths[c])]
+    cur = next((c for c in curs if not any(re.search(r"채권|채무|잔액", x) for x in paths[c])), curs[0] if curs else None)   # '당기' 아래 '채권/채무 | 수익/비용'이면 수익/비용 쪽
     if cur is None:
         if not (paths and paths[-1] and re.fullmatch(r"(계|합계|총계)", paths[-1][-1])):
             return None
@@ -496,11 +530,18 @@ def _long_sum(trs, row_pat, excl_pat):
         if cur >= len(r) or r[cur][1]:
             continue
         labs = [x for x, _ in r[:cur] if x and num(x) is None]
-        if any(x in _TOTAL_LAB or re.search(r"소계$", x) for x in labs):
+        if any(_is_total(x) or re.search(r"소계$", x) for x in labs) or (_is_prior_row(r) and not re.fullmatch(r"전기말?", paths[cur][-1] if paths[cur] else "")):
             continue
         # '상품매출/매출채권등'처럼 거래와 잔액 이름을 빗금으로 묶은 칸은 빗금 앞(거래 이름)만 본다
-        if not any(re.search(row_pat, x.split("/")[0]) and not re.search(excl_pat, x.split("/")[0]) for x in labs):
+        kinds = [x for x in labs if re.search(r"매출|매입|수익|비용|원가", x)]
+        if len(kinds) > 1 and re.fullmatch(r"[가-힣]{2,4}/[가-힣]{2,4}|(매출|매입|수익|비용)(등|거래|등거래|거래등)", kinds[0]):
+            kinds = kinds[1:]            # '매출/매입 | 회사 | 상품매입', '매출등 | 회사 | 기타수익'처럼 앞 칸이 묶음 이름이면 뒤 칸(거래 이름)으로 판단
+        if not any(re.search(row_pat, x.split("/")[0]) and not re.search(excl_pat, x.split("/")[0]) for x in (kinds or labs)):
             continue
+        if any(re.fullmatch(r"(유형|무형|고정|투자)자산(의)?(취득|매입|구입|매각|처분)?|(주식|지분)(의)?(취득|매입|인수|매각|처분)", x) for x in labs):
+            continue                     # '매입 | 유형자산', '매출거래 | 유형자산매각' — 거래 내용 칸이 자산·주식 거래(회사 이름 '주식회사…'·'지분법피투자회사'는 해당 없음)
+        if any(re.search(r"임대료|임차료|이자|배당", x) and not re.search(r"매출|매입", x) for x in labs):
+            continue                     # '매출거래 | 임대료수입' — 묶음 이름만 매출이고 거래 내용은 임대·이자·배당
         v = num(r[cur][0])
         if v is not None:
             total += v
@@ -538,7 +579,7 @@ NO_REL_TX = re.compile(r"특수관계자(와|와의|와의주요|간)?(매출·?
 
 def related_sales(s, is_bizrep, revenue):
     """특수관계자 거래 주석의 매출 합계 ÷ 매출 → (비율, 근거)."""
-    sec, t = find_section(s, r"특수\s*관계", is_bizrep)
+    sec, t, _st = find_note(s, REL, r"특수\s*관계", is_bizrep)
     if not sec:
         return None, "특수관계자 절 못 찾음"
     plain = re.sub(r"\s", "", txt(sec))
@@ -640,7 +681,7 @@ def _purchase_ratio(r, why, bl):
 def related_purchases(s, is_bizrep, cogs=None, revenue=None):
     """특수관계자 거래 주석 표의 매입 합계 ÷ 매출원가(없으면 매출) → (비율, 근거).
     재고 매입 열·행(상품·원재료 매입 등)이 있으면 그것만, 없으면 '매입'이 붙은 열·행 전부(근거에 표시)."""
-    sec, t = find_section(s, r"특수\s*관계", is_bizrep)
+    sec, t, _st = find_note(s, REL, r"특수\s*관계", is_bizrep)
     if not sec:
         return None, "특수관계자 절 못 찾음"
     base, bl = (cogs, "매출원가") if cogs else (revenue, "매출")
@@ -682,7 +723,7 @@ CONTROL_KW = [("임원 겸직", r"겸직|겸임"), ("지배기업", r"지배기�
 
 def control_signals(s, is_bizrep):
     """특수관계자 주석에서 실질 지배 신호 문장 — 참고용, 법정 특수관계 판정 아님(판단은 조문 MCP). 반환 (신호 목록 [{kind, sentence}], 절 제목) — 절을 못 찾으면 (None, 사유)."""
-    sec, t = find_section(s, r"특수\s*관계", is_bizrep)
+    sec, t, _st = find_note(s, REL, r"특수\s*관계", is_bizrep)
     if not sec:
         return None, "특수관계자 절 못 찾음"
     text = re.sub(r"\s+", " ", txt(re.sub(r"<TR[^>]*>", " . ", sec)))

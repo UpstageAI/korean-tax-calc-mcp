@@ -67,8 +67,9 @@ def _ratio(a, b):
     return a / b if a is not None and b else None
 
 
-def _rows_from_sections(s, biz, kw):
-    sec, _ = ST.find_section(s, kw, biz)
+def _rows_from_sections(s, biz, kw, codes):
+    """주석 표의 행 — 자리는 문서 색인에 표준 코드(codes)로 묻는다(kw는 색인이 못 찾았을 수 있다고 할 때만 쓰는 낱말)."""
+    sec, _, _st = ST.find_note(s, codes, kw, biz)
     out = []
     for tb, ctx in ST.tables_in(sec)[:5]:
         out += ST.parse_group(ctx)[0]
@@ -204,14 +205,14 @@ def _profile_listed(R, corp, name, code, rows, fin_items, last, cls_ctx):
                                     rcept_no=brc, account="원재료 및 생산설비", note="; ".join(pr["problems"] + (["글이 길어 앞부분만"] if pr["truncated"] else [])))
         else:
             p["production"] = value(status=STATUS_NONE, rcept_no=brc, account="원재료 및 생산설비", note="; ".join(pr["problems"]))
-        sga = _rows_from_sections(s, True, r"판매비\s*와?\s*(일반)?관리비|판매비및관리비") + _rows_from_sections(s, True, r"비용의\s*성격")
+        sga = _rows_from_sections(s, True, r"판매비\s*와?\s*(일반)?관리비|판매비및관리비", ("D834310",)) + _rows_from_sections(s, True, r"비용의\s*성격", ("D834300",))
         sga_detail = any(re.match(r"^(급여|복리후생비|지급수수료|감가상각비)", l) for l, c, pr in sga)
         for k, pat, fld, lab in (("rnd", RND, "rnd_ratio", "연구개발비"), ("adv", ADV, "advert_ratio", "광고선전비·판매촉진비")):
             v, acc = _find(sga, pat)
             extra[k] = v
             p[fld] = value(_ratio(v, rev), rcept_no=brc, account=acc) if v is not None and rev else (
                 value(0.0, STATUS_NONE, rcept_no=brc, note=f"판관비 내역에 {lab} 계정 없음") if sga_detail else value(note="판관비 내역 못 찾음"))
-        inv_rows = _rows_from_sections(s, True, r"재고\s*자산")
+        inv_rows = _rows_from_sections(s, True, r"재고\s*자산", ("D826380",))
         items_inv = ST.inventory_items(inv_rows)
         p["raw_material_inv"] = value(bool(items_inv & {"원재료", "재공품"}), rcept_no=brc, account="재고자산 주석: " + "|".join(sorted(items_inv))) if items_inv else (
             value(False, STATUS_NONE, note="재고 계정 없음") if p["inv_to_sales"]["status"] == STATUS_NONE else value(note="재고 구성 주석 못 찾음"))
@@ -425,8 +426,8 @@ def _context(s, biz, name=None):
 
 
 def _signals(s, biz, stmt_cogs_rows, stmt_inv_rows, cogs_total, rc):
-    cogs_rows = list(stmt_cogs_rows) + _rows_from_sections(s, biz, r"매출\s*원가|영업\s*비용|비용의\s*성격")
-    inv_rows = list(stmt_inv_rows) + _rows_from_sections(s, biz, r"재고\s*자산")
+    cogs_rows = list(stmt_cogs_rows) + _rows_from_sections(s, biz, r"매출\s*원가|영업\s*비용|비용의\s*성격", ("D834300",))
+    inv_rows = list(stmt_inv_rows) + _rows_from_sections(s, biz, r"재고\s*자산", ("D826380",))
     return ST.goods_signals(cogs_rows, inv_rows, cogs_total, rc)
 
 
@@ -505,7 +506,7 @@ def _profile_unlisted(R, corp, name, code, rows, parsed, docs, last):
     p["ar_to_sales"] = value(_ratio(last["receivables"], rev), rcept_no=rc, account="매출채권/매출액") if last["receivables"] is not None and rev else value()
     if rev and None not in (last["receivables"], last["payables"]):
         p["wc_ratio"] = value(((last["receivables"] or 0) + (inv or 0) - (last["payables"] or 0)) / rev, rcept_no=rc, account="(매출채권+재고-매입채무)/매출액")
-    sga = is_ + _rows_from_sections(s, False, r"판매비\s*와?\s*(일반)?관리비|판매비및관리비")
+    sga = is_ + _rows_from_sections(s, False, r"판매비\s*와?\s*(일반)?관리비|판매비및관리비", ("D834310",))
     sga_detail = any(re.match(r"^(급여|복리후생비|지급수수료|감가상각비)", l) for l, c, pr in sga)
     extra = {}
     for k, pat, fld, lab in (("rnd", RND, "rnd_ratio", "연구개발비"), ("adv", ADV, "advert_ratio", "광고선전비·판매촉진비")):
@@ -513,7 +514,7 @@ def _profile_unlisted(R, corp, name, code, rows, parsed, docs, last):
         extra[k] = v
         p[fld] = value(_ratio(v, rev), rcept_no=rc, account=acc) if v is not None and rev else (
             value(0.0, STATUS_NONE, rcept_no=rc, note=f"판관비 내역에 {lab} 계정 없음") if sga_detail and col == 0 else value(note="판관비 내역 못 찾음"))
-    items_inv = ST.inventory_items(bs) or ST.inventory_items(_rows_from_sections(s, False, r"재고\s*자산"))
+    items_inv = ST.inventory_items(bs) or ST.inventory_items(_rows_from_sections(s, False, r"재고\s*자산", ("D826380",)))
     p["raw_material_inv"] = value(bool(items_inv & {"원재료", "재공품"}), rcept_no=rc, account="재고 구성: " + "|".join(sorted(items_inv))) if items_inv else (
         value(False, STATUS_NONE, note="재고 계정 없음") if p["inv_to_sales"]["status"] == STATUS_NONE else value(note="재고 구성 못 찾음"))
     r, why = ST.related_sales(s, False, rev)
