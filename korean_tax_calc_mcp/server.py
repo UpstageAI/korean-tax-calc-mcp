@@ -1282,12 +1282,16 @@ def tp_comparable_screen(tested_party: Annotated[dict, Field(description="분석
 언제: 이전가격 거래순이익률방법의 비교대상 후보를 국내 공시로 직접 찾고, 후보마다 기능·자산·위험 숫자를 붙여 분석대상과 비교하려 할 때.
 입력: 업종 코드 앞자리 → industry_codes, 분석 연도 → years, 상장 구분 → listed, 매출 범위(마지막 연도, 원) → revenue_min·revenue_max, 후보 수 → limit(상한 100),
   재무제표 기준 → fs_pref(별도 우선), 비상장 탐색 기간 → unlisted_window, 이번 실행 호출 상한 → max_calls, 색인만 쌓기 → build_index_only,
-  짧은 업종 코드 후보 거르기 → short_code_keywords(등록 코드가 입력보다 짧은 후보만 사업 설명 낱말로 거름, 예 ['화장품']).
+  짧은 업종 코드 후보 가르기 → short_code_subclass(기본 '거름': 등록 코드가 입력보다 짧은 후보를 분류표의 형제 항목 중 어디에 드는지 가려 다른 세분류는 뺌 | '표시만' | '끔'),
+  낱말로 거르기 → short_code_keywords(주면 세분류 판정 대신 사업 설명 낱말로만 거름, 예 ['화장품']).
 결과: 후보_행(tp_comparable_screen 입력 열 그대로 + 접수번호·연결/별도·바꾼 칸), 후보_프로필(값마다 상태: 확보 / 불명-없음(계정 없음 → 0) / 불명-못찾음),
-  매출_분류_방법(원문 매출유형·Solar·규칙 — 규칙이면 정확도_낮음), 업종_짧은코드_포함(등록 코드가 입력보다 짧아 들어온 회사 — 세분류 확인), 호출 수, 멈춤 사유와 남은_회사_수(같은 입력으로 다시 부르면 이어서 계속).
+  매출_분류_방법(원문 매출유형·Solar·규칙 — 규칙이면 정확도_낮음), 업종_짧은코드_포함(등록 코드가 입력보다 짧아 들어온 회사 — 판정·판정_세분류·근거_문장), 업종_짧은코드_다른세분류(주된 사업이 입력 밖 세분류로 판정돼 뺀 회사 — 근거 문장을 보고 사람이 되살릴 수 있음),
+  업종_짧은코드_확인필요(가르지 못해 빼지 않고 남긴 회사와 사유), 호출 수, 멈춤 사유와 남은_회사_수(같은 입력으로 다시 부르면 이어서 계속).
 처리: 재무는 상장 = 단일회사 재무 API(별도 우선, 없으면 연결), 비상장 = 감사보고서 원문 표(그 해 보고서, 없으면 다음 해 보고서의 전기 열). 매출 구성 금액은 원문 표 숫자만 쓰고,
   원문 매출유형 칸(제품·상품·용역)이 있으면 그것을 먼저 쓰고, 없으면 Solar(UPSTAGE_API_KEY 있을 때, 행 이름 + 사업보고서 '사업의 개요' 최대 4,000자) 또는 이름 규칙으로 재화·용역·SW·플랫폼·기타까지만 나누고,
   재화의 제품/상품 배분은 원문 매출원가(상품:제품, 없으면 재고 구성) 비율로 함 — 회계 신호가 없거나 분류와 회계가 엇갈리면 불명(사람 확인). 매출 구성 합계가 매출의 80~120%일 때만 비중을 확보로 둠.
+짧은 코드 세분류: 등록 코드 아래 한국표준산업분류 항목(입력과 같은 자릿수)을 선택지로, 이미 뽑은 사업 설명(앞 1,500자)과 매출 행 이름·비중만 Solar에 보내 주된 사업의 항목 하나와 근거 인용을 받음(UPSTAGE_API_KEY 필요, temperature 0·캐시).
+  인용이 보낸 글에 글자 그대로 없으면 판정을 버리고 '확인 필요'. 키 없음·설명 없음·모델이 못 가름도 '확인 필요'로 남기고 빼지 않음. 등록 코드가 주된 사업과 어긋난 회사, 공정 단계로 나뉜 분류는 틀릴 수 있어 뺀 목록을 남김.
 키: 환경변수 DART_API_KEY(본인 발급, 무료 — opendart.fss.or.kr, 약관상 본인만 사용). 없으면 이 도구만 꺼지고 발급 안내를 돌려줌.
 안전: 순차 호출·0.35초 간격·하루 상한(KR_COMPARABLES_DAILY_CAP, 기본 2,000)·실행 상한(max_calls)·한도 초과(020)·연속 오류 시 멈춤, 결과·오류에 키를 남기지 않음,
   캐시(KR_COMPARABLES_CACHE_DIR, 기본 ~/.cache/korean-tax-calc-mcp/opendart)로 같은 요청은 다시 부르지 않음 — 처음 실행은 회사 수만큼 호출이 들고, 상한에 닿으면 다시 실행해 이어감.
@@ -1305,14 +1309,15 @@ def kr_comparable_candidates(
         unlisted_window: Annotated[list[str] | None, Field(description="비상장 탐색 기간 [시작 YYYYMMDD, 끝 YYYYMMDD](3개월 이내, 생략하면 마지막 연도 다음 해 3월 — 12월 결산 감사보고서가 몰리는 달)")] = None,
         max_calls: Annotated[int, Field(description="이번 실행 OpenDART 호출 상한(기본 300) — 닿으면 멈추고 다시 실행하면 캐시로 이어감", ge=1, le=5000)] = 300,
         build_index_only: Annotated[bool, Field(description="true면 재무는 부르지 않고 회사 색인(기업개황 → 업종코드·결산월·법인구분)만 쌓음 — 비상장 모집단이 클 때 먼저 며칠에 나눠 색인을 채우는 용도")] = False,
-        short_code_keywords: Annotated[list[str] | None, Field(description="등록 업종 코드가 입력보다 짧은 후보(예: 입력 '2042'에 등록 '204')만 거르는 품목 낱말(예 ['화장품']) — 사업 설명에 하나도 없으면 후보에서 빼고 업종_짧은코드_설명불일치에 적음. 생략하면 짧은 코드 후보도 모두 넣고 표시만")] = None) -> dict:
+        short_code_keywords: Annotated[list[str] | None, Field(description="등록 업종 코드가 입력보다 짧은 후보(예: 입력 '2042'에 등록 '204')만 거르는 품목 낱말(예 ['화장품']) — 사업 설명에 하나도 없으면 후보에서 빼고 업종_짧은코드_설명불일치에 적음. 주면 세분류 판정(short_code_subclass)은 하지 않음")] = None,
+        short_code_subclass: Annotated[Literal["거름", "표시만", "끔"], Field(description="등록 업종 코드가 입력보다 짧은 후보를 한국표준산업분류의 형제 항목으로 가르기 — 거름(기본: 주된 사업이 입력 밖 세분류면 후보에서 빼고 업종_짧은코드_다른세분류에 적음)|표시만(빼지 않고 판정만 붙임)|끔(가르지 않음). 가르지 못한 후보는 어느 쪽이든 빼지 않음. short_code_keywords를 주면 적용 안 함")] = "거름") -> dict:
     from .engine.kr_comparables import candidates as KRC
     win = tuple(unlisted_window) if unlisted_window else None
     if win is not None and len(win) != 2:
         raise ValueError("unlisted_window는 [시작 YYYYMMDD, 끝 YYYYMMDD]")
     r = KRC.run(industry_codes=industry_codes, years=years, listed=listed, revenue_min=revenue_min, revenue_max=revenue_max,
                 limit=limit, fs_pref=fs_pref, unlisted_window=win, max_calls=max_calls, build_index_only=build_index_only,
-                short_code_keywords=short_code_keywords)
+                short_code_keywords=short_code_keywords, short_code_subclass=short_code_subclass)
     extra = {k: v for k, v in r.items() if k not in ("결과", "근거")}
     return _ok(r["결과"], r["근거"], **extra)
 

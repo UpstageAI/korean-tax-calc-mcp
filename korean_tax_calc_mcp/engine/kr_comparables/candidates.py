@@ -20,6 +20,7 @@ from .statements import title_sections as F_title_sections
 from . import revenue_mix as RM
 from . import sales_channel as SC
 from . import production as PRD
+from . import subclass as SUB
 from .dart import DartClient, DartStop, KEY_ENV, KEY_GUIDE, mask
 from .index import CorpIndex
 from .schema import STATUS_NONE, STATUS_UNKNOWN, empty_profile, value
@@ -45,6 +46,9 @@ def _corp_list(dc):
         raise DartStop("회사 목록(corpCode.xml)을 받지 못했습니다: " + raw.get("message", ""))
     root = ET.fromstring(_zip_main(raw))
     return [{k: (e.findtext(k) or "").strip() for k in ("corp_code", "corp_name", "stock_code")} for e in root.iter("list")]
+
+
+SUBCLASS_OPTS = ("거름", "표시만", "끔")
 
 
 def _match_industry(code, prefixes):
@@ -556,7 +560,7 @@ def _profile_unlisted(R, corp, name, code, rows, parsed, docs, last):
 
 def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=None, limit=30, fs_pref="별도",
         unlisted_window=None, max_calls=300, client=None, solar_http=None, upstage_key=None, build_index_only=False,
-        short_code_keywords=None):
+        short_code_keywords=None, short_code_subclass="거름"):
     """반환 {'결과': ..., '근거': [...], '주의': [...]} 또는 키 없음 안내."""
     key = os.environ.get(KEY_ENV, "")
     if client is None and not key:
@@ -581,7 +585,9 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
         else:
             code_info.append({"code": p_, "name": d_["name"], "level": d_["level"]})
     kws = [str(k).strip() for k in (short_code_keywords or []) if str(k).strip()]
-    short_drop = []
+    if short_code_subclass not in SUBCLASS_OPTS:
+        raise ValueError(f"short_code_subclass는 {SUBCLASS_OPTS} 중 하나")
+    short_drop, sub_other, sub_unsure = [], [], []
     dc = client or DartClient(key=key, max_calls=max_calls)
     up_key = upstage_key if upstage_key is not None else os.environ.get("UPSTAGE_API_KEY", "")
     R = _Run(dc, up_key, solar_http)
@@ -637,6 +643,18 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
                             short_drop.append({**ent, "사유": "등록 업종 코드가 입력보다 짧고 사업 설명에 short_code_keywords 낱말이 없음",
                                                "rcept_no": prof.get("rcept_no")})
                             continue
+                    elif short_code_subclass != "끔":       # 낱말을 주지 않았으면 분류표의 형제 항목으로 세분류를 가름
+                        jd = SUB.judge(prof, info.get("induty_code") or "", prefixes, up_key, solar_http, R.stat)
+                        ent.update({"판정": jd["판정"], "판정_세분류": jd["세분류"], "근거_문장": jd["근거_문장"], "사유": jd["사유"],
+                                    "rcept_no": prof.get("rcept_no")})
+                        if jd.get("확인_안_된_인용"):
+                            ent["확인_안_된_인용"] = jd["확인_안_된_인용"]
+                        if jd["판정"] == SUB.OTHER:
+                            sub_other.append(ent)
+                            if short_code_subclass == "거름":
+                                continue
+                        elif jd["판정"] == SUB.UNSURE:
+                            sub_unsure.append(ent)
                     short.append(ent)
                 found.append(c["corp_code"])
                 cand_rows += rows
@@ -660,6 +678,8 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
         "제외_목록": skipped[:50],
         "업종_짧은코드_포함": short,
         "업종_짧은코드_설명불일치": short_drop,
+        "업종_짧은코드_다른세분류": sub_other,
+        "업종_짧은코드_확인필요": sub_unsure,
         "매출_분류_방법": method or ["매출 행 없음"],
         "정확도_낮음": low_acc,
         "호출": {"OpenDART_실호출": dc.calls, "OpenDART_캐시": dc.cache_hits, "Solar_실호출": R.stat.get("solar_calls", 0),
@@ -670,7 +690,7 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
                    + (" 비상장 모집단(공시 목록)을 모으는 중에 멈춰 남은 수에 비상장은 아직 빠져 있습니다." if pool_cut else "") if stop else ""),
         "입력": {"industry_codes": prefixes, "years": years, "listed": listed, "revenue_min": revenue_min, "revenue_max": revenue_max, "limit": limit,
                  "fs_pref": fs_pref, "build_index_only": build_index_only, "short_code_keywords": kws,
-                 "업종_이름": code_info},
+                 "short_code_subclass": ("낱말 방식(short_code_keywords)을 써서 적용 안 함" if kws else short_code_subclass), "업종_이름": code_info},
         "색인": {"버전": IX.data["version"], "갱신": IX.data["updated"], "색인된_회사": len(IX.data["corps"]),
                  "모집단_색인": f"{ix_n}/{ix_N}", "완료": ix_N > 0 and ix_n == ix_N, "비상장_모집단_일수": len(IX.data["days"]),
                  "안내": ("" if ix_N and ix_n == ix_N else f"색인 {ix_n}/{ix_N} — 같은 입력으로 다시 부르면 이어서 계속(하루 상한 KR_COMPARABLES_DAILY_CAP 안에서)")},
@@ -684,9 +704,20 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
         notes.append(UPSTAGE_GUIDE)
     if v10_notes:
         notes.append("입력 업종 코드 중 10차 코드를 11차로 바꿔 찾음(OpenDART 등록 코드는 11차): " + "; ".join(v10_notes))
-    if short and not kws:
+    if kws and short_code_subclass != "끔":
+        notes.append("short_code_keywords를 주어 낱말 방식으로만 걸렀습니다 — 분류표 세분류 판정(short_code_subclass)은 하지 않음. 세분류 판정을 쓰려면 short_code_keywords를 비우세요.")
+    n_short = len(short) + (len(sub_other) if short_code_subclass == "거름" else 0)
+    if n_short and not kws and short_code_subclass == "끔":
         notes.append(f"등록 업종 코드가 입력보다 짧은 후보 {len(short)}개(업종_짧은코드_포함) — 세분류가 달라도 들어옴(예: '204' 기타 화학제품은 화장품·계면활성제·전자재료를 모두 포함). "
-                     "short_code_keywords에 품목 낱말(예: ['화장품'])을 주면 사업 설명에 그 낱말이 없는 짧은 코드 후보는 후보에서 빼고 업종_짧은코드_설명불일치에 적음.")
+                     "short_code_subclass를 '거름'으로 두거나 short_code_keywords에 품목 낱말(예: ['화장품'])을 주면 거름.")
+    if n_short and not kws and short_code_subclass != "끔":
+        n_in = sum(1 for e in short if e.get("판정") == SUB.IN)
+        act = "후보에서 빼고" if short_code_subclass == "거름" else "빼지 않고"
+        notes.append(f"등록 업종 코드가 입력보다 짧은 후보 {n_short}개를 한국표준산업분류의 형제 항목으로 갈랐습니다(Solar, 사업 설명·매출 행 이름만 보고 근거 인용이 원문에 있는지 확인): "
+                     f"입력 세분류 {n_in}개 유지, 다른 세분류 {len(sub_other)}개는 {act} 업종_짧은코드_다른세분류에 적음, 확인 필요 {len(sub_unsure)}개는 빼지 않고 업종_짧은코드_확인필요에 적음. "
+                     "등록 코드가 주된 사업과 어긋나는 회사도 있고 공정 단계로 나뉜 분류(예: 제강·압연)는 설명만으로 가르기 어렵습니다 — 다른 세분류 목록은 근거 문장을 보고 사람이 되살릴 수 있습니다.")
+        if not up_key:
+            notes.append("UPSTAGE_API_KEY가 없어 짧은 코드 후보의 세분류를 가르지 못했습니다 — 모두 '확인 필요'로 남김.")
     if short_drop:
         notes.append(f"짧은 코드 후보 {len(short_drop)}개를 사업 설명 낱말 불일치로 뺌(업종_짧은코드_설명불일치) — 글자 일치만 본 것이라 사람이 목록을 훑어 되살릴 수 있음.")
     if stop:

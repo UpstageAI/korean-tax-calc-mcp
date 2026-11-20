@@ -218,10 +218,8 @@ def solar_http(body, key):
         return json.load(r)
 
 
-def classify_solar(labels, ctx, key, http=None, stat=None):
-    """Solar 분류(캐시). 실패·상한이면 None(호출한 쪽이 규칙 분류로 대체)."""
-    text = "\n".join(f"id={i}: {l}" for i, l in enumerate(labels))
-    body = {"model": SOLAR_MODEL, "messages": [{"role": "user", "content": PROMPT.replace("{ctx}", ctx[:4100]) + text}], "temperature": 0}
+def solar_cached(body, key, http=None, stat=None):
+    """Solar 한 번 부르기(캐시·일시 오류 재시도·호출 상한). 같은 요청은 캐시에서 같은 답. 실패하면 None(오류는 stat에 적음)."""
     d_dir = os.path.join(cache_dir(), "solar")
     os.makedirs(d_dir, exist_ok=True)
     f = os.path.join(d_dir, "v2_" + hashlib.sha1(json.dumps(body, ensure_ascii=False).encode()).hexdigest()[:16] + ".json")
@@ -230,22 +228,37 @@ def classify_solar(labels, ctx, key, http=None, stat=None):
         if os.path.exists(f):
             d = json.load(open(f, encoding="utf-8"))
             stat["solar_cached"] = stat.get("solar_cached", 0) + 1
-        else:
-            if stat.get("solar_cap") is not None and stat.get("solar_calls", 0) >= stat["solar_cap"]:
-                raise RuntimeError("Solar 호출 상한")
-            d = None
-            for attempt in range(1 + RETRIES):       # 일시 오류만 재시도(1·2·4초), 다 실패하면 아래 except → 규칙 분류
-                stat["solar_calls"] = stat.get("solar_calls", 0) + 1
-                try:
-                    d = (http or solar_http)(body, key)
-                    break
-                except Exception as e:
-                    if not transient(e) or attempt == RETRIES:
-                        raise
-                    stat["solar_retries"] = stat.get("solar_retries", 0) + 1
-                    _sleep(BACKOFF[attempt])
-            with open(f, "w", encoding="utf-8") as fh:
-                json.dump(d, fh, ensure_ascii=False)
+            return d
+        if stat.get("solar_cap") is not None and stat.get("solar_calls", 0) >= stat["solar_cap"]:
+            raise RuntimeError("Solar 호출 상한")
+        d = None
+        for attempt in range(1 + RETRIES):       # 일시 오류만 재시도(1·2·4초), 다 실패하면 아래 except
+            stat["solar_calls"] = stat.get("solar_calls", 0) + 1
+            try:
+                d = (http or solar_http)(body, key)
+                break
+            except Exception as e:
+                if not transient(e) or attempt == RETRIES:
+                    raise
+                stat["solar_retries"] = stat.get("solar_retries", 0) + 1
+                _sleep(BACKOFF[attempt])
+        with open(f, "w", encoding="utf-8") as fh:
+            json.dump(d, fh, ensure_ascii=False)
+        return d
+    except Exception as e:
+        stat.setdefault("solar_errors", []).append(mask(f"{type(e).__name__}: {e}", key))
+        return None
+
+
+def classify_solar(labels, ctx, key, http=None, stat=None):
+    """Solar 분류(캐시). 실패·상한이면 None(호출한 쪽이 규칙 분류로 대체)."""
+    text = "\n".join(f"id={i}: {l}" for i, l in enumerate(labels))
+    body = {"model": SOLAR_MODEL, "messages": [{"role": "user", "content": PROMPT.replace("{ctx}", ctx[:4100]) + text}], "temperature": 0}
+    stat = stat if stat is not None else {}
+    d = solar_cached(body, key, http, stat)
+    if d is None:
+        return None
+    try:
         j = json.loads(re.search(r"\{.*\}", d["choices"][0]["message"]["content"], re.S).group(0))
         return {int(x["id"]): (KO5.get(x.get("category"), "other"), (x.get("reason") or "")[:40]) for x in j.get("rows", [])}
     except Exception as e:

@@ -364,11 +364,12 @@ def test_tool_registered_and_findable(monkeypatch, tmp_path):
 
 # ---------- 짧은 업종 코드 거르기(short_code_keywords) — Claude 작성(2026-11-17) ----------
 def test_short_code_without_keywords_kept_and_noted(env):
-    """입력 '4652'에 등록 '465'(휴맥스)는 짧은 코드 — 낱말을 안 주면 종전처럼 넣고 표시·안내만."""
-    out = run(Transport(), industry_codes=["4652"], listed="상장")
+    """입력 '4652'에 등록 '465'(휴맥스)는 짧은 코드 — 세분류 판정을 끄면(short_code_subclass='끔') 종전처럼 넣고 표시·안내만."""
+    out = run(Transport(), industry_codes=["4652"], listed="상장", short_code_subclass="끔")
     r = out["결과"]
     assert r["후보_수"] == 2 and [x["company_name"] for x in r["업종_짧은코드_포함"]] == ["(주)휴맥스"]
     assert r["업종_짧은코드_설명불일치"] == [] and any("short_code_keywords" in n for n in out["주의"])
+    assert r["업종_짧은코드_다른세분류"] == [] and r["업종_짧은코드_확인필요"] == [] and "판정" not in r["업종_짧은코드_포함"][0]
 
 
 def test_short_code_keywords_drop_unmatched_only(env):
