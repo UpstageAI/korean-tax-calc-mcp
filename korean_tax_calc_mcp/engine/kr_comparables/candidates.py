@@ -29,7 +29,7 @@ LISTED_OPTS = ("상장", "비상장", "둘 다")
 UPSTAGE_GUIDE = "UPSTAGE_API_KEY가 없어 매출 행을 이름 규칙으로 분류했습니다(정확도 낮음). 키 발급: https://console.upstage.ai"
 CANDIDATE_COLS = ["company_id", "company_name", "country", "industry_code", "year", "currency", "revenue", "cogs", "opex", "operating_profit",
                   "total_assets", "inventory", "receivables", "payables", "rnd_expense", "advertising_expense", "related_party_revenue",
-                  "max_shareholder_pct", "rcept_no", "fs_div", "changed_cells"]
+                  "max_shareholder_pct", "control_note", "rcept_no", "fs_div", "changed_cells"]
 
 
 def _zip_main(raw, rcept_no=None):
@@ -725,6 +725,7 @@ def _one(R, kind, corp, info, years, fs_pref, rmin, rmax):
                                note=f"분석 연도 {len(with_op)}년 중 {k}년 영업손실") if with_op else value(note="영업이익 자료 없음")
     out = []
     ms = prof["max_shareholder_pct"]["value"]
+    cn = control_note((prof.get("control_signals") or {}).get("value"))
     rel = prof["related_sales_ratio"]["value"]
     for r in rows:
         is_last = r["year"] == last["year"]
@@ -732,5 +733,17 @@ def _one(R, kind, corp, info, years, fs_pref, rmin, rmax):
                     **{k: r.get(k) for k in ("year", "revenue", "cogs", "opex", "operating_profit", "total_assets", "inventory", "receivables", "payables", "rcept_no", "fs_div", "changed_cells")},
                     "rnd_expense": extra.get("rnd") if is_last else None, "advertising_expense": extra.get("adv") if is_last else None,
                     "related_party_revenue": round(rel * r["revenue"]) if (is_last and rel is not None and r.get("revenue")) else None,
-                    "max_shareholder_pct": ms})
+                    "max_shareholder_pct": ms, "control_note": cn})
     return out, prof
+
+
+CONTROL_NOTE_KINDS = ("지배기업", "기업집단 계열")
+
+
+def control_note(signals, limit=160):
+    """프로필의 실질 지배 신호 중 지배기업·기업집단 계열 문장만 후보 행에 실을 한 줄로 — 선별(tp_comparable_screen)이 지분율 자료가 없는 후보를
+    '검토 필요'로 표시하는 근거. 자금 대여·유의적 영향력 문장은 싣지 않음. 해당 문장이 없으면 None."""
+    parts = [f"{s.get('kind')}: {' '.join(str(s.get('sentence') or '').split())}" for s in (signals or [])
+             if isinstance(s, dict) and s.get("kind") in CONTROL_NOTE_KINDS and s.get("sentence")]
+    parts = list(dict.fromkeys(parts))
+    return ("; ".join(parts)[:limit] or None) if parts else None
