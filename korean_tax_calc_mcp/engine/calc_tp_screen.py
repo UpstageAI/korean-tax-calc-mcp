@@ -49,6 +49,7 @@ SCREEN_NOTE = {"independence_pct": "[관행] 최대주주 지분 상한", "rnd_m
                "loss_years": "[관행] 손실 연도 수 — loss_action=review면 사람 확인, exclude면 탈락", "outlier_k": "[관행] 이상치 표시, 자동 탈락하지 않음"}
 PLI = {"OM": "매출액 대비 거래순이익(영 제8조①1호)", "ROA": "자산 대비 거래순이익(영 제8조①2호)",
        "NCP": "매출원가·영업비용 대비 거래순이익(영 제8조①3호)", "BERRY": "영업비용 대비 매출총이익(영 제8조①4호)"}
+NO_INDEP = "독립성 자료 없음(최대주주 지분율·독립성 지표)"
 SRC_COLS = ("rcept_no", "fs_div", "accounting_standard", "collected_at", "source")   # 개별기업보고서 Ⅱ-12 출처 칸
 NUM_COLS = ["revenue", "cogs", "opex", "operating_profit", "total_assets", "inventory", "receivables", "payables",
             "rnd_expense", "advertising_expense", "related_party_revenue", "max_shareholder_pct", "relevant_segment_share", "employees"]
@@ -177,7 +178,7 @@ def _parse(rows):
         rec["_src"] = {k: str(r[k]).strip() for k in SRC_COLS if r.get(k) not in (None, "")}
         c["years"][y] = rec
         for k in ("company_name", "country", "industry_code", "currency", "bvd_independence", "special_flag",
-                  "manual_decision", "manual_reason", "evidence", "reviewer", "accounting_standard", "fiscal_year_end"):
+                  "manual_decision", "manual_reason", "evidence", "reviewer", "accounting_standard", "fiscal_year_end", "control_note"):
             v = r.get(k)
             if v not in (None, "") and k not in c["meta"]:
                 c["meta"][k] = str(v).strip()
@@ -202,9 +203,19 @@ def _screen_company(c, years, sc, tested):
     """회사 하나를 모든 스크린으로 평가 → {스크린: (상태, 사유)}. 상태: 통과·탈락·표시·검토 필요·건너뜀."""
     m, yd = c["meta"], c["years"]
     out = {}
+    ind = (m.get("bvd_independence") or "").upper()
+    if m.get("max_shareholder_pct") is None and not ind:
+        # 독립성 자료(최대주주 지분율·데이터베이스 독립성 지표)가 하나도 없는 후보 — 0%로 보고 '통과'시키지 않는다(2026-11-20).
+        # 지배·계열 관계 서술(control_note)이 있으면 사람 확인, 없으면 건너뜀. 자료가 없다는 이유로 떨어뜨리지는 않음.
+        note = (m.get("control_note") or "").strip()
+        if note:
+            out["S1a"] = ("검토 필요", f"{NO_INDEP} · 지배·계열 관계 서술 있음({note}) — 지분율이 50% 이상인지 확인(법 제2조①3호·영 제2조②)")
+        else:
+            out["S1a"] = ("건너뜀", f"{NO_INDEP} — 독립성을 확인하지 못함")
+        out["S1b"] = ("건너뜀", "꺼짐") if sc["independence_pct"] is None and not sc["independence_bvd_reject"] else ("건너뜀", f"{NO_INDEP}")
+        return _screen_rest(m, yd, years, sc, tested, out)
     sh = m.get("max_shareholder_pct") or Fraction(0)
     out["S1a"] = ("탈락", f"최대주주 {float(sh):.0f}% ≥ 50% — [법정 준용] 거래 당사자 간 특수관계 기준(법 제2조①3호·영 제2조②)을 비교대상에 준용, 특수관계기업 간 거래 자료는 비교대상 불가(기본통칙 8-0…1), 끌 수 없음") if sh >= 50 else ("통과", "")
-    ind = (m.get("bvd_independence") or "").upper()
     lim = sc["independence_pct"]
     if lim is None and sc["independence_bvd_reject"]:
         lim = 50
@@ -216,6 +227,11 @@ def _screen_company(c, years, sc, tested):
         out["S1b"] = ("탈락", f"독립성 지표 {ind or '-'}·최대주주 {float(sh):.0f}% — 관행 기준 {lim}%")
     else:
         out["S1b"] = ("통과", "")
+    return _screen_rest(m, yd, years, sc, tested, out)
+
+
+def _screen_rest(m, yd, years, sc, tested, out):
+    """S2~S11 — 독립성(S1a·S1b) 뒤의 스크린."""
     have = [y for y in years if y in yd and yd[y].get("revenue") is not None and yd[y].get("operating_profit") is not None]
     if len(have) == len(years):
         out["S2"] = ("통과", "")
@@ -459,6 +475,11 @@ def comparable_screen(rows=None, file_path=None, column_map=None, tested_party=N
     if not search_log:
         경고.append("search_log 없음 — 데이터베이스 이름·추출일·검색 단계별 조건과 남은 수를 넣지 않으면 앞단 탐색 과정을 재현할 수 없음(개별기업보고서 Ⅱ-12)")
 
+    no_indep = [cid for cid in companies if NO_INDEP in rows_res[cid]["S1a"][1]]
+    if no_indep:
+        review = sum(1 for cid in no_indep if rows_res[cid]["S1a"][0] == "검토 필요")
+        경고.append(f"독립성 자료 없는 후보 {len(no_indep)}곳 — 최대주주 지분율·독립성 지표가 없어 독립성 스크린(S1a·S1b)을 적용하지 못함"
+                  + (f"(그중 지배·계열 관계 서술이 있는 {review}곳은 '검토 필요')" if review else "") + ". 지분 구조를 따로 확인해야 함")
     if len(final) < 2:
         return {**({"안내": NO_PRACTICE} if not any(sc.get(k) not in (None, [], "") for k in PRACTICE_KEYS) else {}),
                 "error": "비교대상이 둘 미만 — 정상가격 범위를 산정할 수 없음(시행령 제15조⑤: 둘 이상의 거래)",
