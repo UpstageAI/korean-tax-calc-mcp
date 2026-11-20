@@ -111,7 +111,7 @@ def _desc(tr):
 
 def test_run_drops_other_subclass_and_lists_it(env):
     q = _desc(Transport())[:40]
-    out = run(Transport(), industry_codes=["4652"], listed="상장", upstage_key="u" * 20, solar_http=_sub_solar("4659", q))
+    out = run(Transport(), industry_codes=["4652"], listed="상장", short_code_subclass="거름", upstage_key="u" * 20, solar_http=_sub_solar("4659", q))
     r = out["결과"]
     assert r["후보_수"] == 1 and r["업종_짧은코드_포함"] == []
     d = r["업종_짧은코드_다른세분류"]
@@ -128,10 +128,45 @@ def test_run_keeps_in_scope_and_unsure(env, monkeypatch, tmp_path):
     assert r["후보_수"] == 2 and len(r["업종_짧은코드_확인필요"]) == 1 and r["업종_짧은코드_다른세분류"] == []
 
 
-def test_run_mark_only_keeps_other(env):
+def _same_candidates(a, b):
+    return a["후보_수"] == b["후보_수"] and a["후보_행"] == b["후보_행"] and a["후보_프로필"] == b["후보_프로필"]
+
+
+def _baseline():
+    """세분류 판정을 끈 결과 — 0.69.0의 후보 수·후보 행·프로필과 같음."""
+    return run(Transport(), industry_codes=["4652"], listed="상장", short_code_subclass="끔", upstage_key="u" * 20, solar_http=_gold_solar)["결과"]
+
+
+def test_default_is_mark_only_and_candidates_unchanged(env):
+    """기본값은 '표시만' — 다른 세분류로 판정돼도 후보 수·후보 행·프로필은 판정을 끈 것과 같고 판정 칸만 붙음."""
     q = _desc(Transport())[:40]
-    r = run(Transport(), industry_codes=["4652"], listed="상장", short_code_subclass="표시만", upstage_key="u" * 20, solar_http=_sub_solar("4659", q))["결과"]
-    assert r["후보_수"] == 2 and len(r["업종_짧은코드_다른세분류"]) == 1 and r["업종_짧은코드_포함"][0]["판정"] == SC.OTHER
+    base = _baseline()
+    out = run(Transport(), industry_codes=["4652"], listed="상장", upstage_key="u" * 20, solar_http=_sub_solar("4659", q))
+    r = out["결과"]
+    assert r["입력"]["short_code_subclass"] == "표시만" and _same_candidates(r, base) and r["후보_수"] == 2
+    assert len(r["업종_짧은코드_다른세분류"]) == 1 and r["업종_짧은코드_포함"][0]["판정"] == SC.OTHER
+    ent = {k: v for k, v in r["업종_짧은코드_포함"][0].items() if k in base["업종_짧은코드_포함"][0]}
+    assert ent == base["업종_짧은코드_포함"][0]                      # 종전 칸은 그대로, 판정 칸만 추가
+    assert any("참고용" in n and "정확도가 크게 다르고" in n for n in out["주의"]) and any("빼지 않고" in n for n in out["주의"])
+    r2 = run(Transport(), industry_codes=["4652"], listed="상장", short_code_subclass="표시만", upstage_key="u" * 20, solar_http=_sub_solar("4659", q))["결과"]
+    assert _same_candidates(r2, r)
+
+
+def test_default_keeps_candidates_without_key_or_on_solar_failure(env, monkeypatch, tmp_path):
+    base = _baseline()
+    no_key = run(Transport(), industry_codes=["4652"], listed="상장")["결과"]            # 키 없음(매출 분류도 규칙으로 바뀌므로 수와 회사만 비교)
+    assert no_key["후보_수"] == base["후보_수"] and [p["company_id"] for p in no_key["후보_프로필"]] == [p["company_id"] for p in base["후보_프로필"]]
+    assert len(no_key["업종_짧은코드_확인필요"]) == 1 and no_key["업종_짧은코드_다른세분류"] == []
+
+    def failing(body, key):                                                              # 세분류 판정 호출만 실패
+        if "한국표준산업분류" in body["messages"][0]["content"]:
+            raise ValueError("고장")
+        return _gold_solar(body, key)
+    for mode in ("표시만", "거름"):
+        monkeypatch.setenv("KR_COMPARABLES_CACHE_DIR", str(tmp_path / ("f_" + mode)))
+        r = run(Transport(), industry_codes=["4652"], listed="상장", short_code_subclass=mode, upstage_key="u" * 20, solar_http=failing)["결과"]
+        assert r["후보_수"] == base["후보_수"] and r["후보_행"] == base["후보_행"]
+        assert r["업종_짧은코드_확인필요"][0]["사유"] == "Solar 호출 실패" and r["업종_짧은코드_다른세분류"] == []
 
 
 def test_run_without_key_keeps_all_as_unsure(env):

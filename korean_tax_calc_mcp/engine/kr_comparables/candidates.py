@@ -560,7 +560,7 @@ def _profile_unlisted(R, corp, name, code, rows, parsed, docs, last):
 
 def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=None, limit=30, fs_pref="별도",
         unlisted_window=None, max_calls=300, client=None, solar_http=None, upstage_key=None, build_index_only=False,
-        short_code_keywords=None, short_code_subclass="거름"):
+        short_code_keywords=None, short_code_subclass="표시만"):
     """반환 {'결과': ..., '근거': [...], '주의': [...]} 또는 키 없음 안내."""
     key = os.environ.get(KEY_ENV, "")
     if client is None and not key:
@@ -709,13 +709,15 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
     n_short = len(short) + (len(sub_other) if short_code_subclass == "거름" else 0)
     if n_short and not kws and short_code_subclass == "끔":
         notes.append(f"등록 업종 코드가 입력보다 짧은 후보 {len(short)}개(업종_짧은코드_포함) — 세분류가 달라도 들어옴(예: '204' 기타 화학제품은 화장품·계면활성제·전자재료를 모두 포함). "
-                     "short_code_subclass를 '거름'으로 두거나 short_code_keywords에 품목 낱말(예: ['화장품'])을 주면 거름.")
+                     "short_code_subclass를 '표시만'(판정만 붙임)·'거름'(다른 세분류는 뺌)으로 두거나 short_code_keywords에 품목 낱말(예: ['화장품'])을 주면 가름.")
     if n_short and not kws and short_code_subclass != "끔":
         n_in = sum(1 for e in short if e.get("판정") == SUB.IN)
-        act = "후보에서 빼고" if short_code_subclass == "거름" else "빼지 않고"
-        notes.append(f"등록 업종 코드가 입력보다 짧은 후보 {n_short}개를 한국표준산업분류의 형제 항목으로 갈랐습니다(Solar, 사업 설명·매출 행 이름만 보고 근거 인용이 원문에 있는지 확인): "
-                     f"입력 세분류 {n_in}개 유지, 다른 세분류 {len(sub_other)}개는 {act} 업종_짧은코드_다른세분류에 적음, 확인 필요 {len(sub_unsure)}개는 빼지 않고 업종_짧은코드_확인필요에 적음. "
-                     "등록 코드가 주된 사업과 어긋나는 회사도 있고 공정 단계로 나뉜 분류(예: 제강·압연)는 설명만으로 가르기 어렵습니다 — 다른 세분류 목록은 근거 문장을 보고 사람이 되살릴 수 있습니다.")
+        act = "후보에서 빼고" if short_code_subclass == "거름" else "빼지 않고(후보 그대로)"
+        notes.append(f"등록 업종 코드가 입력보다 짧은 후보 {n_short}개(세분류가 달라도 들어옴)에 한국표준산업분류 형제 항목 판정을 붙였습니다(Solar, 사업 설명·매출 행 이름만 보고 근거 인용이 원문에 있는지 확인): "
+                     f"입력 세분류 {n_in}개, 다른 세분류 {len(sub_other)}개는 {act} 업종_짧은코드_다른세분류에 적음, 확인 필요 {len(sub_unsure)}개는 업종_짧은코드_확인필요에 적음.")
+        notes.append("세분류 판정은 참고용입니다 — 업종에 따라 정확도가 크게 다르고(품목이 뚜렷이 다른 분류는 잘 가르지만 공정 단계로 나뉘거나 '기타' 항목이 큰 분류는 자주 틀림) 등록 코드가 주된 사업과 어긋난 회사도 있습니다. "
+                     "근거 문장을 보고 사람이 고르세요. 다른 세분류를 자동으로 빼려면 short_code_subclass='거름'(뺀 목록은 남음)"
+                     + (", 낱말로 거르려면 short_code_keywords." if short_code_subclass != "거름" else "."))
         if not up_key:
             notes.append("UPSTAGE_API_KEY가 없어 짧은 코드 후보의 세분류를 가르지 못했습니다 — 모두 '확인 필요'로 남김.")
     if short_drop:
