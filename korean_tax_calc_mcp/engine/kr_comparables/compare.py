@@ -10,6 +10,7 @@ rules 키(단위) — 없는 키의 기준은 끔
   advert_mult·sga_mult(배, 1/x~x — advert_mult가 없으면 광고는 ratio_low~ratio_high) · advert_abs_tol·sga_abs_tol(비율 차이) — 광고판촉/매출·판관비/매출
   independence_legal_pct(%, 50 이하만 — 더 엄격하게만), control_dependence(비율, 0.5 이하만) — 법정 기준, 안 주면 50%
   related_review(비율) — 특수관계 매출 또는 매입 비중 이상이면 사람 확인
+  related_purchase_review(비율) — 특수관계 매입 비중(÷ 매출원가)을 따로 줄 때. 안 주면 매입에도 related_review를 씀
   loss_review_years(연도 수) · unknown_review_count(개) · mix_unverified_review(비율)
 종합(기준을 준 항목만)
   제외 후보: [M1] 매출 구성 다름 / [K3] 재고·유형자산 둘 다 다름 / [K4] 원재료 재고 유무가 다르고 재고 또는 유형자산도 다름 / [I1] 최대주주 50% 이상(법정 준용)
@@ -26,7 +27,7 @@ from .schema import STATUS_OK, STATUS_NONE
 # 법정 기준만 상수로 둔다(시행령 제2조② — 의결권 50%, 실질 지배의 거래 의존 50%). 나머지 기준은 rules로만.
 LEGAL_RULES = {"independence_legal_pct": 50.0, "control_dependence": 0.50}
 RULE_KEYS = ("mix_max_diff", "coverage_min", "coverage_max", "ratio_low", "ratio_high", "ppe_abs_tol", "rnd_abs_tol",
-             "advert_mult", "advert_abs_tol", "sga_mult", "sga_abs_tol", "related_review", "loss_review_years",
+             "advert_mult", "advert_abs_tol", "sga_mult", "sga_abs_tol", "related_review", "related_purchase_review", "loss_review_years",
              "unknown_review_count", "mix_unverified_review")
 ALL_KEYS = tuple(LEGAL_RULES) + RULE_KEYS
 # 실질 지배 — 공시 숫자로 못 재는 항목은 질문으로 붙임(시행령 제2조②)
@@ -44,6 +45,7 @@ RULE_SOURCE = {
     "independence_legal_pct": ("법정 준용", "국조법 시행령 제2조제2항(의결권 주식 50% 이상)을 비교대상 독립성에 준용"),
     "control_dependence": ("법정 준용", "국조법 시행령 제2조제2항 실질 지배(사업활동의 50% 이상 거래 의존)를 숫자 신호로 — 사람 확인"),
     "related_review": ("관행", "특수관계 매출 또는 매입 비중 — 사람 확인. " + NOT_LEGAL),
+    "related_purchase_review": ("관행", "특수관계 매입 비중(÷ 매출원가) — 주면 매입 쪽은 이 값으로, 안 주면 related_review를 매입에도 씀. " + NOT_LEGAL),
     "loss_review_years": ("관행", "손실 연도 수 — 자동 제외하지 않고 사람 확인"),
     "mix_max_diff": ("우리 규칙", "매출 구성 주된 갈래 비중 차이"),
     "coverage_min": ("우리 규칙", "매출 구성 커버리지 하한"), "coverage_max": ("우리 규칙", "매출 구성 커버리지 상한"),
@@ -241,8 +243,9 @@ def compare_profile(tested, cand, rules=None):
         excl.append(indep[-1])
     rs_, rp_ = _num(cand.get("related_sales_ratio"), False), _num(cand.get("related_purchase_ratio"), False)
     for x, lab in ((rs_, "매출"), (rp_, "매입")):
-        if x is not None and _has(r, "related_review") and x >= r["related_review"] - EPS:
-            indep.append(f"[I2] 특수관계 {lab} {x:.0%} ≥ {r['related_review']:.0%}(관행) — 사람 확인, 법정 특수관계 판정 아님")
+        rk = "related_purchase_review" if lab == "매입" and _has(r, "related_purchase_review") else "related_review"
+        if x is not None and _has(r, rk) and x >= r[rk] - EPS:
+            indep.append(f"[I2] 특수관계 {lab} {x:.0%} ≥ {r[rk]:.0%}(관행) — 사람 확인, 법정 특수관계 판정 아님")
             review.append(indep[-1])
         if x is not None and x >= r["control_dependence"] - EPS:
             review.append(f"[C2] 특수관계 {lab} 의존 {x:.0%} ≥ {r['control_dependence']:.0%} — 실질 지배 신호(법정 준용, 국조법 시행령 제2조제2항), 사람 확인")

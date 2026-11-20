@@ -20,10 +20,10 @@ from .calc_tp import _quantile, quartile_sensitivity, QM_ALL, norm_qm, median_of
 
 SCREEN_NAMES = {
     "S1a": "독립성(법정 하한 50%)", "S1b": "독립성(관행)", "S2": "자료 충분성", "S3": "업종 코드", "S4": "규모",
-    "S5": "지속 손실", "S6": "연구개발 강도", "S7": "광고 강도", "S8": "운전자본 강도", "S9": "특수관계 매출",
+    "S5": "지속 손실", "S6": "연구개발 강도", "S7": "광고 강도", "S8": "운전자본 강도", "S9": "특수관계 매출", "S9b": "특수관계 매입",
     "S10": "해당 부문 비중", "S11": "특수 상황", "S12": "정성 판단(사람)", "S13": "이상치",
 }
-FUNNEL_ORDER = ["S1a", "S1b", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12"]
+FUNNEL_ORDER = ["S1a", "S1b", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S9b", "S10", "S11", "S12"]
 # 선정 기준 키 — 관행·우리 규칙 값은 두지 않는다(None = 그 기준 끔). 값은 조문 MCP transfer_pricing_guide(비교대상 선정 기준)가 주는 것을 screens로 받는다.
 # 이 도구가 스스로 적용하는 것은 법정 기준뿐: S1a 최대주주 50% 이상(법정 준용), 비교대상 둘 이상(시행령 제15조⑤).
 DEFAULT_SCREENS = {
@@ -37,6 +37,7 @@ DEFAULT_SCREENS = {
     "rnd_max": None, "adv_max": None,           # 연구개발비/매출·광고선전비/매출 상한(소수) — S6·S7
     "wc_band": None,                            # 운전자본/매출 차이 표시 폭(소수) — S8
     "related_max": None, "segment_min": None,   # 특수관계 매출/매출 상한·해당 부문 비중 하한(소수) — S9·S10
+    "related_purchase_max": None,               # 특수관계 매입/매출원가 상한(소수) — S9b
     "special_flags": None,                      # 탈락시킬 special_flag 값 목록 — S11
     "outlier_k": None,                          # 이상치 표시 IQR 배수 — S13(표시만)
     "sample_min": None, "spread_ratio": None,   # 표본·편차 경고(표시만)
@@ -45,14 +46,14 @@ DEFAULT_SCREENS = {
 PRACTICE_KEYS = [k for k in DEFAULT_SCREENS if k not in ("crisis_exception", "loss_action", "require_all_years", "op_tolerance")]
 NO_PRACTICE = "관행 기준 미적용 — 조문 MCP transfer_pricing_guide(비교대상 선정 기준)의 값을 screens로 넣으세요. 지금은 법정 기준(최대주주 50% 이상, 비교대상 둘 이상)만 적용"
 SCREEN_NOTE = {"independence_pct": "[관행] 최대주주 지분 상한", "rnd_max": "[관행] 연구개발비/매출 상한", "adv_max": "[관행] 광고선전비/매출 상한",
-               "related_max": "[관행] 특수관계 매출 상한", "segment_min": "[관행] 해당 부문 비중 하한",
+               "related_max": "[관행] 특수관계 매출 상한", "related_purchase_max": "[관행] 특수관계 매입/매출원가 상한", "segment_min": "[관행] 해당 부문 비중 하한",
                "loss_years": "[관행] 손실 연도 수 — loss_action=review면 사람 확인, exclude면 탈락", "outlier_k": "[관행] 이상치 표시, 자동 탈락하지 않음"}
 PLI = {"OM": "매출액 대비 거래순이익(영 제8조①1호)", "ROA": "자산 대비 거래순이익(영 제8조①2호)",
        "NCP": "매출원가·영업비용 대비 거래순이익(영 제8조①3호)", "BERRY": "영업비용 대비 매출총이익(영 제8조①4호)"}
 NO_INDEP = "독립성 자료 없음(최대주주 지분율·독립성 지표)"
 SRC_COLS = ("rcept_no", "fs_div", "accounting_standard", "collected_at", "source")   # 개별기업보고서 Ⅱ-12 출처 칸
 NUM_COLS = ["revenue", "cogs", "opex", "operating_profit", "total_assets", "inventory", "receivables", "payables",
-            "rnd_expense", "advertising_expense", "related_party_revenue", "max_shareholder_pct", "relevant_segment_share", "employees"]
+            "rnd_expense", "advertising_expense", "related_party_revenue", "related_party_purchase", "max_shareholder_pct", "relevant_segment_share", "employees"]
 
 
 def _fr(x):
@@ -246,7 +247,7 @@ def _screen_rest(m, yd, years, sc, tested, out):
     else:
         out["S3"] = ("건너뜀", "업종코드 조건 없음")
     if not have:
-        for k in ("S4", "S5", "S6", "S7", "S8", "S9", "S10"):
+        for k in ("S4", "S5", "S6", "S7", "S8", "S9", "S9b", "S10"):
             out[k] = ("건너뜀", "자료 없음")
     else:
         if sc["size_min"] is None and sc["size_max"] is None:
@@ -290,6 +291,18 @@ def _screen_rest(m, yd, years, sc, tested, out):
                 out[key] = ("탈락", f"{label} {_pct(v, 1)}% > {sc[lim_key] * 100:g}%")
             else:
                 out[key] = ("통과", "")
+        # S9b 특수관계 매입 ÷ 매출원가 — 매입 금액과 매출원가가 함께 있는 해만. 기준값은 screens로만 받음(조문 MCP).
+        pys = [y for y in have if yd[y].get("related_party_purchase") is not None and yd[y].get("cogs")]
+        if sc["related_purchase_max"] is None:
+            out["S9b"] = ("건너뜀", "꺼짐")
+        elif not pys:
+            out["S9b"] = ("건너뜀", "related_party_purchase·cogs 자료 없음")
+        else:
+            pv = sum(yd[y]["related_party_purchase"] for y in pys) / sum(yd[y]["cogs"] for y in pys)
+            if pv > Fraction(str(sc["related_purchase_max"])):
+                out["S9b"] = ("탈락", f"특수관계 매입/매출원가 {_pct(pv, 1)}% > {sc['related_purchase_max'] * 100:g}%")
+            else:
+                out["S9b"] = ("통과", "")
         wc = _wc_ratio(yd, have)
         if sc["wc_band"] is None or wc is None or tested.get("_wc") is None:
             out["S8"] = ("건너뜀", "기준 없음" if sc["wc_band"] is None else "운전자본 자료 없음")
@@ -634,7 +647,7 @@ def _criteria(sc, years, pli, averaging, qm, given=None):
     src = lambda k: "사용자 입력" if k in given else "입력 없음 — 꺼짐(값·출처는 조문 MCP transfer_pricing_guide)"
     out = [{"기준": "S1a 독립성", "값": "최대주주 50% 이상 탈락", "성격": "[법정 준용] 법 제2조①3호·영 제2조②(거래 당사자 간 기준을 비교대상에 준용)", "입력": "법정 — 항상 적용"}]
     for k, label in (("independence_pct", "S1b 독립성"), ("loss_years", "S5 지속 손실(연도 수)"), ("rnd_max", "S6 연구개발비/매출 상한"),
-                     ("adv_max", "S7 광고선전비/매출 상한"), ("related_max", "S9 특수관계 매출 상한"), ("segment_min", "S10 해당 부문 비중 하한"), ("outlier_k", "S13 이상치 IQR 배수")):
+                     ("adv_max", "S7 광고선전비/매출 상한"), ("related_max", "S9 특수관계 매출 상한"), ("related_purchase_max", "S9b 특수관계 매입/매출원가 상한"), ("segment_min", "S10 해당 부문 비중 하한"), ("outlier_k", "S13 이상치 IQR 배수")):
         out.append({"기준": label, "값": sc[k] if sc[k] is not None else "꺼짐", "성격": SCREEN_NOTE.get(k, "[관행]"), "입력": src(k)})
     out += [{"기준": "S3 업종 코드", "값": sc["industry_codes"] or "꺼짐", "성격": "[관행] 데이터베이스 검색 조건 재확인", "입력": src("industry_codes")},
             {"기준": "S4 규모(평균 매출)", "값": [sc["size_min"], sc["size_max"]], "성격": "[관행]", "입력": src("size_min") if "size_min" in given else src("size_max")},
