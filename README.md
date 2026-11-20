@@ -594,7 +594,7 @@ Anthropic의 BM25 도구 검색(`tool_search_tool_bm25`)으로 에이전트를 �
 
 | 도구 | 입력 | 0.60.x 값 |
 |---|---|---|
-| `tp_comparable_screen` | `screens` | `{"independence_pct": 25, "independence_bvd_reject": ["C", "D", "U"], "loss_years": 2, "loss_action": "exclude", "require_all_years": true, "rnd_max": 0.03, "adv_max": 0.05, "related_max": 0.25, "segment_min": 0.75, "special_flags": ["start_up", "bankruptcy", "restructuring", "merger", "delisted"], "outlier_k": 1.5}`, `quartile_method: "excel_inc"` |
+| `tp_comparable_screen` | `screens` | `{"independence_pct": 25, "independence_bvd_reject": ["C", "D", "U"], "loss_years": 2, "loss_action": "exclude", "require_all_years": true, "rnd_max": 0.03, "adv_max": 0.05, "related_max": 0.25, "related_purchase_max": 0.25, "segment_min": 0.75, "special_flags": ["start_up", "bankruptcy", "restructuring", "merger", "delisted"], "outlier_k": 1.5}`, `quartile_method: "excel_inc"` |
 | `kr_comparable_profile_compare` | `rules` | `{"mix_max_diff": 0.2, "coverage_min": 0.8, "coverage_max": 1.2, "ratio_low": 0.5, "ratio_high": 2.0, "ppe_abs_tol": 0.05, "rnd_abs_tol": 0.01, "advert_mult": 2.0, "advert_abs_tol": 0.01, "related_review": 0.25, "unknown_review_count": 3, "mix_unverified_review": 0.1}` — 값만 같고, 재고·유형자산 조합(하나만 다르면 사람 확인)은 0.61.0 규칙 |
 
 ## 라이선스

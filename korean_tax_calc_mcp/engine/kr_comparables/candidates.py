@@ -29,7 +29,7 @@ LISTED_OPTS = ("상장", "비상장", "둘 다")
 UPSTAGE_GUIDE = "UPSTAGE_API_KEY가 없어 매출 행을 이름 규칙으로 분류했습니다(정확도 낮음). 키 발급: https://console.upstage.ai"
 CANDIDATE_COLS = ["company_id", "company_name", "country", "industry_code", "year", "currency", "revenue", "cogs", "opex", "operating_profit",
                   "total_assets", "inventory", "receivables", "payables", "rnd_expense", "advertising_expense", "related_party_revenue",
-                  "max_shareholder_pct", "control_note", "rcept_no", "fs_div", "changed_cells"]
+                  "related_party_purchase", "max_shareholder_pct", "control_note", "rcept_no", "fs_div", "changed_cells"]
 
 
 def _zip_main(raw, rcept_no=None):
@@ -733,8 +733,23 @@ def _one(R, kind, corp, info, years, fs_pref, rmin, rmax):
                     **{k: r.get(k) for k in ("year", "revenue", "cogs", "opex", "operating_profit", "total_assets", "inventory", "receivables", "payables", "rcept_no", "fs_div", "changed_cells")},
                     "rnd_expense": extra.get("rnd") if is_last else None, "advertising_expense": extra.get("adv") if is_last else None,
                     "related_party_revenue": round(rel * r["revenue"]) if (is_last and rel is not None and r.get("revenue")) else None,
+                    "related_party_purchase": related_purchase_amount(prof, r) if is_last else None,
                     "max_shareholder_pct": ms, "control_note": cn})
     return out, prof
+
+
+def related_purchase_amount(prof, row):
+    """프로필의 특수관계 매입 비율 × 그 비율의 분모(근거에 적힌 '÷ 매출원가' 또는 '÷ 매출') → 후보 행에 실을 매입 금액.
+    비율이 없거나, 근거에서 분모를 알 수 없거나, 그 분모 금액이 행에 없으면 None(추정하지 않음). 비율이 0이면 0."""
+    cell = prof.get("related_purchase_ratio") or {}
+    ratio = cell.get("value")
+    if ratio is None:
+        return None
+    if ratio == 0:
+        return 0                       # 특수관계자 거래 없음 — 분모와 무관하게 0
+    acct = str((cell.get("evidence") or {}).get("account") or "")
+    base = row.get("cogs") if "÷ 매출원가" in acct else row.get("revenue") if re.search(r"÷ 매출(?!원가)", acct) else None
+    return round(ratio * base) if base else None
 
 
 CONTROL_NOTE_KINDS = ("지배기업", "기업집단 계열")
