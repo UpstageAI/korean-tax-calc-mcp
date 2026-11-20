@@ -163,3 +163,26 @@ def test_group_label_with_deung_suffix_is_not_the_kind():
                    _tr("매입등합계", "매입등합계", "매입등합계", "250", "230")])
     assert ST.related_sales(s, False, 1e9)[0] == 3 * 1000 / 1e9
     assert ST.related_purchases(s, False, cogs=1e9)[0] == 200 * 1000 / 1e9
+
+
+def test_period_header_with_parenthesised_current_and_prior_reads_current_only():
+    """'제50(당)기 | 제49(전)기' 머리글 아래 매출·매입 열 — 당기 열만 더한다(2026-11-20: '당기'·'전기'로 적힌 머리글만 기간으로 알아봐 두 기간을 더하던 모양)."""
+    s = _rel_note([_tr("구분", "특수관계자명", "제50(당)기", "제50(당)기", "제50(당)기", "제49(전)기", "제49(전)기", "제49(전)기", tag="TH"),
+                   _tr("구분", "특수관계자명", "매출", "기타수익", "매입", "매출", "기타수익", "매입", tag="TH"),
+                   _tr("기타", "가나", "780", "350", "7800", "1200", "40", "5900"), _tr("기타", "다라", "3", "28", "1600", "1", "8", "1200"),
+                   _tr("합계", "합계", "783", "378", "9400", "1201", "48", "7100")])
+    assert ST.related_sales(s, False, 1e9)[0] == 783 * 1000 / 1e9
+    assert ST.related_purchases(s, False, cogs=1e9)[0] == 9400 * 1000 / 1e9
+
+
+def test_period_header_variants_are_recognised():
+    for cur, pri in (("(당)기", "(전)기"), ("제50기(당기)", "제49기(전기)"), ("제50(당)기말", "제49(전)기말"), ("당기", "전기")):
+        s = _rel_note([_tr("회사명", cur, cur, pri, pri, tag="TH"), _tr("회사명", "매출", "매입", "매출", "매입", tag="TH"),
+                       _tr("가나", "100", "40", "70", "30"), _tr("합계", "100", "40", "70", "30")])
+        assert ST.related_sales(s, False, 1e9)[0] == 100 * 1000 / 1e9, cur
+        assert ST.related_purchases(s, False, cogs=1e9)[0] == 40 * 1000 / 1e9, cur
+
+
+def test_prior_only_table_with_parenthesised_label_is_not_read():
+    s = _rel_note([_tr("회사명", "제49(전)기", "제49(전)기", tag="TH"), _tr("회사명", "매출", "매입", tag="TH"), _tr("가나", "70", "30"), _tr("합계", "70", "30")])
+    assert ST.related_sales(s, False, 1e9)[0] is None

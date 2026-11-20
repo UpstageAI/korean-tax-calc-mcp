@@ -430,10 +430,16 @@ def _is_total(x):
 
 def _is_prior_row(r):
     """행 안에 '전기'·'전기말'만 적힌 칸이 있으면 전기 행(회사마다 당기·전기 두 줄씩 내려오는 표)."""
-    return any(re.fullmatch(r"[<(\[]?전기말?[>)\]]?", x) for x, _ in r)
+    return any(re.fullmatch(r"[<(\[]?전기말?[>)\]]?", x) or re.fullmatch(_PRI, x) for x, _ in r)
 
 
-_CUR = r"당기말?(\([^)]*\))?(금액)?"
+# 기간 머리글: '당기'·'당기말'뿐 아니라 '제50(당)기'·'(당)기'·'제50기(당기)'도(2026-11-20: 뒤 모양을 기간으로 못 알아봐 당기·전기 열을 함께 더함)
+_CUR = r"(제\d+)?[<(\[]?당[>)\]]?기말?(\([^)]*\))?(금액)?|제\d+기말?\(당기?말?\)"
+_PRI = r"(제\d+)?[<(\[]?전[>)\]]?기말?(\([^)]*\))?(금액)?|제\d+기말?\(전기?말?\)"
+
+
+def _is_prior_head(x):
+    return bool(re.match(r"^전기", x) or re.fullmatch(_PRI, x))
 
 
 def _wide_sum(trs, hdr_pat):
@@ -473,12 +479,14 @@ def _wide_sum(trs, hdr_pat):
         cols = plain
     if any(any(re.fullmatch(_CUR, x) for x in paths[c]) for c in cols):
         cols = [c for c in cols if any(re.fullmatch(_CUR, x) for x in paths[c])]
-    elif all(any(re.match(r"^전기", x) for x in paths[c]) for c in cols):
+    elif all(any(_is_prior_head(x) for x in paths[c]) for c in cols):
         return None, ""      # 전기만 있는 표
+    elif any(any(_is_prior_head(x) for x in paths[c]) for c in cols):
+        cols = [c for c in cols if not any(_is_prior_head(x) for x in paths[c])]      # 기간 표시 없는 열 + 전기 열 — 전기 열은 뺀다
     total, rows_sum, read, totals, cur_mark = None, 0, 0, 0, False
     for r in g[n_hdr:]:
         labs = [x for x, _ in r[:3]]
-        if any(re.fullmatch(r"[<(\[]?당기[>)\]]?", x) for x, _ in r):
+        if any(re.fullmatch(r"[<(\[]?당기[>)\]]?", x) or re.fullmatch(_CUR, x) for x, _ in r):
             cur_mark = True
         vals = [num(r[c][0]) for c in cols if c < len(r) and not r[c][1] and r[c][0] != ""]
         vals = [v for v in vals if v is not None]
