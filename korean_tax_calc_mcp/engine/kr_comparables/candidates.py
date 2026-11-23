@@ -21,13 +21,13 @@ from . import revenue_mix as RM
 from . import sales_channel as SC
 from . import production as PRD
 from . import subclass as SUB
+from . import solar_client as SOL
 from .dart import DartClient, DartStop, KEY_ENV, KEY_GUIDE, mask
 from .index import CorpIndex
 from .schema import STATUS_NONE, STATUS_UNKNOWN, empty_profile, value
 
 LIMIT_MAX = 100
-SOLAR_CALLS_DEFAULT = 60      # 실행당 Solar 실제 호출 상한 기본값(매출 분류 + 세분류 판정) — 닿으면 멈추지 않고 그 뒤 호출만 건너뜀
-SOLAR_CALLS_MAX = 500
+SOLAR_CALLS_DEFAULT, SOLAR_CALLS_MAX = SOL.CALLS_DEFAULT, SOL.CALLS_MAX   # Solar 호출 상한은 solar_client에서 셈
 LISTED_OPTS = ("상장", "비상장", "둘 다")
 UPSTAGE_GUIDE = "UPSTAGE_API_KEY가 없어 매출 행을 이름 규칙으로 분류했습니다(정확도 낮음). 키 발급: https://console.upstage.ai"
 CANDIDATE_COLS = ["company_id", "company_name", "country", "industry_code", "year", "currency", "revenue", "cogs", "opex", "operating_profit",
@@ -98,6 +98,7 @@ class _Run:
         self.dc, self.upstage_key, self.solar_http = dc, upstage_key, solar_http
         self.stat = {}
         self.methods = set()
+        self.ai_used = False      # Solar가 낸 값(매출 행 분류·세분류 판정)이 결과에 들어갔는지 — 맨 위 AI 생성 표시
         self.notes = []
 
     # ---------- 상장 ----------
@@ -492,6 +493,9 @@ def _mix(R, p, rows_mix, tinfo, rev, rc, listed, ctx, items_cfs=None, signals=No
     ev["accounting"] = signals or {}
     if al["conflict"]:
         ev["conflict"] = al["conflict"]
+    if method == RM.METHOD_SOLAR:
+        ev[SOL.AI_MARK_KEY] = SOL.AI_MARK_MIX
+        R.ai_used = True
 
 
 def _profile_unlisted(R, corp, name, code, rows, parsed, docs, last):
@@ -611,8 +615,7 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
     dc = client or DartClient(key=key, max_calls=max_calls)
     up_key = upstage_key if upstage_key is not None else os.environ.get("UPSTAGE_API_KEY", "")
     R = _Run(dc, up_key, solar_http)
-    solar_cap = max(0, min(int(SOLAR_CALLS_DEFAULT if max_solar_calls is None else max_solar_calls), SOLAR_CALLS_MAX))
-    R.stat["solar_cap"] = solar_cap       # 매출 분류·세분류 판정이 함께 쓰는 실행당 Solar 호출 상한(캐시에서 읽는 것은 세지 않음)
+    solar_cap = SOL.set_cap(R.stat, max_solar_calls)       # 매출 분류·세분류 판정이 함께 쓰는 실행당 Solar 호출 상한(캐시에서 읽는 것은 세지 않음)
     IX = CorpIndex()
     found, cand_rows, profiles, stop, skipped, short = [], [], [], None, [], []
     prog = {"left": None}
@@ -674,6 +677,9 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
                                     "rcept_no": prof.get("rcept_no")})
                         if jd.get("확인_안_된_인용"):
                             ent["확인_안_된_인용"] = jd["확인_안_된_인용"]
+                        if jd.get(SOL.AI_MARK_KEY):
+                            ent[SOL.AI_MARK_KEY] = jd[SOL.AI_MARK_KEY]
+                            R.ai_used = True
                         if jd["판정"] == SUB.OTHER:
                             sub_other.append(ent)
                             if short_code_subclass == "거름":
@@ -764,7 +770,8 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
         notes.append(f"멈춤: {stop} — 아직 확인하지 않은 회사 {left}. 같은 입력으로 다시 부르면 이어서 계속합니다.")
     basis = ["OpenDART 개발가이드(공시정보·정기보고서 주요정보·재무정보·공시서류원본파일)", "국조법 시행령 제2조②(특수관계 — 지분 50%)",
              "국조칙 비교가능성 분석요소 — 기능·자산·위험(프로필 지표는 판단 보조)"]
-    return {"결과": result, "근거": basis, "주의": notes}
+    out = {"결과": result, "근거": basis, "주의": notes}
+    return SOL.add_ai_mark(out) if R.ai_used else out
 
 
 def _one(R, kind, corp, info, years, fs_pref, rmin, rmax):

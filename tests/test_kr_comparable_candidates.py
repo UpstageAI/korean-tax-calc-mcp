@@ -10,7 +10,7 @@ import zipfile
 import pytest
 
 from korean_tax_calc_mcp.engine.kr_comparables import candidates as C
-from korean_tax_calc_mcp.engine.kr_comparables import revenue_mix as RM
+from korean_tax_calc_mcp.engine.kr_comparables import solar_client as SOL
 from korean_tax_calc_mcp.engine.kr_comparables.dart import DartClient, DartStop, mask
 
 HERE = os.path.dirname(__file__)
@@ -287,7 +287,7 @@ def test_solar_timeout_falls_back_to_rules(env, monkeypatch):
     def slow(body, key):
         calls["n"] += 1
         raise TimeoutError("read timed out")
-    monkeypatch.setattr(RM, "_sleep", lambda s: None)
+    monkeypatch.setattr(SOL, "_sleep", lambda s: None)
     r = run(Transport(), upstage_key="u" * 20, solar_http=slow)["결과"]
     assert r["정확도_낮음"] is True and any("정확도 낮음" in m for m in r["매출_분류_방법"])
     assert r["후보_수"] == 5 and calls["n"] % 4 == 0 and r["호출"]["오류"]
@@ -302,7 +302,7 @@ def test_solar_retry_then_success(env, monkeypatch):
         if calls["n"] % 3:                 # 요청마다 두 번 실패 후 성공
             raise TimeoutError("t")
         return _gold_solar(body, key)
-    monkeypatch.setattr(RM, "_sleep", lambda s: None)
+    monkeypatch.setattr(SOL, "_sleep", lambda s: None)
     r = run(Transport(), upstage_key="u" * 20, solar_http=flaky)["결과"]
     assert r["정확도_낮음"] is False and any("Solar" in m for m in r["매출_분류_방법"])
 
