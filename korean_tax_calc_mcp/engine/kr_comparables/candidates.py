@@ -560,6 +560,24 @@ def _profile_unlisted(R, corp, name, code, rows, parsed, docs, last):
     return p, extra
 
 
+def _unchecked(rest, IX, prefixes):
+    """limit에 닿은 뒤 확인하지 않은 회사 세기 — 색인만 보고(호출 없음) 업종 코드·법인구분이 맞는 수와 색인에 없는 수."""
+    n = hit = unknown = 0
+    for kind, pool in rest:
+        for c in pool:
+            n += 1
+            ix = IX.get(c["corp_code"])
+            if not ix:
+                unknown += 1
+                continue
+            cls = ix.get("c")
+            if (kind == "상장" and cls not in ("Y", "K", "N")) or (kind == "비상장" and cls != "E"):
+                continue
+            if _match_industry(ix.get("i"), prefixes):
+                hit += 1
+    return {"확인_안_한_회사_수": n, "그중_업종_코드_맞음_색인기준": hit, "그중_색인_없음": unknown}
+
+
 def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=None, limit=30, fs_pref="별도",
         unlisted_window=None, max_calls=300, client=None, solar_http=None, upstage_key=None, build_index_only=False,
         short_code_keywords=None, short_code_subclass="표시만", max_solar_calls=None):
@@ -599,6 +617,7 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
     found, cand_rows, profiles, stop, skipped, short = [], [], [], None, [], []
     prog = {"left": None}
     pools = []
+    cut = None       # 후보 수 상한(limit)에 닿아 확인하지 않고 남긴 회사 — 처음 닿은 자리에서 한 번만 셈
     try:
         corps = _corp_list(dc)
         if listed in ("상장", "둘 다"):
@@ -614,6 +633,8 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
                 prog["left"] = sum(1 for x in ordered[ci:] if not IX.get(x["corp_code"])) + sum(
                     1 for p_ in pools[pi + 1:] for x in p_[1] if not IX.get(x["corp_code"]))
                 if len(found) >= limit and not build_index_only:
+                    if cut is None:
+                        cut = _unchecked([(kind, ordered[ci:])] + pools[pi + 1:], IX, prefixes)
                     break
                 ix = IX.get(c["corp_code"])
                 if ix:
@@ -680,6 +701,9 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
         "후보_행": cand_rows,
         "후보_프로필": profiles,
         "제외_목록": skipped[:50],
+        "제외_목록_전체_수": len(skipped),
+        "잘림": {"후보_수_상한": limit, "잘림": bool(cut and cut["확인_안_한_회사_수"]), **(cut or {"확인_안_한_회사_수": 0, "그중_업종_코드_맞음_색인기준": 0, "그중_색인_없음": 0}),
+                 "순서": "상장 먼저, 그 안에서는 회사 고유번호 순 — 매출 크기·유사도 순이 아님"},
         "업종_짧은코드_포함": short,
         "업종_짧은코드_설명불일치": short_drop,
         "업종_짧은코드_다른세분류": sub_other,
@@ -727,6 +751,12 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
     if R.stat.get("solar_capped"):
         notes.append(f"Solar 호출 상한({solar_cap}회)에 닿아 {R.stat['solar_capped']}건을 부르지 않았습니다 — 그 후보의 매출 분류는 규칙으로만 했고 세분류 판정은 '확인 필요'로 남김. "
                      "같은 입력으로 다시 부르면 캐시로 이어서 판정합니다(상한은 max_solar_calls).")
+    if cut and cut["확인_안_한_회사_수"]:
+        notes.append(f"후보 수 상한(limit {limit})에 닿아 모집단의 회사 {cut['확인_안_한_회사_수']}곳을 확인하지 않았습니다 — 그중 업종 코드가 맞는 회사 {cut['그중_업종_코드_맞음_색인기준']}곳(색인 기준, 재무·매출 범위는 보지 않은 수), "
+                     f"색인에 없어 업종을 모르는 회사 {cut['그중_색인_없음']}곳. 이 결과는 업종 전체가 아니라 회사 고유번호 순으로 앞에서 {limit}곳입니다. "
+                     f"limit을 올리거나(최대 {LIMIT_MAX}) 업종 코드·매출 범위를 좁혀 나눠 부르세요.")
+    if len(skipped) > 50:
+        notes.append(f"제외_목록은 {len(skipped)}건 중 앞 50건만 실었습니다(제외_목록_전체_수).")
     if short_drop:
         notes.append(f"짧은 코드 후보 {len(short_drop)}개를 사업 설명 낱말 불일치로 뺌(업종_짧은코드_설명불일치) — 글자 일치만 본 것이라 사람이 목록을 훑어 되살릴 수 있음.")
     if stop:

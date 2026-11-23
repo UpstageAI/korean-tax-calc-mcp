@@ -1304,7 +1304,7 @@ def kr_comparable_candidates(
         listed: Annotated[Literal["상장", "비상장", "둘 다"], Field(description="상장 구분 — 상장(코스피·코스닥·코넥스)|비상장(외부감사 대상)|둘 다")] = "둘 다",
         revenue_min: Annotated[int | None, Field(description="마지막 연도 매출 하한(원, 선택)", ge=0)] = None,
         revenue_max: Annotated[int | None, Field(description="마지막 연도 매출 상한(원, 선택)", ge=0)] = None,
-        limit: Annotated[int, Field(description="후보 수(기본 30, 상한 100)", ge=1, le=100)] = 30,
+        limit: Annotated[int, Field(description="후보 수(기본 30, 상한 100) — 닿으면 회사 고유번호 순으로 앞에서 끊고, 확인하지 않은 회사 수를 결과의 '잘림'과 주의에 적음(업종 전체가 아님)", ge=1, le=100)] = 30,
         fs_pref: Annotated[Literal["별도", "연결"], Field(description="재무제표 기준 — 별도(이전가격 기본)|연결. 없으면 다른 쪽으로 대체하고 fs_div에 표시")] = "별도",
         unlisted_window: Annotated[list[str] | None, Field(description="비상장 탐색 기간 [시작 YYYYMMDD, 끝 YYYYMMDD](3개월 이내, 생략하면 마지막 연도 다음 해 3월 — 12월 결산 감사보고서가 몰리는 달)")] = None,
         max_calls: Annotated[int, Field(description="이번 실행 OpenDART 호출 상한(기본 300) — 닿으면 멈추고 다시 실행하면 캐시로 이어감", ge=1, le=5000)] = 300,
