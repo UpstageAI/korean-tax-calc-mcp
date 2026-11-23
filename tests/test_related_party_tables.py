@@ -232,3 +232,54 @@ def test_only_combined_purchase_column_is_labelled():
     rows = [_tr("구분", "회사명", "매출등", "매입등", th=True), _tr("관계기업", "A", "1,000", "300")]
     r, why = ST.related_purchases(_doc(9, "특수관계자", [("(단위:천원)", rows)]), False, cogs=1_000_000)
     assert r == pytest.approx(0.3) and "재고 외 포함 가능" in why
+
+
+# ---------------- 구조화된 읽기 결과(금액·분모·비율) — 뒤 단계가 근거 문구를 되읽지 않게 ----------------
+def test_detail_carries_amount_base_and_kind():
+    """가로형: 원문 금액 × 단위, 분모 금액·종류, 읽은 자리, 매입 갈래가 칸으로 나온다. (비율, 근거) 짝은 종전 그대로."""
+    s = _coty_like("80", "40")
+    d = ST.related_purchases_detail(s, False, cogs=100_000_000, revenue=400_000_000)
+    assert d["amount"] == 80_000_000 and d["base"] == 100_000_000 and d["base_kind"] == "매출원가" and d["unit"] == 1_000_000
+    assert d["ratio"] == pytest.approx(0.8) and d["kind"] == "재고 매입" and d["where"] == "열 재고매입, 합계 행과 일치"
+    assert (d["ratio"], d["why"]) == ST.related_purchases(s, False, cogs=100_000_000, revenue=400_000_000)
+    d = ST.related_sales_detail(s, False, 15_000_000_000)
+    assert d["amount"] == 1_500_000_000 and d["base"] == 15_000_000_000 and d["base_kind"] == "매출" and d["kind"] == ""
+    assert (d["ratio"], d["why"]) == ST.related_sales(s, False, 15_000_000_000)
+
+
+def test_detail_base_is_revenue_when_no_cogs():
+    """매출원가가 없으면(0·None) 분모는 매출 — 종류가 칸에 적힌다."""
+    for cogs in (None, 0):
+        d = ST.related_purchases_detail(_coty_like("80", "40"), False, cogs=cogs, revenue=400_000_000)
+        assert d["base_kind"] == "매출" and d["base"] == 400_000_000 and d["ratio"] == pytest.approx(0.2) and "÷ 매출:" in d["why"]
+
+
+def test_detail_long_table_and_kind_by_row_pass():
+    d = ST.related_purchases_detail(_doc(3, "특수관계자와의 주요거래", [("(단위:천원)", LONG_KOSE)]), False, cogs=9_437_000_000)
+    assert d["amount"] == 9_392_071_000 and d["unit"] == 1000 and d["where"] == "거래 종류 행, 당기" and d["kind"] == "매입(기타 매입 행 제외)"
+
+
+def test_detail_is_empty_when_not_read():
+    """못 읽었으면 금액·분모를 채우지 않고 사유만 — 범위 밖 비율도 금액을 남기지 않는다."""
+    for d in (ST.related_purchases_detail(_coty_like("160", "40"), False, cogs=100_000_000),          # 범위 밖
+              ST.related_purchases_detail(_coty_like("80", "40"), False, cogs=None, revenue=None),    # 분모 없음
+              ST.related_sales_detail(_coty_like("80", "40"), False, None),                           # 매출 없음
+              ST.related_sales_detail("<P>1. 일반사항</P>", False, 1_000)):                            # 절 없음
+        assert d["ratio"] is None and d["amount"] is None and d["base"] is None and d["base_kind"] is None and d["why"]
+
+
+def test_detail_no_transaction_sentence_is_zero():
+    s = _doc(7, "특수관계자", [], after="당기 중 특수관계자와의 거래는 없습니다.")
+    d = ST.related_purchases_detail(s, False, cogs=5_000)
+    assert (d["ratio"], d["amount"], d["base"], d["base_kind"], d["why"]) == (0.0, 0, 5_000, "매출원가", "특수관계자 거래 없음 문장")
+    d = ST.related_sales_detail(s, False, 9_000)
+    assert (d["ratio"], d["amount"], d["base"], d["base_kind"]) == (0.0, 0, 9_000, "매출")
+
+
+def test_goods_kind_reads_column_names_not_the_message():
+    """재고 매입 여부는 더한 열 이름으로 판단. 쉼표가 든 열 이름은 종전 판정(첫 쉼표 앞까지만 봄)을 그대로 둔다."""
+    assert ST._goods_only(["상품매입", "원재료매입"]) and not ST._goods_only(["상품매입", "매입등"]) and not ST._goods_only([])
+    assert not ST._goods_only(["상품,제품매입"]) and ST._goods_only(["매입,특수관계자거래"])
+    rows = [_tr("구분", "회사명", "매출", "상품매입", "원재료매입", th=True), _tr("관계기업", "A", "1,000", "300", "200")]
+    d = ST.related_purchases_detail(_doc(9, "특수관계자", [("(단위:천원)", rows)]), False, cogs=1_000_000)
+    assert d["kind"] == "재고 매입" and d["amount"] == 500_000 and d["where"] == "열 상품매입+원재료매입"

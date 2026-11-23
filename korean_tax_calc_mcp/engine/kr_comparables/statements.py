@@ -444,15 +444,15 @@ def _is_prior_head(x):
 
 def _wide_sum(trs, hdr_pat):
     """가로형 표(회사가 행, 거래 종류가 열): 머리글 줄들을 격자로 풀어 열마다 제목 경로(위→아래)를 만들고, 맨 아래 제목이 hdr_pat에 맞는 열을
-    (당기·전기가 함께 있으면 당기 쪽만) 더한다. 반환 (금액 또는 None, 설명). 열을 못 찾거나 그 열에서 금액을 하나도 못 읽으면 None —
-    0으로 내지 않는다. 합계 행이 있으면 합계를 쓰고 행을 더한 값과 다르면 설명에 적는다."""
+    (당기·전기가 함께 있으면 당기 쪽만) 더한다. 반환 (금액 또는 None, 설명, 더한 열 이름 목록). 열을 못 찾거나 그 열에서 금액을 하나도 못 읽으면
+    None — 0으로 내지 않는다. 합계 행이 있으면 합계를 쓰고 행을 더한 값과 다르면 설명에 적는다. 열 이름은 설명 글에서 되읽지 않게 따로 돌려준다."""
     n_hdr = 0
     for t in trs[:5]:
         if not _is_header_row(t):
             break
         n_hdr += 1
     if not n_hdr:
-        return None, ""
+        return None, "", []
     g = _grid(trs)
     width = max(len(r) for r in g)
     paths = []
@@ -473,14 +473,14 @@ def _wide_sum(trs, hdr_pat):
                 and not any(re.search(REL_HDR_EXCL, x) for x in paths[c]) and not re.match(r"^(기타|이자|배당|임대|수수료)", paths[c][-1])
                 and not re.search(r"수수료|임차|리스|상환|이자|배당|로열티|용역비|경비", paths[c][-1])]      # '매입등비용' 아래 지급수수료·임차료·리스부채상환은 매입이 아님
     if not cols:
-        return None, ""
+        return None, "", []
     plain = [c for c in cols if not re.search(r"(합계|총계|소계)$", paths[c][-1])]      # '매출등합계' 열은 옆 열들의 합 — 함께 더하면 두 배
     if plain and len(plain) < len(cols):
         cols = plain
     if any(any(re.fullmatch(_CUR, x) for x in paths[c]) for c in cols):
         cols = [c for c in cols if any(re.fullmatch(_CUR, x) for x in paths[c])]
     elif all(any(_is_prior_head(x) for x in paths[c]) for c in cols):
-        return None, ""      # 전기만 있는 표
+        return None, "", []      # 전기만 있는 표
     elif any(any(_is_prior_head(x) for x in paths[c]) for c in cols):
         cols = [c for c in cols if not any(_is_prior_head(x) for x in paths[c])]      # 기간 표시 없는 열 + 전기 열 — 전기 열은 뺀다
     total, rows_sum, read, totals, cur_mark = None, 0, 0, 0, False
@@ -504,13 +504,14 @@ def _wide_sum(trs, hdr_pat):
             rows_sum += sum(vals)
             read += 1
     if total is None and not read:
-        return None, ""
-    names = "+".join(dict.fromkeys(paths[c][-1] for c in cols))
+        return None, "", []
+    col_names = list(dict.fromkeys(paths[c][-1] for c in cols))
+    names = "+".join(col_names)
     if totals > 1 and not cur_mark:
-        return None, "합계 행이 둘 이상(당기·전기 묶음 구분 없음) — 사람 확인"
+        return None, "합계 행이 둘 이상(당기·전기 묶음 구분 없음) — 사람 확인", col_names
     if total is not None and read and abs(total - rows_sum) > 1:
-        return None, f"열 {names}: 행을 더한 값({rows_sum:,.0f})과 합계 행({total:,.0f})이 다름 — 사람 확인"
-    return (total if total is not None else rows_sum), f"열 {names}" + (", 합계 행과 일치" if total is not None and read else "")
+        return None, f"열 {names}: 행을 더한 값({rows_sum:,.0f})과 합계 행({total:,.0f})이 다름 — 사람 확인", col_names
+    return (total if total is not None else rows_sum), f"열 {names}" + (", 합계 행과 일치" if total is not None and read else ""), col_names
 
 
 def _long_sum(trs, row_pat, excl_pat):
@@ -585,47 +586,80 @@ REL_EXCL = r"(원가|채권|채무|외상|미수|미지급|선수|선급|유형|
 # '특수관계자와의 거래 없음' 문장 — '자금거래·담보·보증 내역은 없습니다' 같은 다른 거래 문장에 걸리지 않게 '특수관계자(와의) 거래'로 한정
 NO_REL_TX = re.compile(r"특수관계자(와|와의|와의주요|간)?(매출·?매입)?거래(내역|내용)?(은|는|이|가)?(없|존재하지않)")
 
-def related_sales(s, is_bizrep, revenue):
-    """특수관계자 거래 주석의 매출 합계 ÷ 매출 → (비율, 근거)."""
-    sec, t, _st = find_note(s, REL, r"특수\s*관계", is_bizrep)
-    if not sec:
-        return None, "특수관계자 절 못 찾음"
-    plain = re.sub(r"\s", "", txt(sec))
+UNIT_MISMATCH_NOTE = "주석 표마다 단위 표기가 다름(원·천원 등) — 사람 확인"
+
+
+def _rel_result(why, ratio=None, amount=None, base=None, base_kind=None, unit=None, where="", kind=""):
+    """특수관계 매출·매입 읽기 결과 하나(related_sales_detail·related_purchases_detail의 반환).
+    ratio: 금액 ÷ 분모(못 읽었으면 None), amount: 원문 표 금액 × 표 단위(원), base: 분모 금액(원), base_kind: 분모 종류 '매출'|'매출원가',
+    unit: 표 단위(1·1000·1000000), where: 읽은 자리('열 매입, 합계 행과 일치'·'거래 종류 행, 당기'), kind: 매입 갈래('재고 매입' 등, 매출은 빈칸),
+    why: 값이 있으면 근거 문구, 없으면 못 읽은 사유. 값을 못 읽었으면(ratio None) amount·base·base_kind·unit도 None — 추정해 채우지 않는다.
+    '거래 없음' 문장으로 0을 낸 경우는 표를 읽은 것이 아니라 unit이 None이고, 매출 쪽은 매출을 몰라도 0이라 base가 None일 수 있다.
+    뒤 단계(candidates)는 why 글을 되읽지 않고 이 칸들을 쓴다."""
+    return {"ratio": ratio, "amount": amount, "base": base, "base_kind": base_kind, "unit": unit, "where": where, "kind": kind, "why": why}
+
+
+def _rel_read(sec, wide_pats, long_pats):
+    """특수관계자 절의 표를 앞에서부터 보아 처음 읽히는 거래 금액 하나(매출·매입이 함께 쓰는 뼈대). 전기 표는 건너뛴다.
+    wide_pats: 가로형 표의 열 제목 패턴들 — 앞 패턴으로 열을 못 찾았을 때만 다음 패턴. long_pats: 세로형 표의 (행 패턴, 제외 패턴)들 — 같은 방식.
+    반환: 읽었으면 {'amount': 금액 × 단위(원), 'unit', 'shape': '가로'|'세로', 'where': 읽은 자리, 'cols': 가로형에서 더한 열 이름, 'step': 몇째 세로형 패턴인지},
+    사람 확인으로 넘길 표를 만났으면 {'amount': None, 'why': 사유}, 해당 표가 없으면 None."""
     for tb, ctx in tables_in(sec):
         if is_prior_table(ctx):
             continue
         trs = re.findall(r"<TR[^>]*>(.*?)</TR>", tb, re.S)
         if len(trs) < 2:
             continue
-        wv, winfo = _wide_sum(trs, SALES_HDR)
+        wv, winfo, cols = None, "", []
+        for pat in wide_pats:
+            wv, winfo, cols = _wide_sum(trs, pat)
+            if wv is not None or winfo:
+                break
         if wv is None and winfo:
-            return None, winfo
+            return {"amount": None, "why": winfo}
+        step = 0
         if wv is None:
-            lv = _long_sum(trs, SALES_ROW, REL_EXCL)
+            lv = None
+            for step, (row_pat, excl_pat) in enumerate(long_pats):
+                lv = _long_sum(trs, row_pat, excl_pat)
+                if lv is not None:
+                    break
             if lv is None:
                 continue
-            if _unit_mismatch(sec, _rel_unit(ctx)):
-                return None, "주석 표마다 단위 표기가 다름(원·천원 등) — 사람 확인"
-            a = lv * _rel_unit(ctx)
-            if revenue and revenue > 0:
-                r = a / revenue
-                if 0 <= r <= 1.05:
-                    return r, "특수관계자 주석 표(거래 종류 행, 당기): " + t[:30]
-                return None, f"비율 범위 밖({r:.2f}) — 단위·열 확인 필요"
-            return None, "매출 없음"
         unit = _rel_unit(ctx)
         if _unit_mismatch(sec, unit):
-            return None, "주석 표마다 단위 표기가 다름(원·천원 등) — 사람 확인"
-        a = wv * unit
-        if revenue and revenue > 0:
-            r = a / revenue
-            if 0 <= r <= 1.05:
-                return r, f"특수관계자 주석 표({winfo}): " + t[:30]
-            return None, f"비율 범위 밖({r:.2f}) — 단위·열 확인 필요"
-        return None, "매출 없음"
-    if NO_REL_TX.search(plain):
-        return 0.0, "특수관계자 거래 없음 문장"
-    return None, "매출 열 못 찾음"
+            return {"amount": None, "why": UNIT_MISMATCH_NOTE}
+        if wv is None:
+            return {"amount": lv * unit, "unit": unit, "shape": "세로", "where": "거래 종류 행, 당기", "cols": [], "step": step}
+        return {"amount": wv * unit, "unit": unit, "shape": "가로", "where": winfo, "cols": cols, "step": 0}
+    return None
+
+
+def related_sales_detail(s, is_bizrep, revenue):
+    """특수관계자 거래 주석의 매출 합계 ÷ 매출 → _rel_result 구조(금액·분모·비율·근거)."""
+    sec, t, _st = find_note(s, REL, r"특수\s*관계", is_bizrep)
+    if not sec:
+        return _rel_result("특수관계자 절 못 찾음")
+    got = _rel_read(sec, [SALES_HDR], [(SALES_ROW, REL_EXCL)])
+    if got is None:
+        if NO_REL_TX.search(re.sub(r"\s", "", txt(sec))):
+            return _rel_result("특수관계자 거래 없음 문장", ratio=0.0, amount=0, base=revenue, base_kind="매출")
+        return _rel_result("매출 열 못 찾음")
+    if got["amount"] is None:
+        return _rel_result(got["why"])
+    if not (revenue and revenue > 0):
+        return _rel_result("매출 없음")
+    r = got["amount"] / revenue
+    if not 0 <= r <= 1.05:
+        return _rel_result(f"비율 범위 밖({r:.2f}) — 단위·열 확인 필요")
+    return _rel_result(f"특수관계자 주석 표({got['where']}): " + t[:30], ratio=r, amount=got["amount"], base=revenue, base_kind="매출",
+                       unit=got["unit"], where=got["where"])
+
+
+def related_sales(s, is_bizrep, revenue):
+    """특수관계자 거래 주석의 매출 합계 ÷ 매출 → (비율, 근거). 금액·분모까지 필요하면 related_sales_detail."""
+    d = related_sales_detail(s, is_bizrep, revenue)
+    return d["ratio"], d["why"]
 
 
 # ---------------- 제품·상품 회계 신호 ----------------
@@ -678,50 +712,47 @@ GOODS_PURCHASE_EXCL = REL_EXCL[:-1] + r"|^기타|비용|용역|수수료|사용�
 OVER_COGS_NOTE = "매입이 매출원가보다 큼 — 재고가 늘었거나 재고 아닌 매입이 섞였을 수 있음, 원문 확인"
 
 
-def _purchase_ratio(r, why, bl):
-    """매입 ÷ 매출원가가 100%를 넘으면 숫자는 두되 근거에 주의를 붙인다(관계사에서 거의 다 사는 회사는 재고 증가만으로도 넘음).
+def _goods_only(cols):
+    """가로형 표에서 더한 열 이름이 모두 재고 매입(상품·원재료 매입 등)인지.
+    열 이름에 쉼표나 '+'가 든 표(예: '상품,제품매입')는 종전 판정을 그대로 둔다 — 종전에는 안내 글 '열 a+b, …'를 첫 쉼표 앞까지만 읽고 '+'로 나눠
+    판단했다(그래서 '상품,제품매입'은 '상품'만 남아 재고 매입이 아니라고 봄). 근거 문구가 달라지지 않게 같은 범위만 본다."""
+    head = "+".join(cols).split(",")[0]
+    return bool(cols) and all(re.fullmatch(GOODS_PURCHASE_HDR, c) for c in head.split("+"))
+
+
+def related_purchases_detail(s, is_bizrep, cogs=None, revenue=None):
+    """특수관계자 거래 주석 표의 매입 합계 ÷ 매출원가(없으면 매출) → _rel_result 구조(금액·분모·비율·근거).
+    재고 매입 열·행(상품·원재료 매입 등)이 있으면 그것만, 없으면 '매입'이 붙은 열·행 전부(근거에 표시).
+    매입 ÷ 매출원가가 100%를 넘으면 숫자는 두되 근거에 주의를 붙인다(관계사에서 거의 다 사는 회사는 재고 증가만으로도 넘음).
     150% 넘으면 단위·열 오독으로 보고 숫자를 내지 않는다."""
+    sec, t, _st = find_note(s, REL, r"특수\s*관계", is_bizrep)
+    if not sec:
+        return _rel_result("특수관계자 절 못 찾음")
+    base, bl = (cogs, "매출원가") if cogs else (revenue, "매출")
+    if not base or base <= 0:
+        return _rel_result("매출원가·매출 없음")
+    got = _rel_read(sec, [GOODS_PURCHASE_HDR, PURCHASE_HDR], [(PURCHASE_ROW, GOODS_PURCHASE_EXCL), (PURCHASE_ROW, REL_EXCL)])
+    if got is None:
+        if NO_REL_TX.search(re.sub(r"\s", "", txt(sec))):
+            return _rel_result("특수관계자 거래 없음 문장", ratio=0.0, amount=0, base=base, base_kind=bl)
+        return _rel_result("매입 열 못 찾음")
+    if got["amount"] is None:
+        return _rel_result(got["why"])
+    if got["shape"] == "가로":
+        kind = "재고 매입" if _goods_only(got["cols"]) else "매입(재고 외 포함 가능)"
+    else:
+        kind = ("매입(기타 매입 행 제외)", "매입(재고 외 포함 가능)")[got["step"]]
+    r = got["amount"] / base
     if r < 0 or r > 1.5:
-        return None, f"비율 범위 밖({r:.2f}) — 단위·열 확인 필요"
-    return r, why + (f" — {OVER_COGS_NOTE}({r:.0%})" if r > 1 and bl == "매출원가" else "")
+        return _rel_result(f"비율 범위 밖({r:.2f}) — 단위·열 확인 필요")
+    why = f"특수관계자 주석 표({got['where']}) {kind} ÷ {bl}: " + t[:30] + (f" — {OVER_COGS_NOTE}({r:.0%})" if r > 1 and bl == "매출원가" else "")
+    return _rel_result(why, ratio=r, amount=got["amount"], base=base, base_kind=bl, unit=got["unit"], where=got["where"], kind=kind)
 
 
 def related_purchases(s, is_bizrep, cogs=None, revenue=None):
-    """특수관계자 거래 주석 표의 매입 합계 ÷ 매출원가(없으면 매출) → (비율, 근거).
-    재고 매입 열·행(상품·원재료 매입 등)이 있으면 그것만, 없으면 '매입'이 붙은 열·행 전부(근거에 표시)."""
-    sec, t, _st = find_note(s, REL, r"특수\s*관계", is_bizrep)
-    if not sec:
-        return None, "특수관계자 절 못 찾음"
-    base, bl = (cogs, "매출원가") if cogs else (revenue, "매출")
-    if not base or base <= 0:
-        return None, "매출원가·매출 없음"
-    for tb, ctx in tables_in(sec):
-        if is_prior_table(ctx):
-            continue
-        trs = re.findall(r"<TR[^>]*>(.*?)</TR>", tb, re.S)
-        wv, winfo = _wide_sum(trs, GOODS_PURCHASE_HDR)
-        if wv is None and not winfo:
-            wv, winfo = _wide_sum(trs, PURCHASE_HDR)
-        cols = re.match(r"열 ([^,]+)", winfo or "")
-        kind = "재고 매입" if cols and all(re.fullmatch(GOODS_PURCHASE_HDR, c) for c in cols.group(1).split("+")) else "매입(재고 외 포함 가능)"
-        if wv is None and winfo:
-            return None, winfo
-        if wv is None:
-            lv, kind = _long_sum(trs, PURCHASE_ROW, GOODS_PURCHASE_EXCL), "매입(기타 매입 행 제외)"
-            if lv is None:
-                lv, kind = _long_sum(trs, PURCHASE_ROW, REL_EXCL), "매입(재고 외 포함 가능)"
-            if lv is None:
-                continue
-            if _unit_mismatch(sec, _rel_unit(ctx)):
-                return None, "주석 표마다 단위 표기가 다름(원·천원 등) — 사람 확인"
-            return _purchase_ratio(lv * _rel_unit(ctx) / base, f"특수관계자 주석 표(거래 종류 행, 당기) {kind} ÷ {bl}: " + t[:30], bl)
-        unit = _rel_unit(ctx)
-        if _unit_mismatch(sec, unit):
-            return None, "주석 표마다 단위 표기가 다름(원·천원 등) — 사람 확인"
-        return _purchase_ratio(wv * unit / base, f"특수관계자 주석 표({winfo}) {kind} ÷ {bl}: " + t[:30], bl)
-    if NO_REL_TX.search(re.sub(r"\s", "", txt(sec))):
-        return 0.0, "특수관계자 거래 없음 문장"
-    return None, "매입 열 못 찾음"
+    """특수관계자 거래 주석 표의 매입 합계 ÷ 매출원가(없으면 매출) → (비율, 근거). 금액·분모까지 필요하면 related_purchases_detail."""
+    d = related_purchases_detail(s, is_bizrep, cogs, revenue)
+    return d["ratio"], d["why"]
 
 
 CONTROL_KW = [("임원 겸직", r"겸직|겸임"), ("지배기업", r"지배기업|최상위\s*지배|모회사"), ("유의적 영향력", r"유의적인?\s*영향력"),

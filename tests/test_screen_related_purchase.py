@@ -72,17 +72,39 @@ def test_criteria_table_lists_the_new_screen():
     assert row and row[0]["값"] == 0.25 and row[0]["입력"] == "사용자 입력"
 
 
-def test_row_amount_from_profile_ratio():
-    """후보 행의 매입 금액 = 프로필 비율 × 그 비율의 분모. 분모가 무엇인지 근거에서 못 읽으면 비움."""
-    ok = {"related_purchase_ratio": value(0.9, rcept_no="1", account="특수관계자 주석 표(열 매입) 재고 매입 ÷ 매출원가: 특수관계자")}
-    assert C.related_purchase_amount(ok, {"cogs": 800, "revenue": 1000}) == 720
-    rev = {"related_purchase_ratio": value(0.5, rcept_no="1", account="특수관계자 주석 표(열 매입) 매입 ÷ 매출: 특수관계자")}
-    assert C.related_purchase_amount(rev, {"cogs": None, "revenue": 1000}) == 500
-    assert C.related_purchase_amount({"related_purchase_ratio": value(note="매입 열 못 찾음")}, {"cogs": 800, "revenue": 1000}) is None
-    assert C.related_purchase_amount({"related_purchase_ratio": value(0.9, rcept_no="1", account="근거 문구 없음")}, {"cogs": 800, "revenue": 1000}) is None
-    assert C.related_purchase_amount(ok, {"cogs": None, "revenue": 1000}) is None
-    assert C.related_purchase_amount({"related_purchase_ratio": value(0.0, rcept_no="1", account="특수관계자 거래 없음 문장")}, {"cogs": 800, "revenue": 1000}) == 0
+def _detail(ratio=None, base_kind=None, amount=None, base=None, why="x"):
+    return {"ratio": ratio, "amount": amount, "base": base, "base_kind": base_kind, "unit": 1, "where": "", "kind": "", "why": why}
+
+
+def test_row_amount_from_read_result():
+    """후보 행의 매입·매출 금액은 읽기 결과의 칸(비율·분모 종류)에서 — 근거 문구가 어떻게 적혀 있든 상관없다. 분모를 모르면 비움."""
+    row = {"cogs": 800, "revenue": 1000}
+    assert C.related_amount(_detail(0.9, "매출원가", 720, 800), row) == 720
+    assert C.related_amount(_detail(0.5, "매출", 500, 1000), {"cogs": None, "revenue": 1000}) == 500
+    assert C.related_amount(_detail(0.9, "매출원가", 720, 800, why="문구를 다듬어 '÷' 글자가 없어도"), row) == 720
+    assert C.related_amount(_detail(why="매입 열 못 찾음"), row) is None            # 비율 없음
+    assert C.related_amount(None, row) is None and C.related_amount({}, row) is None   # 원문이 없어 읽지 않음
+    assert C.related_amount(_detail(0.9, None, 720, 800), row) is None             # 분모 종류 모름
+    assert C.related_amount(_detail(0.9, "매출원가", 720, 800), {"cogs": None, "revenue": 1000}) is None   # 행에 그 분모가 없음
+    assert C.related_amount(_detail(0.0, "매출원가", 0, 800, why="특수관계자 거래 없음 문장"), row) == 0
+    assert C.related_amount(_detail(0.9, "매출원가", 721, 800), row) == 720         # 원문 금액과 비율 × 분모가 다르면 종전 값(비율 × 분모)
     assert "related_party_purchase" in C.CANDIDATE_COLS
+
+
+def test_row_amount_survives_evidence_wording():
+    """원문 → 읽기 결과 → 후보 행 금액까지. 근거 문구를 바꿔도(되읽지 않으므로) 금액이 비지 않는다."""
+    from korean_tax_calc_mcp.engine.kr_comparables import statements as ST
+    tr = lambda *c: "<TR>" + "".join(f"<TD>{x}</TD>" for x in c) + "</TR>"
+    s = ("<P>9. 특수관계자</P><P>(단위:천원)</P><TABLE><TR><TH>회사명</TH><TH>매출</TH><TH>상품매입</TH></TR>"
+         + tr("A", "1,234", "300") + tr("B", "0", "33") + "</TABLE><P>10. 유형자산</P>")
+    row = {"cogs": 1_000_000, "revenue": 3_000_000}
+    d = ST.related_purchases_detail(s, False, row["cogs"], row["revenue"])
+    assert C.related_amount(d, row) == 333_000 and C.related_amount({**d, "why": "다듬은 문구"}, row) == 333_000
+    assert C.related_amount(ST.related_sales_detail(s, False, row["revenue"]), row) == 1_234_000
+    cell = C._related_cell(d, "20250101000001")
+    assert cell["value"] == d["ratio"] and cell["status"] == "확보" and cell["evidence"] == {"rcept_no": "20250101000001", "account": d["why"]}
+    miss = C._related_cell(ST.related_purchases_detail("<P>1. 일반</P>", False, 1, 1), "20250101000001")
+    assert miss["value"] is None and miss["evidence"] == {} and miss["note"] == "특수관계자 절 못 찾음"
 
 
 def _cand(**kw):
@@ -101,3 +123,14 @@ def test_compare_purchase_review_key_overrides_only_purchase_side():
     b = reasons({"related_sales_review": 0.5, "related_purchase_review": 0.25})  # 매입 기준을 따로 주면 그것으로
     assert "[I2] 특수관계 매입" not in a and "[I2] 특수관계 매입 40% ≥ 25%" in b
     assert "related_purchase_review" in P.RULE_KEYS and P.merged_rules(None)["related_purchase_review"] is None
+
+
+def test_related_amount_zero_ratio_without_base_is_zero():
+    from korean_tax_calc_mcp.engine.kr_comparables import candidates as C
+    zero = {"ratio": 0.0, "amount": 0, "base": None, "base_kind": None, "unit": None, "where": "", "kind": "", "why": "특수관계자 거래 없음 문장"}
+    assert C.related_amount(zero, {"revenue": None, "cogs": None}) == 0          # 거래 없음은 분모가 없어도 0(종전 동작)
+    none = {"ratio": None, "amount": None, "base": None, "base_kind": None, "unit": None, "where": "", "kind": "", "why": "못 읽음"}
+    assert C.related_amount(none, {"revenue": 100, "cogs": 80}) is None
+    part = {"ratio": 0.25, "amount": 20, "base": 80, "base_kind": "매출원가", "unit": 1, "where": "", "kind": "재고 매입", "why": "x"}
+    assert C.related_amount(part, {"revenue": 100, "cogs": 80}) == 20
+    assert C.related_amount(part, {"revenue": 100, "cogs": None}) is None       # 분모 금액이 행에 없으면 추정하지 않음
