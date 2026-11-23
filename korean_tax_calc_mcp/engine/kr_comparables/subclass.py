@@ -11,11 +11,10 @@ Solar에 보내 하나를 고르게 한다. 근거 인용이 보낸 글에 글�
 - '확인 필요' = 키 없음·설명 없음·모델이 못 가름·하위 항목 어디에도 안 듦·인용 불일치·호출 실패 → 빼지 않고 표시만(추정으로 넣거나 빼지 않음)
 분류표는 통계 분류(통계청 고시)이고 세법 판정 기준이 아니다. 다수결 없음, temperature 0, 같은 입력은 캐시에서 같은 답. Claude 작성(2026-11-20).
 """
-import json
 import re
 
 from . import ksic as KS
-from .revenue_mix import SOLAR_MODEL, solar_cached
+from . import solar_client as SOL
 
 IN, OTHER, UNSURE = "입력 세분류", "다른 세분류", "확인 필요"
 CAPPED = "Solar 호출 상한에 닿아 판정하지 않음 — 다시 실행하면 이어서 판정"
@@ -75,7 +74,8 @@ def evidence_text(prof):
 
 
 def judge(prof, registered, prefixes, key, http=None, stat=None):
-    """반환 {'판정': IN|OTHER|UNSURE, '세분류': {code,name}|None, '근거_문장': str|None, '사유': str}."""
+    """반환 {'판정': IN|OTHER|UNSURE, '세분류': {code,name}|None, '근거_문장': str|None, '사유': str}.
+    Solar 답으로 판정했으면 'AI 생성 표시'(SOL.AI_MARK_SUBCLASS)도 붙음 — 키 없음·설명 없음·상한·호출 실패·답을 못 읽음에는 없음."""
     opts, rel = options(registered, prefixes)
     if not opts:
         return {"판정": UNSURE, "세분류": None, "근거_문장": None, "사유": "분류표에 등록 코드의 하위 항목이 없음"}
@@ -86,18 +86,21 @@ def judge(prof, registered, prefixes, key, http=None, stat=None):
         return {"판정": UNSURE, "세분류": None, "근거_문장": None, "사유": "UPSTAGE_API_KEY 없음 — 세분류를 가르지 않음"}
     opt_txt = "\n".join(f"{o['code']} {o['name']}" + (f" ({', '.join(o['하위'])})" if o["하위"] else "") for o in opts)
     row_txt = "\n".join(f"- {l}" + (f" ({s}%)" if s is not None else "") for l, s in labels) or "(없음)"
-    body = {"model": SOLAR_MODEL, "temperature": 0,
-            "messages": [{"role": "user", "content": PROMPT.replace("{options}", opt_txt).replace("{desc}", desc or "(없음)").replace("{rows}", row_txt)}]}
-    capped0 = (stat or {}).get("solar_capped", 0)
-    d = solar_cached(body, key, http, stat)
-    if d is None and (stat or {}).get("solar_capped", 0) > capped0:
+    body = SOL.user_body(PROMPT.replace("{options}", opt_txt).replace("{desc}", desc or "(없음)").replace("{rows}", row_txt), temperature_first=True)
+    d, src = SOL.call(body, key, http, stat)
+    if src == SOL.CAPPED:
         return {"판정": UNSURE, "세분류": None, "근거_문장": None, "사유": CAPPED}
     if d is None:
         return {"판정": UNSURE, "세분류": None, "근거_문장": None, "사유": "Solar 호출 실패"}
     try:
-        j = json.loads(re.search(r"\{.*\}", d["choices"][0]["message"]["content"], re.S).group(0))
+        j = SOL.reply_json(d)
     except Exception:
         return {"판정": UNSURE, "세분류": None, "근거_문장": None, "사유": "Solar 답을 읽지 못함"}
+    return {**_from_reply(j, opts, rel, desc, labels), SOL.AI_MARK_KEY: SOL.AI_MARK_SUBCLASS}
+
+
+def _from_reply(j, opts, rel, desc, labels):
+    """모델 답(JSON) → 판정. 여기서 나오는 판정은 모두 Solar 답에서 왔음(호출한 쪽이 AI 생성 표시를 붙임)."""
     code, raw_quote = str(j.get("code") or "").strip(), str(j.get("quote") or "").strip()
     by = {o["code"]: o for o in opts}
     if code not in by:
