@@ -391,3 +391,19 @@ def test_short_code_drops_do_not_use_limit(env):
     """빠진 짧은 코드 후보는 후보 수(limit)를 차지하지 않음."""
     r = run(Transport(), industry_codes=["46"], listed="둘 다", limit=10, short_code_keywords=["없는낱말"])["결과"]
     assert r["업종_짧은코드_설명불일치"] == [] and r["후보_수"] == 5    # '46' 입력엔 짧은 코드 후보 자체가 없음
+
+
+def test_limit_truncation_is_reported(env):
+    full = run(Transport(), listed="상장", limit=10)
+    assert full["결과"]["잘림"]["잘림"] is False and full["결과"]["잘림"]["확인_안_한_회사_수"] == 0       # 상한에 안 닿으면 잘림 없음
+    assert not any("후보 수 상한" in n for n in full["주의"])
+    n_all = full["결과"]["후보_수"]
+    assert n_all >= 2
+    out = run(Transport(), listed="상장", limit=1)
+    cut = out["결과"]["잘림"]
+    assert out["결과"]["후보_수"] == 1 and cut["잘림"] is True and cut["후보_수_상한"] == 1
+    assert cut["확인_안_한_회사_수"] >= 1 and cut["확인_안_한_회사_수"] >= cut["그중_업종_코드_맞음_색인기준"] + cut["그중_색인_없음"]
+    assert any("후보 수 상한(limit 1)" in n and "업종 전체가 아니라" in n for n in out["주의"])
+    again = run(Transport(), listed="상장", limit=1)["결과"]["잘림"]                                          # 두 번째 실행은 색인이 쌓여 업종 맞는 수를 앎
+    assert again["그중_색인_없음"] <= cut["그중_색인_없음"]
+    assert out["결과"]["제외_목록_전체_수"] == len(out["결과"]["제외_목록"])
