@@ -222,12 +222,12 @@ def _profile_listed(R, corp, name, code, rows, fin_items, last, cls_ctx):
         items_inv = ST.inventory_items(inv_rows)
         p["raw_material_inv"] = value(bool(items_inv & {"원재료", "재공품"}), rcept_no=brc, account="재고자산 주석: " + "|".join(sorted(items_inv))) if items_inv else (
             value(False, STATUS_NONE, note="재고 계정 없음") if p["inv_to_sales"]["status"] == STATUS_NONE else value(note="재고 구성 주석 못 찾음"))
-        r, why = ST.related_sales(s, True, rev)
-        p["related_sales_ratio"] = value(r, rcept_no=brc, account=why) if r is not None else value(note=why)
+        extra["related_sales"] = ST.related_sales_detail(s, True, rev)
+        p["related_sales_ratio"] = _related_cell(extra["related_sales"], brc)
         sig, st = ST.control_signals(s, True)
         p["control_signals"] = value(sig, rcept_no=brc, account=st) if sig is not None else value(note=st)
-        r, why = ST.related_purchases(s, True, last.get("cogs"), rev)
-        p["related_purchase_ratio"] = value(r, rcept_no=brc, account=why) if r is not None else value(note=why)
+        extra["related_purchases"] = ST.related_purchases_detail(s, True, last.get("cogs"), rev)
+        p["related_purchase_ratio"] = _related_cell(extra["related_purchases"], brc)
     else:
         p["mix_coverage"] = value(note="사업보고서 원문 없음")
     h = R.dc.get("hyslrSttus.json", {"corp_code": corp, "bsns_year": str(last["year"]), "reprt_code": "11011"})
@@ -523,12 +523,12 @@ def _profile_unlisted(R, corp, name, code, rows, parsed, docs, last):
     items_inv = ST.inventory_items(bs) or ST.inventory_items(_rows_from_sections(s, False, r"재고\s*자산", ("D826380",)))
     p["raw_material_inv"] = value(bool(items_inv & {"원재료", "재공품"}), rcept_no=rc, account="재고 구성: " + "|".join(sorted(items_inv))) if items_inv else (
         value(False, STATUS_NONE, note="재고 계정 없음") if p["inv_to_sales"]["status"] == STATUS_NONE else value(note="재고 구성 못 찾음"))
-    r, why = ST.related_sales(s, False, rev)
-    p["related_sales_ratio"] = value(r, rcept_no=rc, account=why) if r is not None else value(note=why)
+    extra["related_sales"] = ST.related_sales_detail(s, False, rev)
+    p["related_sales_ratio"] = _related_cell(extra["related_sales"], rc)
     sig, st = ST.control_signals(s, False)
     p["control_signals"] = value(sig, rcept_no=rc, account=st) if sig is not None else value(note=st)
-    r, why = ST.related_purchases(s, False, last.get("cogs"), rev)
-    p["related_purchase_ratio"] = value(r, rcept_no=rc, account=why) if r is not None else value(note=why)
+    extra["related_purchases"] = ST.related_purchases_detail(s, False, last.get("cogs"), rev)
+    p["related_purchase_ratio"] = _related_cell(extra["related_purchases"], rc)
     p["max_shareholder_pct"] = value(note="비상장 — OpenDART 최대주주 현황 API는 사업보고서 제출 회사만")
     op, osent = ST.owner_share(s)
     p["owner_pct"] = value(op, rcept_no=rc, sentence=osent, account="감사보고서 주석(주주 현황·지배기업)") if op is not None else value(note=osent)
@@ -796,30 +796,39 @@ def _one(R, kind, corp, info, years, fs_pref, rmin, rmax):
     out = []
     ms = prof["max_shareholder_pct"]["value"]
     cn = control_note((prof.get("control_signals") or {}).get("value"))
-    rel = prof["related_sales_ratio"]["value"]
     for r in rows:
         is_last = r["year"] == last["year"]
         out.append({"company_id": corp, "company_name": name, "country": "KR", "industry_code": code, "currency": "KRW",
                     **{k: r.get(k) for k in ("year", "revenue", "cogs", "opex", "operating_profit", "total_assets", "inventory", "receivables", "payables", "rcept_no", "fs_div", "changed_cells")},
                     "rnd_expense": extra.get("rnd") if is_last else None, "advertising_expense": extra.get("adv") if is_last else None,
-                    "related_party_revenue": round(rel * r["revenue"]) if (is_last and rel is not None and r.get("revenue")) else None,
-                    "related_party_purchase": related_purchase_amount(prof, r) if is_last else None,
+                    "related_party_revenue": related_amount(extra.get("related_sales"), r) if is_last else None,
+                    "related_party_purchase": related_amount(extra.get("related_purchases"), r) if is_last else None,
                     "max_shareholder_pct": ms, "control_note": cn})
     return out, prof
 
 
-def related_purchase_amount(prof, row):
-    """프로필의 특수관계 매입 비율 × 그 비율의 분모(근거에 적힌 '÷ 매출원가' 또는 '÷ 매출') → 후보 행에 실을 매입 금액.
-    비율이 없거나, 근거에서 분모를 알 수 없거나, 그 분모 금액이 행에 없으면 None(추정하지 않음). 비율이 0이면 0."""
-    cell = prof.get("related_purchase_ratio") or {}
-    ratio = cell.get("value")
-    if ratio is None:
+def _related_cell(detail, rcept_no):
+    """특수관계 매출·매입 읽기 결과(ST.related_*_detail) → 프로필 값 칸. 비율이 있으면 근거에 접수번호·근거 문구, 없으면 사유를 note에."""
+    if detail["ratio"] is None:
+        return value(note=detail["why"])
+    return value(detail["ratio"], rcept_no=rcept_no, account=detail["why"])
+
+
+RELATED_BASE_FIELD = {"매출": "revenue", "매출원가": "cogs"}
+
+
+def related_amount(detail, row):
+    """특수관계 매출·매입 읽기 결과(ST.related_*_detail) → 후보 행에 실을 금액. 분모가 매출인지 매출원가인지는 결과의 base_kind로 안다
+    (근거 문구를 되읽지 않음). 읽기 결과가 없거나, 비율이 없거나, 분모 종류를 모르거나, 그 분모 금액이 행에 없으면 None(추정하지 않음).
+    싣는 값은 종전과 같은 비율 × 행의 분모(반올림) — 원문 표 금액(amount)과 같으면 그 금액이고, 1원이라도 다르면 종전 값을 둔다."""
+    d = detail or {}
+    if d.get("ratio") is None:
         return None
-    if ratio == 0:
-        return 0                       # 특수관계자 거래 없음 — 분모와 무관하게 0
-    acct = str((cell.get("evidence") or {}).get("account") or "")
-    base = row.get("cogs") if "÷ 매출원가" in acct else row.get("revenue") if re.search(r"÷ 매출(?!원가)", acct) else None
-    return round(ratio * base) if base else None
+    base = row.get(RELATED_BASE_FIELD.get(d.get("base_kind")))
+    if not base:
+        return None
+    back = round(d["ratio"] * base)
+    return d["amount"] if d.get("amount") == back else back
 
 
 CONTROL_NOTE_KINDS = ("지배기업", "기업집단 계열")
