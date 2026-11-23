@@ -122,9 +122,11 @@ def test_item_detail_examples():
     assert r["items"]["inventory"]["verdict"] == "다름" and r["overall"] == "사람 확인" and r["reasons"][0].startswith("[K1]")
     r = compare_profile(TESTED_CONTRACT_MFG, PROFILES["대주기공"])
     assert r["items"]["ppe"]["verdict"] == "다름" and r["reasons"][0].startswith("[K2]")
-    assert r["overall"] == "사람 확인" and any(x.startswith("[I2]") for x in r["reasons"])
+    assert r["overall"] == "사람 확인" and not any(x.startswith("[I2]") for x in r["reasons"])   # 0.72.0 — 검토선 기본값 없음
+    assert any(x.startswith("[I2]") for x in compare_profile(TESTED_CONTRACT_MFG, PROFILES["대주기공"], {"related_review": 0.20})["reasons"])   # 사용자가 준 검토선
     r = compare_profile(TESTED_RESELLER, PROFILES["참트레이딩"])
-    assert r["items"]["revenue_mix"]["verdict"] == "불명" and any("특수관계 매출" in x for x in r["independence"])
+    assert r["items"]["revenue_mix"]["verdict"] == "불명" and r["related_shares"]["매출"] == 0.6011
+    assert any(x.startswith("[C2]") and "특수관계 매출" in x for x in r["reasons"])   # 의존 50% 이상(법정 준용) — 사람 확인
 
 
 # ---------- 경계값 ----------
@@ -230,10 +232,15 @@ def test_independence():
     r = compare_profile(TESTED_RESELLER, c)
     assert r["overall"] == "제외 후보" and "법정 준용" in r["independence"][0]
     assert compare_profile(TESTED_RESELLER, _cand(max_shareholder_pct=value(49.99)))["overall"] == "포함 후보"
-    assert compare_profile(TESTED_RESELLER, _cand(related_sales_ratio=value(0.20)))["overall"] == "사람 확인"
-    assert compare_profile(TESTED_RESELLER, _cand(related_sales_ratio=value(0.1999)))["overall"] == "포함 후보"
-    r = compare_profile(TESTED_RESELLER, _cand(related_purchase_ratio=value(0.53)))      # 매입 의존도 — 사람 확인, 법정 판정 아님
-    assert r["overall"] == "사람 확인" and "법정 특수관계 판정 아님" in r["reasons"][0]
+    # 0.72.0 — 특수관계 비중 검토선 기본값 없음: 법정 준용 의존 50%([C2])만 늘 적용, 그 아래는 숫자만
+    assert compare_profile(TESTED_RESELLER, _cand(related_sales_ratio=value(0.20)))["overall"] == "포함 후보"
+    assert compare_profile(TESTED_RESELLER, _cand(related_sales_ratio=value(0.4999)))["overall"] == "포함 후보"
+    r = compare_profile(TESTED_RESELLER, _cand(related_sales_ratio=value(0.50)))
+    assert r["overall"] == "사람 확인" and r["reasons"][0].startswith("[C2]") and r["related_shares"] == {"매출": 0.5, "매입": None}
+    r = compare_profile(TESTED_RESELLER, _cand(related_purchase_ratio=value(0.53)))      # 매입 의존도 — 사람 확인(제외 아님)
+    assert r["overall"] == "사람 확인" and r["reasons"][0].startswith("[C2]") and "법정 준용" in r["reasons"][0]
+    r = compare_profile(TESTED_RESELLER, _cand(related_sales_ratio=value(0.20)), {"related_review": 0.20})   # 사용자가 준 검토선
+    assert r["overall"] == "사람 확인" and "입력한 검토선" in r["reasons"][0] and "법정 특수관계 판정 아님" in r["reasons"][0]
     assert compare_profile(TESTED_RESELLER, _cand(related_sales_ratio=value(0.22)), rules={"related_sales_review": 0.25})["overall"] == "포함 후보"   # 예전 이름
 
 

@@ -1,5 +1,0 @@
-{"_출처": "korean-tax-mcp PR #123(feat/tp-comparability, 81a6920) transfer_pricing_guide '비교대상 선정 기준'의 '넘길 값' — 연결 테스트 고정본(값은 조문 MCP가 정함)",
- "kr_comparable_profile_compare": {"rules": {"mix_max_diff": 0.2, "ratio_low": 0.5, "ratio_high": 2.0, "ppe_abs_tol": 0.05, "rnd_abs_tol": 0.01, "advert_abs_tol": 0.01,
-   "coverage_min": 0.8, "coverage_max": 1.2, "independence_legal_pct": 50.0, "related_sales_review": 0.25, "unknown_review_count": 3, "mix_unverified_review": 0.1}},
- "tp_comparable_screen": {"screens": {"independence_pct": 25, "independence_bvd_reject": ["C", "D", "U"], "loss_years": 2, "crisis_exception": false, "rnd_max": 0.03,
-   "adv_max": 0.05, "related_max": 0.25, "segment_min": 0.75, "size_min": null, "size_max": null, "outlier_k": 1.5}, "quartile_method": "inclusive"}}
