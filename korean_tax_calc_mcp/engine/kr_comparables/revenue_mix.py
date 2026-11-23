@@ -219,7 +219,8 @@ def solar_http(body, key):
 
 
 def solar_cached(body, key, http=None, stat=None):
-    """Solar 한 번 부르기(캐시·일시 오류 재시도·호출 상한). 같은 요청은 캐시에서 같은 답. 실패하면 None(오류는 stat에 적음)."""
+    """Solar 한 번 부르기(캐시·일시 오류 재시도·호출 상한). 같은 요청은 캐시에서 같은 답. 실패하면 None(오류는 stat에 적음).
+    상한은 stat['solar_cap'](실행당 실제 호출 수, 재시도 포함) — 닿으면 부르지 않고 None, stat['solar_capped']에 건너뛴 수."""
     d_dir = os.path.join(cache_dir(), "solar")
     os.makedirs(d_dir, exist_ok=True)
     f = os.path.join(d_dir, "v2_" + hashlib.sha1(json.dumps(body, ensure_ascii=False).encode()).hexdigest()[:16] + ".json")
@@ -230,7 +231,8 @@ def solar_cached(body, key, http=None, stat=None):
             stat["solar_cached"] = stat.get("solar_cached", 0) + 1
             return d
         if stat.get("solar_cap") is not None and stat.get("solar_calls", 0) >= stat["solar_cap"]:
-            raise RuntimeError("Solar 호출 상한")
+            stat["solar_capped"] = stat.get("solar_capped", 0) + 1       # 상한에 닿음 — 부르지 않고 None(오류로 적지 않음, 다음 실행은 캐시로 이어감)
+            return None
         d = None
         for attempt in range(1 + RETRIES):       # 일시 오류만 재시도(1·2·4초), 다 실패하면 아래 except
             stat["solar_calls"] = stat.get("solar_calls", 0) + 1

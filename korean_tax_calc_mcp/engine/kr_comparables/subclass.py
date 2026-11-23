@@ -18,6 +18,7 @@ from . import ksic as KS
 from .revenue_mix import SOLAR_MODEL, solar_cached
 
 IN, OTHER, UNSURE = "입력 세분류", "다른 세분류", "확인 필요"
+CAPPED = "Solar 호출 상한에 닿아 판정하지 않음 — 다시 실행하면 이어서 판정"
 QUOTE_MIN = 8          # 확인된 인용 조각의 최소 길이(공백 뺀 글자 수) — 이보다 짧으면 근거로 보지 않음
 DESC_MAX, ROWS_MAX = 1500, 12
 
@@ -87,7 +88,10 @@ def judge(prof, registered, prefixes, key, http=None, stat=None):
     row_txt = "\n".join(f"- {l}" + (f" ({s}%)" if s is not None else "") for l, s in labels) or "(없음)"
     body = {"model": SOLAR_MODEL, "temperature": 0,
             "messages": [{"role": "user", "content": PROMPT.replace("{options}", opt_txt).replace("{desc}", desc or "(없음)").replace("{rows}", row_txt)}]}
+    capped0 = (stat or {}).get("solar_capped", 0)
     d = solar_cached(body, key, http, stat)
+    if d is None and (stat or {}).get("solar_capped", 0) > capped0:
+        return {"판정": UNSURE, "세분류": None, "근거_문장": None, "사유": CAPPED}
     if d is None:
         return {"판정": UNSURE, "세분류": None, "근거_문장": None, "사유": "Solar 호출 실패"}
     try:
