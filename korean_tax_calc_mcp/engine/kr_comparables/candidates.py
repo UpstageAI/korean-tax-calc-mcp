@@ -824,6 +824,8 @@ def related_amount(detail, row):
     d = detail or {}
     if d.get("ratio") is None:
         return None
+    if d["ratio"] == 0:
+        return 0                       # 특수관계자 거래 없음 — 분모와 무관하게 0(종전과 같음)
     base = row.get(RELATED_BASE_FIELD.get(d.get("base_kind")))
     if not base:
         return None
