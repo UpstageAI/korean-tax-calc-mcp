@@ -123,3 +123,14 @@ def test_compare_purchase_review_key_overrides_only_purchase_side():
     b = reasons({"related_sales_review": 0.5, "related_purchase_review": 0.25})  # 매입 기준을 따로 주면 그것으로
     assert "[I2] 특수관계 매입" not in a and "[I2] 특수관계 매입 40% ≥ 25%" in b
     assert "related_purchase_review" in P.RULE_KEYS and P.merged_rules(None)["related_purchase_review"] is None
+
+
+def test_related_amount_zero_ratio_without_base_is_zero():
+    from korean_tax_calc_mcp.engine.kr_comparables import candidates as C
+    zero = {"ratio": 0.0, "amount": 0, "base": None, "base_kind": None, "unit": None, "where": "", "kind": "", "why": "특수관계자 거래 없음 문장"}
+    assert C.related_amount(zero, {"revenue": None, "cogs": None}) == 0          # 거래 없음은 분모가 없어도 0(종전 동작)
+    none = {"ratio": None, "amount": None, "base": None, "base_kind": None, "unit": None, "where": "", "kind": "", "why": "못 읽음"}
+    assert C.related_amount(none, {"revenue": 100, "cogs": 80}) is None
+    part = {"ratio": 0.25, "amount": 20, "base": 80, "base_kind": "매출원가", "unit": 1, "where": "", "kind": "재고 매입", "why": "x"}
+    assert C.related_amount(part, {"revenue": 100, "cogs": 80}) == 20
+    assert C.related_amount(part, {"revenue": 100, "cogs": None}) is None       # 분모 금액이 행에 없으면 추정하지 않음
