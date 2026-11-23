@@ -1293,7 +1293,7 @@ def tp_comparable_screen(tested_party: Annotated[dict, Field(description="분석
 짧은 코드 세분류: 등록 코드 아래 한국표준산업분류 항목(입력과 같은 자릿수)을 선택지로, 이미 뽑은 사업 설명(앞 1,500자)과 매출 행 이름·비중만 Solar에 보내 주된 사업의 항목 하나와 근거 인용을 받음(UPSTAGE_API_KEY 필요, temperature 0·캐시).
   인용이 보낸 글에 글자 그대로 없으면 판정을 버리고 '확인 필요'. 키 없음·설명 없음·모델이 못 가름도 '확인 필요'로 남김. 판정은 참고용 — 업종에 따라 정확도가 크게 달라(공정 단계로 나뉘거나 '기타' 항목이 큰 분류는 자주 틀림) 기본은 후보를 빼지 않음.
 키: 환경변수 DART_API_KEY(본인 발급, 무료 — opendart.fss.or.kr, 약관상 본인만 사용). 없으면 이 도구만 꺼지고 발급 안내를 돌려줌.
-안전: 순차 호출·0.35초 간격·하루 상한(KR_COMPARABLES_DAILY_CAP, 기본 2,000)·실행 상한(max_calls)·한도 초과(020)·연속 오류 시 멈춤, 결과·오류에 키를 남기지 않음,
+안전: 순차 호출·0.35초 간격·하루 상한(KR_COMPARABLES_DAILY_CAP, 기본 2,000)·실행 상한(max_calls, Solar는 max_solar_calls)·한도 초과(020)·연속 오류 시 멈춤, 결과·오류에 키를 남기지 않음,
   캐시(KR_COMPARABLES_CACHE_DIR, 기본 ~/.cache/korean-tax-calc-mcp/opendart)로 같은 요청은 다시 부르지 않음 — 처음 실행은 회사 수만큼 호출이 들고, 상한에 닿으면 다시 실행해 이어감.
 색인: 기업개황(업종코드·결산월·법인구분)을 캐시 폴더의 회사 색인 파일에 쌓고, 다음 실행부터는 색인으로 업종을 먼저 걸러 업종이 맞는 회사만 재무를 부름. 비상장 모집단은 공시 목록을 하루씩 쪼개 모든 쪽을 받음(50쪽 상한에 걸려 빠지는 회사 없음). 결과의 색인(모집단_색인 n/N)이 완료가 아니면 같은 입력으로 다시 부르면 이어감.
 한계(범위 밖): 비교대상이 적절한지 판단(프로필 비교·사람 검토 몫), 비상장 최대주주 지분(API 없음 → 불명), 12월 결산 외 회사·영업부문별 재무, 비상장 탐색은 기간 안 감사보고서를 낸 회사만.""")
@@ -1310,14 +1310,15 @@ def kr_comparable_candidates(
         max_calls: Annotated[int, Field(description="이번 실행 OpenDART 호출 상한(기본 300) — 닿으면 멈추고 다시 실행하면 캐시로 이어감", ge=1, le=5000)] = 300,
         build_index_only: Annotated[bool, Field(description="true면 재무는 부르지 않고 회사 색인(기업개황 → 업종코드·결산월·법인구분)만 쌓음 — 비상장 모집단이 클 때 먼저 며칠에 나눠 색인을 채우는 용도")] = False,
         short_code_keywords: Annotated[list[str] | None, Field(description="등록 업종 코드가 입력보다 짧은 후보(예: 입력 '2042'에 등록 '204')만 거르는 품목 낱말(예 ['화장품']) — 사업 설명에 하나도 없으면 후보에서 빼고 업종_짧은코드_설명불일치에 적음. 주면 세분류 판정(short_code_subclass)은 하지 않음")] = None,
-        short_code_subclass: Annotated[Literal["거름", "표시만", "끔"], Field(description="등록 업종 코드가 입력보다 짧은 후보를 한국표준산업분류의 형제 항목으로 가르기 — 표시만(기본: 후보는 그대로 두고 판정·판정_세분류·근거_문장만 붙임)|거름(주된 사업이 입력 밖 세분류면 후보에서 빼고 업종_짧은코드_다른세분류에 적음 — 정확도가 업종마다 달라 목록을 사람이 확인)|끔(가르지 않음). 가르지 못한 후보는 어느 쪽이든 빼지 않음. short_code_keywords를 주면 적용 안 함")] = "표시만") -> dict:
+        short_code_subclass: Annotated[Literal["거름", "표시만", "끔"], Field(description="등록 업종 코드가 입력보다 짧은 후보를 한국표준산업분류의 형제 항목으로 가르기 — 표시만(기본: 후보는 그대로 두고 판정·판정_세분류·근거_문장만 붙임)|거름(주된 사업이 입력 밖 세분류면 후보에서 빼고 업종_짧은코드_다른세분류에 적음 — 정확도가 업종마다 달라 목록을 사람이 확인)|끔(가르지 않음). 가르지 못한 후보는 어느 쪽이든 빼지 않음. short_code_keywords를 주면 적용 안 함")] = "표시만",
+        max_solar_calls: Annotated[int, Field(description="이번 실행 Solar 호출 상한(기본 60, 매출 분류와 세분류 판정이 함께 씀, 캐시에서 읽는 것은 세지 않음) — 닿으면 멈추지 않고 그 뒤 후보의 매출 분류는 규칙으로만, 세분류 판정은 '확인 필요'로 남김. 다시 실행하면 캐시로 이어감", ge=0, le=500)] = 60) -> dict:
     from .engine.kr_comparables import candidates as KRC
     win = tuple(unlisted_window) if unlisted_window else None
     if win is not None and len(win) != 2:
         raise ValueError("unlisted_window는 [시작 YYYYMMDD, 끝 YYYYMMDD]")
     r = KRC.run(industry_codes=industry_codes, years=years, listed=listed, revenue_min=revenue_min, revenue_max=revenue_max,
                 limit=limit, fs_pref=fs_pref, unlisted_window=win, max_calls=max_calls, build_index_only=build_index_only,
-                short_code_keywords=short_code_keywords, short_code_subclass=short_code_subclass)
+                short_code_keywords=short_code_keywords, short_code_subclass=short_code_subclass, max_solar_calls=max_solar_calls)
     extra = {k: v for k, v in r.items() if k not in ("결과", "근거")}
     return _ok(r["결과"], r["근거"], **extra)
 

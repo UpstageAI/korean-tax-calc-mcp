@@ -26,6 +26,8 @@ from .index import CorpIndex
 from .schema import STATUS_NONE, STATUS_UNKNOWN, empty_profile, value
 
 LIMIT_MAX = 100
+SOLAR_CALLS_DEFAULT = 60      # 실행당 Solar 실제 호출 상한 기본값(매출 분류 + 세분류 판정) — 닿으면 멈추지 않고 그 뒤 호출만 건너뜀
+SOLAR_CALLS_MAX = 500
 LISTED_OPTS = ("상장", "비상장", "둘 다")
 UPSTAGE_GUIDE = "UPSTAGE_API_KEY가 없어 매출 행을 이름 규칙으로 분류했습니다(정확도 낮음). 키 발급: https://console.upstage.ai"
 CANDIDATE_COLS = ["company_id", "company_name", "country", "industry_code", "year", "currency", "revenue", "cogs", "opex", "operating_profit",
@@ -560,7 +562,7 @@ def _profile_unlisted(R, corp, name, code, rows, parsed, docs, last):
 
 def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=None, limit=30, fs_pref="별도",
         unlisted_window=None, max_calls=300, client=None, solar_http=None, upstage_key=None, build_index_only=False,
-        short_code_keywords=None, short_code_subclass="표시만"):
+        short_code_keywords=None, short_code_subclass="표시만", max_solar_calls=None):
     """반환 {'결과': ..., '근거': [...], '주의': [...]} 또는 키 없음 안내."""
     key = os.environ.get(KEY_ENV, "")
     if client is None and not key:
@@ -591,6 +593,8 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
     dc = client or DartClient(key=key, max_calls=max_calls)
     up_key = upstage_key if upstage_key is not None else os.environ.get("UPSTAGE_API_KEY", "")
     R = _Run(dc, up_key, solar_http)
+    solar_cap = max(0, min(int(SOLAR_CALLS_DEFAULT if max_solar_calls is None else max_solar_calls), SOLAR_CALLS_MAX))
+    R.stat["solar_cap"] = solar_cap       # 매출 분류·세분류 판정이 함께 쓰는 실행당 Solar 호출 상한(캐시에서 읽는 것은 세지 않음)
     IX = CorpIndex()
     found, cand_rows, profiles, stop, skipped, short = [], [], [], None, [], []
     prog = {"left": None}
@@ -683,7 +687,7 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
         "매출_분류_방법": method or ["매출 행 없음"],
         "정확도_낮음": low_acc,
         "호출": {"OpenDART_실호출": dc.calls, "OpenDART_캐시": dc.cache_hits, "Solar_실호출": R.stat.get("solar_calls", 0),
-                 "Solar_캐시": R.stat.get("solar_cached", 0), "오류": [mask(x, key) for x in dc.errors[:10]] + [mask(x, key) for x in R.stat.get("solar_errors", [])[:5]]},
+                 "Solar_캐시": R.stat.get("solar_cached", 0), "Solar_상한": solar_cap, "Solar_상한으로_건너뜀": R.stat.get("solar_capped", 0), "오류": [mask(x, key) for x in dc.errors[:10]] + [mask(x, key) for x in R.stat.get("solar_errors", [])[:5]]},
         "멈춤": stop or "",
         "남은_회사_수": (prog["left"] if stop else 0),
         "이어서": ("같은 입력으로 다시 부르면 캐시에 쌓인 결과는 다시 부르지 않고 남은 회사부터 이어서 계속합니다."
@@ -720,6 +724,9 @@ def run(industry_codes, years, listed="둘 다", revenue_min=None, revenue_max=N
                      + (", 낱말로 거르려면 short_code_keywords." if short_code_subclass != "거름" else "."))
         if not up_key:
             notes.append("UPSTAGE_API_KEY가 없어 짧은 코드 후보의 세분류를 가르지 못했습니다 — 모두 '확인 필요'로 남김.")
+    if R.stat.get("solar_capped"):
+        notes.append(f"Solar 호출 상한({solar_cap}회)에 닿아 {R.stat['solar_capped']}건을 부르지 않았습니다 — 그 후보의 매출 분류는 규칙으로만 했고 세분류 판정은 '확인 필요'로 남김. "
+                     "같은 입력으로 다시 부르면 캐시로 이어서 판정합니다(상한은 max_solar_calls).")
     if short_drop:
         notes.append(f"짧은 코드 후보 {len(short_drop)}개를 사업 설명 낱말 불일치로 뺌(업종_짧은코드_설명불일치) — 글자 일치만 본 것이라 사람이 목록을 훑어 되살릴 수 있음.")
     if stop:

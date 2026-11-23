@@ -189,3 +189,33 @@ def test_run_keywords_keep_old_behaviour(env):
 def test_run_rejects_unknown_option(env):
     with pytest.raises(ValueError):
         run(Transport(), industry_codes=["4652"], short_code_subclass="아무거나")
+
+
+def test_solar_cap_skips_call_and_marks_unsure(monkeypatch, tmp_path):
+    monkeypatch.setenv("KR_COMPARABLES_CACHE_DIR", str(tmp_path))
+    calls = []
+    def http(body, key):
+        calls.append(1)
+        return _solar("2922", "주력 제품은 가상 절삭기이며 매출의 대부분을 차지합니다.")(body, key)
+    st = {"solar_cap": 0}
+    r = SC.judge(_prof(), "292", ["2922"], "k" * 10, http, st)
+    assert r["판정"] == SC.UNSURE and r["사유"] == SC.CAPPED and not calls                 # 상한 0 — 부르지 않고 확인 필요
+    assert st["solar_capped"] == 1 and "solar_errors" not in st                            # 오류가 아니라 건너뜀으로 셈
+    st2 = {"solar_cap": 1}
+    assert SC.judge(_prof(), "292", ["2922"], "k" * 10, http, st2)["판정"] == SC.IN and len(calls) == 1
+    assert SC.judge(_prof(), "292", ["2922"], "k" * 10, http, st2)["판정"] == SC.IN and len(calls) == 1   # 같은 요청은 캐시 — 상한에 안 걸림
+
+
+def test_run_solar_cap_keeps_candidates_and_reports(env, monkeypatch, tmp_path):
+    base = _baseline()
+    monkeypatch.setenv("KR_COMPARABLES_CACHE_DIR", str(tmp_path / "cap0"))
+    out = run(Transport(), industry_codes=["4652"], listed="상장", upstage_key="u" * 20, solar_http=_gold_solar, max_solar_calls=0)
+    r = out["결과"]
+    assert r["후보_수"] == base["후보_수"] and [p["company_id"] for p in r["후보_프로필"]] == [p["company_id"] for p in base["후보_프로필"]]
+    assert r["호출"]["Solar_실호출"] == 0 and r["호출"]["Solar_상한"] == 0 and r["호출"]["Solar_상한으로_건너뜀"] >= 1
+    assert r["업종_짧은코드_확인필요"][0]["사유"] == SC.CAPPED and r["업종_짧은코드_다른세분류"] == []
+    assert any("Solar 호출 상한(0회)" in n for n in out["주의"])
+    monkeypatch.setenv("KR_COMPARABLES_CACHE_DIR", str(tmp_path / "dflt"))
+    d = run(Transport(), industry_codes=["4652"], listed="상장", upstage_key="u" * 20, solar_http=_gold_solar)
+    assert d["결과"]["호출"]["Solar_상한"] == 60 and d["결과"]["호출"]["Solar_상한으로_건너뜀"] == 0
+    assert not any("Solar 호출 상한" in n for n in d["주의"])
