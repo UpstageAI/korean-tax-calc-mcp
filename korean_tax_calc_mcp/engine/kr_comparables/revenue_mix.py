@@ -5,22 +5,15 @@
 비상장: 감사보고서 손익계산서의 매출 하위 행(매출액 아래 ~ 매출원가 전).
 분류: UPSTAGE_API_KEY가 있으면 Solar(solar-pro4)에 행 이름만 보내 6갈래 분류(금액은 보내지 않음), 없으면 이름 규칙 분류 + '정확도 낮음'.
 """
-import hashlib
-import json
-import os
 import re
-import time
-import urllib.request
 
+from . import solar_client as SOL
 from .statements import title_sections, txt, unit_of
-from .dart import BACKOFF, RETRIES, cache_dir, mask, transient, _ssl_ctx
-
-_sleep = time.sleep   # 테스트에서 바꿔 끼움
+from .dart import mask
 
 CATS = ("product", "merchandise", "service", "sw_license", "platform_fee", "other")
 KO = {"제품": "product", "상품": "merchandise", "용역": "service", "SW·라이선스": "sw_license", "플랫폼·중개수수료": "platform_fee", "기타": "other"}
-SOLAR_MODEL = "solar-pro4"
-SOLAR_URL = "https://api.upstage.ai/v1/chat/completions"
+METHOD_SOLAR = "Solar(solar-pro4, 행 이름 + 회사 맥락, 재화까지만)"
 
 TOTAL = re.compile(r"^(합\s*계|총\s*계|계|매출\s*합계|매출액\s*합계|합계\s*매출액|총\s*매출액?)$")
 SUBT = re.compile(r"(^|[\s/])(소\s*계|계)\s*$|합\s*계|총\s*계")
@@ -212,56 +205,16 @@ JSON만 출력: {"rows":[{"id":0,"category":"재화|용역|SW·라이선스|플�
 """
 
 
-def solar_http(body, key):
-    req = urllib.request.Request(SOLAR_URL, data=json.dumps(body).encode(), headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=120, context=_ssl_ctx()) as r:
-        return json.load(r)
-
-
-def solar_cached(body, key, http=None, stat=None):
-    """Solar 한 번 부르기(캐시·일시 오류 재시도·호출 상한). 같은 요청은 캐시에서 같은 답. 실패하면 None(오류는 stat에 적음).
-    상한은 stat['solar_cap'](실행당 실제 호출 수, 재시도 포함) — 닿으면 부르지 않고 None, stat['solar_capped']에 건너뛴 수."""
-    d_dir = os.path.join(cache_dir(), "solar")
-    os.makedirs(d_dir, exist_ok=True)
-    f = os.path.join(d_dir, "v2_" + hashlib.sha1(json.dumps(body, ensure_ascii=False).encode()).hexdigest()[:16] + ".json")
-    stat = stat if stat is not None else {}
-    try:
-        if os.path.exists(f):
-            d = json.load(open(f, encoding="utf-8"))
-            stat["solar_cached"] = stat.get("solar_cached", 0) + 1
-            return d
-        if stat.get("solar_cap") is not None and stat.get("solar_calls", 0) >= stat["solar_cap"]:
-            stat["solar_capped"] = stat.get("solar_capped", 0) + 1       # 상한에 닿음 — 부르지 않고 None(오류로 적지 않음, 다음 실행은 캐시로 이어감)
-            return None
-        d = None
-        for attempt in range(1 + RETRIES):       # 일시 오류만 재시도(1·2·4초), 다 실패하면 아래 except
-            stat["solar_calls"] = stat.get("solar_calls", 0) + 1
-            try:
-                d = (http or solar_http)(body, key)
-                break
-            except Exception as e:
-                if not transient(e) or attempt == RETRIES:
-                    raise
-                stat["solar_retries"] = stat.get("solar_retries", 0) + 1
-                _sleep(BACKOFF[attempt])
-        with open(f, "w", encoding="utf-8") as fh:
-            json.dump(d, fh, ensure_ascii=False)
-        return d
-    except Exception as e:
-        stat.setdefault("solar_errors", []).append(mask(f"{type(e).__name__}: {e}", key))
-        return None
-
-
 def classify_solar(labels, ctx, key, http=None, stat=None):
     """Solar 분류(캐시). 실패·상한이면 None(호출한 쪽이 규칙 분류로 대체)."""
     text = "\n".join(f"id={i}: {l}" for i, l in enumerate(labels))
-    body = {"model": SOLAR_MODEL, "messages": [{"role": "user", "content": PROMPT.replace("{ctx}", ctx[:4100]) + text}], "temperature": 0}
+    body = SOL.user_body(PROMPT.replace("{ctx}", ctx[:4100]) + text)
     stat = stat if stat is not None else {}
-    d = solar_cached(body, key, http, stat)
+    d = SOL.cached(body, key, http, stat)
     if d is None:
         return None
     try:
-        j = json.loads(re.search(r"\{.*\}", d["choices"][0]["message"]["content"], re.S).group(0))
+        j = SOL.reply_json(d)
         return {int(x["id"]): (KO5.get(x.get("category"), "other"), (x.get("reason") or "")[:40]) for x in j.get("rows", [])}
     except Exception as e:
         stat.setdefault("solar_errors", []).append(mask(f"{type(e).__name__}: {e}", key))
@@ -291,7 +244,7 @@ def classify(rows, ctx, listed, upstage_key=None, http=None, stat=None):
         if got is None:
             got, method = classify_rules(labels), "규칙(정확도 낮음)"
         else:
-            method = "Solar(solar-pro4, 행 이름 + 회사 맥락, 재화까지만)"
+            method = METHOD_SOLAR
         for j, i in enumerate(need):
             cls[i] = got.get(j, ("other", "분류 누락"))
     return cls, method

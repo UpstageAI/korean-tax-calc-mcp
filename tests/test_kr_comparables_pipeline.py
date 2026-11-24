@@ -9,7 +9,7 @@ import pytest
 from korean_tax_calc_mcp import server as S
 from kr_example_rules import EX_RULES
 from korean_tax_calc_mcp.engine.kr_comparables import candidates as C
-from korean_tax_calc_mcp.engine.kr_comparables import revenue_mix as RM
+from korean_tax_calc_mcp.engine.kr_comparables import solar_client as SOL
 from korean_tax_calc_mcp.engine.kr_comparables.dart import DartClient
 from tests.test_kr_comparable_candidates import FAKE_KEY, GOLD, Transport, _gold_solar
 
@@ -27,7 +27,7 @@ def pipeline(tmp_path, monkeypatch):
     monkeypatch.setenv("UPSTAGE_API_KEY", "u" * 20)
     tr = Transport()
     monkeypatch.setattr(C, "DartClient", functools.partial(DartClient, transport=tr, interval=0, sleep=lambda s: None))
-    monkeypatch.setattr(RM, "solar_http", _gold_solar)
+    monkeypatch.setattr(SOL, "http", _gold_solar)
     cand = S.kr_comparable_candidates(industry_codes=["46"], years=[2024], listed="둘 다", limit=10)
     cmp_ = S.kr_comparable_profile_compare(tested=TESTED, candidates=cand, rules=EX_RULES)
     return cand, cmp_, tr
