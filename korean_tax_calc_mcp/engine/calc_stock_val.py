@@ -545,7 +545,9 @@ def income_tax_unlisted_basis(transfer_date: str, shares: int, prior_year_income
     ev = None
     if prior_year_income is not None:
         ev = max(0.0, float(prior_year_income)) / shares / rate
-        판단.append({"항목": "순손익가치", "결론": f"직전 사업연도 순손익액 {float(prior_year_income):,.0f} ÷ {shares:,}주 ÷ 이자율 {rate*100:g}% = {ev:,.2f}(3년 가중평균 아님)", "근거": "소득세법 시행령 제165조④1호가목"})
+        판단.append({"항목": "순손익가치", "결론": f"직전 사업연도 순손익액 {float(prior_year_income):,.0f} ÷ {shares:,}주 ÷ 이자율 {rate*100:g}% = {ev:,.2f}(3년 가중평균 아님)",
+                   "근거": "소득세법 시행령 제165조④1호가목. 이자율 10%: 2023.2.28. 개정 뒤는 소득세법 시행규칙 제81조②(2023.3.20. 신설) → 상속세 및 증여세법 시행규칙 제17조 '연간 100분의 10', "
+                           "그 전은 기획재정부장관 고시 「비상장주식 평가시 적용할 이자율 고시」(2000년 10% 고시, 이후 개정 미확인 — 고시 원문은 법제처 행정규칙에 없음)"})
     if status and status not in ("청산", "휴폐업", "존속3년", "3년연속결손"):
         return {"error": "입력 확인 필요 — 계산하지 않음",
                 "문제": [f"status='{status}' — 허용값: 청산, 휴폐업, 존속3년(2023.2.28. 이후 양도분), 3년연속결손(2023.2.27.까지 양도분)"]}

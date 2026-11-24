@@ -51,6 +51,13 @@ def test_location_index_by_year():
     assert c(year=2026, structure="철근콘크리트", use="사무소", land_price_per_m2=9_500_000)["결과"]["위치지수"] == 137
 
 
+def test_2016_from_nts_commentary():
+    # 2016년 해설서: 사무소 110(2017년 115), 구조 3번 110(2017년 115), 위치 2구간 80(2017년 82)
+    r = c(year=2016, structure="철골철근콘크리트", use="사무소", land_price_per_m2=25_000)
+    assert (r["결과"]["구조지수"], r["결과"]["용도지수"], r["결과"]["위치지수"], r["결과"]["근사"]) == (110, 110, 80, False)
+    assert any("2016년 시행" in x["결론"] for x in r["판단"])
+
+
 def test_before_2016_residual_floor_20pct():
     r = c(year=2015, structure="철근콘크리트", use="사무소", built_year=1960)["결과"]
     assert r["잔가율"] == 0.2 and r["근사"] is True

@@ -1,7 +1,7 @@
 """건물 기준시가 — 국세청 「건물 기준시가 계산방법 고시」(2026년 적용: 제2025-39호). 소득세법 제99조①1호나목(양도세 기준시가)·상증법 제61조①2호(보충적 평가).
 ㎡당 금액 = 건물신축가격기준액 × 구조지수 × 용도지수 × 위치지수 × 경과연수별잔가율 (× 개별건물특성조정률: 상속·증여세만), 1,000원 미만 버림; 기준시가 = 면적 × ㎡당 금액.
 지수표는 적용연도별(index_by_year): 2017~2023·2025·2026은 고시 원문 대조, 2024는 국세청 2024년 해설서 표,
-2016년 이전은 2017년 표로 근사(결과에 표시). 작성 Claude 2026-10-30, 연도표 2026-11-24."""
+2015년 이전은 2016년 표로 근사(결과에 표시). 작성 Claude 2026-10-30, 연도표 2026-11-24."""
 from __future__ import annotations
 
 import json
@@ -110,9 +110,9 @@ def match_use(text: str) -> tuple[str | None, int | None, str | None]:
 
 
 def _table_year(year: int) -> str:
-    """지수표 연도: 표가 있으면 그 해, 2016년 이전은 2017년 표(근사)."""
+    """지수표 연도: 표가 있으면 그 해, 2015년 이전은 2016년 표(근사)."""
     Y = _rules()["index_by_year"]
-    return str(year) if str(year) in Y["structure"] else "2017"
+    return str(year) if str(year) in Y["structure"] else "2016"
 
 
 def location_index(land_price_per_m2: float, year: int = 2026) -> int:
@@ -134,10 +134,10 @@ def use_index(ulabel: str, year: int) -> tuple[int | None, str | None]:
     Y = _rules()["index_by_year"]["use"]
     no = re.match(r"(\d+)", ulabel).group(1)
     ty = str(year)
-    tbl = Y.get(ty) or Y["2017"]
+    tbl = Y.get(ty) or Y["2016"]
     v = tbl.get(no)
     if v is None:
-        return None, f"번호 {no}({ulabel})는 {'2017년' if ty not in Y else ty + '년'} 적용 고시에 없는 용도(2018년 고시에서 신설) — 그 해 고시에서 해당하는 용도를 직접 골라야 함"
+        return None, f"번호 {no}({ulabel})는 {'2016년' if ty not in Y else ty + '년'} 적용 고시에 없는 용도(2018년 고시에서 신설) — 그 해 고시에서 해당하는 용도를 직접 골라야 함"
     return v, None
 
 
@@ -177,7 +177,7 @@ def building_standard_price(year: int, area_m2: float, structure: str, use: str,
         return {"error": "자료 부족 — 계산하지 않음", "문제": [unote], "근거": "국세청 건물 기준시가 계산방법 고시 제8조(용도지수)"}
     lidx = location_index(float(land_price_per_m2), int(year))
     rr, grp, n = residual_rate(sname, int(built_year), int(year))
-    approx = year < 2017
+    approx = year < 2016
     adj = 1.0; adj_lines = []; adj_notes = []
     if purpose in ("상증세", "상속", "증여", "상속증여"):
         A = R["adjustment_rate_2026_상증세만"]
@@ -237,11 +237,11 @@ def building_standard_price(year: int, area_m2: float, structure: str, use: str,
     _fl = 0.2 if (year <= 2015 and grp in ("I", "II")) else 0.1
     판단.append({"항목": "잔가율", "결론": f"{sname}는 {grp}그룹(내용연수 {R['durability_group'][grp]['years']}년, 연 {R['durability_group'][grp]['annual_rate']}) — 경과 {n}년 → max(1 − {R['durability_group'][grp]['annual_rate']}×{n}, {_fl:.2f}) = {rr:.4f}. 신축연도는 사용승인일 기준(가사용·사실상 사용이 앞서면 그 해), 증축은 증축연도", "근거": "고시 제10조"})
     if approx:
-        판단.append({"항목": "확인 필요", "결론": f"{year}년 적용 신축가격기준액 {base['amount']:,}원({base.get('notice', base.get('source'))})은 그 해 고시값이지만, 구조·용도·위치지수는 그 해 원문을 확보하지 못해 2017년 적용 표(제2016-21호)로 계산한 근사치"
+        판단.append({"항목": "확인 필요", "결론": f"{year}년 적용 신축가격기준액 {base['amount']:,}원({base.get('notice', base.get('source'))})은 그 해 고시값이지만, 구조·용도·위치지수는 그 해 표를 넣지 않아 2016년 적용 표(제2015-66호)로 계산한 근사치(2015년 이전은 구조 그룹·용도 번호 체계도 달라 그 해 고시로 확인)"
                    + (". 잔가율도 2015년 이전 고시의 그룹 구성(2012년 판은 Ⅰ그룹이 다름)을 대조하지 못함" if year <= 2015 else "") + f" — {year}년 고시 지수표로 다시 확인", "근거": "고시는 매년 개정"})
     else:
         _src = R["index_by_year"]["notices"].get(str(year), "")
-        판단.append({"항목": "지수표 연도", "결론": f"{year}년 적용 고시({_src}) 지수표로 계산" + (" — 국세청 2024년 건물 기준시가 계산방법 해설의 지수표(법제처에 조문 미수록)" if year == 2024 else ""), "근거": "고시 제7조·제8조·제9조(연도별)"})
+        판단.append({"항목": "지수표 연도", "결론": f"{year}년 적용 고시({_src}) 지수표로 계산" + (" — 국세청 2024년 건물 기준시가 계산방법 해설의 지수표(법제처에 조문 미수록)" if year == 2024 else " — 국세청 2016년 시행 건물 기준시가 산정방법 해설의 지수표(법제처 미등재)" if year == 2016 else ""), "근거": "고시 제7조·제8조·제9조(연도별)"})
     if unote:
         판단.append({"항목": "용도지수 주의", "결론": unote, "근거": "고시 제8조"})
     판단.append({"항목": "시가 우선·감정", "결론": "상속·증여는 평가기간 내 매매·감정·수용·경매 가액(시가)이 있으면 그것이 우선(상증법 제60조). 비주거용 건물은 국세청이 평가심의위원회를 거쳐 감정평가로 과세할 수 있어(영 제49조① 단서·제49조의2) 기준시가 신고가 뒤집힐 수 있음. 양도세는 실지거래가액이 원칙이고 이 기준시가는 환산·안분용", "근거": "상속세 및 증여세법 제60조·제61조, 소득세법 제99조·제100조"})
