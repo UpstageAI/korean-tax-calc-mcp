@@ -9,7 +9,7 @@ rules 키(단위) — 없는 키의 기준은 끔
   ratio_low·ratio_high(배) · ppe_abs_tol·rnd_abs_tol(비율 차이) — 재고/매출·유형자산/자산·연구개발/매출
   advert_mult·sga_mult(배, 1/x~x — advert_mult가 없으면 광고는 ratio_low~ratio_high) · advert_abs_tol·sga_abs_tol(비율 차이) — 광고판촉/매출·판관비/매출
   independence_legal_pct(%, 50 이하만 — 더 엄격하게만), control_dependence(비율, 0.5 이하만) — 법정 기준, 안 주면 50%
-  related_review(비율) — 특수관계 매출 또는 매입 비중 이상이면 사람 확인
+  related_review(비율) — 사용자 검토선(기본값 없음 — 법령·판례상 숫자 기준 없음). 특수관계 매출 또는 매입 비중 이상이면 사람 확인
   related_purchase_review(비율) — 특수관계 매입 비중(÷ 매출원가)을 따로 줄 때. 안 주면 매입에도 related_review를 씀
   loss_review_years(연도 수) · unknown_review_count(개) · mix_unverified_review(비율)
 종합(기준을 준 항목만)
@@ -44,7 +44,7 @@ NO_PRACTICE = "관행 기준 미적용 — 조문 MCP transfer_pricing_guide(비
 RULE_SOURCE = {
     "independence_legal_pct": ("법정 준용", "국조법 시행령 제2조제2항(의결권 주식 50% 이상)을 비교대상 독립성에 준용"),
     "control_dependence": ("법정 준용", "국조법 시행령 제2조제2항 실질 지배(사업활동의 50% 이상 거래 의존)를 숫자 신호로 — 사람 확인"),
-    "related_review": ("관행", "특수관계 매출 또는 매입 비중 — 사람 확인. " + NOT_LEGAL),
+    "related_review": ("입력", "특수관계 매출 또는 매입 비중 사용자 검토선 — 사람 확인. 법령·판례상 비교대상의 특수관계 거래 비중 숫자 기준 없음(기본값 없음). " + NOT_LEGAL),
     "related_purchase_review": ("관행", "특수관계 매입 비중(÷ 매출원가) — 주면 매입 쪽은 이 값으로, 안 주면 related_review를 매입에도 씀. " + NOT_LEGAL),
     "loss_review_years": ("관행", "손실 연도 수 — 자동 제외하지 않고 사람 확인"),
     "mix_max_diff": ("우리 규칙", "매출 구성 주된 갈래 비중 차이"),
@@ -245,7 +245,7 @@ def compare_profile(tested, cand, rules=None):
     for x, lab in ((rs_, "매출"), (rp_, "매입")):
         rk = "related_purchase_review" if lab == "매입" and _has(r, "related_purchase_review") else "related_review"
         if x is not None and _has(r, rk) and x >= r[rk] - EPS:
-            indep.append(f"[I2] 특수관계 {lab} {x:.0%} ≥ {r[rk]:.0%}(관행) — 사람 확인, 법정 특수관계 판정 아님")
+            indep.append(f"[I2] 특수관계 {lab} {x:.0%} ≥ {r[rk]:.0%}(입력한 검토선) — 사람 확인, 법정 특수관계 판정 아님")
             review.append(indep[-1])
         if x is not None and x >= r["control_dependence"] - EPS:
             review.append(f"[C2] 특수관계 {lab} 의존 {x:.0%} ≥ {r['control_dependence']:.0%} — 실질 지배 신호(법정 준용, 국조법 시행령 제2조제2항), 사람 확인")
@@ -279,6 +279,7 @@ def compare_profile(tested, cand, rules=None):
             fq.append({"질문": q, "분석대상": "예" if tested[k] else "아니오", "후보_단서": f"{ITEMS[it]} {items[it]['candidate']}", "근거": "기능·위험 차이 — " + LAW_MCP})
     overall = "제외 후보" if excl else ("사람 확인" if review else "포함 후보")
     return {"company_id": cand.get("company_id"), "company_name": cand.get("company_name"), "items": items,
+            "related_shares": {"매출": rs_, "매입": rp_},
             "independence": indep or ["문제 없음" if ms is not None else "최대주주 지분 불명"], "overall": overall,
             "reasons": excl + review or ["제외·사람 확인 사유 없음(준 기준 안에서)"], "warnings": flags, "product_match": pm, "function_questions": fq,
             "rules_used": r}
@@ -372,6 +373,8 @@ def run_tool(tested, candidates, rules=None):
     table, review, drafts = [], [], []
     for p, x in zip(profs, m["rows"]):
         row = {"company_id": x["company_id"], "company_name": x["company_name"], "종합": x["overall"], "사유": x["reasons"], "표시": x["warnings"], "독립성": x["independence"],
+               "특수관계_거래_비중": {"매출": x["related_shares"]["매출"], "매입": x["related_shares"]["매입"],   # 기준과 상관없이 늘 숫자(없으면 None)
+                                "근거": "감사보고서·사업보고서 특수관계자 주석(매출 ÷ 매출, 매입 ÷ 매출원가) — 50% 이상이면 [C2]"},
                **{ITEMS[k]: {"판정": v["verdict"], "후보": v["candidate"], "분석대상": v["tested"], **{kk: v[kk] for kk in ("차이", "배수") if kk in v}} for k, v in x["items"].items()}}
         table.append(row)
         if x["overall"] == "사람 확인":

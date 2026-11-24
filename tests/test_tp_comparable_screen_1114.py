@@ -23,7 +23,8 @@ def _tp(**kw):
 
 
 BASE = {**EX_SCREENS, "industry_codes": ["424210"], "size_min": 5e6, "size_max": 1e9,
-        "loss_action": "exclude", "require_all_years": True}   # 0.61.0 기본(손실 사람 확인·연도 자료 필수 해제) 전 설정으로 기존 기댓값 유지
+        "loss_action": "exclude", "require_all_years": True,   # 0.61.0 기본(손실 사람 확인·연도 자료 필수 해제) 전 설정으로 기존 기댓값 유지
+        "related_max": 0.25}   # 호출자가 S9 상한을 직접 준 경우(기본값 아님, 0.72.0) — 이 파일의 기댓값을 그대로 확인하려고만 넘김
 
 
 def run(**kw):

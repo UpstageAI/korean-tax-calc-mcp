@@ -1,0 +1,5 @@
+{"_출처": "korean-tax-mcp 0.30.0(fix/related-share-statutory-signals) transfer_pricing_guide(transaction='재화') '비교대상 선정 기준'의 '넘길 값' — 연결 테스트 고정본(값은 조문 MCP가 정함). 특수관계 매출·매입 상한·검토선은 넘기지 않고 법정(준용) control_dependence만",
+ "kr_comparable_profile_compare": {"rules": {"mix_max_diff": 0.2, "ratio_low": 0.5, "ratio_high": 2.0, "ppe_abs_tol": 0.05, "rnd_abs_tol": 0.01, "advert_abs_tol": 0.01,
+   "coverage_min": 0.8, "coverage_max": 1.2, "independence_legal_pct": 50.0, "control_dependence": 0.5, "unknown_review_count": 3, "mix_unverified_review": 0.1}},
+ "tp_comparable_screen": {"screens": {"independence_pct": 25, "independence_bvd_reject": ["C", "D", "U"], "loss_years": 2, "crisis_exception": false, "rnd_max": 0.03,
+   "adv_max": 0.05, "segment_min": 0.75, "size_min": null, "size_max": null, "outlier_k": 1.5}, "quartile_method": "nts"}}

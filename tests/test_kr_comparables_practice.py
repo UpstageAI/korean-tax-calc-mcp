@@ -128,7 +128,7 @@ def test_control_signals_are_reference_only():
     sig = [{"kind": "임원 겸직", "sentence": "당사의 대표이사는 지배기업의 임원을 겸직하고 있습니다."}]
     r = compare_profile(RESELLER, _cand(control_signals=value(sig)))
     assert r["overall"] == "포함 후보" and any(x.startswith("[C1]") and "임원 겸직" in x and "판정 아님" in x for x in r["warnings"])   # 문장은 참고 표시만
-    out = run_tool(RESELLER, [_cand(control_signals=value(sig), related_sales_ratio=value(0.3))])
+    out = run_tool(RESELLER, [_cand(control_signals=value(sig), related_sales_ratio=value(0.55))])   # 의존 50% 이상([C2]) — 사람 확인
     row = out["결과"]["사람_확인_목록"][0]
     assert row["실질_지배_근거(참고)"] == sig and len(row["실질_지배_질문"]) == 4
 
@@ -169,7 +169,8 @@ def test_rule_sources_labeled():
     legal = sorted(k for k, v in lab.items() if v["구분"] == "법정")
     assert legal == ["범위·중위값 조정(tp_comparable_screen·arm_length_range)"]   # 법정은 범위·중위값 조정뿐
     assert lab["independence_legal_pct"]["구분"] == "법정 준용"
-    assert lab["related_review"]["구분"] == "관행" and lab["loss_review_years"]["구분"] == "관행" and lab["related_review"]["값"] == 0.20
+    assert lab["related_review"]["구분"] == "입력" and lab["loss_review_years"]["구분"] == "관행" and lab["related_review"]["값"] == "꺼짐"   # 0.72.0 — 기본값 없음
+    assert "숫자 기준 없음" in lab["related_review"]["근거"] and lab["control_dependence"]["구분"] == "법정 준용"
     assert lab["mix_max_diff"]["구분"] == "우리 규칙" and all(v["근거"] for v in lab.values())
     assert "조문 MCP" in lab["판단_근거_확인"]["근거"] and "판정 아님" in lab["related_review"]["근거"]
     import re
@@ -324,16 +325,23 @@ def test_no_rules_applies_statutory_only():
 
 # ---------- 조문 MCP '넘길 값' 연결(고정본) — 키 이름 그대로 받아 오류 없이 ----------
 def test_tax_mcp_handoff_values_accepted():
+    """조문 MCP 0.30.0 '넘길 값'(특수관계 상한·검토선 없음, control_dependence 0.5)을 오류 없이 받음."""
     import json, os
-    h = json.load(open(os.path.join(os.path.dirname(__file__), "data", "tax_mcp_handoff_1117.json"), encoding="utf-8"))
+    h = json.load(open(os.path.join(os.path.dirname(__file__), "data", "tax_mcp_handoff_1123.json"), encoding="utf-8"))
+    rules = h["kr_comparable_profile_compare"]["rules"]
+    assert not set(rules) & {"related_review", "related_sales_review", "related_purchase_review"} and rules["control_dependence"] == 0.5
+    assert not set(h["tp_comparable_screen"]["screens"]) & {"related_max", "related_purchase_max"}
     r = S.kr_comparable_profile_compare(tested=RESELLER, candidates=[_cand(), _cand(inv_to_sales=value(0.6))], **h["kr_comparable_profile_compare"])
     assert "error" not in r and "안내" not in r["결과"]
-    assert r["결과"]["사용_기준"]["related_review"]["값"] == 0.25 and r["결과"]["사용_기준"]["related_review"]["입력"] == "사용자 입력"
+    assert r["결과"]["사용_기준"]["related_review"]["값"] == "꺼짐" and r["결과"]["사용_기준"]["control_dependence"]["입력"] == "사용자 입력"
     assert r["결과"]["비교표"][1]["종합"] == "사람 확인" and r["결과"]["비교표"][1]["광고판촉"]["판정"] == "가까움"   # advert_mult 없으면 ratio_low~high
     sc = h["tp_comparable_screen"]
     out = S.tp_comparable_screen(tested_party=TP, analysis_years=YEARS, tested_year=2024, rows=_rows(), multi_year_reason={"code": 1, "text": "x"},
                                  search_log={"db": "t"}, screens=sc["screens"], quartile_method=sc["quartile_method"])
-    assert "error" not in out and "안내" not in out["결과"] and out["결과"]["범위"]["계산법"] == "excel_inc"
+    assert "error" not in out and "안내" not in out["결과"] and out["결과"]["범위"]["계산법"] == "nts"
+    out = S.tp_comparable_screen(tested_party=TP, analysis_years=YEARS, tested_year=2024, rows=_rows(), multi_year_reason={"code": 1, "text": "x"},
+                                 search_log={"db": "t"}, screens=sc["screens"], quartile_method="inclusive")
+    assert out["결과"]["범위"]["계산법"] == "excel_inc"
     out = S.tp_comparable_screen(tested_party=TP, analysis_years=YEARS, tested_year=2024, rows=_rows(), multi_year_reason={"code": 1, "text": "x"},
                                  search_log={"db": "t"}, screens=sc["screens"], quartile_method="nts_rule_8_15")
     assert out["결과"]["범위"]["계산법"] == "nts"

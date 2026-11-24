@@ -43,10 +43,13 @@ DEFAULT_SCREENS = {
     "sample_min": None, "spread_ratio": None,   # 표본·편차 경고(표시만)
     "op_tolerance": 0.005,                      # 영업이익 대사 허용 오차(매출 대비) — 데이터 검산용, 선정 기준 아님
 }
+# 특수관계 매출·매입 상한(S9·S9b) — 법령·판례상 비교대상의 특수관계 거래 비중 숫자 기준이 없어 조문 MCP는 넘기지 않음(0.72.0). 준 경우에만 탈락.
+# 비중은 상한과 상관없이 탈락_매트릭스·최종_비교대상에 숫자로 낸다.
+REL_NOTE = "[입력] 특수관계 {} 상한 — 준 경우에만 탈락(기본 없음), 법령·판례상 숫자 기준 없음"
 PRACTICE_KEYS = [k for k in DEFAULT_SCREENS if k not in ("crisis_exception", "loss_action", "require_all_years", "op_tolerance")]
 NO_PRACTICE = "관행 기준 미적용 — 조문 MCP transfer_pricing_guide(비교대상 선정 기준)의 값을 screens로 넣으세요. 지금은 법정 기준(최대주주 50% 이상, 비교대상 둘 이상)만 적용"
 SCREEN_NOTE = {"independence_pct": "[관행] 최대주주 지분 상한", "rnd_max": "[관행] 연구개발비/매출 상한", "adv_max": "[관행] 광고선전비/매출 상한",
-               "related_max": "[관행] 특수관계 매출 상한", "related_purchase_max": "[관행] 특수관계 매입/매출원가 상한", "segment_min": "[관행] 해당 부문 비중 하한",
+               "related_max": REL_NOTE.format("매출/매출"), "related_purchase_max": REL_NOTE.format("매입/매출원가"), "segment_min": "[관행] 해당 부문 비중 하한",
                "loss_years": "[관행] 손실 연도 수 — loss_action=review면 사람 확인, exclude면 탈락", "outlier_k": "[관행] 이상치 표시, 자동 탈락하지 않음"}
 PLI = {"OM": "매출액 대비 거래순이익(영 제8조①1호)", "ROA": "자산 대비 거래순이익(영 제8조①2호)",
        "NCP": "매출원가·영업비용 대비 거래순이익(영 제8조①3호)", "BERRY": "영업비용 대비 매출총이익(영 제8조①4호)"}
@@ -137,6 +140,15 @@ def _ratio_avg(years_data, years, field):
     if not ys:
         return None
     return sum(years_data[y][field] for y in ys) / sum(years_data[y]["revenue"] for y in ys)
+
+
+def _related_shares(yd, years):
+    """특수관계 매출 ÷ 매출(S9과 같은 가중평균), 특수관계 매입 ÷ 매출원가(S9b와 같은 해) — 소수 퍼센트, 자료 없으면 None. 상한과 상관없이 표시용."""
+    have = [y for y in years if y in yd and yd[y].get("revenue") is not None and yd[y].get("operating_profit") is not None]
+    sv = _ratio_avg(yd, have, "related_party_revenue") if have else None
+    pys = [y for y in have if yd[y].get("related_party_purchase") is not None and yd[y].get("cogs")]
+    pv = sum(yd[y]["related_party_purchase"] for y in pys) / sum(yd[y]["cogs"] for y in pys) if pys else None
+    return {"특수관계_매출%": _pct(sv, 1), "특수관계_매입%": _pct(pv, 1)}
 
 
 def _basis(tested_year):
@@ -551,7 +563,7 @@ def comparable_screen(rows=None, file_path=None, column_map=None, tested_party=N
                                         "수집_기준_시점": c["years"][y]["_src"].get("collected_at") or (search_log or {}).get("collected_at") or "입력 없음"} for y in have},
                            "자료_연도": have,
                            ("가중평균%" if averaging == "weighted" else "평균%"): _pct(vals[cid]),
-                           "운전자본/매출%": _pct(wcr) if wcr is not None else None})
+                           "운전자본/매출%": _pct(wcr) if wcr is not None else None, **_related_shares(c["years"], analysis_years)})
     결과 = {**({"안내": NO_PRACTICE} if not any(sc.get(k) not in (None, [], "") for k in PRACTICE_KEYS) else {}), "후보_수": len(companies), "최종_수": len(final), "지표": {"종류": pli, "뜻": PLI[pli], "평균방식": averaging, "연도": analysis_years},
           "범위": {"제1사분위%": _pct(stats["q1"]), "중위값%": _pct(stats["med"]), "제3사분위%": _pct(stats["q3"]), "최솟값%": _pct(stats["min"]),
                  "최댓값%": _pct(stats["max"]), "계산법": quartile_method, "계산법_설명": _QM_NAME[quartile_method], "n": stats["n"], "조정점": "중위값",
@@ -598,7 +610,7 @@ def comparable_screen(rows=None, file_path=None, column_map=None, tested_party=N
     판단 = [{"항목": "선정", "결론": f"후보 {len(companies)}개 중 {len(final)}개 선정", "근거": "시행규칙 제7조①5호·7호(외부 비교대상 수집·선정)" if tested_year >= 2021 else "구 시행규칙 제2조의2"},
           {"항목": "범위", "결론": f"{PLI[pli]} 사분위 범위 {_pct(stats['q1'])}% ~ {_pct(stats['q3'])}%, 분석대상 {_pct(tv)}% → " + ("범위 안" if inside else "범위 밖"),
            "근거": ("시행령 제15조⑤⑥, 시행규칙 별지 제1호서식 작성방법 10(정상사분위범위)" if tested_year >= 2022 else "시행령 제15조⑤⑥" if tested_year >= 2021 else "구 시행령 제6조④⑤")}]
-    return {"결과": 결과, "탈락_매트릭스": _matrix(companies, rows_res), "최종_비교대상": final_rows, "민감도": 시나리오,
+    return {"결과": 결과, "탈락_매트릭스": _matrix(companies, rows_res, analysis_years), "최종_비교대상": final_rows, "민감도": 시나리오,
             "arm_length_range_입력": alr, "보고서_부록": 부록, "영업이익_대사": 대사, "경고": 경고, "판단": 판단, "근거": _basis(tested_year),
             "주의": ["데이터베이스 검색(모집단·업종·키워드)과 회사별 기능·거래단계 비교는 이 도구가 하지 않음 — 정성 판단은 manual_decisions에 사유와 함께",
                    "이 도구가 스스로 적용하는 기준은 법정(최대주주 50% 이상, 둘 이상)뿐 — [관행] 기준은 screens로 넣은 값만 적용(값·출처는 조문 MCP transfer_pricing_guide), 선택 이유를 보고서에 적어야 함",
@@ -658,10 +670,12 @@ def _criteria(sc, years, pli, averaging, qm, given=None):
     return out
 
 
-def _matrix(companies, rows_res):
+def _matrix(companies, rows_res, years=None):
     out = []
     for cid, r in rows_res.items():
         row = {"company_id": cid, "이름": companies[cid]["meta"].get("company_name")}
+        if years:
+            row.update(_related_shares(companies[cid]["years"], years))
         for k in SCREEN_NAMES:
             if k in r:
                 s, why = r[k]
