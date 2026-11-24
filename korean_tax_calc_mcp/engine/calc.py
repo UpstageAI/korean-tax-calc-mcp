@@ -222,7 +222,7 @@ def _income_loss_offset_core(year, incomes, carryforwards, estimated, financial_
         부동산임대_이월잔액 = 0
 
     # --- 3) 이월결손금 ---
-    # 발생연도별로 남은 금액을 따로 들고 다님 — 소멸기한(제45조③: 2019년 이전 발생 10년, 2020년 이후 발생 15년)이
+    # 발생연도별로 남은 금액을 따로 들고 다님 — 소멸기한(제45조③: 2008년 이전 발생 5년, 2009~2019년 발생 10년, 2020년 이후 발생 15년)이
     # 발생연도 기준이므로 다음 연도로 넘길 때 연도를 덮어쓰지 않는다.
     # 추계신고·추계결정 연도(estimated=True)는 이월결손금을 공제하지 않지만(제45조④) 소멸시키지도 않는다 — 그대로 다음 연도로.
     남은_목록 = []
@@ -235,11 +235,14 @@ def _income_loss_offset_core(year, incomes, carryforwards, estimated, financial_
         if cf_amount <= 0:
             continue
 
-        유효기간 = 15 if cf_year >= 2020 else 10
+        # 공제기간: 2020년 이후 발생 15년, 2009~2019년 발생 10년, 2008년 이전 발생 5년
+        # (구 소득세법 제45조② "5년내", 법률 제9270호 부칙 제4조 — 10년은 2009.1.1. 이후 최초 발생 결손금부터)
+        유효기간 = 15 if cf_year >= 2020 else (10 if cf_year >= 2009 else 5)
         if cf_year + 유효기간 < year:
+            근거 = " — 구 소득세법 제45조②(5년), 법률 제9270호 부칙 제4조" if cf_year <= 2008 else ""
             소멸목록.append({
                 "연도": cf_year, "종류": cf_kind, "금액": cf_amount,
-                "사유": f"{cf_year}년 발생 이월결손금({유효기간}년 경과) 소멸",
+                "사유": f"{cf_year}년 발생 이월결손금({유효기간}년 경과) 소멸{근거}",
             })
             continue
 

@@ -3323,7 +3323,8 @@ def business_car_expense(year: YEAR, upkeep: Annotated[int, Field(description="�
                          acquisition_cost: Annotated[int | None, Field(description="차량 취득가액(원, 임차는 기준가액). 8천만원 미만이면 번호판 요건 대상이 아니므로 plate_ok=False여도 업무사용비율 그대로", ge=0)] = None,
                          fy_start: Annotated[str | None, Field(description=_FY_START_DESC)] = None,
                          fy_end: Annotated[str | None, Field(description=_FY_END_DESC)] = None,
-                         share_from_2024: Annotated[float | None, Field(description="관련비용(유지비·감가상각비) 중 2024.1.1. 이후 지출분의 비율(0~1, 선택) — 사업연도가 2024.1.1.을 걸칠 때 번호판 요건 적용분. 없으면 사업연도 일수로 안분", ge=0, le=1)] = None) -> dict:
+                         share_from_2024: Annotated[float | None, Field(description="관련비용(유지비·감가상각비) 중 2024.1.1. 이후 지출분의 비율(0~1, 선택) — 사업연도가 2024.1.1.을 걸칠 때 번호판 요건 적용분. 없으면 사업연도 일수로 안분", ge=0, le=1)] = None,
+                         registered_on: Annotated[str | None, Field(description="차량 등록일(임차는 임차 개시일) YYYY-MM-DD(선택) — 2024.1.1. 전 등록·임차 차량은 법인업무용 번호판 부착 대상이 아님(국토교통부 고시 제2023-954호 부칙 제2조)")] = None) -> dict:
     """Business passenger car expenses disallowance: business-use ratio, KRW 8M depreciation cap (업무용승용차 관련비용).
     업무용승용차 관련비용 손금불산입(업무사용비율·사적사용·미작성 시 기준비율·감가상각 연 800만 원 한도). 언제: 임원·직원이 사용하는 승용차 관련비용을 어디까지 손금으로 인정할지 계산할 때.
 입력: 사업연도(2016~2026, 개시일이 속하는 해) → year, 유지비(유류·보험·수선 등, 원) → upkeep, 세법상 감가상각비(5년 정액, 원) → depreciation, 장부상 감가상각비(원) → booked_depreciation, 운행기록부 작성 여부 → log_kept, 업무사용비율(소수, 작성 시) → business_ratio, 보유 월수(1~12) → months, 부동산임대업 주업 등 특정법인 여부 → rental_corp, 법인 전용번호판 부착 여부 → plate_ok,
@@ -3339,6 +3340,17 @@ def business_car_expense(year: YEAR, upkeep: Annotated[int, Field(description="�
                 "문제": ["log_kept=True(운행기록부 작성)면 business_ratio(운행기록상 업무사용비율, 소수 0~1) 필요 — 운행기록부를 쓰지 않았으면 log_kept=False"]}
     plate_applies = (acquisition_cost is None) or (acquisition_cost >= 80_000_000)
     주의, 기준 = [], None
+    등록_전차량 = False
+    if registered_on is not None:
+        try:
+            reg = date.fromisoformat(registered_on)
+        except ValueError:
+            return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"registered_on='{registered_on}' — YYYY-MM-DD 형식"]}
+        if reg < date(2024, 1, 1) and plate_applies:
+            plate_applies, 등록_전차량 = False, True
+    elif not plate_ok and plate_applies:
+        주의.append("번호판 부착 대상은 2024.1.1. 이후 등록하거나 임차한 차량(국토교통부 고시 제2023-954호 부칙 제2조) — "
+                  "그 전 차량이면 registered_on을 넣어 다시 계산(그 차량은 미부착이어도 업무사용비율 그대로)")
     if not plate_ok and plate_applies and (fy_start is not None or fy_end is not None):
         from .engine import date_basis as DB
         fs, fe, _ = DB.fiscal_year(year, fy_start, fy_end)
@@ -3359,7 +3371,11 @@ def business_car_expense(year: YEAR, upkeep: Annotated[int, Field(description="�
     if not plate_ok and plate_applies and year == 2023:
         주의.append("번호판 요건은 2024.1.1. 이후 지출분부터(대통령령 제34266호 부칙 제7조) — 2023 개시 사업연도를 역년으로 보고 적용하지 않았음. 사업연도가 2024년까지 걸치면 fy_start·fy_end를 넣는다")
     r = C.business_car(year, upkeep, depreciation, booked_depreciation, log_kept, business_ratio, months, rental_corp, plate_ok or not plate_applies)
-    if not plate_ok and not plate_applies:
+    if not plate_ok and 등록_전차량:
+        r["번호판 요건"] = (f"등록·임차일 {registered_on} — 2024.1.1. 전 차량이라 법인업무용 번호판 부착 대상 아님(국토교통부 고시 제2023-954호 부칙 제2조: "
+                         "시행일 이후 등록·대여 자동차부터 적용, 그 전 차량은 교체할 수 있음) — 미부착이어도 업무사용비율 그대로 적용. "
+                         "고시 부칙을 세법 요건(영 제50조의2④ 단서)에 그대로 잇는 것은 해석이므로 세무 대리인 확인 권장")
+    elif not plate_ok and not plate_applies:
         r["번호판 요건"] = f"취득가액 {acquisition_cost:,}원 < 80,000,000원 → 법인업무용 번호판 부착 대상 아님(영 제50조의2④ 단서·규칙 기준) — 미부착이어도 업무사용비율 그대로 적용"
     elif not plate_ok and acquisition_cost is None:
         r["번호판 요건"] = "취득가액을 주지 않아 번호판 요건 대상으로 보고 업무사용금액 0원 적용 — 8천만원 미만 차량이면 acquisition_cost를 넣어 다시 계산"
@@ -4762,6 +4778,7 @@ def related_judge(a: Annotated[str, Field(description='당사자 a(이름)')], b
                   group_exempt: Annotated[dict | None, Field(description='공정위 계열편입 유예·제외 통지 {법인: 통지 내용}. 예: {"㈜대한": "유예 통지"}')] = None,
                   with_citation: Annotated[bool, Field(description='법령 인용 포함 여부(기본 True)')] = True) -> dict:
     from .audit.agents.related_intake import normalize, to_case
+    _chk.supported_year("on", on)   # 2016~2026 밖 기준일은 판정하지 않음(그 전 시행령의 친족 범위·호 구조를 대조하지 않음)
     try:
         case = to_case(normalize({"people": people, "family": family, "stakes": stakes, "officers": officers, "employees": employees,
                                   "livelihood": livelihood, "livelihood_shared": livelihood_shared, "influence": influence, "group": group}))
@@ -11292,7 +11309,7 @@ def stock_basis_income_tax(transfer_date: Annotated[str, Field(description="양�
                            real_estate_ratio: Annotated[float | None, Field(description="자산총액 중 부동산 비율(0~1), 0.5 이상이면 2:3")] = None,
                            stock_asset_ratio: Annotated[float | None, Field(description="자산총액 중 주식등 비율(0~1) — 2023.2.28.~ 0.8 이상이면 순자산가치만")] = None,
                            business_start: Annotated[str, Field(description="사업개시일 YYYY-MM-DD(개시 후 1년 미만이면 순자산가치만)")] = "",
-                           status: Annotated[str, Field(description="청산|휴폐업|존속3년 해당 시")] = "") -> dict:
+                           status: Annotated[str, Field(description="청산|휴폐업|존속3년(2023.2.28. 이후 양도분)|3년연속결손(2023.2.27.까지 양도분, 구 시행령 제165조제4항제3호다목) 해당 시")] = "") -> dict:
     """Unlisted stock standard market price per share for capital gains tax (비상장주식 기준시가).
     비상장주식 소득세법 기준시가(영 제165조제4항) — 양도세 기준시가와 대주주 시가총액 판정(영 제157조제4항제2호)에 쓰는 1주당 가액. 상속·증여 평가와 달리 직전 사업연도 순손익만(÷10%), 순자산은 장부가액, 할증 없음, 하한 순자산가치×80%(2018.4.1.~).
     언제: 비상장주식 양도세에서 기준시가가 필요하거나, stock_major_shareholder의 price(1주당 가액)에 넣을 값이 필요할 때.
@@ -11721,7 +11738,8 @@ def individual_foreign_tax_credit(
     countries: Annotated[list, Field(description="[{country, foreign_income, foreign_tax, treaty_rate?, gross_amount?, russia_override?}] — "
                                              "foreign_income: 국외원천소득(대응비용 차감 후, 원), foreign_tax: 외국소득세액(가산세 제외, 원), "
                                              "treaty_rate: 조약 제한세율(선택, 소수), gross_amount: 조약 제한세율 적용 대상 총액(원, 선택), "
-                                             "russia_override: 러시아 등 조약 초과분 포함 여부(선택 bool)")],
+                                             "russia_override: 러시아 조약 초과분 포함 여부(선택 bool — 2023.8.8. 이후 납부분만, 대통령령 제34265호 부칙 제9조), "
+                                             "tax_paid_on: 외국소득세 납부일 YYYY-MM-DD(russia_override일 때, 2022·2023년 귀속은 필수)")],
     income_kind: Annotated[str, Field(description="소득 종류: '종합'(기본) | '퇴직'")] = "종합",
     carryforward: Annotated[list | None, Field(description="[{country, year, amount}] 이월된 미공제 외국소득세액 — 종합소득만 지원")] = None,
 ) -> dict:
@@ -12124,6 +12142,8 @@ def capital_gains_unfair_transaction(
     결과: [저가고가] 부당행위계산·차액·차액비율(정수 만분율)·기준_3억_충족·기준_5퍼센트_충족·조정후_양도가액|조정후_취득가액.
       [증여후양도] 증여자_직접양도_간주·수증자_세액합계·증여자_직접양도세액·적용제외_사유.
     """
+    if transfer_date and str(transfer_date) < "2016-01-01":   # 2016년 전 양도는 계산하지 않음(증여일은 그 전이어도 됨 — 2014 증여·2017 양도 등)
+        return {"error": "입력 확인 필요 — 계산하지 않음", "문제": [f"transfer_date={transfer_date} — 2016.1.1. 이후 양도분부터 지원(그 전 조문은 대조하지 않음)"]}
     _e = _neg_err(("market_value", market_value, "시가"), ("price", price, "거래가액"), ("donee_gift_tax", donee_gift_tax, "수증자가 낸 증여세"),
                   ("donee_capital_gains_tax", donee_capital_gains_tax, "수증자가 낸 양도소득세"),
                   ("donor_direct_capital_gains_tax", donor_direct_capital_gains_tax, "증여자가 직접 양도했을 때의 양도소득세"))

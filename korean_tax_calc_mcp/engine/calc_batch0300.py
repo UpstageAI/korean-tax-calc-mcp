@@ -75,6 +75,30 @@ def individual_foreign_tax_credit(
             return _오류([f"countries[{i}].foreign_tax 가 음수 — 외국소득세액은 0 이상"],
                           {"foreign_tax": "0 이상 (원)"})
 
+    # 러시아 조약 초과분(영 제117조① 단서 후단, 2024.2.29. 신설) — 대통령령 제34265호 부칙 제9조:
+    # 2023.8.8. 이후 납부했거나 납부할 외국소득세액부터. 납부일(tax_paid_on)로 가른다.
+    countries = [dict(c) for c in countries]   # 입력을 바꾸지 않도록 사본
+    러시아_주의 = []
+    for i, c in enumerate(countries):
+        if not c.get("russia_override"):
+            continue
+        paid = c.get("tax_paid_on")
+        if paid is not None and (not isinstance(paid, str) or len(paid) != 10 or paid[4] != "-" or paid[7] != "-"):
+            return _오류([f"countries[{i}].tax_paid_on='{paid}' — YYYY-MM-DD 형식"], {"tax_paid_on": "YYYY-MM-DD"})
+        if paid is None:
+            if year <= 2021:
+                c["russia_override"] = False
+                러시아_주의.append(f"countries[{i}]: {year}년 귀속분은 러시아 조약 초과분 포함 규정(영 제117조① 단서 후단) 적용 전 — "
+                                   "2023.8.8. 이후 납부분부터(대통령령 제34265호 부칙 제9조). 조약 한도로 계산함")
+            elif year <= 2023:
+                return _오류([f"countries[{i}].russia_override=true — {year}년 귀속분은 외국소득세 납부일(tax_paid_on)이 필요함: "
+                              "2023.8.8. 이후 납부분만 조약 초과분 포함(대통령령 제34265호 부칙 제9조)"],
+                             {"tax_paid_on": "YYYY-MM-DD (외국소득세 납부일)"})
+        elif paid < "2023-08-08":
+            c["russia_override"] = False
+            러시아_주의.append(f"countries[{i}]: 납부일 {paid}는 2023.8.8. 전 — 러시아 조약 초과분 포함 규정 적용 전"
+                               "(대통령령 제34265호 부칙 제9조). 조약 한도로 계산함")
+
     A = calculated_tax          # 산출세액
     C = total_income            # 총소득
     이월기간경과분 = 0
@@ -196,6 +220,7 @@ def individual_foreign_tax_credit(
         주의목록.append("퇴직소득은 외국납부세액공제 한도 계산은 되나 이월공제 대상이 아님(소득세법 제57조②)")
 
     판단목록 = []
+    주의목록.extend(러시아_주의)
     무시된_이월국가 = [k for k in 이월지도 if k not in {c["country"] for c in countries}]
     if 무시된_이월국가:
         주의목록.append(f"carryforward의 국가 {무시된_이월국가}는 countries에 없어 이번 과세기간에 공제하지 않음(해당 국가 국외원천소득이 없으면 한도 0)")
