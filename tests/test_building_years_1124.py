@@ -25,17 +25,25 @@ def test_hagwon_not_matched_to_dance_academy():
     assert c(year=2026, structure="철근콘크리트", use="무도학원")["결과"]["용도지수"] == 90
 
 
+def test_src_structure_not_read_as_rc():
+    # '철골철근콘크리트'·'철골콘크리트'는 3번(2026 110) — 4번 철근콘크리트(100)로 읽던 오류
+    assert c(year=2026, structure="철골철근콘크리트", use="사무소")["결과"]["구조지수"] == 110
+    assert c(year=2026, structure="철골콘크리트조", use="사무소")["결과"]["구조지수"] == 110
+    assert c(year=2026, structure="철근콘크리트조", use="사무소")["결과"]["구조지수"] == 100
+
+
 def test_2017_old_numbering_mapped():
     # 2017년 고시(제2016-21호)는 장례식장이 27번(지수 115) — 2018년 이후 44번
     assert c(year=2017, structure="철근콘크리트", use="장례식장")["결과"]["용도지수"] == 115
     assert c(year=2017, structure="철근콘크리트", use="종합병원")["결과"]["용도지수"] == 125
 
 
-def test_2024_use_only_when_2023_and_2025_agree():
-    r = c(year=2024, structure="철근콘크리트", use="종합병원")
-    assert r["결과"]["용도지수"] == 125 and any("2023·2025" in x["결론"] for x in r["판단"])
-    e = c(year=2024, structure="철근콘크리트", use="근린생활시설")
-    assert e["error"].startswith("자료 부족") and "2023년 100" in e["문제"][0] and "2025년 95" in e["문제"][0]
+def test_2024_from_nts_commentary():
+    # 2024년 해설서: 2023→2024 용도 변경 20·28·48·57번, 근생 41번은 100(2025년에 95로)
+    r = c(year=2024, structure="철근콘크리트", use="근린생활시설")
+    assert r["결과"]["용도지수"] == 100 and any("해설" in x["결론"] for x in r["판단"])
+    assert c(year=2024, structure="철골조", use="공장")["결과"]["용도지수"] == 78
+    assert c(year=2024, structure="철골철근콘크리트", use="사무소")["결과"]["구조지수"] == 110
 
 
 def test_location_index_by_year():

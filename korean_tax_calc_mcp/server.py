@@ -11359,7 +11359,7 @@ def building_standard_price(year: Annotated[int, Field(description="적용연도
     건물 기준시가 — 국세청 「건물 기준시가 계산방법 고시」 산식(신축가격기준액 × 구조지수 × 용도지수 × 위치지수 × 경과연수별 잔가율 × (상증세만) 개별건물 특성 조정률, ㎡당 1,000원 미만 버림 × 면적). 양도세 기준시가(소득세법 제99조제1항제1호나목)와 상속·증여 보충적 평가(상증법 제61조제1항제2호)에 쓴다.
     언제: 일반 건물(상가·사무실·공장·창고 등)의 기준시가가 필요할 때 — 비상장주식 평가(unlisted_stock_valuation의 assets 기준시가), 상속·증여 신고, 양도세 환산취득가액. 주택·아파트는 공시가격(official_property_price), 오피스텔·일괄고시 상업용은 국세청 고시가격을 쓴다.
     입력: 적용연도 → year, 면적 → area_m2, 구조·용도 → structure·use, 부속토지 공시지가 → land_price_per_m2, 신축연도 → built_year, 상증세면 purpose='상증세'와 층수·연면적·지붕·층별·안전등급.
-    지수표는 적용연도별 고시 원문(2017~2023·2025·2026). 2024년은 구조·위치지수는 국세청 해설서 표, 용도지수는 2023·2025년이 같은 번호만 계산하고 다르면 자료 부족. 2007~2016년은 그 해 신축가격기준액에 2017년 지수표를 적용한 근사(결과에 표시).
+    지수표는 적용연도별 고시 원문(2017~2023·2025·2026). 2024년은 국세청 2024년 해설서 지수표(법제처에 조문 미수록). 2007~2016년은 그 해 신축가격기준액에 2017년 지수표를 적용한 근사(결과에 표시).
     결과: 기준시가·㎡당 금액·지수·잔가율·조정률, 판단(산식·시가 우선·국세청 감정평가 가능성·범위), 근거."""
     return BL.building_standard_price(year, area_m2, structure, use, land_price_per_m2, built_year, purpose=purpose, floors=floors, total_area_m2=total_area_m2,
                                       roof=roof, floor_use=floor_use, safety_grade=safety_grade, remodel_count=remodel_count)
