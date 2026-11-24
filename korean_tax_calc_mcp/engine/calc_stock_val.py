@@ -546,9 +546,21 @@ def income_tax_unlisted_basis(transfer_date: str, shares: int, prior_year_income
     if prior_year_income is not None:
         ev = max(0.0, float(prior_year_income)) / shares / rate
         판단.append({"항목": "순손익가치", "결론": f"직전 사업연도 순손익액 {float(prior_year_income):,.0f} ÷ {shares:,}주 ÷ 이자율 {rate*100:g}% = {ev:,.2f}(3년 가중평균 아님)", "근거": "소득세법 시행령 제165조④1호가목"})
+    if status and status not in ("청산", "휴폐업", "존속3년", "3년연속결손"):
+        return {"error": "입력 확인 필요 — 계산하지 않음",
+                "문제": [f"status='{status}' — 허용값: 청산, 휴폐업, 존속3년(2023.2.28. 이후 양도분), 3년연속결손(2023.2.27.까지 양도분)"]}
     사유 = None
-    if status in ("청산", "휴폐업", "존속3년"):
-        사유 = status if not (status == "존속3년" and td < date(2023, 2, 28)) else None
+    if status in ("청산", "휴폐업"):
+        사유 = status
+    elif status == "존속3년":
+        사유 = status if td >= date(2023, 2, 28) else None
+    elif status == "3년연속결손":
+        # 구 영 제165조④3호다목(2023.2.27.까지 양도분): 양도일이 속하는 사업연도 전 3년 이내 사업연도부터 계속 결손
+        if td < date(2023, 2, 28):
+            사유 = status
+        else:
+            판단.append({"항목": "3년 연속 결손", "결론": "2023.2.28. 이후 양도분은 순자산가치만 평가 사유가 아님(같은 날 개정으로 삭제) — 가중평균으로 계산",
+                       "근거": "소득세법 시행령 제165조④3호(2023.2.28. 개정)"})
     if business_start and (td - _d(business_start)).days < 365:
         사유 = 사유 or "개시1년미만"
     if 사유 is None and td >= date(2023, 2, 28) and stock_asset_ratio is not None and float(stock_asset_ratio) >= 0.8:

@@ -229,7 +229,15 @@ def tunnel_rule(size, on="2099-12-31", fiscal_start=None):
         return 0.30, 0.03, 0.15, 0.03, False
     if size == "중소": return 0.50, 0.10, 0.50, 0.10, False
     if size == "중견": return 0.40, 0.10, 0.20, 0.05, False
-    return 0.30, 0.03, 0.05, 0.0, True
+    # 일반기업 '특수관계법인 매출 1천억원 초과' 요건(법 제45조의3①1호나목2))의 금액은 영 제34조의2⑮(2018.2.13. 신설)가 정하고,
+    # 영 제28638호 부칙 제4조로 2018년에 개시하는 사업연도분부터 적용 — 2017년 개시·2018년 종료 사업연도에는 이 요건을 쓰지 않는다.
+    if fiscal_start is None:
+        from datetime import date as _d, timedelta as _td
+        e = _d.fromisoformat(on)
+        try: st = e.replace(year=e.year - 1) + _td(days=1)
+        except ValueError: st = e.replace(year=e.year - 1, day=28) + _td(days=1)
+        fiscal_start = st.isoformat()
+    return 0.30, 0.03, 0.05, 0.0, fiscal_start >= "2018-01-01"
 
 
 def split_limit(relations, limit):
