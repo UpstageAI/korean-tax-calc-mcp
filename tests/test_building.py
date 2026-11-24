@@ -24,9 +24,13 @@ def test_inheritance_adjustment_and_residual_floor():
 
 
 def test_year_approximation_and_scope_errors():
+    # 2016년 이전은 2017년 표(제2016-21호)로 근사: 기준액 660,000 × 철골조 0.95 × 기타공장 0.80 × 위치(50만~65만) 0.97 × 잔가율(II그룹 1년 0.9775)
+    r = c({"year": 2016, "area_m2": 100, "structure": "철골조", "use": "공장", "land_price_per_m2": 500_000, "built_year": 2015})
+    assert r["결과"]["근사"] is True and any("근사" in x["결론"] for x in r["판단"])
+    assert r["결과"]["㎡당_원"] == int(660_000 * 0.95 * 0.80 * 0.97 * 0.9775 // 1000 * 1000)
+    # 2024년(제2023-26호): 830,000 × 철골조 0.97 × 기타공장 0.78 × 위치(50만~65만) 0.98 × 잔가율(II그룹 4년 0.91)
     r = c({"year": 2024, "area_m2": 100, "structure": "철골조", "use": "공장", "land_price_per_m2": 500_000, "built_year": 2020})
-    assert r["결과"]["근사"] is True and any("근사" in x["결론"] for x in r["판단"])   # 2024 기준액 830,000 × 0.95 × 0.78 × 0.97 × 0.91
-    assert r["결과"]["㎡당_원"] == int(830_000 * 0.95 * 0.78 * 0.97 * 0.91 // 1000 * 1000)
+    assert r["결과"]["근사"] is False and r["결과"]["㎡당_원"] == int(830_000 * 0.97 * 0.78 * 0.98 * 0.91 // 1000 * 1000)
     e = c({"year": 2026, "area_m2": 84, "structure": "철근콘크리트", "use": "아파트", "land_price_per_m2": 5_000_000, "built_year": 2010})
     assert e["error"] == "이 고시 대상 아님" and "공동주택가격" in e["안내"]
     e = c({"year": 2026, "area_m2": 84, "structure": "철근콘크리트", "use": "오피스텔", "land_price_per_m2": 5_000_000, "built_year": 2010})
