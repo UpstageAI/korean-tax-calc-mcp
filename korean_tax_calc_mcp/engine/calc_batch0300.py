@@ -79,6 +79,7 @@ def individual_foreign_tax_credit(
     # 2023.8.8. 이후 납부했거나 납부할 외국소득세액부터. 납부일(tax_paid_on)로 가른다.
     countries = [dict(c) for c in countries]   # 입력을 바꾸지 않도록 사본
     러시아_주의 = []
+    해석_주의 = []
     for i, c in enumerate(countries):
         if not c.get("russia_override"):
             continue
@@ -137,6 +138,10 @@ def individual_foreign_tax_credit(
                 인정액 = foreign_tax          # 초과분 포함
             else:
                 인정액 = min(foreign_tax, treaty_cap)
+                if year <= 2018 and foreign_tax > treaty_cap and not 해석_주의:
+                    해석_주의.append("조약 제한세율 초과분 제외(영 제117조① 단서)는 2019년 과세기간부터의 조문 — 그 전 연도도 조약 한도로 계산함"
+                                  "(조세조약상 원천지국 과세권 범위를 넘어 낸 세액은 공제 대상이 아니라는 판례·심판례가 있음). "
+                                  "근거 판례는 조문 MCP(korean-tax-mcp) search_tax_rulings '제한세율 초과 외국납부세액공제'로 확인")
         else:
             인정액 = foreign_tax
 
@@ -162,6 +167,10 @@ def individual_foreign_tax_credit(
             elif cf_year <= 2015:
                 경과 = True
                 경과_설명 = f"{cf_year}년 발생분은 2020년에 5년이 끝남(2020.12.29. 개정 부칙 제11조: 남아 있는 금액만 10년) → 이월기간 경과, 필요경비 산입 가능"
+                if cf_year == 2015 and not any("2015년 발생" in x for x in 해석_주의):
+                    해석_주의.append("해석 공백 — 2015년 발생분: 부칙 제11조 '이 법 시행 이후 개시하는 과세기간 직전까지 공제되지 아니하고 남아있는 금액'에 "
+                                  "2020년 과세기간까지 5년이 이어진 2015년 발생분이 드는지 문언만으로 갈리지 않고 직접 답한 해석·판례를 찾지 못함. "
+                                  "이 도구는 2020년에 끝난 것으로 봄(드는 것으로 보면 2025년까지 10년). 금액이 크면 서면질의로 확인")
             else:
                 경과 = year - cf_year > 10
                 경과_설명 = f"{year}−{cf_year}={year-cf_year}년 > 10 → 이월기간 경과, 필요경비 산입 가능"
@@ -221,6 +230,7 @@ def individual_foreign_tax_credit(
 
     판단목록 = []
     주의목록.extend(러시아_주의)
+    주의목록.extend(해석_주의)
     무시된_이월국가 = [k for k in 이월지도 if k not in {c["country"] for c in countries}]
     if 무시된_이월국가:
         주의목록.append(f"carryforward의 국가 {무시된_이월국가}는 countries에 없어 이번 과세기간에 공제하지 않음(해당 국가 국외원천소득이 없으면 한도 0)")

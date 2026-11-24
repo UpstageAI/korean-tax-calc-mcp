@@ -154,3 +154,15 @@ def test_gift_before_2016_with_transfer_in_range_still_computed():
                                                       "donee_relation": "기타특수관계인", "donee_gift_tax": 1,
                                                       "donee_capital_gains_tax": 1, "donor_direct_capital_gains_tax": 5})
     assert r["결과"]["증여자_직접양도_간주"] is True
+
+
+# ── 해석 근거·공백 표시(2026-11-24 연도 점검 마무리)
+def test_treaty_cap_before_2019_points_to_law_mcp():
+    _, r = _ftc_recognized(2017, russia_override=False)
+    assert any("2019년 과세기간부터" in x and "search_tax_rulings" in x for x in r.get("주의", []))
+
+
+def test_2015_carryforward_marked_as_interpretation_gap():
+    r = call_raw("individual_foreign_tax_credit", dict(_FTC, year=2022, countries=[dict(country="미국", foreign_income=10_000_000, foreign_tax=0)],
+                                                       carryforward=[{"country": "미국", "year": 2015, "amount": 300_000}]))
+    assert any(x.startswith("해석 공백 — 2015년 발생분") for x in r.get("주의", []))

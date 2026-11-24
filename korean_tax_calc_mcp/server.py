@@ -3376,7 +3376,9 @@ def business_car_expense(year: YEAR, upkeep: Annotated[int, Field(description="�
                          "시행일 이후 등록·대여 자동차부터 적용, 그 전 차량은 교체할 수 있음) — 미부착이어도 업무사용비율 그대로 적용. "
                          "고시 부칙을 세법 요건(영 제50조의2④ 단서)에 그대로 잇는 것은 해석이므로 세무 대리인 확인 권장")
     elif not plate_ok and not plate_applies:
-        r["번호판 요건"] = f"취득가액 {acquisition_cost:,}원 < 80,000,000원 → 법인업무용 번호판 부착 대상 아님(영 제50조의2④ 단서·규칙 기준) — 미부착이어도 업무사용비율 그대로 적용"
+        r["번호판 요건"] = (f"취득가액 {acquisition_cost:,}원 < 80,000,000원 → 법인업무용 번호판 부착 대상 아님 — 미부착이어도 업무사용비율 그대로 적용. "
+                         "8천만원 기준은 국토교통부 운영 기준(2023.11.2. 고시 개정 행정예고 보도자료 '차량가액 8천만원 이상', 2024.4. 참고자료 '임차기간 합산 1년 이상'): "
+                         "법인세법 시행규칙 제27조의2②가 넘기는 「자동차 등록번호판 등의 기준에 관한 고시」 본문에는 금액이 없음")
     elif not plate_ok and acquisition_cost is None:
         r["번호판 요건"] = "취득가액을 주지 않아 번호판 요건 대상으로 보고 업무사용금액 0원 적용 — 8천만원 미만 차량이면 acquisition_cost를 넣어 다시 계산"
     return _ok(r, "법인세법 제27조의2, 시행령 제50조의2", 산식="미작성 시 업무사용비율 = min(1, 기준금액 ÷ 총비용), 감가상각 업무사용분 연 800만원 한도", **({"주의": 주의} if 주의 else {}))
@@ -11359,7 +11361,7 @@ def building_standard_price(year: Annotated[int, Field(description="적용연도
     건물 기준시가 — 국세청 「건물 기준시가 계산방법 고시」 산식(신축가격기준액 × 구조지수 × 용도지수 × 위치지수 × 경과연수별 잔가율 × (상증세만) 개별건물 특성 조정률, ㎡당 1,000원 미만 버림 × 면적). 양도세 기준시가(소득세법 제99조제1항제1호나목)와 상속·증여 보충적 평가(상증법 제61조제1항제2호)에 쓴다.
     언제: 일반 건물(상가·사무실·공장·창고 등)의 기준시가가 필요할 때 — 비상장주식 평가(unlisted_stock_valuation의 assets 기준시가), 상속·증여 신고, 양도세 환산취득가액. 주택·아파트는 공시가격(official_property_price), 오피스텔·일괄고시 상업용은 국세청 고시가격을 쓴다.
     입력: 적용연도 → year, 면적 → area_m2, 구조·용도 → structure·use, 부속토지 공시지가 → land_price_per_m2, 신축연도 → built_year, 상증세면 purpose='상증세'와 층수·연면적·지붕·층별·안전등급.
-    지수표는 적용연도별 고시 원문(2017~2023·2025·2026). 2024년은 국세청 2024년 해설서 지수표(법제처에 조문 미수록). 2007~2016년은 그 해 신축가격기준액에 2017년 지수표를 적용한 근사(결과에 표시).
+    지수표는 적용연도별 고시 원문(2017~2023·2025·2026). 2016·2024년은 국세청 해설서 지수표(법제처에 조문 없음). 2007~2015년은 그 해 신축가격기준액에 2016년 지수표를 적용한 근사(결과에 표시).
     결과: 기준시가·㎡당 금액·지수·잔가율·조정률, 판단(산식·시가 우선·국세청 감정평가 가능성·범위), 근거."""
     return BL.building_standard_price(year, area_m2, structure, use, land_price_per_m2, built_year, purpose=purpose, floors=floors, total_area_m2=total_area_m2,
                                       roof=roof, floor_use=floor_use, safety_grade=safety_grade, remodel_count=remodel_count)
