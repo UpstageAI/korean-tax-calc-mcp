@@ -82,6 +82,7 @@
  "pension_income": {"year": 2022, "public_pension": 12000000},
  "personal_deduction": {"year": 2023, "taxpayer": {"sex": "남", "birth_year": 1980, "has_spouse": true, "comprehensive_income": 50000000}, "persons": [{"name": "배우자", "relation": "배우자", "birth_year": 1985}, {"name": "부친", "relation": "직계존속", "birth_year": 1950}, {"name": "아들", "relation": "직계비속", "birth_year": 2005}, {"name": "딸", "relation": "직계비속", "birth_year": 2002}, {"name": "형", "relation": "형제자매", "birth_year": 1960}]},
  "provision_reserve_ledger": {"grants": [{"year": 2025, "amount": 200000000}], "valid_years": 2, "usage_pattern": [0.3, 0.4, 0.1], "expected_usage_rate": 1.0, "cost_ratio": 0.5, "year": 2025},
+ "qualified_merger_asset_adjustment": {"assets": [{"자산": "토지", "세무상장부가액": 120000000, "시가": 250000000, "계상액": 300000000}]},
  "reduction_income_segments": {"segments": [{"name": "온라인 직접 판매", "eligible": true, "revenue": 12000000000, "direct_expenses": 8000000000}, {"name": "도매", "eligible": false, "revenue": 18000000000, "direct_expenses": 16000000000}], "common_expenses": 3000000000},
  "refund_claim_deadline": {"kind": "통상", "tax": "법인세", "year": 2023},
  "religious_income": {"year": 2023, "amount": 50000000, "scholarship": 2000000, "meal_allowance": 2400000, "meal_months": 12, "meal_provided": false, "vehicle_allowance": 3000000, "vehicle_months": 12, "vehicle": "본인소유", "childcare_allowance": 1800000, "childcare_months": 12, "childcare_children": 1},

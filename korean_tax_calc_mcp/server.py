@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from .engine import calc as K, calc_cit as C, calc_income as I, calc_vat as V, calc_capgains as CG
 from .engine import calc_nonprofit as NP
+from .engine import calc_merger as MERGER
 from .engine import calc_foreign as F
 from .engine import calc_branch_exit as BX
 from .engine import calc_provision as PV
@@ -1786,6 +1787,22 @@ def loss_carryback_refund(year: Annotated[int, Field(description="결손금이 �
     결과: 환급세액, 소급공제 결손금, 이월할 결손금, 계산(직전 산출세액·소급공제 후 세액·차액·한도), 판단·근거·주의.
     범위 밖: 2020·2021년 한시 특례(조세특례제한법 제8조의4), 1년 미만 사업연도, 개인사업자, 환급 후 경정에 따른 추징세액."""
     r = INC.loss_carryback_refund(year, loss, prior_base, prior_credits, carryback)
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 주의=r["주의"])
+
+
+@mcp.tool(annotations=CALC)
+@_guard
+def qualified_merger_asset_adjustment(assets: Annotated[list[dict], Field(description="승계 자산 목록 [{자산: 이름, 세무상장부가액: 피합병법인의 세무상 장부가액(원), 시가: 합병등기일 시가(원), 계상액: 합병법인이 장부에 계상한 금액(원, 비우면 시가), 감가상각자산: true|false}]")]) -> dict:
+    """Qualified merger: asset adjustment account entries per acquired asset at the merger date (적격합병 자산조정계정).
+    적격합병 자산조정계정 세무조정 — 합병법인이 승계한 자산별로 자산조정계정(시가 − 피합병법인 세무상 장부가액)과 시가와 다르게 계상한 금액의 세무조정·소득처분(법인세법 제44조의3제1항, 시행령 제80조의4제1항). 언제: 적격합병으로 받은 자산을 시가(또는 다른 금액)로 계상했을 때 합병등기일이 속하는 사업연도의 세무조정을 정할 때.
+    입력: 자산별 피합병법인 세무상 장부가액·시가·합병법인 계상액 → assets.
+    계산: 자산조정계정 = 시가 − 세무상 장부가액(양수면 손금산입 △유보, 음수면 익금산입 유보). 계상액 − 시가는 시가와 다르게 계상한 부분으로 따로 조정(법 제42조제1항).
+      조문의 '차액을 익금에 산입'하는 부분은 자산을 시가로 계상하면 장부에 이미 반영된 것으로 보아 익금산입 줄을 따로 내지 않는다.
+    결과: 세무조정[{구분, 과목, 금액, 소득처분, 근거, 산식}], 손금산입·익금산입 합계, 계산(자산별 자산조정계정·후속처리), 판단·근거·주의.
+    범위 밖: 적격 요건 판정, 합병매수차손익, 포합주식·합병대가·의제배당, 유보 승계, 이후 사업연도의 상계·추인과 사후관리."""
+    r = MERGER.qualified_merger_asset_adjustment(assets)
     if "error" in r:
         return r
     return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 주의=r["주의"])
@@ -12237,6 +12254,7 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "중소기업 판정": ["sme_status"], "중소기업 범위": ["sme_status"], "중소기업 졸업": ["sme_status"], "유예기간": ["sme_status"], "소기업 판정": ["sme_status"], "관계기업": ["sme_status"],
     "창업감면": ["startup_tax_reduction"], "창업중소기업": ["startup_tax_reduction"], "청년창업": ["startup_tax_reduction"], "창업벤처": ["startup_tax_reduction"], "벤처기업 감면": ["startup_tax_reduction"],
     "위탁제조": ["startup_tax_reduction"], "특별세액감면": ["sme_special_tax_reduction"], "중소기업 감면": ["sme_special_tax_reduction", "startup_tax_reduction"], "소기업": ["sme_special_tax_reduction"],
+    "적격합병": ["qualified_merger_asset_adjustment"], "자산조정계정": ["qualified_merger_asset_adjustment"], "합병 자산": ["qualified_merger_asset_adjustment"],
     "소급공제": ["loss_carryback_refund"], "결손금 환급": ["loss_carryback_refund"], "결손금 소급": ["loss_carryback_refund"],
     "이월결손금 추적": ["loss_carryforward_ledger"], "결손금 잔액": ["loss_carryforward_ledger"], "결손금 소멸": ["loss_carryforward_ledger"], "이월결손금": ["loss_carryforward_ledger", "loss_carryforward_limit"],
     "해외법인 청산": ["foreign_subsidiary_liquidation", "foreign_exchange_reporting"], "자회사 청산 손실": ["foreign_subsidiary_liquidation"], "투자주식 손실": ["foreign_subsidiary_liquidation"],
