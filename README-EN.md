@@ -10,7 +10,7 @@
 
 **Korean tax calculations for AI agents — code, not guesses.**
 
-AI models often get tax arithmetic wrong. This server computes Korean corporate, income, VAT, withholding, international, inheritance and gift tax — and the tax adjustments behind them — in code, and attaches the statutory basis to every result. 142 tools, rate and limit tables for 2016–2026; for a year without a table it stops instead of guessing. It covers foreign companies, expats and Korean subsidiaries (foreign worker flat tax, non-resident withholding, branch profits tax, exit tax and more). Ask in English: every tool description starts with an English line, and `find_tool` takes English queries. Results can be exported to a review workbook laid out as the statutory forms.
+AI models often get tax arithmetic wrong. This server computes Korean corporate, income, VAT, withholding, international, inheritance and gift tax — and the tax adjustments behind them — in code, and attaches the statutory basis to every result. 143 tools, rate and limit tables for 2016–2026; for a year without a table it stops instead of guessing. It covers foreign companies, expats and Korean subsidiaries (foreign worker flat tax, non-resident withholding, branch profits tax, exit tax and more). Ask in English: every tool description starts with an English line, and `find_tool` takes English queries. Results can be exported to a review workbook laid out as the statutory forms.
 
 > Not tax advice. Results show sources and computations for review; confirm filings and appeals with a tax professional. Only the 3 PDF tools and the optional revenue-row classification in the Korean comparable candidates tool use generative AI, and their results say so — [full notices](#disclaimer)
 
@@ -105,7 +105,7 @@ Optional keys: `LAW_OC` (law.go.kr lookups in two audit tools), `UPSTAGE_API_KEY
 
 Requirements and year-specific judgments (credit eligibility, arm's-length methods, permanent establishment) belong to the companion server [korean-tax-mcp](https://github.com/UpstageAI/korean-tax-mcp). This server computes from amounts that meet the requirements and points to the statute check in its output.
 
-Of the 142 tools, the 137 other than the 3 PDF tools and the Korean comparable candidates tool run in code without generative AI; two of them (price lookups) only fetch public data from KRX and VWORLD. The 3 PDF tools and the candidates tool use Upstage only when `UPSTAGE_API_KEY` is set (the candidates tool fetches OpenDART filings and, without the key, classifies revenue rows by name rules).
+Of the 143 tools, the 138 other than the 3 PDF tools and the Korean comparable candidates tool run in code without generative AI; two of them (price lookups) only fetch public data from KRX and VWORLD. The 3 PDF tools and the candidates tool use Upstage only when `UPSTAGE_API_KEY` is set (the candidates tool fetches OpenDART filings and, without the key, classifies revenue rows by name rules).
 
 </details>
 
@@ -238,12 +238,12 @@ Form templates were built by checking cell layout against the official form PDFs
 </details>
 
 <details>
-<summary><b>All tools (142)</b></summary>
+<summary><b>All tools (143)</b></summary>
 
 Click a group to expand its tools.
 
 <details>
-<summary><b>Corporate tax</b> (20)</summary>
+<summary><b>Corporate tax</b> (21)</summary>
 
 | Tool | What it does |
 |---|---|
@@ -261,6 +261,7 @@ Click a group to expand its tools.
 | `dividend_received_deduction` | dividends received deduction |
 | `tax_adjustment_schedule` | Multi-year tax adjustment schedule — book income and adjustments by year → taxable income, loss carryforward, tax base, tax, reserve balances by item |
 | `loss_carryback_refund` | Loss carryback refund for SMEs — refund of prior-year corporate tax and remaining loss to carry forward (CITA art.72) |
+| `qualified_merger_asset_adjustment` | Qualified merger asset adjustment account — per acquired asset, the adjustment account (fair value less the merged company's tax basis) and the adjustment for amounts booked away from fair value, with dispositions (CITA art.44-3(1), Decree art.80-4(1)) |
 | `loss_carryforward_ledger` | Multi-year loss carryforward ledger — balance by year of origin, annual deduction and tax base, expiry (CITA art.13(1), Decree art.10(2)) |
 | `provision_reserve_ledger` | Multi-year tax adjustments for provisions (loyalty points, warranties) — add-back on accrual, deduction on use, reversal on expiry, reserve balance (CITA art.40) |
 | `asset_grant_reserve` | asset grant reserve |
