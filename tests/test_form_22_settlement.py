@@ -121,3 +121,21 @@ def test_no_settlement_adds_no_check_row(tmp_path):
              ledger=[{"항목": "임차료", "매입세액": 1_000_000, "사용처": "공통"}])
     ws = openpyxl.load_workbook(build(tmp_path, [{"tool": "common_input_tax", "args": a}]))[SHEET]
     assert ws["J36"].value is None and ws["B34"].value is None and ws["G36"].value == "=SUM(G34:G35)"
+
+
+def test_rows_are_reported_separately():
+    """안분계산분 4,040,000과 건물 정산분 3,000,000을 한 금액으로 합쳐 읽는 일이 되풀이됨 → 줄별로 나눠 보인다."""
+    r = c("common_input_tax", {"year": 2026, "period": "2기", "filing": "확정",
+        "supplies": {"예정": {"taxable": 700_000_000, "exempt": 300_000_000}, "확정": {"taxable": 796_000_000, "exempt": 404_000_000}},
+        "ledger": [{"항목": "기계장치3", "매입세액": 12_000_000, "사용처": "공통"}], "prior_common_input_tax": 10_000_000, "prior_nondeductible": 3_000_000,
+        "settlements": [{"항목": "건물B", "총공통매입세액": 60_000_000, "면적": {"과세": 65, "면세": 35}, "기불공제": 18_000_000}]})
+    rows = r["결과"]["별지22_줄별_불공제"]
+    assert rows["3_공통매입세액_안분계산분"] == 4_040_000 and rows["4_공통매입세액_정산분"] == 3_000_000
+    assert "합치지 않는다" in rows["읽는_법"] and "input_tax_recalculation" in rows["5_납부세액_재계산분"]
+
+
+def test_rows_without_settlement_have_no_row_4():
+    r = c("common_input_tax", {"year": 2026, "period": "2기", "filing": "예정", "supplies": {"예정": {"taxable": 700_000_000, "exempt": 300_000_000}},
+        "ledger": [{"항목": "원재료", "매입세액": 10_000_000, "사용처": "공통"}]})
+    rows = r["결과"]["별지22_줄별_불공제"]
+    assert rows["3_공통매입세액_안분계산분"] == 3_000_000 and "4_공통매입세액_정산분" not in rows
