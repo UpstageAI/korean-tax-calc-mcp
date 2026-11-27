@@ -98,7 +98,7 @@ Optional keys: `LAW_OC` (law.go.kr lookups in two audit tools), `UPSTAGE_API_KEY
 <summary><b>How it works in detail — 5 steps</b></summary>
 
 1. **Check input** — if a field is unknown or missing, it does not calculate and says what is needed.
-2. **Values for that year** — rates and limits come from year tables in code (corporate and income tax 2016–2026, VAT 2016 H1–2026 H2); item-level criteria come from `facts_vocab.json` (107 items with periods and statutory basis). The tables were checked against each year's statute and addenda.
+2. **Values for that year** — rates and limits come from year tables in code (corporate and income tax 2016–2026, VAT 2016 H1–2026 H2); item-level criteria come from `facts_vocab.json` (111 items with periods and statutory basis). The tables were checked against each year's statute and addenda.
 3. **Calculate** — in the order of the statute, e.g. tax base → that year's brackets → tax.
 4. **Adjustment items** — adjustment tools return the adjustment type and amount, the income disposition (reserve, bonus, other outflow; provisional reserve for cross-border adjustments) and the statutory basis. These items go straight into the aggregation tools.
 5. **Aggregation and forms** — `income_adjustment_total` for corporate tax, `vat_return_general` for VAT and `withholding_return` for withholding tax collect the figures in form order, and `export_workbook` re-runs the same calls to build a review workbook.
@@ -495,7 +495,7 @@ When a case is out of scope, the tool stops with "input needed" or an error, or 
 **General**
 - Years outside the supported range (corporate FY2016–2026, income tax 2016–2026, VAT 2016-1 to 2026-2) and local income tax
 - Facts that need judgment first (number of houses, related parties, business relevance) are taken as you enter them; the tool does not decide them
-- No dedicated tool for merger or split adjustments
+- Mergers and splits: only the qualified-merger asset adjustment account (`qualified_merger_asset_adjustment`). No tool for the qualifying tests, merger gain or loss on purchase, or split adjustments
 
 <details>
 <summary>Per-tool limits (collected from tool descriptions)</summary>
@@ -534,7 +534,7 @@ Each tool's description has the full scope.
 | Official forms | cell layout, line numbers and instructions for form templates | form PDFs on law.go.kr |
 | NTS rulings and tribunal decisions | points the statute alone does not settle, cited by document number in the output | summary and full text on taxlaw.nts.go.kr |
 | NTS filing guides | e.g. the formula for deemed gifts from related-party transactions | the published guide |
-| Fact vocabulary (`facts_vocab.json`) | criteria, periods, statutory basis and aliases for 107 items | bundled after checking against the statute |
+| Fact vocabulary (`facts_vocab.json`) | criteria, periods, statutory basis and aliases for 111 items | bundled after checking against the statute |
 | KRX and VWORLD public data | listed share prices, official land and housing prices | per call |
 | Foreign Exchange Transactions Regulation | outbound investment filing and follow-up reports | all editions 2015–2026 |
 
@@ -561,7 +561,7 @@ When answering Korean tax questions, use korean-tax-mcp and korean-tax-calc-mcp 
 <details>
 <summary><b>Building an agent — tool search</b></summary>
 
-If you build an agent with Anthropic's BM25 tool search (`tool_search_tool_bm25`), it does not match Hangul queries (checked 2026-11-14: Korean words present verbatim in the descriptions returned 0 results; English words matched). Search with English keywords — every tool description starts with an English line — or use the regex tool search (`tool_search_tool_regex`), which matches Korean terms. If unsure which tool to use, call `find_tool` first — it accepts Korean and English queries.
+If you build an agent with Anthropic's BM25 tool search (`tool_search_tool_bm25_20251119`), it does not match Hangul queries (checked 2026-11-14: Korean words present verbatim in the descriptions returned 0 results; English words matched). Search with English keywords — every tool description starts with an English line — or use the regex tool search (`tool_search_tool_regex_20251119`), which matches Korean terms. If unsure which tool to use, call `find_tool` first — it accepts Korean and English queries.
 
 </details>
 
