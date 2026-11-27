@@ -34,6 +34,7 @@
  "employment_increase_credit": {"year": 2021, "size": "중소기업", "headcounts": [{"year": 2020, "total": 0, "youth": 0}, {"year": 2021, "total": 8, "youth": 4}, {"year": 2022, "total": 20, "youth": 8}, {"year": 2023, "total": 45, "youth": 20}, {"year": 2024, "total": 80, "youth": 35}, {"year": 2025, "total": 110, "youth": 45}]},
  "entertainment_adjustment": {"sme": true, "ledger": [{"항목": "거래처 접대", "금액": 50000000, "증빙": "적격"}, {"항목": "온누리상품권", "금액": 3000000, "증빙": "적격", "성격": "온누리상품권"}, {"항목": "지역사랑상품권", "금액": 2000000, "증빙": "적격", "성격": "지역사랑상품권"}], "revenue": {"매출액": 1000000000}, "year": 2025, "fy_start": "2025-07-01"},
  "entertainment_limit": {"year": 2024, "sme": true, "general_revenue": 5000000000, "expensed": 80000000, "market": 20000000, "fy_end": "2024-12-31", "filing_date": "2026-02-10"},
+ "excess_withdrawal_interest": {"borrowings": [{"이자율": 15, "지급이자": 600000, "적수": 1460000000, "채권자불분명_이자": 150000}, {"이자율": 8, "지급이자": 1600000, "적수": 7300000000}], "excess_jeoksu": 1550000000},
  "estimated_business_income": {"industry_group": "나", "revenues": [{"구분": "매출", "금액": 100000000}], "expenses": [], "base_rate": 0.1, "simple_rate": 0.9, "year": 2019, "prior_year_revenue": 40000000},
  "expat_cost_recharge": {"year": 2026, "items": [{"이름": "A", "급여": 60000000, "사회보험": 6000000, "체재비": 12000000, "귀속": "현지법인", "마크업": 0.05, "청구액": 0, "국외근로_개월": 12}]},
  "financial_income_aggregate": {"year": 2025, "items": [{"kind": "예금이자", "amount": 3000000}]},
