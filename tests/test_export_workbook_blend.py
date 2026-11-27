@@ -366,7 +366,7 @@ def test_description_first_sentence_says_statutory_forms_and_where():
     assert "언제:" in tool.description and "입력:" in tool.description
     for name in ("scenarios", "sources", "issues", "extra_sheets", "actions", "key_figures"):
         assert name in tool.parameters["properties"] and f"{name}" in tool.description
-    assert len(S.mcp._tool_manager.list_tools()) == 143
+    assert len(S.mcp._tool_manager.list_tools()) == 144
 
 
 def test_instructions_tell_to_build_then_verify_for_workings():

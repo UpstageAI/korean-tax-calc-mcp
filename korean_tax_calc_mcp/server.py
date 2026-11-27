@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from .engine import calc as K, calc_cit as C, calc_income as I, calc_vat as V, calc_capgains as CG
 from .engine import calc_nonprofit as NP
 from .engine import calc_merger as MERGER
+from .engine import calc_excess_withdrawal as EXW
 from .engine import calc_foreign as F
 from .engine import calc_branch_exit as BX
 from .engine import calc_provision as PV
@@ -9962,6 +9963,24 @@ def _주택간주임대료(year: int, houses: list, financial_income: int = 0, e
 
 @mcp.tool(annotations=CALC)
 @_guard
+def excess_withdrawal_interest(borrowings: Annotated[list[dict], Field(description="차입금 목록 [{차입금?: 이름, 이자율: 연 %(차입금이 둘 이상이면 필수), 지급이자: 원, 적수: 차입금 적수(원·일), 채권자불분명_이자?: 그중 채권자불분명 차입금 이자(원), 건설자금_이자?: 그중 건설자금 이자(원), 제외_적수?: 앞 순서로 부인된 이자의 차입금 적수(원·일, 비우면 이자 비율로 계산)}]")],
+                               excess_jeoksu: Annotated[int | None, Field(description="초과인출금 적수(원·일)를 직접 계산했으면 넣는다. months와 둘 중 하나", ge=0)] = None,
+                               months: Annotated[list[dict] | None, Field(description="기간별 잔액 [{기간?: 이름, 자산: 사업용 자산 합계(원), 부채: 부채 합계(원), 충당금준비금?: 부채에 포함된 필요경비 산입 충당금·준비금(원), 일수: 그 잔액이 유지된 일수}] — 초과인출금이 있는 달만 넣어도 된다")] = None) -> dict:
+    """Sole proprietor: non-deductible interest on liabilities exceeding business assets (초과인출금 지급이자 필요경비불산입).
+    초과인출금 지급이자 필요경비불산입 — 개인사업자의 부채 합계가 사업용 자산 합계를 넘는 금액(초과인출금)에 상당하는 지급이자를, 이자율이 높은 차입금부터 채워 계산한다(소득세법 제33조제1항제5호, 시행령 제61조제1항제2호·제78조의2, 시행규칙 제27조). 언제: 개인사업자 장부에서 부채가 사업용 자산보다 많은 기간이 있을 때, 지급이자 중 필요경비에 넣지 못하는 금액을 정할 때. 이자율이 다른 차입금이 섞여 있거나 채권자불분명 차입금 이자가 함께 있으면 손으로 계산하지 말고 이 도구를 쓴다.
+    입력: 차입금별 이자율·지급이자·차입금 적수 → borrowings, 초과인출금 적수 → excess_jeoksu 또는 기간별 자산·부채·충당금·일수 → months.
+    계산: 초과인출금 = 부채(필요경비에 산입한 충당금·준비금 제외) − 사업용 자산. 채권자불분명·건설자금 이자와 그 차입금 적수를 먼저 뺀다(시행령 제78조의2제1항). 초과인출금 적수(차입금 적수 한도, 시행규칙 제27조제2항)를 높은 이자율 차입금 적수부터 채우고(시행령 제78조의2제2항), 차입금별로 지급이자 × 배분된 적수 ÷ 차입금 적수를 더한다. 원 미만은 합계에서 한 번 절사.
+    결과: 필요경비불산입액, 계산(초과인출금 적수, 이자율별 배분·금액, 기간별 초과인출금), 판단·근거·주의·산식. 2016~2026 과세기간 산식 같음.
+    범위 밖: 사업용 자산·부채 해당 여부, 채권자불분명·건설자금 해당 여부(입력 그대로 씀), 업무무관 지급이자(시행령 제78조제3호), 공동사업 출자를 위한 차입금 이자, 법인(nonbusiness_interest_disallowance)."""
+    r = EXW.excess_withdrawal_interest(borrowings, excess_jeoksu, months)
+    if "error" in r:
+        return r
+    return _ok(r["결과"], r["근거"], 계산=r["계산"], 판단=r["판단"], 주의=r["주의"], 산식=r["산식"])
+
+
+
+@mcp.tool(annotations=CALC)
+@_guard
 def housing_deemed_rent_income(
     year: YEAR,
     houses: Annotated[list, Field(description=(
@@ -12254,6 +12273,7 @@ _TOOL_ALIASES: dict[str, list[str]] = {
     "중소기업 판정": ["sme_status"], "중소기업 범위": ["sme_status"], "중소기업 졸업": ["sme_status"], "유예기간": ["sme_status"], "소기업 판정": ["sme_status"], "관계기업": ["sme_status"],
     "창업감면": ["startup_tax_reduction"], "창업중소기업": ["startup_tax_reduction"], "청년창업": ["startup_tax_reduction"], "창업벤처": ["startup_tax_reduction"], "벤처기업 감면": ["startup_tax_reduction"],
     "위탁제조": ["startup_tax_reduction"], "특별세액감면": ["sme_special_tax_reduction"], "중소기업 감면": ["sme_special_tax_reduction", "startup_tax_reduction"], "소기업": ["sme_special_tax_reduction"],
+    "초과인출금": ["excess_withdrawal_interest"], "가사관련경비": ["excess_withdrawal_interest"], "개인사업자 지급이자": ["excess_withdrawal_interest"], "부채 초과": ["excess_withdrawal_interest"],
     "적격합병": ["qualified_merger_asset_adjustment"], "자산조정계정": ["qualified_merger_asset_adjustment"], "합병 자산": ["qualified_merger_asset_adjustment"],
     "소급공제": ["loss_carryback_refund"], "결손금 환급": ["loss_carryback_refund"], "결손금 소급": ["loss_carryback_refund"],
     "이월결손금 추적": ["loss_carryforward_ledger"], "결손금 잔액": ["loss_carryforward_ledger"], "결손금 소멸": ["loss_carryforward_ledger"], "이월결손금": ["loss_carryforward_ledger", "loss_carryforward_limit"],
