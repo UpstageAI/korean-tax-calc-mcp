@@ -8,7 +8,7 @@ Registry name: `io.github.UpstageAI/korean-tax-calc-mcp` · PyPI: `korean-tax-ca
 
 Tool names are English, and every tool description starts with an English line followed by the Korean term; `find_tool` accepts English queries. Result keys and enum values are mostly Korean (e.g. income_kind "사용료" = royalties, recipient_type "법인" = corporation) — read each tool's input schema and see the [glossary](https://github.com/UpstageAI/korean-tax-calc-mcp/blob/main/docs/glossary_ko_en.md). If you do not know which tool fits, call `find_tool` first.
 
-If you build an agent with Anthropic's BM25 tool search (`tool_search_tool_bm25`), it does not match Hangul queries (checked 2026-11-14: Korean words present verbatim in descriptions returned 0 results; English matched). Search with English keywords — every tool description starts with an English line — or use the regex tool search (`tool_search_tool_regex`), which matches Korean terms. If unsure which tool to use, call `find_tool` first — it accepts Korean and English queries.
+If you build an agent with Anthropic's BM25 tool search (`tool_search_tool_bm25_20251119`), it does not match Hangul queries (checked 2026-11-14: Korean words present verbatim in descriptions returned 0 results; English matched). Search with English keywords — every tool description starts with an English line — or use the regex tool search (`tool_search_tool_regex_20251119`), which matches Korean terms. If unsure which tool to use, call `find_tool` first — it accepts Korean and English queries.
 
 ## Which tool for which question
 
